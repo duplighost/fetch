@@ -948,13 +948,13 @@ export function buildSkullMesh(boneMaterial) {
   // maxilla either side of the aperture.
   M(gridGeo(8, 4, (u, v) => {
     const a = lerp(-1.86, 1.86, u);                 // past ±90° so the flanks tuck in
-    const halfW = lerp(0.0056, 0.0163, v);
+    const halfW = lerp(0.0078, 0.0182, v);
     const y = lerp(0.0140, -0.0450, v);
     const depth = lerp(0.0060, 0.0125, v);
     const zFront = lerp(0.0845, 0.0960, v);
     return [Math.sin(a) * halfW, y, zFront - (1 - Math.cos(a)) * depth];
   }), skinPale, body, 4);
-  const tip = M(new THREE.SphereGeometry(1, 9, 6).scale(0.0112, 0.0092, 0.0104), skinPale, body, 4);
+  const tip = M(new THREE.SphereGeometry(1, 9, 6).scale(0.0132, 0.0106, 0.0118), skinPale, body, 4);
   tip.position.set(0.0005, -0.0420, 0.0920);
   for (const s of [-1, 1]) {
     const ala = M(new THREE.SphereGeometry(1, 8, 5).scale(0.0070, 0.0058, 0.0080), skin, body, 4);
@@ -971,8 +971,11 @@ export function buildSkullMesh(boneMaterial) {
     const d = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
       d.fromBufferAttribute(p, i).normalize();
-      // skin does not fall into the sockets — it stretches across them
-      const r0 = unionRadius(d.x, d.y, d.z);
+      // Skin does not fall into the sockets — it stretches across them. But it
+      // must also sit OUTSIDE every ridge the bone adds on top of the union
+      // (the orbital margin, the brow, the temporal line), or those poke
+      // through the face and the sockets read straight back out of it.
+      const r0 = Math.max(unionRadius(d.x, d.y, d.z), shellRadius(d.x, d.y, d.z)) + 0.0016;
       let x = d.x * r0, y = d.y * r0, z = d.z * r0;
       z += 0.0058 * bell(Math.abs(x) - 0.043, 0.018) * bell(y + 0.017, 0.022) * ss(0.01, 0.05, z);
       x += Math.sign(x) * 0.0058 * ss(0.045, 0.062, Math.abs(x)) * band(y, -0.03, 0, 0.035, 0.055);
@@ -999,11 +1002,8 @@ export function buildSkullMesh(boneMaterial) {
     const ear = M(cap(0.011, 0.019, 0.005, { seed: 17 + s, wobble: 0.18 }), skinPale, body, 5);
     ear.position.set(s * 0.0620, -0.0130, -0.0245);
     ear.rotation.y = s * (Math.PI / 2 - 0.15);
-    const lid = M(gridGeo(12, 1, (u, v) => {
-      const a = u * TAU, rr = lerp(0.0150, 0.0086, v);
-      return [s * 0.0335 + Math.cos(a) * rr, 0.0015 + Math.sin(a) * rr * 0.82, 0.0800 - v * 0.0058];
-    }), skin, body, 5);
-    lid.renderOrder = 1;
+    // no lid ring: the face shell already dimples an opening here, and a
+    // second ring on top of it reads as concentric circles drawn on the face
   }
   M(sweepGeo([
     new THREE.Vector3(-0.0248, -0.0680, 0.0560),

@@ -373,59 +373,201 @@ export class Forest {
     }
   }
 
+  // The forest LOOK, ported from THE EATEN PATH (docs/analysis/eaten-path.json).
+  // The seal mechanics already came across; this is the other half — why that
+  // forest reads as a place and this one read as poles on a floor. Five things
+  // do nearly all of it: trunks that LEAN over the path, canopy that closes the
+  // sky above it, branches that knit across it, shrub walls that give the
+  // corridor surfaces, and two ground ribbons instead of one flat strip.
   _buildFlora(rng) {
     const { scene, mats: M } = this.game;
-    // trees hug the corridor edge with exponential falloff — eaten-path discipline
+    const at = (i, lat) => {
+      const sm = this.samples[clamp(Math.round(i), 0, this.length - 1)];
+      return { x: sm.x + -sm.tz * lat, z: sm.z + sm.tx * lat, tx: sm.tx, tz: sm.tz };
+    };
+
     const trunkGeo = new THREE.CylinderGeometry(0.13, 0.26, 1, 7);
+    trunkGeo.translate(0, 0.5, 0);
     const canopyGeo = new THREE.IcosahedronGeometry(1, 1);
-    const items = [];
-    for (let i = 0; i < this.length; i += 2) {
-      const sm = this.samples[i];
+    canopyGeo.scale(1, 0.62, 1);
+    const branchGeo = new THREE.CylinderGeometry(0.05, 0.085, 1, 5);
+    branchGeo.translate(0, 0.5, 0);
+    const rootGeo = new THREE.TorusGeometry(1, 0.09, 4, 8, Math.PI * 0.85);
+    // crossed planes: the cheapest thing that still reads as a mass of leaves
+    const shrubGeo = (() => {
+      const g = new THREE.BufferGeometry();
+      const pos = [], uv = [], idx = [];
+      for (let k = 0; k < 2; k++) {
+        const a = (k * Math.PI) / 2, c = Math.cos(a), s = Math.sin(a);
+        const o = k * 4;
+        pos.push(-c, 0, -s, c, 0, s, c, 1.6, s, -c, 1.6, -s);
+        uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+        idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+      }
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      return g;
+    })();
+    const shrubTex = (() => {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 64;
+      const g = cv.getContext('2d');
+      g.clearRect(0, 0, 64, 64);
+      const cols = ['#1c2818', '#16211a', '#212e1a', '#0f1810'];
+      for (let i = 0; i < 120; i++) {
+        const x = 5 + rng.float() * 54, y = 64 - rng.float() * 60, r = rng.range(1.8, 5.2);
+        g.fillStyle = cols[rng.int(0, 3)];
+        g.beginPath();
+        g.ellipse(x, y, r, r * rng.range(0.55, 1), rng.float() * TAU, 0, TAU);
+        g.fill();
+      }
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+
+    const trunks = [], canopies = [], branches = [], shrubs = [], roots = [];
+    for (let i = 2; i < this.length - 2; i += 2) {
       const hw = this.halfW[i];
       for (const side of [-1, 1]) {
         for (let k = 0; k < 3; k++) {
           const off = hw + 0.8 + -Math.log(1 - rng.float()) * 2.6;
           if (off > hw + 12) continue;
-          const x = sm.x + -sm.tz * side * off + rng.range(-0.7, 0.7);
-          const z = sm.z + sm.tx * side * off + rng.range(-0.7, 0.7);
-          const h = rng.range(5, 9);
-          items.push({ x, z, h, r: rng.range(0.8, 1.5), tilt: rng.gauss() * 0.05 });
+          const p = at(i + rng.gauss() * 0.7, side * off);
+          const h = rng.range(5, 9.5);
+          // near-wall trunks lean OVER the corridor — this is the single
+          // cheapest thing that turns a row of poles into a forest wall
+          const lean = off < hw + 2.4 ? rng.range(0.05, 0.17) : rng.range(-0.04, 0.06);
+          trunks.push({ x: p.x, z: p.z, tx: p.tx, tz: p.tz, h, lean, side, tint: rng.range(0.42, 0.86) });
+          canopies.push({
+            x: p.x + rng.gauss() * 0.8, y: h * rng.range(0.84, 0.98), z: p.z + rng.gauss() * 0.8,
+            sc: rng.range(1.6, 2.9), tint: rng.range(0.45, 0.92),
+          });
+        }
+      }
+      // the sky closes over the path: low canopy blobs above the corridor
+      if (rng.chance(0.42)) {
+        const p = at(i, rng.gauss() * hw * 0.6);
+        canopies.push({ x: p.x, y: rng.range(4.6, 7.2), z: p.z, sc: rng.range(2.1, 3.4), tint: rng.range(0.34, 0.66) });
+      }
+      // and branches knit across it, low enough to duck under
+      if (rng.chance(0.24)) {
+        const y = rng.range(2.9, 4.3);
+        const a = at(i, -(hw + rng.range(0, 0.9))), b = at(i + rng.gauss() * 1.2, hw + rng.range(0, 0.9));
+        branches.push({ a: new THREE.Vector3(a.x, y + rng.gauss() * 0.4, a.z), b: new THREE.Vector3(b.x, y + rng.gauss() * 0.4, b.z) });
+      }
+    }
+    // shrub walls line the corridor — the surfaces you actually walk between.
+    // Use the UNPINCHED width so foliage never presses against the lens.
+    for (let i = 2; i < this.length - 2; i += 1) {
+      if (rng.chance(0.25)) continue;
+      const wallW = Math.max(this.halfW[i], 1.9);
+      for (const side of [-1, 1]) {
+        const p = at(i, side * (wallW + rng.range(0.3, 1.1)));
+        shrubs.push({ x: p.x, z: p.z, sc: rng.range(0.55, 1.15), rotY: rng.float() * TAU, tint: rng.range(0.34, 0.72) });
+        if (rng.chance(0.28)) {
+          const p2 = at(i, side * (wallW + rng.range(1.7, 3.8)));
+          shrubs.push({ x: p2.x, z: p2.z, sc: rng.range(0.75, 1.5), rotY: rng.float() * TAU, tint: rng.range(0.26, 0.58) });
         }
       }
     }
-    const trunks = new THREE.InstancedMesh(trunkGeo, M.bark, items.length);
-    const canopies = new THREE.InstancedMesh(canopyGeo, new THREE.MeshLambertMaterial({ color: 0x0c1410 }), items.length);
-    const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sv = new THREE.Vector3();
-    items.forEach((it, i) => {
-      e.set(it.tilt, 0, it.tilt * 0.7);
-      q.setFromEuler(e);
-      mtx.compose(v.set(it.x, it.h / 2, it.z), q, sv.set(1.1, it.h, 1.1));
-      trunks.setMatrixAt(i, mtx);
-      mtx.compose(v.set(it.x, it.h * 0.92, it.z), q, sv.set(it.r * 2.2, it.r * 1.6, it.r * 2.2));
-      canopies.setMatrixAt(i, mtx);
-    });
-    scene.add(trunks, canopies);
-
-    // path ribbon (skips the ravine — a black gash crosses the trail there)
-    const ribbon = [];
-    for (let i = 0; i < this.length - 1; i++) {
-      if (Math.abs(i - this.ravineS()) < 3) continue;
-      const a = this.samples[i], b = this.samples[i + 1];
-      const wA = Math.min(this.halfW[i] * 0.8, 2.2), wB = Math.min(this.halfW[i + 1] * 0.8, 2.2);
-      ribbon.push(
-        a.x + -a.tz * -wA, 0.02, a.z + a.tx * -wA,
-        a.x + -a.tz * wA, 0.02, a.z + a.tx * wA,
-        b.x + -b.tz * wB, 0.02, b.z + b.tx * wB,
-        a.x + -a.tz * -wA, 0.02, a.z + a.tx * -wA,
-        b.x + -b.tz * wB, 0.02, b.z + b.tx * wB,
-        b.x + -b.tz * -wB, 0.02, b.z + b.tx * -wB,
-      );
+    // roots breaking out of the dirt across the trail
+    for (let n = 0; n < 26; n++) {
+      const i = rng.range(4, this.length - 6);
+      const p = at(i, rng.gauss() * this.halfW[Math.round(i)] * 0.5);
+      roots.push({ x: p.x, z: p.z, sc: rng.range(0.5, 1.15), rotY: rng.float() * TAU, tip: rng.range(-0.3, 0.3) });
     }
-    const rg = new THREE.BufferGeometry();
-    rg.setAttribute('position', new THREE.Float32BufferAttribute(ribbon, 3));
-    rg.computeVertexNormals();
-    const rib = new THREE.Mesh(rg, M.dirt);
-    scene.add(rib);
+
+    const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    const v = new THREE.Vector3(), sv = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3(), col = new THREE.Color();
+    const bake = (geo, mat, items, place, tintOf) => {
+      const im = new THREE.InstancedMesh(geo, mat, items.length);
+      items.forEach((it, i) => {
+        place(it, i);
+        im.setMatrixAt(i, mtx);
+        // per-instance tint jitter, so 800 copies of one trunk stop looking
+        // like 800 copies of one trunk
+        if (tintOf) im.setColorAt(i, col.setScalar(tintOf(it)));
+      });
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      scene.add(im);
+      return im;
+    };
+
+    bake(trunkGeo, M.bark, trunks, (it) => {
+      // tilt the trunk's up-axis toward the corridor centre
+      dir.set(-it.tz, 0, it.tx).multiplyScalar(-it.side);
+      v.copy(up).addScaledVector(dir, Math.tan(it.lean)).normalize();
+      q.setFromUnitVectors(up, v);
+      mtx.compose(sv.set(it.x, 0, it.z), q, v.set(1.1, it.h, 1.1));
+    }, (it) => it.tint);
+
+    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x0e1712 });
+    bake(canopyGeo, canopyMat, canopies, (it) => {
+      e.set(0, it.tint * 6, 0); q.setFromEuler(e);
+      mtx.compose(v.set(it.x, it.y, it.z), q, sv.set(it.sc * 2.1, it.sc * 1.5, it.sc * 2.1));
+    }, (it) => it.tint);
+
+    bake(branchGeo, M.bark, branches, (it) => {
+      dir.subVectors(it.b, it.a);
+      const len = dir.length();
+      q.setFromUnitVectors(up, dir.normalize());
+      mtx.compose(it.a, q, sv.set(1, len, 1));
+    }, () => 0.85);
+
+    const shrubMat = new THREE.MeshLambertMaterial({
+      color: 0xffffff, map: shrubTex, alphaTest: 0.42, side: THREE.DoubleSide,
+    });
+    bake(shrubGeo, shrubMat, shrubs, (it) => {
+      e.set(0, it.rotY, 0); q.setFromEuler(e);
+      mtx.compose(v.set(it.x, 0, it.z), q, sv.set(it.sc, it.sc, it.sc));
+    }, (it) => it.tint);
+
+    bake(rootGeo, new THREE.MeshLambertMaterial({ color: 0x2c2118 }), roots, (it) => {
+      e.set(Math.PI / 2 + it.tip, it.rotY, 0); q.setFromEuler(e);
+      mtx.compose(v.set(it.x, -0.06, it.z), q, sv.set(it.sc, it.sc, it.sc));
+    }, null);
+
+    // ---- ground: two ribbons, not one. A wide vertex-jittered fringe under
+    // the trees so the floor is never a flat sheet, and a raised paler trail
+    // on top of it so the path itself stays readable in the dark.
+    const ribbonMesh = (widthFn, y, colorFn, mat) => {
+      const pos = [], uv = [], colA = [], idx = [];
+      let prev = -1;
+      for (let i = 0; i < this.length; i++) {
+        // the ravine is a black gash across the trail — the ground stops at it
+        if (Math.abs(i - this.ravineS()) < 3) { prev = -1; continue; }
+        const hw = widthFn(i);
+        const a = at(i, -hw), b = at(i, hw);
+        const k = pos.length / 3;
+        pos.push(a.x, y, a.z, b.x, y, b.z);
+        uv.push(0, i * 0.26, hw * 0.5, i * 0.26);
+        const [c1, c2] = colorFn(i);
+        colA.push(...c1, ...c2);
+        if (prev >= 0) idx.push(prev, k, prev + 1, prev + 1, k, k + 1);
+        prev = k;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(colA, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, mat);
+      scene.add(m);
+      return m;
+    };
+    const fringeMat = M.dirt.clone(); fringeMat.vertexColors = true; fringeMat.side = THREE.DoubleSide;
+    const trailMat = M.dirt.clone(); trailMat.vertexColors = true; trailMat.side = THREE.DoubleSide;
+    const jit = () => { const c = rng.range(0.30, 0.56); return [c, c * 0.97, c * 0.88]; };
+    ribbonMesh((i) => this.halfW[i] + 7.5, 0, () => [jit(), jit()], fringeMat);
+    ribbonMesh((i) => Math.min(this.halfW[i] * 0.72, 2.0), 0.03,
+      () => { const c = [0.72, 0.66, 0.55]; return [c, c]; }, trailMat);
+
     // wide under-floor so gaps between trees never show the void
     const under = new THREE.Mesh(new THREE.PlaneGeometry(320, 400), M.dirt);
     under.rotation.x = -Math.PI / 2;
