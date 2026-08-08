@@ -98,7 +98,7 @@ class Game {
     this.world.buildLights(this.scene);
     this.world.attachCandlePool(this.scene);
 
-    this.skull = new Skull({ scene: this.scene, camera: this.camera, audio: this.audio, world: this.world, mats: this.mats });
+    this.skull = new Skull({ scene: this.scene, camera: this.camera, audio: this.audio, world: this.world, mats: this.mats, variant: Q.get('skull') });
     this.skull.setLayers((o) => o.layers.set(LAYER_HELD));
     // the skull is the light you carry — throw it and the light leaves with it
     this.skullLight = new THREE.PointLight(0xb6cfdd, 42, 9, 1.6);
