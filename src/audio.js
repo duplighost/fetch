@@ -757,6 +757,54 @@ export class GameAudio {
     src.start(t); src.stop(t + 2.2);
   }
 
+  fireRoar(opts = {}) {
+    // the incinerator takes the offering: a swelling, hungry column of noise
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 2.2, 1, 0.3);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+    lp.frequency.setValueAtTime(300, t);
+    lp.frequency.exponentialRampToValueAtTime(2400, t + 1.0);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.85, t + 0.9);
+    g.gain.setValueAtTime(0.85, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.55);
+    const rumble = ctx.createOscillator(); rumble.type = 'sine';
+    rumble.frequency.setValueAtTime(48, t);
+    rumble.frequency.linearRampToValueAtTime(34, t + 1.4);
+    const rg = ctx.createGain();
+    this._env(rg, t, 0.5, 0.5, 1.0);
+    src.connect(lp).connect(g).connect(out);
+    rumble.connect(rg).connect(out);
+    src.start(t); src.stop(t + 1.7);
+    rumble.start(t); rumble.stop(t + 1.6);
+  }
+
+  fireChoke(opts = {}) {
+    // ...and refuses it: a hollow backdraft whumpf, then nothing
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.4, 1, 0.45);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    const og = ctx.createGain();
+    this._env(og, t, 0.9, 0.012, 0.6);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 0.7);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.01, 0.7);
+    o.connect(og).connect(out);
+    src.connect(lp).connect(g).connect(out);
+    o.start(t); o.stop(t + 0.8);
+    src.start(t); src.stop(t + 0.9);
+    this.duck(0.5, 1.6);
+  }
+
   whisper(opts = {}) {
     if (!this._ready) return;
     this._play(this._whisperBuf, {
@@ -807,11 +855,13 @@ export class GameAudio {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const out = this._bus(opts, 0.7, 1, 0.3);
+    // speed writes the sound: intensity 0..1 lifts the pitch and body
+    const inten = opts.intensity ?? 0.5;
     const o = ctx.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(120, t);
-    o.frequency.exponentialRampToValueAtTime(38, t + 0.2);
+    o.frequency.setValueAtTime(100 + inten * 60, t);
+    o.frequency.exponentialRampToValueAtTime(34 + inten * 12, t + 0.2);
     const g = ctx.createGain();
-    this._env(g, t, 0.7, 0.002, 0.26);
+    this._env(g, t, 0.55 + inten * 0.35, 0.002, 0.26);
     o.connect(g).connect(out); o.start(t); o.stop(t + 0.34);
     const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 400;
@@ -819,6 +869,16 @@ export class GameAudio {
     this._env(g2, t, 0.4, 0.002, 0.18);
     src.connect(lp).connect(g2).connect(out);
     src.start(t); src.stop(t + 0.22);
+    if (opts.crack) {
+      // a dry bone CRACK riding the dark thud — flesh stops sounding like floor.
+      // sharpness, not loudness, is what makes the quiet option read.
+      const cs = ctx.createBufferSource(); cs.buffer = this._noiseBuf;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1800;
+      const cg = ctx.createGain();
+      this._env(cg, t, 0.16 + inten * 0.14, 0.001, 0.055);
+      cs.connect(hp).connect(cg).connect(out);
+      cs.start(t); cs.stop(t + 0.08);
+    }
   }
 
   sting(intensity = 0.5) {
@@ -1065,8 +1125,23 @@ export class GameAudio {
         self._setPos(farP, x, y, z);
         self._setPos(closeP, x, y, z);
       },
+      choke(dur = 0.5) {
+        // the hit punches a hole in the creature's drone — its voice gasps
+        if (this._dead) return;
+        const t = ctx.currentTime;
+        this._chokeT = t + 0.4;
+        for (const gg of [farG, closeG]) {
+          const held = gg.gain.value;
+          gg.gain.cancelScheduledValues(t);
+          gg.gain.setTargetAtTime(0.03, t, 0.02);
+          gg.gain.setTargetAtTime(Math.max(0.0001, held), t + 0.12, dur * 0.6);
+        }
+        farSrc.playbackRate.setTargetAtTime(0.6, t, 0.03);
+        farSrc.playbackRate.setTargetAtTime(1, t + 0.15, dur);
+      },
       setThreat(threat, near, rear) {
         if (this._dead) return;
+        if (this._chokeT && ctx.currentTime < this._chokeT) return;
         const t = ctx.currentTime;
         const panic = clamp01(near * near + rear * 0.45);
         // volume = floor + threat*0.42 + near*0.28 + rear*0.28 (Behind You law)

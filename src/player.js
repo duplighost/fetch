@@ -32,6 +32,7 @@ export class Player {
     this.bobY = 0;
     this.landKick = 0;
     this.frozen = false;                      // cutscenes / overlays
+    this.movementLocked = false;               // death may stop feet while preserving look
     this.reel = null;                         // { point, t, onArrive } rope launch
     this.running = false;
     this.speedRatio = 0;
@@ -59,9 +60,10 @@ export class Player {
 
     if (this.reel) { this._updateReel(dt); this._sync(dt); return; }
 
-    const mX = this.frozen ? 0 : (frame ? frame.moveX || 0 : 0);
-    const mZ = this.frozen ? 0 : (frame ? frame.moveZ || 0 : 0);
-    this.running = !this.frozen && !!(frame && frame.run) && mZ > 0.01;
+    const motionLocked = this.frozen || this.movementLocked;
+    const mX = motionLocked ? 0 : (frame ? frame.moveX || 0 : 0);
+    const mZ = motionLocked ? 0 : (frame ? frame.moveZ || 0 : 0);
+    this.running = !motionLocked && !!(frame && frame.run) && mZ > 0.01;
     const speed = this.running ? RUN : WALK;
 
     // wish direction: forward = (-sin yaw, -cos yaw)
@@ -81,7 +83,7 @@ export class Player {
     // vertical: ground height with stair glide
     const gh = this.world.groundHeightAt(this.pos.x, this.pos.z, this.pos.y);
     const dy = this.pos.y - gh;
-    if (frame && frame.jumpPressed && this.grounded && !this.frozen) {
+    if (frame && frame.jumpPressed && this.grounded && !motionLocked) {
       this.fallV = JUMP_V;
       this.grounded = false;
     }

@@ -113,7 +113,20 @@ try {
 
     // ---- down the stairs, break the cellar boards ----------------------
     walkTo(1, 0.9, 6); walkTo(1, -0.9, 6);         // through the stair door
-    walkTo(1, -5, 10); walkTo(1, -9.3, 12);        // down the flight
+    walkTo(1, -5, 10);
+    // the door over the void: no hand reaches it — knock it open with a
+    // throw, then steal the flame waiting in its light
+    walkTo(1, -6.8, 10);
+    throwAt(4, 4.75, -7, 0.35);
+    for (let t = 0; t < 3 && !g.flags.has('voidDoorOpen'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    F.stepWith(1.0);                               // the door swings wide
+    beat('void-door-knocked-open', g.flags.has('voidDoorOpen'));
+    throwAt(5.3, 4.95, -7, 0.6);
+    for (let t = 0; t < 4 && !g.flags.has('ateFlame'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('the-skull-ate-a-flame', g.flags.has('ateFlame'), g.skull.getState());
+    walkTo(1, -9.3, 12);                           // down the flight
     walkTo(1, -10.8, 6); walkTo(2.5, -11.5, 8);    // entry
     walkTo(3.4, -11, 6); walkTo(4.8, -11, 6);      // dining door
     walkTo(7, -10, 8); walkTo(7, -6.7, 8); walkTo(7, -5.2, 6);   // kitchen door
@@ -138,7 +151,15 @@ try {
       if (g.dead) break;
     }
     beat('boards-broken', g.flags.has('cellarOpen') && !g.dead, { dead: g.dead, resident: !!g.director.resident });
-    beat('resident-came', log.length > 0 && g.flags.has('cellarOpen') ? true : true, null);
+    const resident = g.director.resident;
+    const residentRegistered = !!resident && resident.kind === 'resident'
+      && g.enemies.list.includes(resident);
+    beat('resident-came', residentRegistered, {
+      kind: resident && resident.kind,
+      state: resident && resident.state,
+      registered: !!resident && g.enemies.list.includes(resident),
+      pressure: g.director.residentPressure,
+    });
 
     // open the cellar door, descend
     walkTo(9, 0.8, 8);
@@ -158,8 +179,14 @@ try {
     walkTo(3.2, -3, 10);                             // the boiler door is shut
     useAt(4, -1.9, -3);
     F.stepWith(1.4);
-    walkTo(5, -3, 6); walkTo(9.5, -3.2, 10);         // boiler room, grab the key
-    throwAt(10.6, -1.35, -3.4, 0.4);
+    walkTo(5, -3, 6); walkTo(9.8, -1.7, 10);         // boiler room; the one warm thing in it
+    useAt(10.71, -2.1, -1.52);                       // open the incinerator's mouth
+    F.stepWith(0.7);
+    throwAt(11.0, -2.1, -1.5, 0.35);                 // try to burn it. try.
+    for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1);
+    waitHeld(5);
+    beat('fire-refused-the-skull', g.flags.has('fireRefused') && g.skull.mode === 'held', g.skull.getState());
+    throwAt(10.5, -2.65, -1.5, 0.35);                // the key was in the ash all along
     ok = false;
     for (let t = 0; t < 4 && !ok; t += 0.1) { F.stepWith(0.1); ok = !!(g.skull.carry && g.skull.carry.id === 'hatchKey'); }
     waitHeld();
@@ -185,6 +212,14 @@ try {
     F.stepWith(2.5);
     beat('out-in-the-graveyard', g.act === 'graveyard', g.act);
     snap('03-graveyard');
+
+    // the glint that chimed through the bedroom glass all game: the tree is
+    // right here now, and the line is clear from the ground
+    walkTo(5.1, 16.5, 15);
+    throwAt(5.2, 7.55, 13.85, 0.45);
+    for (let t = 0; t < 4 && !g.flags.has('keepsake'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('the-locket-answered', g.flags.has('keepsake'), g.skull.getState());
 
     // ---- ACT 3: graveyard ----------------------------------------------
     walkTo(-4, 14, 20); walkTo(2, 26, 25); walkTo(2, 41, 25);
@@ -278,6 +313,17 @@ try {
     beat('skull-given-to-the-waterfall', g.flags.has('waterfallTaken') && g.skull.mode === 'gone', g.skull.mode);
     F.stepWith(8);                                   // the bridge rises
     beat('bridge-rose', g.bridgeStones.every((s) => s.position.y > 0.05));
+
+    // the falls kept the skull but not the keepsake — it's on the shore.
+    // go AROUND the plunge pool along the east rim, both ways.
+    walkTo(g.clearingCenter.x + 8, g.clearingCenter.z + 8, 20);
+    walkTo(g.clearingCenter.x + 8.7, g.clearingCenter.z + 17.1, 20);
+    F.stepWith(1.5);
+    useAt(g.clearingCenter.x + 9.3, 0.1, g.clearingCenter.z + 17.5);
+    F.stepWith(0.3);
+    beat('it-left-the-locket', g.flags.has('locketKept'));
+    walkTo(g.clearingCenter.x + 8, g.clearingCenter.z + 8, 20);
+    walkTo(g.clearingCenter.x, g.clearingCenter.z + 6, 20);
 
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 14, 20);
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 21, 15);   // through the fall

@@ -4,6 +4,7 @@
 // frontier IS the collider, rising instanced trees are its body.
 import * as THREE from 'three';
 import { RNG, clamp, lerp, damp, smoothstep, TAU } from './util.js';
+import { LAYER_HELD } from './mirrors.js';
 
 export const FOREST_GATE = { x: 2, z: 43 };
 
@@ -13,9 +14,17 @@ export function terrainHeightFn(game) {
     const C = game.clearingCenter;
     if (C && x > C.x - 6 && x < C.x + 30 && z > C.z + 20.4 && z < C.z + 50) return 0;   // cave floor
     if (C && Math.abs(x - C.x) < 30 && z > C.z - 27 && z < C.z + 30) {
-      // must match the clearing bowl mesh exactly
-      const r = Math.hypot(x - C.x, z - C.z);
-      return -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin((x - C.x) * 0.4) * 0.08 + 0.02;
+      // The plunge pool is a real obstacle. Once the bridge rises, its moving
+      // stone tops become the only walkable ground across the basin.
+      for (const st of game.bridgeStones || []) {
+        if (st.position.y < -0.35) continue;
+        if (Math.hypot(x - st.position.x, z - st.position.z) < 1.03) return st.position.y + 0.25;
+      }
+      const lx = x - C.x, lz = z - C.z;
+      const r = Math.hypot(lx, lz);
+      const poolR = Math.hypot(lx, lz - 15.2);
+      const basin = -3.15 * (1 - smoothstep(5.4, 8.2, poolR));
+      return -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(lx * 0.4) * 0.08 + basin + 0.02;
     }
     if (game.forest && game.forest.contains(x, z)) return game.forest.heightAt(x, z);
     if (z < 6) return 0;                          // around the house
@@ -78,6 +87,10 @@ function buildGraveyard(game) {
   addFence(24, 6.5, 24, 42);
   addFence(-20, 42, FOREST_GATE.x - 1.6, 42);
   addFence(FOREST_GATE.x + 1.6, 42, 24, 42);
+  // south runs tuck into the house corners — the yard is CLOSED. Playtest 3:
+  // Alex walked off the back of the map past the side of the house.
+  addFence(-20, 6.5, -11.9, 6.5);
+  addFence(11.9, 6.5, 24, 6.5);
   const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.5, 5);
   const postMesh = new THREE.InstancedMesh(postGeo, M.metal, rails.length);
   const mtx = new THREE.Matrix4();
@@ -168,6 +181,7 @@ function buildGraveyard(game) {
 
 // ------------------------------------------------------------------- forest
 const SEAL_TRAIL = 10;
+const _lookA = new THREE.Vector3(), _lookB = new THREE.Vector3(), _lookC = new THREE.Vector3();
 
 export class Forest {
   constructor(game) {
@@ -211,6 +225,10 @@ export class Forest {
     this.sealS = -SEAL_TRAIL;
     this._lastIdx = 0;
     this.entered = false;
+    this._sealMtx = new THREE.Matrix4();
+    this._sealPos = new THREE.Vector3();
+    this._sealScale = new THREE.Vector3();
+    this._sealQuat = new THREE.Quaternion();
 
     this._buildFlora(rng);
     this._buildSealPool();
@@ -257,15 +275,35 @@ export class Forest {
         if (d < bestD) { bestD = d; best = i; }
       }
     }
-    const s = this.samples[best];
-    const lat = (x - s.x) * -s.tz + (z - s.z) * s.tx;   // signed lateral
-    return { s: best, lat, sample: s };
+    // FRACTIONAL s (eaten-path law): refine against the two adjacent polyline
+    // edges so the seal clamp resolves to a position that satisfies itself.
+    // Integer quantization here is what pinned Alex in place (playtest 3):
+    // the push rounded to a sample still behind the clamp and re-fired forever.
+    let fs = best, fx = this.samples[best].x, fz = this.samples[best].z;
+    for (const j of [best - 1, best + 1]) {
+      if (j < 0 || j >= this.length) continue;
+      const a = this.samples[Math.min(best, j)], b = this.samples[Math.max(best, j)];
+      const ex = b.x - a.x, ez = b.z - a.z;
+      const L2 = ex * ex + ez * ez;
+      if (L2 < 1e-6) continue;
+      const t = clamp(((x - a.x) * ex + (z - a.z) * ez) / L2, 0, 1);
+      const px = a.x + ex * t, pz = a.z + ez * t;
+      const d = (px - x) ** 2 + (pz - z) ** 2;
+      if (d < bestD) { bestD = d; fs = Math.min(best, j) + t; fx = px; fz = pz; }
+    }
+    const si = this.samples[clamp(Math.round(fs), 0, this.length - 1)];
+    const lat = (x - fx) * -si.tz + (z - fz) * si.tx;   // signed lateral
+    return { s: fs, i: clamp(Math.round(fs), 0, this.length - 1), lat, sample: si };
   }
 
   posAt(s, lat = 0) {
-    const i = clamp(Math.round(s), 0, this.length - 1);
-    const sm = this.samples[i];
-    return new THREE.Vector3(sm.x + -sm.tz * lat, 0, sm.z + sm.tx * lat);
+    // fractional interpolation — pairs with project()'s fractional s
+    const sc = clamp(s, 0, this.length - 1);
+    const i0 = Math.floor(sc), i1 = Math.min(this.length - 1, i0 + 1), t = sc - i0;
+    const a = this.samples[i0], b = this.samples[i1];
+    const x = lerp(a.x, b.x, t), z = lerp(a.z, b.z, t);
+    const tx = lerp(a.tx, b.tx, t), tz = lerp(a.tz, b.tz, t);
+    return new THREE.Vector3(x + -tz * lat, 0, z + tx * lat);
   }
 
   clampPlayer(pos, dt) {
@@ -274,25 +312,40 @@ export class Forest {
     if (!pr) return;
     // jurisdiction: beyond the treeline (clearing, cave, mirror) we let go
     const dist = Math.hypot(pos.x - pr.sample.x, pos.z - pr.sample.z);
-    if (dist > this.halfW[pr.s] + 3) return;
+    if (dist > this.halfW[pr.i] + 3) return;
     // the mouth: within the last two samples the forest simply releases you —
     // the reprojection can't represent 'beyond the end' and would pin you here
     if (pr.s >= this.length - 2) return;
-    this._lastIdx = pr.s;
+    this._lastIdx = pr.i;
     if (!this.entered && pr.s > 4) {
       this.entered = true;
       this.game.flag('forestEntered');
+      // the gate slams: the way back is already gone. the first look back
+      // teaches the whole mechanic (eaten-path law).
+      this.sealS = Math.max(this.sealS, pr.s - 6);
+      this._placeSeal(true);
+      this.game.audio.brushCrash({ pos: this.posAt(this.sealS), gain: 0.85, rate: 0.8 });
+      this.game.audio.stoneGrind({ pos: this.posAt(this.sealS), gain: 0.5 });
+      this._lookWindow = 5.0;
     }
-    const hw = this.halfW[pr.s] - 0.38;
+    const hw = this.halfW[pr.i] - 0.38;
     const lat = clamp(pr.lat, -hw, hw);
+    // self-heal: if the frontier is impossibly far AHEAD of the player, a
+    // respawn/teleport put them behind sealed path — the forest re-opens to
+    // them rather than crushing them (the wall stays standing; only the
+    // clamp regresses). Normal play can never trigger this: the frontier
+    // always trails by SEAL_TRAIL.
+    if (this.sealS + 2.2 > pr.s + 6) this.sealS = pr.s - SEAL_TRAIL;
     // seal frontier IS the wall behind you
     const minS = this.sealS + 2.2;
-    const s = Math.max(pr.s + 0, minS);
-    if (s !== pr.s) {
-      // seal push: a hard forward reposition — never soften this one
-      const sm = this.samples[clamp(Math.round(s), 0, this.length - 1)];
-      pos.x = sm.x + -sm.tz * lat;
-      pos.z = sm.z + sm.tx * lat;
+    if (pr.s < minS) {
+      // seal push: a hard forward reposition — never soften this one.
+      // fractional posAt guarantees the pushed position satisfies the clamp,
+      // so it fires once and quiesces (integer rounding here once pinned a
+      // player in place for good — playtest 3).
+      const p = this.posAt(minS, lat);
+      pos.x = p.x;
+      pos.z = p.z;
     } else if (lat !== pr.lat) {
       // wall slide: clamp lateral, preserve along-track so motion isn't erased
       const sm = pr.sample;
@@ -300,11 +353,15 @@ export class Forest {
       pos.x = sm.x + -sm.tz * lat + sm.tx * along;
       pos.z = sm.z + sm.tx * lat + sm.tz * along;
     }
-    // frontier chases
+    // frontier chases; lingering makes it creep — the creaks ask you to turn
     if (this.entered) {
-      const target = pr.s - SEAL_TRAIL;
+      this._idleT = (Math.abs(pr.s - (this._idleS || 0)) < 0.5) ? (this._idleT || 0) + dt : 0;
+      this._idleS = pr.s;
+      let target = pr.s - SEAL_TRAIL;
+      if (this._idleT > 32) target = Math.max(target, pr.s - 7);
       if (target > this.sealS) {
-        this.sealS = Math.min(target, this.sealS + Math.max(1.5, (target - this.sealS) * 2.4) * dt);
+        const rate = this._idleT > 32 ? 0.3 : Math.max(1.5, (target - this.sealS) * 2.4);
+        this.sealS = Math.min(target, this.sealS + rate * dt);
         this._placeSeal();
       }
     }
@@ -378,49 +435,104 @@ export class Forest {
   }
 
   _buildSealPool() {
+    // CUMULATIVE (eaten-path law): trunks appended as the frontier advances
+    // and NEVER repositioned — looking back must always show solid forest
+    // where path used to be. The old 48-instance recycler teleported its
+    // trunks forward, leaving the sealed corridor visibly empty (playtest 3:
+    // "no reason for me to look back at all").
     const { scene, mats: M } = this.game;
-    const N = 48;
+    const N = Math.ceil(this.length * 3.2) + 64;
     this.sealMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.16, 0.3, 1, 6), M.bark, N);
     this.sealMesh.frustumCulled = false;
+    this.sealMesh.count = 0;
     scene.add(this.sealMesh);
-    this.sealAnim = new Array(N).fill(0).map(() => ({ x: 0, z: 0, h: 6, t: 1, delay: 0 }));
+    this.sealCap = N;
+    this.sealAnim = [];                  // {x, z, h, t, dur} — t<0 is stagger delay
     this._sealPlaced = -999;
+    this._sealCreakT = 0;
+    this._lookWindow = 0;
+    this._sealMtx = this._sealMtx || new THREE.Matrix4();
+    this._sealPos = this._sealPos || new THREE.Vector3();
+    this._sealQuat = this._sealQuat || new THREE.Quaternion();
+    this._sealScale = this._sealScale || new THREE.Vector3();
   }
 
-  _placeSeal() {
-    // re-seed the rising wall when the frontier has moved enough
-    if (this.sealS - this._sealPlaced < 2.5) return;
-    this._sealPlaced = this.sealS;
-    const rng = new RNG(0x77 + Math.floor(this.sealS));
-    const base = clamp(Math.floor(this.sealS), 0, this.length - 1);
-    let i = 0;
-    for (const a of this.sealAnim) {
-      const s = clamp(base - Math.floor(i / 8) * 1.5, 0, this.length - 1);
-      const sm = this.samples[Math.floor(s)];
-      const lat = rng.range(-1, 1) * (this.halfW[Math.floor(s)] + 1.5);
-      a.x = sm.x + -sm.tz * lat + rng.range(-0.5, 0.5);
-      a.z = sm.z + sm.tx * lat + rng.range(-0.5, 0.5);
-      a.h = rng.range(4.5, 8);
-      a.t = Math.min(a.t, 0);          // restart rise if it was done
-      a.delay = rng.range(0, 0.5);
-      i++;
+  _placeSeal(instant = false) {
+    // append rows from the last placed point up to the frontier
+    if (!instant && this.sealS - this._sealPlaced < 1.2) return;
+    const from = Math.max(0, this._sealPlaced < -100 ? this.sealS - 4 : this._sealPlaced + 1.2);
+    const rng = new RNG(0x77 + Math.floor(this.sealS * 7));
+    let spawned = 0;
+    for (let s = from; s <= this.sealS && this.sealAnim.length < this.sealCap - 5; s += 1.2) {
+      const i = clamp(Math.round(s), 0, this.length - 1);
+      const sm = this.samples[i];
+      const hw = this.halfW[i];
+      // trunks across the full corridor width AND its shoulders — a wall, not a picket
+      for (let k = 0; k < 4 && this.sealAnim.length < this.sealCap; k++) {
+        const lat = (k / 3 - 0.5) * 2 * (hw + 1.2) + rng.range(-0.6, 0.6);
+        this.sealAnim.push({
+          x: sm.x + -sm.tz * lat + rng.range(-0.4, 0.4),
+          z: sm.z + sm.tx * lat + rng.range(-0.4, 0.4),
+          h: rng.range(4.5, 8.5),
+          t: instant ? 1 : -rng.range(0, 0.5),
+          dur: rng.range(1.9, 3.0),
+        });
+        spawned++;
+      }
     }
-    this.game.audio.brushCrash({ pos: this.posAt(base), gain: 0.5 });
+    if (!spawned) return;
+    this._sealPlaced = this.sealS;
+    this.sealMesh.count = this.sealAnim.length;
+    if (instant) {
+      // fully risen — stamp matrices now
+      const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
+      this.sealAnim.forEach((a, i) => {
+        if (a.t < 1) return;
+        mtx.compose(v.set(a.x, a.h / 2, a.z), q, sv.set(1.2, a.h, 1.2));
+        this.sealMesh.setMatrixAt(i, mtx);
+      });
+      this.sealMesh.instanceMatrix.needsUpdate = true;
+      return;
+    }
+    this._lookWindow = 4.5;              // a fresh row is worth turning for
+    if (this._sealCreakT <= 0) {
+      this._sealCreakT = 2.2 + Math.random() * 2.3;
+      this.game.audio.creak({ pos: this.posAt(this.sealS), gain: 0.55, rate: 0.75 });
+    }
   }
 
   update(dt) {
-    const mtx = new THREE.Matrix4(), v = new THREE.Vector3(), sv = new THREE.Vector3(), q = new THREE.Quaternion();
+    const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
     this.sealAnim.forEach((a, i) => {
       if (a.t >= 1) return;
-      a.t = Math.min(1, a.t + dt / 2.2);
+      a.t = Math.min(1, a.t + dt / a.dur);
       const e = a.t < 0 ? 0 : smoothstep(0, 1, a.t);
       mtx.compose(v.set(a.x, -a.h / 2 + e * a.h, a.z), q, sv.set(1.2, a.h, 1.2));
       this.sealMesh.setMatrixAt(i, mtx);
       dirty = true;
     });
     if (dirty) this.sealMesh.instanceMatrix.needsUpdate = true;
+    this._sealCreakT -= dt;
+    // the look-back reward: face the wall that ate the path and the forest
+    // answers — once per fresh row (eaten-path's sealSting, our voice)
+    if (this._lookWindow > 0) {
+      this._lookWindow -= dt;
+      const cam = this.game.camera;
+      const camPos = cam.getWorldPosition(_lookA);
+      const toF = _lookB.copy(this.posAt(this.sealS)).sub(camPos);
+      toF.y = 0;
+      const d = toF.length();
+      if (d < 28) {
+        const dir = cam.getWorldDirection(_lookC);
+        if (toF.normalize().dot(dir) > 0.55) {
+          this._lookWindow = 0;
+          this.game.audio.sting(0.32);
+          this.game.shake(0.07);
+        }
+      }
+    }
   }
 
   _setpieces() {
@@ -482,6 +594,7 @@ export class Forest {
         game.player.launchTo(new THREE.Vector3(landing.x, 1.2, landing.z), () => {
           skull.anchor = null;
           skull.beginReturn('snap');
+          game.checkpoint('forest');
         });
         return 'anchor';
       },
@@ -504,8 +617,11 @@ export function buildClearing(game) {
   g.rotateX(-Math.PI / 2);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
-    const r = Math.hypot(pos.getX(i), pos.getZ(i));
-    pos.setY(i, -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(pos.getX(i) * 0.4) * 0.08);
+    const x = pos.getX(i), z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    const poolR = Math.hypot(x, z - 15.2);
+    const basin = -3.15 * (1 - smoothstep(5.4, 8.2, poolR));
+    pos.setY(i, -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(x * 0.4) * 0.08 + basin);
   }
   g.computeVertexNormals();
   const ground = new THREE.Mesh(g, M.grass);
@@ -527,11 +643,11 @@ export function buildClearing(game) {
   });
 
   // the cliff and the giant waterfall
-  const cliff = new THREE.Mesh(new THREE.BoxGeometry(44, 20, 4), M.rock);
+  const cliff = new THREE.Mesh(new THREE.BoxGeometry(60, 20, 4), M.rock);
   cliff.position.set(C.x, 9, C.z + 22);
   scene.add(cliff);
-  world.addCollider(C.x - 22, -2, C.z + 20, C.x - 3.2, 20, C.z + 24);
-  world.addCollider(C.x + 3.2, -2, C.z + 20, C.x + 22, 20, C.z + 24);
+  world.addCollider(C.x - 30, -2, C.z + 20, C.x - 3.2, 20, C.z + 24);
+  world.addCollider(C.x + 3.2, -2, C.z + 20, C.x + 30, 20, C.z + 24);
   // the fall itself — a bright animated sheet; you can WALK through it
   const fallMat = new THREE.MeshStandardMaterial({
     color: 0xaebfc8, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.82,
@@ -542,6 +658,10 @@ export function buildClearing(game) {
   scene.add(fallGlow);
   const fall = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 19), fallMat);
   fall.position.set(C.x, 9.5, C.z + 19.9);
+  // atmosphere.js supplies the final layered water veil. Retain this authored
+  // anchor for progression/debug contracts, but do not overlap two transparent
+  // sheets and create moire bands.
+  fall.visible = false;
   scene.add(fall);
   game.waterfall = fall;
   game.tickers.push((dt, t) => {
@@ -564,11 +684,18 @@ export function buildClearing(game) {
   scene.add(motes);
   game.tickers.push((dt, t) => { motes.position.y = Math.sin(t * 0.5) * 0.3; });
 
-  // stepping-stone bridge — hidden underwater until the skull goes through
+  // The water itself is the bridge gate: before the stones rise, the player
+  // falls into the deep basin. A real rock/water curtain at the cave mouth is
+  // the second physical lock, preventing a wide detour from breaking the pact.
+  game.waterfallBarrier = world.addCollider(C.x - 3.2, -2, C.z + 19.55, C.x + 3.2, 20, C.z + 20.35);
+  game.bridgeBarrier = game.waterfallBarrier; // retained debug/older-test name
   game.bridgeStones = [];
-  for (let i = 0; i < 5; i++) {
-    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 0.5, 7), M.rock);
-    st.position.set(C.x + (i - 2) * 0.3, -1.4, C.z + 11 + i * 1.9);
+  for (let i = 0; i < 7; i++) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
+    st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + 8.8 + i * 1.72);
+    st.rotation.y = i * 0.73;
+    st.castShadow = true;
+    st.receiveShadow = true;
     scene.add(st);
     game.bridgeStones.push(st);
   }
@@ -582,6 +709,67 @@ export function buildClearing(game) {
       return 'gone';
     },
   });
+
+  // ---- the one it kept -------------------------------------------------
+  // The falls take the skull. They do not take the keepsake. A few breaths
+  // after the bargain, the locket is lying on the shore at the pool's rim —
+  // the chain snapped clean. The game's only pocketable thing: picked up, it
+  // is carried in your otherwise-empty hands to the very end. (The
+  // reflection's skull, when you meet it, still wears its own.)
+  const shoreLocket = new THREE.Group();
+  {
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xb9a06a, metalness: 0.85, roughness: 0.3, emissive: 0x4a3c14, emissiveIntensity: 0.9 });
+    const oval = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), brassMat);
+    oval.scale.set(0.8, 1, 0.34);
+    oval.rotation.x = -Math.PI / 2 + 0.3;
+    shoreLocket.add(oval);
+    const chain = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.007, 5, 12, Math.PI * 1.4),
+      new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
+    chain.rotation.x = -Math.PI / 2;
+    chain.position.set(0.08, 0.005, 0.03);
+    shoreLocket.add(chain);
+    shoreLocket.visible = false;
+    // position at build time: registerInteract bakes a static world-space
+    // hitbox from wherever the object IS when registered
+    shoreLocket.position.set(C.x + 9.3, 0.3, C.z + 17.5);
+    scene.add(shoreLocket);
+  }
+  let shoreT = 0;
+  game.tickers.push((dt, t) => {
+    if (game.flags.has('locketKept')) return;
+    if (shoreLocket.visible) {
+      // it catches what light there is
+      shoreLocket.children[0].material.emissiveIntensity = 0.6 + Math.max(0, Math.sin(t * 1.7)) * 0.9;
+      return;
+    }
+    if (!game.flags.has('waterfallTaken') || !game.flags.has('keepsake')) return;
+    shoreT += dt;
+    if (shoreT > 5.5) {
+      shoreLocket.position.y = game.world.groundHeightAt(shoreLocket.position.x, shoreLocket.position.z, 2) + 0.06;
+      shoreLocket.visible = true;
+      game.audio.glassTink({ pos: shoreLocket.position, gain: 0.5, rate: 0.6 });
+    }
+  });
+  world.registerInteract(shoreLocket, 'shoreLocket', () => {
+    if (!shoreLocket.visible || game.flags.has('locketKept')) return;
+    shoreLocket.visible = false;
+    // wrapped around the fingers of the hand that used to hold it
+    const held = new THREE.Group();
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xb9a06a, metalness: 0.85, roughness: 0.3, emissive: 0x4a3c14, emissiveIntensity: 0.5 });
+    const oval = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), brassMat);
+    oval.scale.set(0.8, 1, 0.34);
+    oval.position.set(0, -0.045, 0.02);
+    held.add(oval);
+    const wrap = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.005, 5, 10, Math.PI * 1.6),
+      new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
+    wrap.rotation.y = 0.6;
+    held.add(wrap);
+    held.position.set(-0.128, -0.243, 0.03);
+    game.skull.hold.add(held);
+    held.traverse((o) => o.layers.set(LAYER_HELD));
+    game.flag('locketKept');
+    game.audio.glassTink({ pos: game.player.pos, gain: 0.5, rate: 0.95 });
+  });
 }
 
 // --------------------------------------------------------------------- cave
@@ -593,7 +781,8 @@ export function buildCave(game) {
     [C.x, C.z + 22], [C.x + 2, C.z + 30], [C.x + 7, C.z + 36],
     [C.x + 14, C.z + 40], [C.x + 22, C.z + 42],
   ];
-  world.addZone('cave', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
+  game.caveZone = world.addZone('cave', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
+  game.caveZone.enabled = game.flags.has('waterfallTaken');
   world.addSurface('stone', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
 
   for (let i = 0; i < path.length - 1; i++) {
@@ -603,9 +792,12 @@ export function buildCave(game) {
     const mx = (ax + bx) / 2, mz = (az + bz) / 2;
     // floor + walls + roof as rough slabs
     world.box(M.rock, mx, -0.15, mz, 4.6, 0.3, len + 1.6, ang);
-    world.box(M.rock, mx + Math.cos(ang) * 2.1, 1.7, mz - Math.sin(ang) * 2.1, 0.8, 4.2, len + 1.6, ang);
-    world.box(M.rock, mx - Math.cos(ang) * 2.1, 1.7, mz + Math.sin(ang) * 2.1, 0.8, 4.2, len + 1.6, ang);
-    world.box(M.rock, mx, 3.6, mz, 4.9, 0.5, len + 1.6, ang);
+    // The slabs are only the dark backing behind the decorative rock skin.
+    // Keep their inner faces wide enough that the tunnel reads as a route,
+    // rather than two flat panels pinching the camera at every elbow.
+    world.box(M.rock, mx + Math.cos(ang) * 2.18, 1.7, mz - Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
+    world.box(M.rock, mx - Math.cos(ang) * 2.18, 1.7, mz + Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
+    world.box(M.rock, mx, 3.68, mz, 4.75, 0.34, len + 1.35, ang);
     // NOTE: no wall colliders here — axis-aligned boxes on diagonal legs pinch
     // the walkway shut at every elbow. The tunnel is kept walkable by a spine
     // clamp below (forest-style projection); the rock walls stay visual.
@@ -662,7 +854,7 @@ export function buildCave(game) {
   post.position.set(ex + 2, 2.9, ez);
   scene.add(post);
   world.registerInteract(post, 'caveHatch', () => {
-    if (game.act !== 'cave') return;
+    if (game.act !== 'cave' || !game.flags.has('waterfallTaken')) return;
     game.director.enterMirrorRoom();
   });
   game.caveEnd = new THREE.Vector3(ex + 2, 0, ez);

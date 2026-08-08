@@ -68,11 +68,14 @@ export class World {
   }
 
   addZone(name, x0, z0, x1, z1, yMin = -50, yMax = 50) {
-    this.zones.push({ name, min: { x: x0, y: yMin, z: z0 }, max: { x: x1, y: yMax, z: z1 } });
+    const zone = { name, enabled: true, min: { x: x0, y: yMin, z: z0 }, max: { x: x1, y: yMax, z: z1 } };
+    this.zones.push(zone);
+    return zone;
   }
 
   zoneAt(pos) {
     for (const z of this.zones) {
+      if (z.enabled === false) continue;
       if (pos.x >= z.min.x && pos.x <= z.max.x &&
           pos.z >= z.min.z && pos.z <= z.max.z &&
           pos.y >= z.min.y && pos.y <= z.max.y) return z.name;
@@ -85,7 +88,9 @@ export class World {
   }
 
   surfaceAt(pos) {
-    for (const s of this.surfaceZones) {
+    // Later zones are authored as local overrides of broad act-level beds.
+    for (let i = this.surfaceZones.length - 1; i >= 0; i--) {
+      const s = this.surfaceZones[i];
       if (pos.x >= s.min.x && pos.x <= s.max.x &&
           pos.z >= s.min.z && pos.z <= s.max.z &&
           pos.y >= s.min.y && pos.y <= s.max.y) return s.surface;
