@@ -1,7 +1,7 @@
 # PLAYTEST 2 — Alex's second real playthrough (2026-08-08)
 
 Raw feedback, translated into work items. Status marks who owns each lane.
-`[CLAUDE-WIP]` = Claude is actively fixing on branch `playtest-2` — do NOT
+`[SHIPPED 2026-08-08]` = Claude is actively fixing on branch `playtest-2` — do NOT
 duplicate. `[OPEN]` = free lane for Sol or a Pro instance. `[DESIGN]` = needs
 Alex's direction before anyone builds.
 
@@ -12,7 +12,7 @@ making a gesture where it's putting hands around its eyes to make glasses.
 It's not directly facing the player and making eye contact. And it needs to
 be a bigger skull."
 
-- `[CLAUDE-WIP]` Composition rework in `skull.js`: skull scaled up (~+40%),
+- `[SHIPPED 2026-08-08]` Composition rework in `skull.js`: skull scaled up (~+40%),
   per-frame `root.lookAt(camera)` for true eye contact, hands dropped to a
   cradle-from-below grip (fingertips reach mid-skull at most, never the eyes),
   forearms extending off the bottom of the frame so they read as YOUR arms.
@@ -32,13 +32,13 @@ nailed on the FAR side of the door (z +0.16 relative to the door plane, the
 stair side) — invisible from the kitchen where the player stands. He was
 breaking them through the door without ever seeing them.
 
-- `[CLAUDE-WIP]` Boards move to the kitchen-visible face, lighter wood so they
+- `[SHIPPED 2026-08-08]` Boards move to the kitchen-visible face, lighter wood so they
   read in the dark.
-- `[CLAUDE-WIP]` Door grammar in `world.js`: knob = will open; knob + keyhole
+- `[SHIPPED 2026-08-08]` Door grammar in `world.js`: knob = will open; knob + keyhole
   escutcheon = needs a key; NO knob at all = never opens (the front door
   having no knob is the story told in one prop); boards on your side = throw
   the skull at them. Knobs/keyholes visible from BOTH faces of every door.
-- `[CLAUDE-WIP]` Locked interaction gets physical: knob jiggle + panel shudder
+- `[SHIPPED 2026-08-08]` Locked interaction gets physical: knob jiggle + panel shudder
   animation, beefed-up rattle SFX. Knobless doors give a dead thud instead —
   nothing to rattle.
 
@@ -46,7 +46,7 @@ breaking them through the door without ever seeing them.
 
 - Liked: shutting doors on it; its hands reaching through the wall (accidental
   mesh penetration — now canon, do not "fix").
-- `[CLAUDE-WIP]` It gets stuck when a door is shut on it: no pathfinding to
+- `[SHIPPED 2026-08-08]` It gets stuck when a door is shut on it: no pathfinding to
   the other doorway. Adding door-node steering (reroute through open doors)
   + the Resident slowly opens closed unlocked doors after a beat — you shut
   the door, silence, then the knob turns.
@@ -58,7 +58,7 @@ breaking them through the door without ever seeing them.
 
 ## Furniture placement (Sol's overhaul, placement bugs)
 
-- `[CLAUDE-WIP]` Painting hovering inside the scullery doorway hole
+- `[SHIPPED 2026-08-08]` Painting hovering inside the scullery doorway hole
   (`framedArt` on the x=4 wall at z 2.35, ground). Bookcase parked in front
   of the study's west window (`bookshelf` at z 1.1 on the x=-12 wall).
   Second bookcase oddly placed beside it. All being re-seated.
