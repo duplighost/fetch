@@ -1,0 +1,161 @@
+{
+ "games": [
+  {
+   "name": "THE EATEN PATH",
+   "path": "C:\\Users\\Alex\\Projects\\eaten-path",
+   "genre": "First-person infinite-forest VHS horror walking sim (Three.js)",
+   "stealable": "TOP FOREST DONOR. (1) Forest generation + landmark props: src/flora.js `Flora` class (line 25, cross-plane billboard trees/foliage) and src/props.js landmark builders \u2014 buildCemetery:81, buildSnagFigure:269 (humanoid snag scare), buildDeadwood:487, buildJunk:771 (junk that switches on). (2) VHS camcorder post pass: src/vhs.js `VHS` class (line 102) \u2014 640x480 scanlines, grain, chroma bleed, tracking bands; instant horror atmosphere as a single post pass. (3) HRTF scare audio + figure-ahead direction: src/audio.js `GameAudio` (line 9), HRTF panner creation lines 301-302 (hum sources you can walk toward); src/events.js `Events` (line 9) \u2014 figure-standing-down-the-path / darting-shape scares. Bonus: path-seal dread mechanic in src/world.js (SEAL_TRAIL/COMMIT_S lines 9-10, seal frontier clamp ~line 294)."
+  },
+  {
+   "name": "UNINVITED",
+   "path": "C:\\Users\\Alex\\Projects\\uninvited",
+   "genre": "First-person horror-with-a-twist in a dark house (Blackthorn engine)",
+   "stealable": "(1) NPC wander/activity AI with speech: src/npc.js \u2014 `figure()` low-poly humanoid builder (line 12), `NPCs` class (line 315) roam rooms, do activities, react and speak; the best in-house template for FETCH's enemies/haunts. (2) Mundane-misread scare library: src/scares.js `Scares` (line 12) \u2014 fleeting figures, a watcher behind you, drifting doors, storm, all directed scares with cooldowns. (3) Dark-house lighting/fog/post + house-wide light-state flip: src/effects.js. Mobile dual-stick controls in src/player.js if FETCH ever needs touch."
+  },
+  {
+   "name": "BLACKTHORN MANOR",
+   "path": "C:\\Users\\Alex\\Projects\\blackthorn-manor",
+   "genre": "First-person haunted-house mystery (Three.js, all procedural assets)",
+   "stealable": "(1) Procedural material library: src/textures.js (~21KB of canvas-generated wood/plaster/portrait textures \u2014 no asset files). (2) src/effects.js `Effects` (line 38): candle light pool, post stack, and the grey-lady apparition \u2014 a proven cheap ghost. (3) Scripted-haunting event system: src/events.js + the cell-grid floor-plan-to-walls/colliders compiler in src/world.js (the same engine family as UNINVITED) if FETCH's house needs more rooms fast."
+  },
+  {
+   "name": "THE LAG (hall-of-mirrors)",
+   "path": "C:\\Users\\Alex\\Projects\\hall-of-mirrors",
+   "genre": "First-person mirror-maze horror (custom planar-reflection engine)",
+   "stealable": "(1) `PoseBuffer` pose ring buffer: src/double.js line 66 \u2014 the whole monster is the player's own poses replayed at (now - lag); ideal for a FETCH haunt that retraces your route while the skull is away, one variable drives the threat curve. (2) Danger-you-hear-first audio: src/audio.js `Audio` (line 4) \u2014 reverb tail lengthens as threat grows, footsteps go dry+wet (the wet copy IS the monster). (3) Pooled planar reflections: src/mirrors.js \u2014 only ~6 nearest panes render live; if FETCH ever wants mirrors/water this is the budgeted way. FETCH's src/mirrors.js already shares DNA \u2014 check before re-porting."
+  },
+  {
+   "name": "CINDERBLOOM",
+   "path": "C:\\Users\\Alex\\Projects\\cinderbloom",
+   "genre": "AAA-ambition alien-planet FPS slice (Three.js r161, all generated)",
+   "stealable": "TOP LOOKS DONOR. (1) Creature system: src/game/enemies.js \u2014 SPECIES table (line 99), procedural skinned rigs (skitterRig:2338, carapaceRig:2580, bloomRig:2902), `Creature` (3332) and `Enemies` manager (4869): full locomotion/attack/death AI for 4 classes. (2) Encounter `Director`: src/game/director.js (line 244) \u2014 authored beats, spawn pacing, checkpoints. (3) The look: src/world/terrain.js `Terrain` (396) with biomes, src/world/sky.js `Sky` (1553), src/engine/post/volumetrics.js `Volumetrics` (516) plus gtao/bloom/grade in src/engine/post/ \u2014 light-shaft fog volumetrics would transform FETCH's skull-as-light. Gun/impact audio in src/audio/guns.js."
+  },
+  {
+   "name": "KICK BALL // LUNAR VELOCITY",
+   "path": "C:\\Users\\Alex\\Projects\\kick-ball",
+   "genre": "First-person moon game about a ball that comes back (FETCH's direct ancestor)",
+   "stealable": "THE BALL-FEEL REFERENCE. (1) FEEL_PROFILE + return grammar: game/game.js \u2014 FEEL_PROFILE frozen at line 33; outbound/steer/reel/catch tuning ~4051-4535; queued volley redirect ~4088-4198. FETCH's skull descends from this \u2014 mine it for the catch-launch (fast catch throws you along your aim) if FETCH wants traversal-by-catch. (2) Cadence measurement: tests/cadence.mjs measures real kick-to-return-to-catch times against a reference build \u2014 the right way to guard FETCH's feel core during the Codex merge. (3) Landmark design law (one verb each, visible from afar, no gates): LANDMARKS in game/game.js \u2014 a template for populating FETCH's outdoors without clutter. NO-HUD design contract in README/docs."
+  },
+  {
+   "name": "GOODFIRE",
+   "path": "C:\\Users\\Alex\\Projects\\goodfire",
+   "genre": "Wildfire fire-warden sim on a living mountain (canvas, deterministic)",
+   "stealable": "(1) Wind you fight by ear: src/audio.js \u2014 windParams() at line 316, noise-bed setup ~300-330; the filter cutoff and pan ARE the sim's wind vector (nsBright line 35: brightness as the N/S cue). Perfect model for a forest wind bed in FETCH that carries directional information without HUD. (2) 76KB of layered ambience mixing (BUS ducking per scene, night mix, line 27/173-185) \u2014 the most mature ambience mixer Alex owns. (3) Radio voice synthesis: src/radio.js. Note: mid-build project, resume doc at docs/HANDOFF.md \u2014 read-only borrowing fine."
+  },
+  {
+   "name": "CHAMBER",
+   "path": "C:\\Users\\Alex\\Projects\\chamber",
+   "genre": "First-person Russian-roulette-then-escape-room thriller (Three.js r161)",
+   "stealable": "(1) Tension-driven audio: src/audio.js \u2014 `_tension` 0..1 drives heartbeat rate/volume + drone (update() line 70, heartbeat ~78), sting() 185, thud() 197 \u2014 a drop-in dread meter for FETCH's danger states. (2) The swinging-bulb single-light room in src/world.js \u2014 one moving light as the entire lighting design; strong reference for skull-as-only-light moments. (3) Turn-based opponent AI with readable odds in src/duel.js if FETCH ever wants a set-piece standoff."
+  },
+  {
+   "name": "WICK",
+   "path": "C:\\Users\\Alex\\Projects\\wick",
+   "genre": "GPU-fluid ember game \u2014 you move only the air (WebGL2)",
+   "stealable": "(1) Real incompressible fluid sim: js/fluid.js `Fluid` (line 60), PARAMS (14) \u2014 smoke/fog that actually flows would be a signature FETCH atmosphere upgrade (skull flight stirring the fog). (2) Fire-lit rendering: js/render.js + js/shaders.js \u2014 everything lit by fire; the ember glow model maps directly onto FETCH's skull-as-light. Heavy GPU requirement (float render targets) \u2014 gate behind a quality setting."
+  },
+  {
+   "name": "EVENSONG",
+   "path": "C:\\Users\\Alex\\Projects\\evensong",
+   "genre": "Mouse-only counterpoint singing game (live music engine)",
+   "stealable": "(1) Formant choir synthesis: js/audio.js \u2014 vowel formant tables (line 12), per-singer persistent voices (saw -> 3 parallel bandpass formants, line 60), formantShift character voicing (94-105, 256). Ghostly wordless human voices, fully synthesized \u2014 ideal for FETCH's haunts whispering/keening without samples. (2) Generated cathedral reverb in the same file. (3) Counterpoint/interval logic in js/theory.js if any haunt should musically answer the player."
+  },
+  {
+   "name": "APEX",
+   "path": "C:\\Users\\Alex\\Projects\\apex",
+   "genre": "Arena wave FPS (Three.js)",
+   "stealable": "(1) Compact FPS enemy AI: src/enemies.js `EnemyManager` (line 7), four archetypes via spawn() (line 34) \u2014 grunt/rusher/sniper/heavy; the 'rusher' melee-sprint brain is the simplest chase-pursuer template to port. (2) Hit feedback wiring: bindEnemyHurt() line 308 (particles + hurt/kill audio hooks). Cinderbloom supersedes this for looks; APEX wins on smallness/legibility."
+  },
+  {
+   "name": "FILAMENT",
+   "path": "C:\\Users\\Alex\\Projects\\filament",
+   "genre": "Grind-rail island traversal, wake-the-world progression (Three.js r160)",
+   "stealable": "(1) Analytic heightfunction terrain: src/world/terrain.js \u2014 terrainHeight() line 28 / terrainNormal() 67 as the single source of truth for render+collision+prop placement; the cleanest outdoor-terrain pattern in the stable if FETCH grows an outdoors. (2) Sky rig with progress-keyed palette and speed-keyed fog: src/world/sky.js `SkyRig` (50) \u2014 repurpose as dread-keyed sky. (3) One-pass post (split-tone, vignette): src/fx/postfx.js `PostFX` (81) \u2014 cheap grade if the full VHS pass is too much."
+  },
+  {
+   "name": "FINALE",
+   "path": "C:\\Users\\Alex\\Projects\\finale",
+   "genre": "Spectacle bullet hell (canvas) \u2014 fuse-window kills cascade",
+   "stealable": "(1) Entity/particle pooling: js/pool.js + js/atlas.js \u2014 zero-GC pools if FETCH's skull trail/impact FX ever stutter. (2) The fuse-window grammar (js/fuse.js): a tight timing window that flips an enemy's attack to your side \u2014 an interesting seed for skull-catch parries. Otherwise low direct relevance."
+  },
+  {
+   "name": "HELLBLOOM",
+   "path": "C:\\Users\\Alex\\Projects\\hellbloom",
+   "genre": "Vertical danmaku bullet hell (canvas)",
+   "stealable": "src/bullets.js pooled danmaku recipes and src/enemies.js spell patterns \u2014 only relevant if a FETCH boss ever emits patterned projectiles. Low priority."
+  },
+  {
+   "name": "DUET (shmup)",
+   "path": "C:\\Users\\Alex\\Projects\\shmup",
+   "genre": "Wordless one-partner bullet duel (canvas, all-synth audio)",
+   "stealable": "(1) js/conductor.js \u2014 music direction tied to game state (layers swell with closeness); the pattern for FETCH audio that thickens as the skull nears its target. (2) Graze detection/reward in js/entities.js \u2014 near-miss skull flybys could pay the same way. DESIGN.md is a masterclass spec if you need pattern-readability rules."
+  },
+  {
+   "name": "SUMI",
+   "path": "C:\\Users\\Alex\\Projects\\sumi",
+   "genre": "Mouse-only calligraphy score-attack (canvas)",
+   "stealable": "The decoupled-tip pattern (js/game.js, per DESIGN.md lock #1): crisp hitbox tracking with a separately smoothed rendered trail \u2014 directly applicable if FETCH's skull trail should look flowing while flight stays crisp. Graze->heat feed also here."
+  },
+  {
+   "name": "RALLY",
+   "path": "C:\\Users\\Alex\\Projects\\rally",
+   "genre": "Mouse-only tennis duel; music lives only while the ball does",
+   "stealable": "(1) Contact-feel math (DESIGN.md, implemented in js/game.js): exit = reflect(relativeVel)*restitution + mittVel*transfer, swept-circle contact, 3-frame smoothed cursor velocity \u2014 reference for any skull-swat/deflect interaction. (2) The 'music lives only while the ball is alive' rule \u2014 maps beautifully to FETCH: sound world opens while the skull is out, hard-cuts to a delay tail on catch."
+  },
+  {
+   "name": "LIFT",
+   "path": "C:\\Users\\Alex\\Projects\\lift",
+   "genre": "One-input pendulum climber up a shaft of reaching hands",
+   "stealable": "The reaching-hands imagery and their animation (src/world.js + src/render.js) \u2014 hands that reach, tremble, and one that does not let go: a ready-made horror asset language for FETCH's haunts grabbing at the skull. Act pacing in src/acts.js."
+  },
+  {
+   "name": "RELIQUARY",
+   "path": "C:\\Users\\Alex\\Projects\\reliquary",
+   "genre": "Commitment-based Castlevania platformer (canvas)",
+   "stealable": "Design law more than code: 'every input is a promise you cannot take back' (README) \u2014 startup/active/recovery framing in src/chain.js is the argument for keeping FETCH's committed throw grammar sacred during the merge. Low direct code relevance."
+  },
+  {
+   "name": "VESPERBANE",
+   "path": "C:\\Users\\Alex\\Projects\\vesperbane",
+   "genre": "Momentum gothic speed-platformer (canvas)",
+   "stealable": "Minimal for FETCH. js/audio.js has a lean synth SFX kit; gothic sprite palette in js/sprites.js. Do not merge with anything (standing rule from VESPERWAKE incident)."
+  },
+  {
+   "name": "ROCKET SHOES",
+   "path": "C:\\Users\\Alex\\Projects\\rocket-shoes",
+   "genre": "Neon-city grind-rail roguelite (browser)",
+   "stealable": "rocket-shoes/rocket-shoes/src/systems \u2014 grind/momentum systems; only relevant if FETCH adds traversal set-pieces. FILAMENT is the better-engineered descendant of these ideas."
+  },
+  {
+   "name": "THE LONELY HAUNTER",
+   "path": "C:\\Users\\Alex\\Projects\\lonely-haunter",
+   "genre": "Haunted-mansion dating sim + killing game (2D)",
+   "stealable": "src/portraits.js \u2014 procedural character-portrait generation (13KB): could stock FETCH's house with unsettling family portraits cheaply. Otherwise off-genre."
+  },
+  {
+   "name": "CANDY MACHINE (JUBILEE)",
+   "path": "C:\\Users\\Alex\\Projects\\candy-machine",
+   "genre": "Tactile mechanical toy (single-page)",
+   "stealable": "The synthesized mechanical foley in index.html \u2014 ratchet clicks that climb C to G, coin chink, spring-steel flap. A model for making FETCH's skull catch/click feedback feel machined and tactile."
+  },
+  {
+   "name": "GALAXY SANDBOX",
+   "path": "C:\\Users\\Alex\\Projects\\galaxy-sandbox",
+   "genre": "N-body galaxy toy (single-page)",
+   "stealable": "Closed-form orbital-rail math in index.html \u2014 only relevant if the skull ever orbits a mass (cf. kick-ball's LODESTONE). Marginal."
+  },
+  {
+   "name": "THE BLUE POT",
+   "path": "C:\\Users\\Alex\\Projects\\the-blue-pot",
+   "genre": "Design-stage Godot puzzle-adventure (Alex's magnum opus)",
+   "stealable": "No Three.js code to port (game/ is a Godot project). docs/systems-spec.md's perception-pressure model is interesting design reading for fear-as-perception, but treat this project as hands-off."
+  },
+  {
+   "name": "FETCH (sibling folder)",
+   "path": "C:\\Users\\Alex\\Projects\\fetch",
+   "genre": "First-person skull-boomerang horror \u2014 the original 2026-08-06 build alongside our fetch-claude working copy",
+   "stealable": "Not a donor \u2014 this is the target's own family (src/ mirrors fetch-claude: skull.js + variants a-d, director.js, enemies.js, house.js, outside.js). Useful only for diffing history; the sacred FEEL_PROFILE lives in fetch-claude/src/skull.js."
+  }
+ ],
+ "summary": "Cataloged 26 game projects under C:\\Users\\Alex\\Projects (skipped qualiacology site repos and zips; you-are-here is not currently present under Projects). Top donors for FETCH, in order: (1) THE EATEN PATH \u2014 the forest game: Flora billboard-tree generation, landmark prop builders (cemetery/deadwood/snag-figure/junk-that-switches-on), the single-class VHS post pass (src/vhs.js:102), HRTF prop audio (src/audio.js:301) and figure-down-the-path scare direction \u2014 this alone covers 'forests + horror atmosphere + audio'. (2) UNINVITED + BLACKTHORN MANOR \u2014 the shared house-horror engine: NPC wander/speech AI (uninvited/src/npc.js), the mundane-misread scare library (scares.js), procedural textures and the candle/grey-lady effects stack. (3) THE LAG \u2014 the PoseBuffer ring buffer (double.js:66) that turns the player's own recorded poses into a monster, plus reverb-tail-grows-with-danger audio: both are cheap, high-concept horror systems that fit a skull-away-from-hand game. (4) CINDERBLOOM \u2014 the looks donor: 4-class procedural creature rigs + Enemies AI (game/enemies.js), encounter Director, and the volumetrics/gtao/grade post stack that would upgrade skull-as-light. (5) KICK BALL \u2014 the ball-feel ancestor: FEEL_PROFILE at game.js:33, catch-launch traversal, and tests/cadence.mjs \u2014 the right harness pattern to fence FETCH's feel core during the Codex merge. Audio standouts elsewhere: GOODFIRE's wind-you-fight-by-ear (audio.js:316), EVENSONG's formant choir for wordless ghost voices, CHAMBER's tension-driven heartbeat, RALLY's 'music lives only while the ball is alive' rule which maps directly onto skull-out/skull-caught. Everything else (bullet hells, platformers, toys) is niche: pooling from FINALE, decoupled-tip trail from SUMI, reaching-hands imagery from LIFT, portrait generation from LONELY HAUNTER, tactile foley from CANDY MACHINE."
+}
