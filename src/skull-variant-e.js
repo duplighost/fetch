@@ -598,8 +598,11 @@ export function buildSkullMesh(boneMaterial) {
   const skin = mk(0xa88a74, 0.64, { side: THREE.DoubleSide });
   const skinPale = mk(0xbc9c85, 0.60, { side: THREE.DoubleSide });
   const hair = mk(0x241f1b, 0.97, { side: THREE.DoubleSide });
-  const sclera = mk(0x6b6558, 0.30);          // never brighter than the bone
-  const iris = mk(0x22261f, 0.44);
+  // A pale ball in a black socket is a googly eye no matter how small it is.
+  // What belongs in a half-grown socket is something DARK and wet that catches
+  // one hard highlight — you find it by the glint, not by the white.
+  const sclera = mk(0x3d3b33, 0.16);
+  const iris = mk(0x141712, 0.20);
   const lip = mk(0x84544a, 0.54, { side: THREE.DoubleSide });
   const voidMat = new THREE.MeshBasicMaterial({ color: 0x010101, side: THREE.DoubleSide });
 
@@ -741,14 +744,14 @@ export function buildSkullMesh(boneMaterial) {
     // ball that fills the aperture with a flat iris disc and a pupil dot in the
     // middle is a bullseye, and a bullseye in a skull is a googly eye.
     const pivot = new THREE.Group();
-    pivot.position.copy(A.o).multiplyScalar(shellRadius(A.o.x, A.o.y, A.o.z) + 0.0132);
+    pivot.position.copy(A.o).multiplyScalar(shellRadius(A.o.x, A.o.y, A.o.z) + 0.0124);
     pivot.visible = false;
     body.add(pivot);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0114, 10, 7), sclera);
-    const ir = new THREE.Mesh(new THREE.CircleGeometry(0.0062, 12), iris);
-    ir.position.z = 0.00955;
-    const pu = new THREE.Mesh(new THREE.CircleGeometry(0.0031, 10), new THREE.MeshBasicMaterial({ color: 0x030303 }));
-    pu.position.z = 0.00975;
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0106, 10, 7), sclera);
+    const ir = new THREE.Mesh(new THREE.CircleGeometry(0.0078, 12), iris);
+    ir.position.z = 0.00715;
+    const pu = new THREE.Mesh(new THREE.CircleGeometry(0.0040, 10), new THREE.MeshBasicMaterial({ color: 0x020202 }));
+    pu.position.z = 0.00735;
     pivot.add(ball, ir, pu);
     eyePivot[s] = pivot;
   }
@@ -869,6 +872,10 @@ export function buildSkullMesh(boneMaterial) {
   // ========================================================= growth stages
   // It grows a face stage by stage. Everything here rides the same shell field,
   // so skin and muscle shrink-wrap the bone instead of floating over it.
+  // Every soft-tissue patch is shrink-wrapped to the shell field AND its rim
+  // lands exactly on the bone, tucking a hair under it. A patch whose border
+  // floats above the surface shows a free silhouette edge, which is what turned
+  // the growth stages into hexagonal plates stuck on a skull.
   const patch = (centreDir, angR, { offset = 0.0018, wobble = 0.24, seed = 1, uSeg = 9, vSeg = 4 }) => {
     const c = new THREE.Vector3(...centreDir).normalize();
     const t1 = new THREE.Vector3(0, 1, 0).cross(c);
@@ -878,12 +885,14 @@ export function buildSkullMesh(boneMaterial) {
     const d = new THREE.Vector3(), o = new THREE.Vector3();
     return gridGeo(uSeg, vSeg, (u, v) => {
       const a = u * TAU;
-      const wob = 1 + wobble * Math.sin(a * 3 + seed * 2.1) + wobble * 0.6 * Math.sin(a * 7 - seed * 1.3);
+      const wob = 1 + wobble * Math.sin(a * 3 + seed * 2.1) + wobble * 0.6 * Math.sin(a * 7 - seed * 1.3)
+        + wobble * 0.35 * Math.sin(a * 13 + seed * 0.7);
       const rr = v * angR * wob;
       d.copy(c).multiplyScalar(Math.cos(rr))
         .addScaledVector(t1, Math.sin(rr) * Math.cos(a))
         .addScaledVector(t2, Math.sin(rr) * Math.sin(a)).normalize();
-      shellPoint(d.x, d.y, d.z, o).addScaledVector(d, offset * (1 - v * v * 0.5));
+      shellPoint(d.x, d.y, d.z, o)
+        .addScaledVector(d, offset * (1 - v * v) - 0.0004 * ss(0.72, 1.0, v));
       return [o.x, o.y, o.z];
     });
   };
@@ -906,28 +915,21 @@ export function buildSkullMesh(boneMaterial) {
     ], () => new THREE.Vector3(s, 0, 0), (t) => ({ w: 0.0034, h: 0.0072 + 0.0042 * Math.sin(t * Math.PI) }), 5),
       s < 0 ? muscle : muscle2, jaw, 1);
   }
-  const frontalis = M(cap(0.021, 0.015, 0.004, { seed: 5, wobble: 0.3 }), muscle2, body, 1);
-  frontalis.position.set(-0.012, 0.048, 0.0770);
-  frontalis.rotation.x = -0.45;
+  M(patch([-0.22, 0.62, 0.75], 0.32, { offset: 0.0022, wobble: 0.3, seed: 5, uSeg: 8, vSeg: 3 }), muscle2, body, 1);
 
   // stage 2 — skin creeps in from the edges; the first eye arrives
   M(patch([-0.54, 0.70, 0.40], 0.48, { offset: 0.0022, seed: 41 }), skin, body, 2);
-  const cheekL = M(cap(0.019, 0.022, 0.005, { seed: 8 }), skin, body, 2);
-  cheekL.position.set(-0.0420, -0.0190, 0.0620);
-  cheekL.rotation.y = -0.6;
+  M(patch([-0.62, -0.26, 0.74], 0.30, { offset: 0.0026, seed: 8, uSeg: 8, vSeg: 3 }), skin, body, 2);
   M(patch([0.86, 0.40, 0.10], 0.32, { offset: 0.0024, seed: 43, uSeg: 8 }), skinPale, body, 2);
   const eyeL = eyePivot[-1];
 
   // stage 3 — the second eye; more face than not
   M(patch([0.52, 0.68, 0.42], 0.46, { offset: 0.0022, seed: 47 }), skinPale, body, 3);
-  const cheekR = M(cap(0.019, 0.022, 0.005, { seed: 9 }), skin, body, 3);
-  cheekR.position.set(0.0420, -0.0190, 0.0620);
-  cheekR.rotation.y = 0.6;
-  const philtrum = M(cap(0.012, 0.010, 0.003, { seed: 10 }), skin, body, 3);
-  philtrum.position.set(0.0005, -0.0530, 0.0720);
+  M(patch([0.62, -0.26, 0.74], 0.30, { offset: 0.0026, seed: 9, uSeg: 8, vSeg: 3 }), skin, body, 3);
+  M(patch([0.02, -0.56, 0.83], 0.19, { offset: 0.0022, seed: 10, uSeg: 7, vSeg: 3 }), skin, body, 3);
   const jawSkin = M(cap(0.017, 0.024, 0.005, { seed: 11 }), skinPale, jaw, 3);
-  jawSkin.position.copy(jawLocal([-0.0462, -0.0780, 0.0180]));
-  jawSkin.rotation.y = -0.95;
+  jawSkin.position.copy(jawLocal([-0.0468, -0.0790, 0.0170]));
+  jawSkin.rotation.y = -1.15;
   const eyeR = eyePivot[1];
 
   // stage 4 — hair and a nose: it is becoming someone
@@ -940,10 +942,17 @@ export function buildSkullMesh(boneMaterial) {
     M(sweepGeo(lock.map((p) => new THREE.Vector3(...p)), () => new THREE.Vector3(0, 1, 0),
       (t) => ({ w: 0.0018 * (1 - t * 0.5), h: 0.0018 * (1 - t * 0.5) }), 4), hair, body, 4);
   }
-  M(gridGeo(6, 4, (u, v) => {
-    const x = lerp(-1, 1, u), y = lerp(0.014, -0.0400, v);
-    const w = 0.0060 + 0.0038 * v, zr = lerp(0.0840, 0.0930, v);
-    return [x * w * (1 - 0.35 * Math.abs(x)), y, zr - Math.abs(x) * w * 0.55];
+  // The nose has to have SIDES. A flat plate spanning the nasal aperture hangs
+  // 30mm in front of a pit that has been carved 30mm back, and reads as a blade
+  // stuck to the face. This is a ridge whose flanks curve back and land on the
+  // maxilla either side of the aperture.
+  M(gridGeo(8, 4, (u, v) => {
+    const a = lerp(-1.86, 1.86, u);                 // past ±90° so the flanks tuck in
+    const halfW = lerp(0.0056, 0.0163, v);
+    const y = lerp(0.0140, -0.0450, v);
+    const depth = lerp(0.0060, 0.0125, v);
+    const zFront = lerp(0.0845, 0.0960, v);
+    return [Math.sin(a) * halfW, y, zFront - (1 - Math.cos(a)) * depth];
   }), skinPale, body, 4);
   const tip = M(new THREE.SphereGeometry(1, 9, 6).scale(0.0112, 0.0092, 0.0104), skinPale, body, 4);
   tip.position.set(0.0005, -0.0420, 0.0920);
@@ -968,8 +977,8 @@ export function buildSkullMesh(boneMaterial) {
       z += 0.0058 * bell(Math.abs(x) - 0.043, 0.018) * bell(y + 0.017, 0.022) * ss(0.01, 0.05, z);
       x += Math.sign(x) * 0.0058 * ss(0.045, 0.062, Math.abs(x)) * band(y, -0.03, 0, 0.035, 0.055);
       for (const s of [-1, 1]) {
-        const dd = Math.hypot(x - s * 0.0300, y);
-        z -= 0.0160 * bell(dd, 0.0100) * ss(0.02, 0.05, z);   // the eyes look out
+        const dd = Math.hypot(x - s * 0.0335, y - 0.0015);
+        z -= 0.0150 * bell(dd, 0.0104) * ss(0.02, 0.05, z);   // the eyes look out
       }
       if (y < -0.052 && z > 0.020) {                          // the mouth line
         const over = -0.052 - y;
@@ -991,8 +1000,8 @@ export function buildSkullMesh(boneMaterial) {
     ear.position.set(s * 0.0620, -0.0130, -0.0245);
     ear.rotation.y = s * (Math.PI / 2 - 0.15);
     const lid = M(gridGeo(12, 1, (u, v) => {
-      const a = u * TAU, rr = lerp(0.0148, 0.0084, v);
-      return [s * 0.0305 + Math.cos(a) * rr, Math.sin(a) * rr * 0.82, 0.0790 - v * 0.0055];
+      const a = u * TAU, rr = lerp(0.0150, 0.0086, v);
+      return [s * 0.0335 + Math.cos(a) * rr, 0.0015 + Math.sin(a) * rr * 0.82, 0.0800 - v * 0.0058];
     }), skin, body, 5);
     lid.renderOrder = 1;
   }
