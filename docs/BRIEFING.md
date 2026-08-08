@@ -51,7 +51,7 @@ Known issues / active work: `docs/PLAYTEST-1.md`, `docs/PLAYTEST-2.md`.
   r161 via importmap).
 - Controls: WASD + mouse, LMB throw (hold/release per the grammar), E interact,
   Space jump, Shift run.
-- URL flags: `?skull=a|b` (skull sculpt variants), `?mute=1` (no audio init),
+- URL flags: `?skull=a|b|c|d` (skull sculpt variants), `?mute=1` (no audio init),
   `?test=1` (harness mode, no self-stepping), `?autotest=1` (in-page suite).
 
 ## Architecture map (src/)

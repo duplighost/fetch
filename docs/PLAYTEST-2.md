@@ -16,10 +16,15 @@ be a bigger skull."
   per-frame `root.lookAt(camera)` for true eye contact, hands dropped to a
   cradle-from-below grip (fingertips reach mid-skull at most, never the eyes),
   forearms extending off the bottom of the frame so they read as YOUR arms.
-- `[OPEN]` Skull sculpt round 3 under the new composition. Variants a/b
-  (`?skull=a|b`, files `src/skull-variant-a.js` / `-b.js`) both got a "not so
-  great" — a fresh sculpt or a heavy revision of either is welcome. Contract
-  is in BRIEFING.md §Courier contract.
+- `[SHIPPED 2026-08-08]` Skull sculpt round 3: Claude ran a 4-sculptor
+  sculpt-off (tools/sculpt-harness.html + tools/render-sculpt.mjs render any
+  sculpt module under the game bone material/lighting; 3-lens judge panel
+  scored against a/b as the floor). Top two mounted for Alex to judge
+  in-game: `?skull=c` "THE FAMILIAR" (companion, locked-on eye contact,
+  best dark read) and `?skull=d` "THE WRONG SKULL" (authored uncanny,
+  never-was-a-person proportions). Default unchanged. Judge caveats if a
+  round 4 is wanted: c's profile is a featureless egg side-on and must not
+  get any cuter; d's flared jaw-ring could use a de-puff pass.
 
 ## Door language (top confusion of the session)
 

@@ -1,0 +1,137 @@
+<!doctype html>
+<!-- sculpt-harness.html — render any skull sculpt module under the game's real
+     bone material, renderer settings and candle-scale lighting, for the
+     skull-off review loop. Load with ?mod=<module URL relative to this page>,
+     e.g. ?mod=../src/skull-variant-a.js. Drive via window.__H (see
+     tools/render-sculpt.mjs). Not part of the game. -->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>FETCH sculpt harness</title>
+<style>html,body{margin:0;background:#05060a}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.min.js", "three/addons/": "../vendor/jsm/" } }
+</script>
+</head>
+<body>
+<script type="module">
+import * as THREE from 'three';
+import { makeMaterials } from '../src/textures.js';
+
+const SIZE = 640;
+const H = { ready: false, error: null };
+window.__H = H;
+
+try {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(SIZE, SIZE);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05060a);
+  const camera = new THREE.PerspectiveCamera(71, 1, 0.05, 20);
+
+  // lighting: r161 physical scale. candle = the game's light vocabulary.
+  const candle = new THREE.PointLight(0xffb066, 11, 0, 2);
+  candle.position.set(0.28, 0.34, 0.5);
+  const fill = new THREE.HemisphereLight(0x2a3444, 0x0a0906, 0.35);
+  const rim = new THREE.PointLight(0x4a5a80, 9, 0, 2);
+  rim.position.set(-0.45, 0.25, -0.5);
+  scene.add(candle, fill, rim);
+
+  const mats = makeMaterials();
+  let parts = null;
+
+  H.build = async (modUrl) => {
+    const m = await import(new URL(modUrl, location.href).href);
+    if (typeof m.buildSkullMesh !== 'function') throw new Error('module has no buildSkullMesh export');
+    if (parts && parts.root.parent) scene.remove(parts.root);
+    parts = m.buildSkullMesh(mats.bone);
+    scene.add(parts.root);
+    H.setStage(0);
+    return H.info();
+  };
+
+  // mirror of Skull.setStage visibility rules (skull.js)
+  H.setStage = (n) => {
+    const stage = Math.max(0, Math.min(5, n | 0));
+    for (let s = 1; s <= 5; s++) {
+      const on = s <= stage;
+      for (const mesh of (parts.stageSets[s] || [])) mesh.visible = on;
+    }
+    if (parts.eyeL) parts.eyeL.visible = stage >= 2;
+    if (parts.eyeR) parts.eyeR.visible = stage >= 3;
+    for (const s of (parts.sockets || [])) s.visible = stage < 5;
+  };
+
+  const POSES = {
+    // front: the eye-contact law — the skull faces YOU
+    front: () => { camera.position.set(0, 0.02, 0.34); parts.root.rotation.set(0, 0, 0); parts.root.lookAt(camera.position); },
+    // held: camera above eye-line, skull tipped up at you — the in-hand read
+    held: () => { camera.position.set(0, 0.24, 0.3); parts.root.rotation.set(0, 0, 0); parts.root.lookAt(camera.position); },
+    threeq: () => { camera.position.set(0, 0.02, 0.34); parts.root.rotation.set(0, 0.7, 0); },
+    profile: () => { camera.position.set(0, 0.02, 0.34); parts.root.rotation.set(0, Math.PI / 2, 0); },
+    jaw: () => { camera.position.set(0, -0.1, 0.32); parts.root.rotation.set(0, 0, 0); parts.root.lookAt(camera.position); if (parts.jaw) parts.jaw.rotation.x = 0.45; },
+  };
+
+  H.shoot = (pose, { stage = 0, dark = false, jawOpen = 0 } = {}) => {
+    H.setStage(stage);
+    if (parts.jaw) parts.jaw.rotation.x = jawOpen;
+    (POSES[pose] || POSES.front)();
+    camera.lookAt(0, 0, 0);
+    fill.visible = !dark; rim.visible = !dark;
+    candle.intensity = dark ? 6 : 40;
+    renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/png');
+  };
+
+  H.info = () => {
+    let tris = 0, meshes = 0;
+    const matSet = new Set();
+    parts.root.traverse((o) => {
+      if (!o.isMesh) return;
+      meshes++;
+      if (o.material) matSet.add(o.material);
+      const g = o.geometry;
+      if (!g) return;
+      tris += g.index ? g.index.count / 3 : (g.getAttribute('position')?.count || 0) / 3;
+    });
+    H.setStage(5);
+    const full = new THREE.Box3().setFromObject(parts.root);
+    H.setStage(0);
+    const bare = new THREE.Box3().setFromObject(parts.root);
+    const dims = (b) => [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z].map((v) => +v.toFixed(4));
+    return {
+      tris: Math.round(tris), meshes, materials: matSet.size,
+      bboxStage0: dims(bare), bboxStage5: dims(full),
+      keys: {
+        root: !!parts.root, jaw: !!parts.jaw, jawMount: !!parts.jawMount,
+        sockets: Array.isArray(parts.sockets) && parts.sockets.length >= 2,
+        eyeL: !!parts.eyeL, eyeR: !!parts.eyeR,
+        stageSets: Array.isArray(parts.stageSets) && parts.stageSets.length === 6 &&
+          parts.stageSets.slice(1).every((s) => Array.isArray(s) && s.length > 0),
+      },
+    };
+  };
+
+  const q = new URLSearchParams(location.search);
+  const mod = q.get('mod');
+  if (mod) {
+    H.build(mod).then(() => { H.shoot('front'); H.ready = true; })
+      .catch((e) => { H.error = String(e && e.message || e); H.ready = true; });
+  } else {
+    H.ready = true;
+  }
+} catch (e) {
+  H.error = String(e && e.message || e);
+  H.ready = true;
+}
+</script>
+</body>
+</html>
