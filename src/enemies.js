@@ -158,10 +158,26 @@ export class Enemies {
         case 'chase': {
           if (!sameLevel) { e.windT += dt; break; }   // it waits below. it hears you.
           if (dist > 0.85) {
-            toP.normalize();
             const sp = e.spec.chase * Math.min(1, 0.35 + e.windT * 0.4);
             e.windT += dt;
-            this._moveWithPush(e, toP.x * sp * dt, toP.z * sp * dt);
+            // door-node steering: straight lines end at shut doors. When
+            // progress stalls, route through the doorway that best closes on
+            // the player. The Resident goes further: it does doors (below).
+            let tx = player.pos.x, tz = player.pos.z;
+            if (e._via) {
+              const vd = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z);
+              if (vd < 0.9) e._via = null;
+              else { tx = e._via.x; tz = e._via.z; }
+            }
+            const dl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
+            const dirX = (tx - e.pos.x) / dl, dirZ = (tz - e.pos.z) / dl;
+            const preX = e.pos.x, preZ = e.pos.z;
+            this._moveWithPush(e, dirX * sp * dt, dirZ * sp * dt);
+            const moved = Math.hypot(e.pos.x - preX, e.pos.z - preZ);
+            if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
+            else e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
+            if (e._stallT > 0.8) { e._via = this._bestDoorNode(e); e._stallT = 0; }
+            if (e.kind === 'resident') this._tryOpenDoor(e, dt);
             e.stepT -= dt;
             if (e.stepT <= 0) {
               e.stepT = 0.26 + Math.random() * 0.06;
@@ -270,6 +286,45 @@ export class Enemies {
     // popping is loud. everything nearby turns toward the sound.
     this.wakeAll(e.pos.x, e.pos.z, 30);
     if (game.director) game.director.onPop(e);
+  }
+
+  _bestDoorNode(e) {
+    // nearest useful doorway: passable (open — or merely unlocked, if you are
+    // the Resident) on this storey, scoring approach + remaining distance
+    const player = this.game.player;
+    let best = null, bestScore = Infinity;
+    for (const d of this.game.world.doors) {
+      if (Math.abs(d.floor - e.pos.y) > 1.8) continue;
+      const passable = d.open || (e.kind === 'resident' && !d.locked);
+      if (!passable) continue;
+      const de = Math.hypot(d.center.x - e.pos.x, d.center.z - e.pos.z);
+      if (de < 1.2 || de > 30) continue;
+      const dp = Math.hypot(d.center.x - player.pos.x, d.center.z - player.pos.z);
+      const score = de + dp * 1.2;
+      if (score < bestScore) { bestScore = score; best = { x: d.center.x, z: d.center.z, door: d }; }
+    }
+    return best;
+  }
+
+  _tryOpenDoor(e, dt) {
+    // the Resident does doors. A shut door buys you a breath, not safety:
+    // it stands there a moment — and then the knob turns.
+    let door = null;
+    for (const d of this.game.world.doors) {
+      if (d.open || d.locked) continue;
+      if (Math.abs(d.floor - e.pos.y) > 1.8) continue;
+      if (Math.hypot(d.center.x - e.pos.x, d.center.z - e.pos.z) < 1.25) { door = d; break; }
+    }
+    if (door) {
+      e._doorT = (e._doorT || 0) + dt;
+      if (e._doorT > 1.15) {
+        e._doorT = 0;
+        door.setOpen(true);
+        this.game.audio.doorOpen(true, { pos: door.group.position });
+      }
+    } else {
+      e._doorT = 0;
+    }
   }
 
   _moveWithPush(e, dx, dz) {

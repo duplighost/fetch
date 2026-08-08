@@ -681,15 +681,23 @@ export class GameAudio {
   lockedRattle(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx;
-    const out = this._bus(opts, 0.6, 1, 0.2);
-    for (let i = 0; i < 3; i++) {
-      const t = ctx.currentTime + i * 0.09;
+    const out = this._bus(opts, 0.9, 1, 0.2);
+    // four knob-clacks, each with a wood body-knock under it — the whole
+    // door works against its frame and refuses (playtest 2: "pump it")
+    for (let i = 0; i < 4; i++) {
+      const t = ctx.currentTime + i * 0.075;
       const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 1;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400 - i * 260; bp.Q.value = 1.2;
       const g = ctx.createGain();
-      this._env(g, t, 0.4, 0.003, 0.05);
+      this._env(g, t, 0.55, 0.002, 0.05);
       src.connect(bp).connect(g).connect(out);
       src.start(t); src.stop(t + 0.08);
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(130 - i * 8, t);
+      const og = ctx.createGain();
+      this._env(og, t, 0.3, 0.003, 0.09);
+      o.connect(og).connect(out);
+      o.start(t); o.stop(t + 0.12);
     }
   }
 
