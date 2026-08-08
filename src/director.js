@@ -6,10 +6,10 @@ import { clamp, lerp, damp, smoothstep } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
-  bedroom: { x: 9.5, z: 1.5, yaw: Math.PI, y: 3.6 },   // wake facing the open window (+z)
+  bedroom: { x: 7.2, z: 1.5, yaw: Math.PI, y: 3.6 },   // the open window and hanging key own frame one
   house: { x: -1.5, z: 3, yaw: Math.PI, y: 3.6 },
   basement: { x: 9, z: 4.5, yaw: 0.5, y: -3.0 },
-  graveyard: { x: -8, z: 8, yaw: Math.PI },
+  graveyard: { x: -8, z: 8, yaw: -2.86 },       // car left, gate/bodies ahead
   forest: { x: FOREST_GATE.x, z: FOREST_GATE.z + 3, yaw: Math.PI },
   clearing: null,   // computed from forest end
   cave: null,
@@ -20,6 +20,14 @@ const STAGE_BY_ACT = { bedroom: 0, house: 1, basement: 2, graveyard: 3, forest: 
 const FOG_BY_ACT = {
   bedroom: 0.028, house: 0.03, basement: 0.06, graveyard: 0.034,
   forest: 0.055, clearing: 0.018, cave: 0.07, mirror: 0.012,
+};
+const FOG_COLOR_BY_ACT = {
+  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x0a1422,
+  forest: 0x071820, clearing: 0x0d2731, cave: 0x07141a, mirror: 0x111620,
+};
+const BACKGROUND_BY_ACT = {
+  bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
+  forest: 0x030b10, clearing: 0x071821, cave: 0x02080b, mirror: 0x080b12,
 };
 
 const APPROACH_BY_ACT = {
@@ -44,9 +52,12 @@ export class Director {
     this._boxTh = null;
     this._gestureT = 0;
     this._silence = null;
+    this._scope = 0;
   }
 
-  after(t, fn) { this.beats.push({ t, fn }); }
+  after(t, fn, { global = false } = {}) {
+    this.beats.push({ t, fn, scope: global ? null : this._scope });
+  }
 
   start() {
     const g = this.game;
@@ -60,17 +71,23 @@ export class Director {
     const g = this.game;
     if (g.act === act && !hard) return;
     const prev = g.act;
+    if (prev !== act) this._scope++;
     g.act = act;
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
+    g.scene.fog.color.setHex(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
+    g.scene.background.setHex(BACKGROUND_BY_ACT[act] ?? 0x03050a);
     this.approach = APPROACH_BY_ACT[act] ?? this.approach;
-    g.skull.fearHome = act === 'graveyard';   // it refuses long throws here
+    // The skull may look afraid; the player's calibrated throw never changes.
+    g.skull.graveFear = act === 'graveyard';   // expression: the hands tremble
+    g.skull.fearHome = act === 'graveyard';    // mechanics: it refuses long throws (hardAway * 0.6)
 
     // the skull grows between acts — never while you watch it happen
     const stage = STAGE_BY_ACT[act] ?? this.stageGrown;
     if (stage > this.stageGrown) {
       this.stageGrown = stage;
-      g.skull.setStage(stage);
+      if (hard) g.skull.setStage(stage);       // debug teleports need exact state
+      else g.skull.requestStage(stage);        // real growth waits until unseen
       g.audio.webTear({ gain: 0.25, rate: 0.5 });   // a soft wet sound you can't place
     }
 
@@ -152,6 +169,10 @@ export class Director {
 
     // dt-driven beat timers
     for (const b of this.beats.slice()) {
+      if (b.scope !== null && b.scope !== this._scope) {
+        this.beats.splice(this.beats.indexOf(b), 1);
+        continue;
+      }
       b.t -= dt;
       if (b.t <= 0) {
         this.beats.splice(this.beats.indexOf(b), 1);
@@ -164,8 +185,9 @@ export class Director {
     if (zone && zone !== g.act) {
       // bedroom -> house only after the door opened; zones never move you backwards in the story
       const order = ['bedroom', 'house', 'basement', 'graveyard', 'forest', 'clearing', 'cave', 'mirror'];
-      const canGo = order.indexOf(zone) >= 0;
-      if (canGo && !(zone === 'bedroom' && g.act !== 'bedroom')) this.setAct(zone);
+      const next = order.indexOf(zone), current = order.indexOf(g.act);
+      const canGo = next >= 0 && (current < 0 || next > current);
+      if (canGo) this.setAct(zone);
     }
 
     this._voidCool = Math.max(0, this._voidCool - dt);
@@ -181,6 +203,7 @@ export class Director {
 
     // the ravine takes what falls in it
     if (g.act === 'forest' && g.player.pos.y < -4 && !g.dead) this.death(null);
+    if (g.act === 'clearing' && g.player.pos.y < -1.5 && !g.dead) this.death(null);
 
     // fear display: vignette breathes with tension; fog eases toward the act's density
     g.fx.fear = damp(g.fx.fear,
@@ -254,7 +277,12 @@ export class Director {
         g.audio.creak({ pos: best.group.position, gain: 0.55, rate: 0.7 });
       }
     } else {
-      g.audio.sting(0.3);
+      // No abstract orchestra jab: the house itself performs the scare.
+      this._paceOverhead(4);
+      g.audio.creak({
+        pos: new THREE.Vector3(p.x + (Math.random() - 0.5) * 10, p.y + 3.1, p.z + (Math.random() - 0.5) * 10),
+        gain: 0.45, rate: 0.58, verb: 0.65,
+      });
     }
   }
 
@@ -430,11 +458,14 @@ export class Director {
     if (a.wave >= 3 && a.alive === 0 && !(a.pending > 0)) {
       a.done = true;
       g.baseTension = 0;
-      g.skull.setStage(4);
+      g.skull.requestStage(4);
       this.stageGrown = 4;
       this._silence = { t: 6 };            // the payoff: total quiet
       g.audio.duck(0.1, 6);
       g.flag('arenaCleared');
+      // Irreversible set pieces earn spatial checkpoints. A death beyond the
+      // closing forest must never return the player to a spent rope or horde.
+      g.checkpoint('forest');
     }
   }
 
@@ -479,6 +510,9 @@ export class Director {
     const g = this.game;
     this._gesturing = false;
     g.flag('waterfallTaken');
+    g.checkpoint('clearing');
+    if (g.caveZone) g.caveZone.enabled = true;
+    if (g.bridgeBarrier) g.bridgeBarrier.max.y = g.bridgeBarrier.min.y;
     g.audio.splash({ pos: new THREE.Vector3(g.clearingCenter.x, 4, g.clearingCenter.z + 20), gain: 0.9 });
     g.audio.duck(0.3, 4);
     // the bridge rises, stone by stone
@@ -486,7 +520,7 @@ export class Director {
       this.after(1.2 + i * 0.7, () => {
         st.userData.rise = 0.12;
         g.audio.stoneGrind({ pos: st.position, gain: 0.5, rate: 0.8 + i * 0.05 });
-      });
+      }, { global: true });
     });
     // NOTE the skull does not come back. no failsafe fires. the one broken promise.
   }
@@ -514,27 +548,46 @@ export class Director {
     g.audio.duck(0.05, 8);
     g.fx.fear = 1;
     g.shake(0.6);
-    if (enemy) {
-      // it turns you to face it before the dark
-      const to = new THREE.Vector3(enemy.pos.x - g.player.pos.x, 0, enemy.pos.z - g.player.pos.z);
-      g.player.yaw = Math.atan2(-to.x, -to.z);
-    }
-    g.player.frozen = true;
-    this.after(1.1, () => g.showDeath());
+    // Movement stops, but look input remains live until vision is gone. Death
+    // never turns the camera toward the killer or steals the player's eyes.
+    g.player.movementLocked = true;
+    this.after(1.1, () => { g.player.frozen = true; g.showDeath(); });
   }
 
   respawn() {
     const g = this.game;
+    this._scope++;                         // cancel delayed events from the dead life
     g.dead = false;
     g.player.frozen = false;
+    g.player.movementLocked = false;
     g.fx.fear = 0;
-    const cp = g.lastCheckpoint || 'bedroom';
+    const saved = g.checkpointPose ? { ...g.checkpointPose } : null;
+    const cp = saved?.act || g.lastCheckpoint || 'bedroom';
     g.enemies.clear((e) => e !== this.kneeler);
     this.resident = null;
     if (this.arena && !this.arena.done) this.arena = null;
     g.teleport(cp);
-    g.skull.holdNow();
-    g.skull.setStage(this.stageGrown);
+    if (saved && saved.act === cp) {
+      g.player.pos.set(saved.x, saved.y, saved.z);
+      g.player.yaw = saved.yaw;
+      g.player.pitch = saved.pitch;
+      g.player.fallV = 0;
+      g.player.reel = null;
+      g.player._sync(0);
+      g.checkpointPose = saved;             // hard teleport's act hook snapshots its spawn
+    }
+    if (g.flags.has('waterfallTaken')) {
+      // The promise is already broken; death cannot un-break it or strand the
+      // player with a half-raised bridge after scoped callbacks are cleared.
+      for (const st of g.bridgeStones) st.userData.rise = 0.12;
+      if (g.caveZone) g.caveZone.enabled = true;
+      if (g.waterfallBarrier) g.waterfallBarrier.max.y = g.waterfallBarrier.min.y;
+      g.skull.vanish();
+    }
+    else {
+      g.skull.holdNow();
+      g.skull.setStage(this.stageGrown);
+    }
   }
 
   onPop(e) {
@@ -562,7 +615,7 @@ export class Director {
     }
     if (act === 'cave') {
       const c = g.clearingCenter;
-      return { x: c.x + 2, z: c.z + 26, yaw: Math.PI * 0.8 };
+      return { x: c.x + 0.35, z: c.z + 23.35, yaw: -2.9 };
     }
     return ACT_SPAWNS[act];
   }

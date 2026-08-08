@@ -13,11 +13,13 @@ import { Director } from './director.js';
 import { Finale } from './finale.js';
 import { buildHouse } from './house.js';
 import { buildOutside } from './outside.js';
+import { buildAtmosphere } from './atmosphere.js';
 import { LAYER_HELD } from './mirrors.js';
 
 const FIXED_DT = 1 / 120;
 const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const VERSION = '0.1.0-wake';
 
 // ------------------------------------------------------------------- input
@@ -31,7 +33,16 @@ class InputState {
     this.pending = { throwPressed: false, throwReleased: false, callTap: false, interact: false, jump: false };
     this.testInput = null;      // harness override
   }
-  clearKeys() { this.keys.clear(); this.throwHeld = false; this.callHeld = false; }
+  clearKeys() {
+    this.keys.clear();
+    // Losing focus is a physical mouse release, not permission to leave the
+    // skull hanging forever. Preserve the sacred press/hold/release grammar.
+    if (this.throwHeld) this.pending.throwReleased = true;
+    this.throwHeld = false;
+    this.callHeld = false;
+    this.lookX = 0;
+    this.lookY = 0;
+  }
   frame(consumeEdges) {
     if (this.testInput) return { ...this.testInput };
     const k = this.keys;
@@ -76,7 +87,10 @@ class Game {
     this.fogTarget = 0.028;
     this.snapBuffer = 0;
     this.lastCheckpoint = 'bedroom';
+    this.checkpointPose = null;
     this.gorePool = [];
+    this.goreGeo = new THREE.IcosahedronGeometry(0.08, 0);
+    this.goreMat = new THREE.MeshStandardMaterial({ color: 0x1a1216, roughness: 0.75 });
 
     this._setupRenderer();
     this._setupScene();
@@ -93,6 +107,7 @@ class Game {
 
     buildHouse(this);
     buildOutside(this);
+    this.atmosphere = buildAtmosphere(this);
     this.finale = new Finale(this);
     this.world.finishStatic();
     this.world.buildLights(this.scene);
@@ -115,6 +130,7 @@ class Game {
     this.player.pos.set(spawn.x, 3.6, spawn.z);
     this.player.yaw = spawn.yaw;
     this.player._sync(0);
+    this.checkpoint('bedroom');
     this.world.freezeMoonShadow(this.renderer, this.scene, this.camera);
 
     this._buildGrain();
@@ -123,7 +139,9 @@ class Game {
 
   // ---------------------------------------------------------------- setup
   _setupRenderer() {
-    const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+    // test mode keeps the backbuffer for deterministic canvas capture; shipping
+    // players don't pay for the copy
+    const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: TEST_MODE });
     r.setPixelRatio(Math.min(devicePixelRatio, 1.75));
     r.setSize(innerWidth, innerHeight);
     r.outputColorSpace = THREE.SRGBColorSpace;
@@ -159,6 +177,8 @@ class Game {
     tint('woodFloor', 0x7a7268);
     tint('ceiling', 0x808080);
     tint('bone', 0xcfc9bb);
+    tint('rock', 0x48545c);
+    tint('headstone', 0x7b898f);
   }
 
   _buildGrain() {
@@ -175,8 +195,8 @@ class Game {
           float g = hash(vUv*vec2(1280.,720.) + fract(uTime)*173.1) - 0.5;
           vec2 c = vUv - 0.5;
           float vig = smoothstep(0.35, 0.95, dot(c,c)*(2.4 + uFear*2.2));
-          float a = abs(g)*0.11 + vig*(0.34 + uFear*0.5);
-          gl_FragColor = vec4(vec3(0.007,0.006,0.01), clamp(a, 0., 0.94));
+          float a = abs(g)*0.055 + vig*(0.16 + uFear*0.42);
+          gl_FragColor = vec4(vec3(0.007,0.006,0.01), clamp(a, 0., 0.88));
         }`,
     });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.grainMat);
@@ -267,7 +287,17 @@ class Game {
   // ------------------------------------------------------------- services
   flag(name) { this.flags.add(name); }
   after(t, fn) { this.director.after(t, fn); }
-  checkpoint(act) { this.lastCheckpoint = act; }
+  checkpoint(act, pose = null) {
+    const p = pose || this.player;
+    const pos = p.pos || p;
+    this.lastCheckpoint = act;
+    this.checkpointPose = {
+      act,
+      x: pos.x, y: pos.y, z: pos.z,
+      yaw: p.yaw ?? this.player.yaw,
+      pitch: p.pitch ?? this.player.pitch,
+    };
+  }
   shake(v) { this._shake = Math.max(this._shake, v); }
   residentHeard(n) { this.director.residentHeard(n); }
 
@@ -278,9 +308,9 @@ class Game {
   }
 
   gore(pos, n) {
-    const mat = new THREE.MeshBasicMaterial({ color: 0x1a1216 });
     for (let i = 0; i < n; i++) {
-      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.05 + Math.random() * 0.06, 0), mat);
+      const m = new THREE.Mesh(this.goreGeo, this.goreMat);
+      m.scale.setScalar(0.65 + Math.random() * 0.7);
       m.position.copy(pos);
       m.position.y += 1;
       const v = new THREE.Vector3((Math.random() - 0.5) * 7, Math.random() * 6, (Math.random() - 0.5) * 7);
@@ -469,7 +499,7 @@ class Game {
     const info = this.renderer.info.render;
     this.lastRender = { drawCalls: info.calls, triangles: info.triangles };
     this.renderer.autoClear = false;
-    this.grainMat.uniforms.uTime.value = this.time % 300;
+    this.grainMat.uniforms.uTime.value = REDUCED_MOTION ? 0 : this.time % 300;
     this.grainMat.uniforms.uFear.value = this.fx.fear;
     this.renderer.render(this.grainScene, this.grainCam);
     this.renderer.autoClear = true;
@@ -479,13 +509,16 @@ class Game {
     ch.dataset.target = this._crosshairTarget() ? '1' : '';
     ch.dataset.skull = this.skull.mode === 'held' ? '' : 'away';
     this.el.vignette.style.opacity = clamp(this.fx.fear, 0, 1) * 0.85;
-    this.el.sr.textContent = `${this.act}, skull ${this.skull.mode}${this.skull.carry ? ' carrying ' + this.skull.carry.id : ''}`;
+    // announce only meaningful state changes to assistive tech; a 60 Hz
+    // aria-live stream is neither useful nor kind
+    const srState = `${this.act}, skull ${this.skull.mode}${this.skull.carry ? ' carrying ' + this.skull.carry.id : ''}`;
+    if (srState !== this._srState) { this._srState = srState; this.el.sr.textContent = srState; }
 
     // camera shake as canvas transform
     this._shake = Math.max(0, this._shake - this._lastShakeDt * 2.8);
     const s = this._shake * this._shake;
-    this.renderer.domElement.style.transform =
-      s > 0.0001 ? `translate(${(Math.random() - 0.5) * s * 14}px, ${(Math.random() - 0.5) * s * 10}px)` : '';
+    this.renderer.domElement.style.transform = !REDUCED_MOTION && s > 0.0001
+      ? `translate(${(Math.random() - 0.5) * s * 14}px, ${(Math.random() - 0.5) * s * 10}px)` : '';
   }
 
   // ----------------------------------------------------------------- loop

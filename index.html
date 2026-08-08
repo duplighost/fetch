@@ -47,9 +47,18 @@
   .overlay h1 { font-size: 3.4rem; letter-spacing: 1.1rem; margin: 0; font-weight: normal; color: #d8dde2; text-indent: 1.1rem; }
   .overlay .tag { font-size: 1.05rem; opacity: 0.75; margin: 0; font-style: italic; }
   .overlay .keys { font-size: 0.85rem; opacity: 0.55; line-height: 1.9; margin: 0.6rem 0 0; font-family: 'Segoe UI', system-ui, sans-serif; font-style: normal; }
-  .overlay .go { font-size: 0.95rem; opacity: 0.85; margin-top: 1.4rem; animation: breathe 3.2s ease-in-out infinite; }
+  .overlay .go {
+    appearance: none; border: 0; background: transparent; color: inherit;
+    font: inherit; font-size: 0.95rem; opacity: 0.85; margin-top: 1.4rem;
+    padding: 0.7rem 1.2rem; cursor: pointer; animation: breathe 3.2s ease-in-out infinite;
+  }
+  .overlay .go:focus-visible { outline: 2px solid #8bd9ee; outline-offset: 0.45rem; }
   @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
   #die h1 { font-size: 2rem; letter-spacing: 0.6rem; text-indent: 0.6rem; }
+  @media (prefers-reduced-motion: reduce) {
+    .overlay .go { animation: none; opacity: 0.8; }
+    #fade, #vignette { transition-duration: 0.01ms !important; }
+  }
 </style>
 </head>
 <body>
@@ -62,20 +71,20 @@
   <span id="srState" class="sr-only" role="status" aria-live="polite"></span>
 </div>
 
-<div id="title" class="overlay">
-  <h1>FETCH</h1>
-  <p class="tag">Throw it. It comes back.</p>
-  <p class="keys">
+<div id="title" class="overlay" role="dialog" aria-labelledby="fetchTitle" aria-describedby="fetchTag fetchKeys">
+  <h1 id="fetchTitle">FETCH</h1>
+  <p class="tag" id="fetchTag">Throw it. It comes back.</p>
+  <p class="keys" id="fetchKeys">
     hold left mouse &mdash; it goes where you look, and stays out &nbsp;&middot;&nbsp; let go &mdash; it comes back<br>
     WASD &mdash; move &nbsp;&middot;&nbsp; shift &mdash; run &nbsp;&middot;&nbsp; space &mdash; jump &nbsp;&middot;&nbsp; E &mdash; use<br>
     headphones on
   </p>
-  <p class="go">click</p>
+  <button class="go" type="button">click</button>
 </div>
 
-<div id="die" class="overlay hidden">
-  <h1>IT KEEPS YOU</h1>
-  <p class="go">click</p>
+<div id="die" class="overlay hidden" role="dialog" aria-labelledby="deathTitle">
+  <h1 id="deathTitle">IT KEEPS YOU</h1>
+  <button class="go" type="button">click</button>
 </div>
 
 <script type="importmap">

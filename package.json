@@ -1,10 +1,12 @@
 {
   "name": "fetch",
-  "version": "0.1.0",
+  "version": "0.2.0-codex",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node serve.mjs 8711",
-    "test": "node tests/smoke.mjs"
+    "test": "node tests/autotest.mjs && node tests/regressions.mjs && node tests/smoke.mjs",
+    "test:playthrough": "node tests/playthrough.mjs",
+    "test:gpu": "node tests/render-perf.mjs"
   }
 }

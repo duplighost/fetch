@@ -1,7 +1,8 @@
 // smoke.mjs -- the gate. Headless drive of FETCH on the real GPU (d3d11 ANGLE).
 // Boots ?test=1, waits for the __FETCH debug API, teleports through every act,
-// steps the sim 90 frames each and screenshots it, wall-clock times a 300-frame
-// burst, and enforces render budgets. Exits non-zero on any failed assertion.
+// steps the sim 90 frames each and screenshots it, wall-clock times a 300-step
+// render-free simulation burst, and enforces render budgets. This is not an FPS
+// benchmark. Exits non-zero on any failed assertion.
 //   node tests/smoke.mjs
 import { ensureServer, launchBrowser, openPage, URL_BASE, shotPath, resultsPath } from './lib/harness.mjs';
 import { writeFileSync } from 'node:fs';
@@ -44,8 +45,21 @@ try {
 
   for (const act of ACTS) {
     const errBefore = errors.length;
+    // Preserve the story's one broken promise in visual coverage: the cave and
+    // mirror are only representative when the waterfall has actually kept it.
+    if (act === 'cave') await page.evaluate(() => {
+      const g = window.__game;
+      if (!g.flags.has('waterfallTaken')) g.director.waterfallTaken();
+      g.skull.vanish();
+    });
     await page.evaluate((a) => window.__FETCH.teleport(a), act);
-    await page.evaluate(() => window.__FETCH.step(1 / 60, 90));
+    if (act === 'mirror') await page.evaluate(() => {
+      const g = window.__game;
+      g.player.yaw = 0;
+      g.player.pitch = 0;
+      g.player._sync(0);
+    });
+    await page.evaluate((frames) => window.__FETCH.step(1 / 60, frames), act === 'mirror' ? 540 : 90);
     const state = await page.evaluate(() => window.__FETCH.state());
     report.acts[act] = state;
     ok(state && state.act === act, `act ${act}: state.act === '${act}'`
@@ -61,15 +75,15 @@ try {
     writeFileSync(shotPath(act + '.png'), Buffer.from(dataUrl.split(',')[1], 'base64'));
   }
 
-  // Perf probe: 300 simulated frames, wall-clock timed inside the page.
+  // Simulation-throughput probe: no render calls occur inside this burst.
   const elapsedMs = await page.evaluate(async () => {
     const t0 = performance.now();
     await window.__FETCH.step(1 / 60, 300);
     return performance.now() - t0;
   });
   const simFps = 300 / (elapsedMs / 1000);
-  report.perf = { frames: 300, elapsedMs, simFps };
-  ok(simFps > 25, `perf: simulated fps ${simFps.toFixed(1)} > 25 (300 frames in ${elapsedMs.toFixed(0)}ms)`);
+  report.perf = { frames: 300, elapsedMs, simFps, kind: 'render-free simulation steps per second' };
+  ok(simFps > 25, `perf: simulation throughput ${simFps.toFixed(1)} steps/s > 25 (300 steps in ${elapsedMs.toFixed(0)}ms)`);
 
   // Render budgets via state().render.
   const render = await page.evaluate(() => (window.__FETCH.state() || {}).render || null);

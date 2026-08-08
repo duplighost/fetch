@@ -757,6 +757,54 @@ export class GameAudio {
     src.start(t); src.stop(t + 2.2);
   }
 
+  fireRoar(opts = {}) {
+    // the incinerator takes the offering: a swelling, hungry column of noise
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 2.2, 1, 0.3);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf; src.loop = true;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.8;
+    lp.frequency.setValueAtTime(300, t);
+    lp.frequency.exponentialRampToValueAtTime(2400, t + 1.0);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.85, t + 0.9);
+    g.gain.setValueAtTime(0.85, t + 1.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.55);
+    const rumble = ctx.createOscillator(); rumble.type = 'sine';
+    rumble.frequency.setValueAtTime(48, t);
+    rumble.frequency.linearRampToValueAtTime(34, t + 1.4);
+    const rg = ctx.createGain();
+    this._env(rg, t, 0.5, 0.5, 1.0);
+    src.connect(lp).connect(g).connect(out);
+    rumble.connect(rg).connect(out);
+    src.start(t); src.stop(t + 1.7);
+    rumble.start(t); rumble.stop(t + 1.6);
+  }
+
+  fireChoke(opts = {}) {
+    // ...and refuses it: a hollow backdraft whumpf, then nothing
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.4, 1, 0.45);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(30, t + 0.5);
+    const og = ctx.createGain();
+    this._env(og, t, 0.9, 0.012, 0.6);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t);
+    lp.frequency.exponentialRampToValueAtTime(90, t + 0.7);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.01, 0.7);
+    o.connect(og).connect(out);
+    src.connect(lp).connect(g).connect(out);
+    o.start(t); o.stop(t + 0.8);
+    src.start(t); src.stop(t + 0.9);
+    this.duck(0.5, 1.6);
+  }
+
   whisper(opts = {}) {
     if (!this._ready) return;
     this._play(this._whisperBuf, {

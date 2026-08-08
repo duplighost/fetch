@@ -53,7 +53,7 @@ export const HOUSE_TABLES = {
     ['first', 8, 7, 'W', { id: 'bedroomDoor', locked: 'bedroomKey' }],  // bedroom -> landing
     ['first', 4, 7, 'W', { ajar: true }],         // landing -> nursery
     ['first', 6, 7, 'N', { id: 'stairDoor', locked: 'stairKey' }],      // landing -> stairwell
-    ['first', 8, 3, 'W', {}],                     // guest -> stairwell (closed)
+    ['first', 8, 3, 'W', { id: 'voidDoor' }],     // guest -> the door over the stair void
     // basement
     ['basement', 5, 8, 'N', { ajar: true }],      // bcorr -> storeroom
     ['basement', 8, 5, 'W', { heavy: true }],     // storeroom -> boiler (closed: the key room)
@@ -573,6 +573,7 @@ export function buildHouse(game) {
   furnish(game);
   bedroomAct(game);
   nurseryAct(game);
+  voidDoorAct(game);
   cellarBoards(game);
   basementAct(game);
 }
@@ -926,12 +927,144 @@ function basementAct(game) {
   const { world, scene, mats: M } = game;
   const B = HOUSE_TABLES.levels.basement.floor;
 
-  // hatch key on the boiler tank — a pale glint in the dark
+  // ---- the incinerator (Alex, playtest 3: "the player should try to burn
+  // the skull down there but it doesn't work") -------------------------------
+  // The one warm thing in the basement: a squat iron furnace against the
+  // boiler room's east wall, ember light breathing through the door slits.
+  // Feeding it the skull IS the basement's beat — the fire roars, chokes,
+  // dies, the skull comes back untouched, and the backdraft pops the jammed
+  // ash pan open. The hatch key was in the ash all along.
+  const brass = new THREE.MeshStandardMaterial({ color: 0xa98748, roughness: 0.34, metalness: 0.78 });
+  const soot = new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.62, metalness: 0.55 });
+  const sootDark = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.7, metalness: 0.5 });
+  const emberMat = new THREE.MeshBasicMaterial({ color: 0xff8438 });
+  const inc = new THREE.Group();
+  inc.position.set(11.2, B, -1.5);
+  inc.rotation.y = -Math.PI / 2;             // mouth faces -x, into the room
+  scene.add(inc);
+  const bodyBox = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.44, 0.95), soot);
+  bodyBox.position.y = 0.84;
+  inc.add(bodyBox);
+  const crown = new THREE.Mesh(new THREE.BoxGeometry(1.23, 0.1, 1.03), sootDark);
+  crown.position.y = 1.6;
+  inc.add(crown);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 0.1), sootDark);
+    leg.position.set(sx * 0.46, 0.07, sz * 0.36);
+    inc.add(leg);
+  }
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.14, 10), sootDark);
+  collar.position.set(0.22, 1.7, -0.12);
+  inc.add(collar);
+  const flue = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.0, 10), soot);
+  flue.position.set(0.22, 2.2, -0.12);
+  inc.add(flue);
+  // firebox cavity + ember bed, visible when the door swings
+  const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.66, 0.5),
+    new THREE.MeshBasicMaterial({ color: 0x0a0503 }));
+  cavity.position.set(0, 0.9, 0.26);
+  inc.add(cavity);
+  const embers = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.34), emberMat);
+  embers.position.set(0, 0.62, 0.3);
+  inc.add(embers);
+  // the fire door, hinged at its left edge; vent slits glow while it's shut
+  const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.78, 0.06), sootDark);
+  doorFrame.position.set(0, 0.9, 0.475);
+  inc.add(doorFrame);
+  const hinge = new THREE.Group();
+  hinge.position.set(-0.31, 0.9, 0.51);
+  inc.add(hinge);
+  const fireDoor = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.64, 0.05), soot);
+  fireDoor.position.x = 0.29;
+  hinge.add(fireDoor);
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    const rivet = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 5), sootDark);
+    rivet.position.set(0.29 + sx * 0.24, sy * 0.26, 0.03);
+    hinge.add(rivet);
+  }
+  const slits = [];
+  for (let i = 0; i < 3; i++) {
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.05, 0.02), emberMat);
+    slit.position.set(0.29, -0.17 + i * 0.17, 0.032);
+    hinge.add(slit);
+    slits.push(slit);
+  }
+  const handle = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), brass);
+  handle.position.set(0.52, 0, 0.05);
+  hinge.add(handle);
+  // ash pan drawer, jammed shut until the backdraft
+  const pan = new THREE.Group();
+  pan.position.set(0, 0.2, 0.32);
+  inc.add(pan);
+  const panBox = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.5), M.metal);
+  pan.add(panBox);
+  const panAsh = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 0.42),
+    new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: 1 }));
+  panAsh.position.y = 0.06;
+  pan.add(panAsh);
+  const panHandle = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), brass);
+  panHandle.position.set(0, 0, 0.27);
+  panHandle.scale.set(1.6, 0.8, 0.8);
+  pan.add(panHandle);
+
+  // the key sleeps in the ash until the fire dies
   const key = makeKey(M);
-  key.position.set(10.6, B + 1.62, -3.4);
-  scene.add(key);
-  world.addFetchTarget({
-    id: 'hatchKey', object: key, radius: 0.7,
+  key.scale.setScalar(1.4);
+  key.position.set(0.05, 0.11, 0.05);
+  key.rotation.set(-Math.PI / 2, 0, 0.6);
+  key.visible = false;
+  pan.add(key);
+
+  // breathing ember glow (candle descriptor; intensity is live-animated)
+  const glow = { x: 10.55, y: B + 0.95, z: -1.5, intensity: 1.3, r: 4.5 };
+  world.candles.push(glow);
+
+  const incin = { doorOpen: false, offered: false, refused: false, glowTarget: 1.3 };
+  game.incinerator = incin;
+  const incPos = new THREE.Vector3(11.0, B + 0.9, -1.5);
+
+  world.registerInteract(fireDoor, 'incineratorDoor', () => {
+    if (incin.doorOpen) return;
+    incin.doorOpen = true;
+    game.audio.creak({ pos: incPos, gain: 0.7 });
+    incin.glowTarget = 2.4;                      // the mouth opens; the room warms
+    fireboxTarget.enabled = true;
+  });
+  world.registerInteract(panBox, 'ashPan', () => {
+    if (incin.refused) return;                   // open and empty-able by skull now
+    game.audio.lockedRattle({ pos: incPos, gain: 0.6, rate: 1.4 });   // jammed
+    game.shake(0.08);
+  });
+
+  const fireboxTarget = world.addFetchTarget({
+    id: 'firebox', pos: incPos.clone(), radius: 0.55,
+    onHit(skull) {
+      if (incin.offered) return 'return';
+      incin.offered = true;
+      this.enabled = false;
+      // the skull sits IN the fire. the fire tries. the fire loses.
+      skull.anchorAt(incPos, { maxHold: 2.3 });
+      game.flag('skullOffered');
+      game.audio.fireRoar({ pos: incPos, gain: 0.9 });
+      incin.glowTarget = 5.5;                                    // it LIKES it
+      game.after(1.3, () => {
+        game.audio.fireChoke({ pos: incPos, gain: 0.9 });
+        incin.glowTarget = 0.08;                                 // ...it didn't
+      });
+      game.after(1.9, () => game.audio.skullChatter(0.5, incPos));
+      game.after(2.7, () => {
+        incin.refused = true;
+        game.flag('fireRefused');
+        game.audio.metalDrop({ pos: incPos, gain: 0.8 });
+        key.visible = true;
+        keyTarget.enabled = true;
+      });
+      return 'anchor';
+    },
+  });
+
+  const keyTarget = world.addFetchTarget({
+    id: 'hatchKey', object: key, radius: 0.7, enabled: false,
     onHit(skull) {
       this.enabled = false;
       skull.grab('hatchKey', key);
@@ -939,37 +1072,110 @@ function basementAct(game) {
       return 'return';
     },
   });
+  keyTarget.enabled = false;
 
-  // the hatch: sloped bilco doors in the hatchbay ceiling corner, padlocked
+  // ash pan slides open after the refusal; slits/embers/glow all die together
+  game.tickers.push((dt) => {
+    glow.intensity += (incin.glowTarget - glow.intensity) * Math.min(1, dt * 3.5);
+    const lit = clamp(glow.intensity / 1.3, 0.05, 2.2);
+    emberMat.color.setRGB(1 * lit * 0.55 + 0.03, 0.3 * lit * 0.45 + 0.01, 0.08 * lit * 0.3);
+    if (incin.doorOpen && hinge.rotation.y > -1.85) hinge.rotation.y = Math.max(-1.85, hinge.rotation.y - dt * 3.2);
+    if (incin.refused && pan.position.z < 0.66) pan.position.z = Math.min(0.66, pan.position.z + dt * 1.4);
+    // the skull dreads the open mouth: chatter spikes as you carry it close
+    if (incin.doorOpen && !incin.refused && game.skull.mode === 'held') {
+      const cam = game.camera.getWorldPosition(_vDread);
+      const d = cam.distanceTo(incPos);
+      if (d < 3.4) {
+        const dread = 0.45 * (1 - d / 3.4) + 0.15;
+        if (game.skull.threat < dread) {
+          game.skull.threat = dread;
+          game.skull.threatDir.copy(incPos).sub(cam).normalize();
+        }
+      }
+    }
+  });
+
+  // ---- the hatch: sloped bilco doors, now VISIBLY chained shut --------------
+  // (Alex, playtest 3: "the basement hatch doesn't look like its locked at all")
   const hatch = new THREE.Group();
   const panel = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.12, 1.9), M.metal);
   panel.rotation.x = -0.5;
   hatch.add(panel);
   hatch.position.set(-10, B + 2.1, 4.4);
   scene.add(hatch);
-  const lock = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.08), M.metal);
-  lock.position.set(-10, B + 1.75, 3.6);
-  scene.add(lock);
-  game.hatch = { group: hatch, panel, lock, open: false };
 
+  // an X of chain draped flat on the panel, meeting at a hasp + fat padlock —
+  // it must read SEALED from across the room
+  const chainGroup = new THREE.Group();
+  scene.add(chainGroup);
+  const linkGeo = new THREE.TorusGeometry(0.05, 0.016, 6, 10);
+  const panelTilt = new THREE.Euler(-0.5, 0, 0);
+  const onPanel = (u, v) => new THREE.Vector3(u, 0.06, v).applyEuler(panelTilt).add(hatch.position);
+  // two chain runs from the panel's top corners down to a hasp at the lip —
+  // an inverted V the player walks straight into
+  for (const dirU of [1, -1]) {
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      const p = onPanel(dirU * 0.66 * (1 - t), 0.8 - 1.58 * t);
+      const link = new THREE.Mesh(linkGeo, sootDark);
+      link.position.copy(p);
+      link.lookAt(onPanel(dirU * 0.66 * (1 - t - 0.08), 0.8 - 1.58 * (t + 0.08)));
+      link.rotateY(Math.PI / 2);
+      if (i % 2) link.rotateX(Math.PI / 2);
+      chainGroup.add(link);
+    }
+  }
+  const haspP = onPanel(0, -0.8);
+  const hasp = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.18), sootDark);
+  hasp.position.copy(haspP);
+  hasp.rotation.copy(panelTilt);
+  chainGroup.add(hasp);
+  // the padlock hangs off the lip, face-on to whoever walks in
+  const lockBody = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.36, 0.11), brass);
+  lockBody.position.set(-10, B + 1.56, 3.56);
+  lockBody.rotation.x = -0.12;
+  chainGroup.add(lockBody);
+  const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.028, 8, 10, Math.PI), sootDark);
+  shackle.position.set(-10, B + 1.74, 3.59);
+  shackle.rotation.x = -0.12;
+  chainGroup.add(shackle);
+  const keyhole = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.02, 8),
+    new THREE.MeshBasicMaterial({ color: 0x050505 }));
+  keyhole.position.set(-10, B + 1.5, 3.63);
+  keyhole.rotation.x = Math.PI / 2 - 0.12;
+  chainGroup.add(keyhole);
+  game.hatch = { group: hatch, panel, lock: lockBody, open: false };
+
+  let chainFalling = 0;
   world.addFetchTarget({
-    id: 'hatchLock', object: lock, radius: 0.8,
+    id: 'hatchLock', object: lockBody, radius: 0.9,
     onHit(skull) {
       if (!skull.carry || skull.carry.id !== 'hatchKey') return 'return';
       this.enabled = false;
       const c = skull.dropCarry();
       c.mesh.visible = false;
-      lock.visible = false;
-      game.audio.unlock({ pos: lock.position });
+      game.audio.unlock({ pos: lockBody.position });
+      chainFalling = 1;
+      game.after(0.55, () => game.audio.metalDrop({ pos: lockBody.position, gain: 0.9 }));
       game.flag('hatchUnlocked');
       return 'return';
     },
   });
+  game.tickers.push((dt) => {
+    if (!chainFalling) return;
+    if (chainGroup.position.y > -1.62) {
+      chainGroup.position.y -= dt * 3.4;
+      chainGroup.rotation.z += dt * 0.4;
+    } else chainFalling = 0;                     // it lies where it fell
+  });
 
   world.registerInteract(panel, 'hatch', () => {
     if (!game.flags.has('hatchUnlocked')) {
-      game.audio.lockedRattle({ pos: hatch.position });
-      game.shake(0.12);
+      game.audio.lockedRattle({ pos: hatch.position, gain: 0.85 });
+      game.shake(0.14);
+      // the chain takes the shake
+      chainGroup.position.x = (Math.random() - 0.5) * 0.05;
+      game.after(0.25, () => { chainGroup.position.x = 0; });
       return;
     }
     if (!game.hatch.open) {
@@ -980,10 +1186,96 @@ function basementAct(game) {
     }
   });
 }
+const _vDread = new THREE.Vector3();
+
+// -------------------------------------------------- the door over the void
+// Alex (playtest 3): "that random door is also perfect for a puzzle... the
+// one you can open but not get into. not everything has to be a fucking key."
+// The guest room's only door hangs over the stair shaft, out of any hand's
+// reach. The skull is your hand: knock it open with a throw, and a candle
+// flame waits in the doorway's light — steal it, and the skull carries fire
+// in its sockets from then on. The room itself you never get.
+function voidDoorAct(game) {
+  const { world, scene, mats: M } = game;
+  const F = HOUSE_TABLES.levels.first.floor;
+  const door = world.doorById.voidDoor;
+
+  // a tall iron candle-stand just inside, dead in line with the doorway —
+  // from the stairs below, its flame floats in the open door's glow
+  const stand = new THREE.Group();
+  stand.position.set(5.3, F, -7);
+  scene.add(stand);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.05, 1.28, 8), game.mats.metal);
+  pole.position.y = 0.64;
+  stand.add(pole);
+  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.055, 0.05, 10), game.mats.metal);
+  dish.position.y = 1.3;
+  stand.add(dish);
+  const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.032, 0.14, 8),
+    new THREE.MeshStandardMaterial({ color: 0xd8cdb4, roughness: 0.6 }));
+  candle.position.y = 1.4;
+  stand.add(candle);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffc36c }));
+  flame.position.y = 1.52;
+  flame.scale.set(0.65, 1.8, 0.65);
+  stand.add(flame);
+  const glow = { x: 5.3, y: F + 1.55, z: -7, intensity: 1.6, r: 5 };
+  world.candles.push(glow);
+
+  const doorPos = new THREE.Vector3(4, F + 1.15, -7);
+  const flameTarget = world.addFetchTarget({
+    id: 'guestFlame', object: flame, radius: 0.6, enabled: false,
+    onHit(skull) {
+      this.enabled = false;
+      flame.visible = false;
+      const gi = world.candles.indexOf(glow);
+      if (gi >= 0) world.candles.splice(gi, 1);
+      game.audio.fireChoke({ pos: stand.position, gain: 0.4 });   // the flame dies into it
+      game.audio.glassTink({ pos: stand.position, gain: 0.5, rate: 0.7 });
+      // ember sockets: from now on it carries fire behind its eyes
+      const emberMat = new THREE.MeshBasicMaterial({ color: 0xffb060 });
+      const sockets = skull.sockets || [];
+      const embersOn = [];
+      for (const s of sockets.slice(0, 2)) {
+        const p = s.getWorldPosition(new THREE.Vector3());
+        skull.root.worldToLocal(p);
+        const ember = new THREE.Mesh(new THREE.SphereGeometry(0.0095, 8, 6), emberMat);
+        ember.position.copy(p);
+        ember.position.z += 0.012;
+        skull.root.add(ember);
+        embersOn.push([ember, s]);
+      }
+      game.tickers.push(() => {
+        for (const [e, s] of embersOn) e.visible = s.visible;   // hide under the stage-5 face
+      });
+      // and your carried light warms and reaches further — brightness, not hue,
+      // carries the upgrade (colorblind law)
+      game.skullLight.intensity = 62;
+      game.skullLight.distance = 12.5;
+      game.skullLight.color.setHex(0xd8c8a4);
+      game.flag('ateFlame');
+      return 'return';
+    },
+  });
+  flameTarget.enabled = false;
+
+  world.addFetchTarget({
+    id: 'voidDoor', pos: doorPos.clone(), radius: 0.8,
+    onHit() {
+      this.enabled = false;
+      door.setOpen(true);
+      game.audio.doorOpen(false, { pos: door.group.position });
+      game.flag('voidDoorOpen');
+      flameTarget.enabled = true;
+      return 'return';
+    },
+  });
+}
 
 export function makeKey(M) {
   const g = new THREE.Group();
-  const bowMat = new THREE.MeshStandardMaterial({ color: 0xd9b24a, metalness: 0.9, roughness: 0.35, emissive: 0x6e4f10, emissiveIntensity: 0.5 });
+  const bowMat = new THREE.MeshStandardMaterial({ color: 0xf0c55b, metalness: 0.9, roughness: 0.35, emissive: 0x6e4f10, emissiveIntensity: 1.15 });
   const bow = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.014, 6, 12), bowMat);
   const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 6), bowMat);
   stem.position.y = -0.1;

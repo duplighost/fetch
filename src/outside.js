@@ -13,9 +13,17 @@ export function terrainHeightFn(game) {
     const C = game.clearingCenter;
     if (C && x > C.x - 6 && x < C.x + 30 && z > C.z + 20.4 && z < C.z + 50) return 0;   // cave floor
     if (C && Math.abs(x - C.x) < 30 && z > C.z - 27 && z < C.z + 30) {
-      // must match the clearing bowl mesh exactly
-      const r = Math.hypot(x - C.x, z - C.z);
-      return -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin((x - C.x) * 0.4) * 0.08 + 0.02;
+      // The plunge pool is a real obstacle. Once the bridge rises, its moving
+      // stone tops become the only walkable ground across the basin.
+      for (const st of game.bridgeStones || []) {
+        if (st.position.y < -0.35) continue;
+        if (Math.hypot(x - st.position.x, z - st.position.z) < 1.03) return st.position.y + 0.25;
+      }
+      const lx = x - C.x, lz = z - C.z;
+      const r = Math.hypot(lx, lz);
+      const poolR = Math.hypot(lx, lz - 15.2);
+      const basin = -3.15 * (1 - smoothstep(5.4, 8.2, poolR));
+      return -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(lx * 0.4) * 0.08 + basin + 0.02;
     }
     if (game.forest && game.forest.contains(x, z)) return game.forest.heightAt(x, z);
     if (z < 6) return 0;                          // around the house
@@ -211,6 +219,10 @@ export class Forest {
     this.sealS = -SEAL_TRAIL;
     this._lastIdx = 0;
     this.entered = false;
+    this._sealMtx = new THREE.Matrix4();
+    this._sealPos = new THREE.Vector3();
+    this._sealScale = new THREE.Vector3();
+    this._sealQuat = new THREE.Quaternion();
 
     this._buildFlora(rng);
     this._buildSealPool();
@@ -410,7 +422,7 @@ export class Forest {
   }
 
   update(dt) {
-    const mtx = new THREE.Matrix4(), v = new THREE.Vector3(), sv = new THREE.Vector3(), q = new THREE.Quaternion();
+    const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
     this.sealAnim.forEach((a, i) => {
       if (a.t >= 1) return;
@@ -482,6 +494,7 @@ export class Forest {
         game.player.launchTo(new THREE.Vector3(landing.x, 1.2, landing.z), () => {
           skull.anchor = null;
           skull.beginReturn('snap');
+          game.checkpoint('forest');
         });
         return 'anchor';
       },
@@ -504,8 +517,11 @@ export function buildClearing(game) {
   g.rotateX(-Math.PI / 2);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
-    const r = Math.hypot(pos.getX(i), pos.getZ(i));
-    pos.setY(i, -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(pos.getX(i) * 0.4) * 0.08);
+    const x = pos.getX(i), z = pos.getZ(i);
+    const r = Math.hypot(x, z);
+    const poolR = Math.hypot(x, z - 15.2);
+    const basin = -3.15 * (1 - smoothstep(5.4, 8.2, poolR));
+    pos.setY(i, -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(x * 0.4) * 0.08 + basin);
   }
   g.computeVertexNormals();
   const ground = new THREE.Mesh(g, M.grass);
@@ -527,11 +543,11 @@ export function buildClearing(game) {
   });
 
   // the cliff and the giant waterfall
-  const cliff = new THREE.Mesh(new THREE.BoxGeometry(44, 20, 4), M.rock);
+  const cliff = new THREE.Mesh(new THREE.BoxGeometry(60, 20, 4), M.rock);
   cliff.position.set(C.x, 9, C.z + 22);
   scene.add(cliff);
-  world.addCollider(C.x - 22, -2, C.z + 20, C.x - 3.2, 20, C.z + 24);
-  world.addCollider(C.x + 3.2, -2, C.z + 20, C.x + 22, 20, C.z + 24);
+  world.addCollider(C.x - 30, -2, C.z + 20, C.x - 3.2, 20, C.z + 24);
+  world.addCollider(C.x + 3.2, -2, C.z + 20, C.x + 30, 20, C.z + 24);
   // the fall itself — a bright animated sheet; you can WALK through it
   const fallMat = new THREE.MeshStandardMaterial({
     color: 0xaebfc8, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.82,
@@ -542,6 +558,10 @@ export function buildClearing(game) {
   scene.add(fallGlow);
   const fall = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 19), fallMat);
   fall.position.set(C.x, 9.5, C.z + 19.9);
+  // atmosphere.js supplies the final layered water veil. Retain this authored
+  // anchor for progression/debug contracts, but do not overlap two transparent
+  // sheets and create moire bands.
+  fall.visible = false;
   scene.add(fall);
   game.waterfall = fall;
   game.tickers.push((dt, t) => {
@@ -564,11 +584,18 @@ export function buildClearing(game) {
   scene.add(motes);
   game.tickers.push((dt, t) => { motes.position.y = Math.sin(t * 0.5) * 0.3; });
 
-  // stepping-stone bridge — hidden underwater until the skull goes through
+  // The water itself is the bridge gate: before the stones rise, the player
+  // falls into the deep basin. A real rock/water curtain at the cave mouth is
+  // the second physical lock, preventing a wide detour from breaking the pact.
+  game.waterfallBarrier = world.addCollider(C.x - 3.2, -2, C.z + 19.55, C.x + 3.2, 20, C.z + 20.35);
+  game.bridgeBarrier = game.waterfallBarrier; // retained debug/older-test name
   game.bridgeStones = [];
-  for (let i = 0; i < 5; i++) {
-    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 0.5, 7), M.rock);
-    st.position.set(C.x + (i - 2) * 0.3, -1.4, C.z + 11 + i * 1.9);
+  for (let i = 0; i < 7; i++) {
+    const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
+    st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + 8.8 + i * 1.72);
+    st.rotation.y = i * 0.73;
+    st.castShadow = true;
+    st.receiveShadow = true;
     scene.add(st);
     game.bridgeStones.push(st);
   }
@@ -593,7 +620,8 @@ export function buildCave(game) {
     [C.x, C.z + 22], [C.x + 2, C.z + 30], [C.x + 7, C.z + 36],
     [C.x + 14, C.z + 40], [C.x + 22, C.z + 42],
   ];
-  world.addZone('cave', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
+  game.caveZone = world.addZone('cave', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
+  game.caveZone.enabled = game.flags.has('waterfallTaken');
   world.addSurface('stone', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
 
   for (let i = 0; i < path.length - 1; i++) {
@@ -603,9 +631,12 @@ export function buildCave(game) {
     const mx = (ax + bx) / 2, mz = (az + bz) / 2;
     // floor + walls + roof as rough slabs
     world.box(M.rock, mx, -0.15, mz, 4.6, 0.3, len + 1.6, ang);
-    world.box(M.rock, mx + Math.cos(ang) * 2.1, 1.7, mz - Math.sin(ang) * 2.1, 0.8, 4.2, len + 1.6, ang);
-    world.box(M.rock, mx - Math.cos(ang) * 2.1, 1.7, mz + Math.sin(ang) * 2.1, 0.8, 4.2, len + 1.6, ang);
-    world.box(M.rock, mx, 3.6, mz, 4.9, 0.5, len + 1.6, ang);
+    // The slabs are only the dark backing behind the decorative rock skin.
+    // Keep their inner faces wide enough that the tunnel reads as a route,
+    // rather than two flat panels pinching the camera at every elbow.
+    world.box(M.rock, mx + Math.cos(ang) * 2.18, 1.7, mz - Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
+    world.box(M.rock, mx - Math.cos(ang) * 2.18, 1.7, mz + Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
+    world.box(M.rock, mx, 3.68, mz, 4.75, 0.34, len + 1.35, ang);
     // NOTE: no wall colliders here — axis-aligned boxes on diagonal legs pinch
     // the walkway shut at every elbow. The tunnel is kept walkable by a spine
     // clamp below (forest-style projection); the rock walls stay visual.
@@ -662,7 +693,7 @@ export function buildCave(game) {
   post.position.set(ex + 2, 2.9, ez);
   scene.add(post);
   world.registerInteract(post, 'caveHatch', () => {
-    if (game.act !== 'cave') return;
+    if (game.act !== 'cave' || !game.flags.has('waterfallTaken')) return;
     game.director.enterMirrorRoom();
   });
   game.caveEnd = new THREE.Vector3(ex + 2, 0, ez);

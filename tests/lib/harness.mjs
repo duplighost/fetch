@@ -88,7 +88,7 @@ export async function openPage(browser, url, { width = 1280, height = 800, quiet
 
 export function shotPath(name) {
   mkdirSync(SHOTS, { recursive: true });
-  return join(SHOTS, name.endsWith('.png') ? name : name + '.png');
+  return join(SHOTS, /\.(?:png|jpe?g|webp)$/i.test(name) ? name : name + '.png');
 }
 
 export function resultsPath(name) {

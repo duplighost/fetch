@@ -9,6 +9,7 @@ import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
 import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
 import { buildSkullMesh as buildVariantC } from './skull-variant-c.js';
 import { buildSkullMesh as buildVariantD } from './skull-variant-d.js';
+import { buildSkullMesh as buildVariantA2 } from './skull-variant-a2.js';
 
 export const FEEL_PROFILE = Object.freeze({
   name: 'fetch-core',
@@ -68,6 +69,8 @@ export class Skull {
 
     this.mode = 'held';
     this.stage = 0;
+    this.pendingStage = 0;
+    this.graveFear = false;       // expression only; never changes throw handling
     this.carry = null;          // { id, mesh } clamped in the teeth
     this.pos = new THREE.Vector3();
     this.prevPos = new THREE.Vector3();
@@ -107,7 +110,7 @@ export class Skull {
     // Sculpt-off variants: ?skull=a (anatomist) / b (engineer) / c (the
     // familiar) / d (the wrong skull). Alex judges in-game; the winner
     // becomes the default (then the switch and losing files go).
-    const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD };
+    const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD, a2: buildVariantA2 };
     if (VARIANTS[this.variant]) {
       const parts = VARIANTS[this.variant](this.mats.bone);
       this.root = parts.root;
@@ -376,6 +379,7 @@ export class Skull {
 
   setStage(n) {
     this.stage = clamp(n | 0, 0, 5);
+    this.pendingStage = this.stage;
     for (let s = 1; s <= 5; s++) {
       const on = s <= this.stage;
       for (const m of this.stageSets[s]) m.visible = on;
@@ -384,6 +388,25 @@ export class Skull {
     if (this.eyeR) this.eyeR.visible = this.stage >= 3;
     // once it has a full face, sockets hide behind it
     for (const s of this.sockets) s.visible = this.stage < 5;
+  }
+
+  requestStage(n) {
+    // Growth is allowed to wait indefinitely. The player's next natural throw
+    // supplies an unseen moment; the game never turns their head or steals input.
+    this.pendingStage = Math.max(this.pendingStage, clamp(n | 0, 0, 5));
+  }
+
+  _applyPendingStageIfUnseen() {
+    if (this.pendingStage <= this.stage) return;
+    if (this.mode === 'gone') { this.setStage(this.pendingStage); return; }
+    if (this.mode === 'held') return;              // guaranteed foreground view
+
+    this.camera.updateMatrixWorld();
+    this.root.updateMatrixWorld();
+    const ndc = this.root.getWorldPosition(V.f).project(this.camera);
+    const onScreen = ndc.z > -1 && ndc.z < 1
+      && Math.abs(ndc.x) < 1.12 && Math.abs(ndc.y) < 1.12;
+    if (!onScreen) this.setStage(this.pendingStage);
   }
 
   // ---------------------------------------------------------------- state
@@ -508,6 +531,7 @@ export class Skull {
 
   // ---------------------------------------------------------------- update
   update(dt, ctx) {
+    this._applyPendingStageIfUnseen();
     this._updateHands(dt);
     switch (this.mode) {
       case 'held': this._updateHeld(dt, ctx); break;
@@ -552,8 +576,10 @@ export class Skull {
 
     // breathing sway; pulls back and up while charging — it knows what's coming
     const c = this.charge;
-    this.hold.position.x = 0.17 + Math.sin(t * 0.8) * 0.004;
-    this.hold.position.y = -0.31 + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05;
+    const fearTremble = this.graveFear ? Math.sin(t * 23) * 0.0035 : 0;
+    this.hold.position.x = 0.17 + Math.sin(t * 0.8) * 0.004 + fearTremble;
+    this.hold.position.y = -0.31 + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05
+      + (this.graveFear ? 0.018 : 0);
     this.hold.position.z = -0.7 + c * 0.13;
     this.hold.rotation.z = Math.sin(t * 0.5) * 0.02 - c * 0.25;
     this.hold.rotation.x = c * 0.4;
