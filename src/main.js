@@ -125,7 +125,7 @@ class Game {
     this.skull.root.add(this.skullLight);
     this.fillLight = new THREE.PointLight(0x28323c, 8, 3.5, 1.4);
     this.camera.add(this.fillLight);
-    this.holdLight = new THREE.PointLight(0xd8bb90, 2.7, 1.4, 1.7);
+    this.holdLight = new THREE.PointLight(0xd8bb90, 1.35, 1.4, 1.7);
     this.holdLight.position.set(0.06, -0.12, -0.42);
     this.holdLight.layers.set(LAYER_HELD);
     this.camera.add(this.holdLight);

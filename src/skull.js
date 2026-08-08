@@ -10,6 +10,7 @@ import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
 import { buildSkullMesh as buildVariantC } from './skull-variant-c.js';
 import { buildSkullMesh as buildVariantD } from './skull-variant-d.js';
 import { buildSkullMesh as buildVariantA2 } from './skull-variant-a2.js';
+import { buildSkullMesh as buildVariantE } from './skull-variant-e.js';
 
 export const FEEL_PROFILE = Object.freeze({
   name: 'fetch-core',
@@ -110,7 +111,7 @@ export class Skull {
     // Sculpt-off variants: ?skull=a (anatomist) / b (engineer) / c (the
     // familiar) / d (the wrong skull). Alex judges in-game; the winner
     // becomes the default (then the switch and losing files go).
-    const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD, a2: buildVariantA2 };
+    const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD, a2: buildVariantA2, e: buildVariantE };
     if (VARIANTS[this.variant]) {
       const parts = VARIANTS[this.variant](this.mats.bone);
       this.root = parts.root;
