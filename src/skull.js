@@ -276,27 +276,51 @@ export class Skull {
     const hold = new THREE.Group();
     hold.position.set(0.17, -0.31, -0.7);
     hold.scale.setScalar(1.15);
-    const skin = new THREE.MeshStandardMaterial({ color: 0x584d42, roughness: 0.82 });
-    const knuckleSkin = new THREE.MeshStandardMaterial({ color: 0x60544a, roughness: 0.76 });
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95 });
+    // human hands, not talons (playtest 3b): fleshy tapered phalanges that
+    // overlap at the joints, knuckle mass, a static distal curl with a
+    // NAIL — the anim contract (k1/k2 rotation.x) is unchanged.
+    const skin = new THREE.MeshStandardMaterial({ color: 0x6b5648, roughness: 0.88 });
+    const crease = new THREE.MeshStandardMaterial({ color: 0x53423a, roughness: 0.92 });
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x9a8a76, roughness: 0.55 });
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x101216, roughness: 1.0, metalness: 0 });
 
     const mkFinger = (parent, x, y, z, scale, yaw) => {
       const k1 = new THREE.Group();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
-      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.034 * scale, 3, 6), skin);
+      // proximal: fattest, sunk into the palm so no gap shows
+      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0145 * scale, 0.03 * scale, 3, 7), skin);
       s1.rotation.x = Math.PI / 2;
-      s1.position.z = 0.026 * scale;
+      s1.position.z = 0.02 * scale;
       k1.add(s1);
+      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.0135 * scale, 7, 6), crease);
+      kn.position.z = 0.046 * scale;
+      kn.scale.set(1, 0.9, 0.85);
+      k1.add(kn);
       const k2 = new THREE.Group();
-      k2.position.set(0, 0, 0.052 * scale);
-      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0095 * scale, 0.03 * scale, 3, 6), knuckleSkin);
+      k2.position.set(0, 0, 0.048 * scale);
+      // middle phalanx
+      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 * scale, 0.024 * scale, 3, 7), skin);
       s2.rotation.x = Math.PI / 2;
-      s2.position.z = 0.021 * scale;
+      s2.position.z = 0.018 * scale;
       k2.add(s2);
-      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.0095 * scale, 6, 5), skin);
-      tip.position.set(0, 0.002, 0.042 * scale);
-      k2.add(tip);
+      // distal: a static curl off k2 — pad, slight inward bend, nail on top
+      const d = new THREE.Group();
+      d.position.set(0, -0.001, 0.038 * scale);
+      d.rotation.x = -0.35;
+      const s3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.016 * scale, 3, 7), skin);
+      s3.rotation.x = Math.PI / 2;
+      s3.position.z = 0.012 * scale;
+      d.add(s3);
+      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.0105 * scale, 7, 6), skin);
+      pad.position.set(0, -0.002, 0.024 * scale);
+      pad.scale.set(1, 0.85, 1);
+      d.add(pad);
+      const nail = new THREE.Mesh(new THREE.BoxGeometry(0.0115 * scale, 0.0022, 0.014 * scale), nailMat);
+      nail.position.set(0, 0.0085 * scale, 0.02 * scale);
+      nail.rotation.x = 0.18;
+      d.add(nail);
+      k2.add(d);
       k1.add(k2);
       parent.add(k1);
       return { k1, k2 };
@@ -312,8 +336,13 @@ export class Skull {
       heel.position.set(0, -0.004, -0.05);
       heel.scale.set(1.2, 0.55, 0.9);
       hand.add(heel);
+      // webbing: flesh across the finger bases so they grow FROM the hand
+      const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), skin);
+      web.position.set(0, 0.004, 0.058);
+      web.scale.set(2.05, 0.5, 0.7);
+      hand.add(web);
       for (let i = 0; i < 4; i++) {
-        const f = mkFinger(hand, (i - 1.5) * 0.027, 0.006, 0.062, 1 - Math.abs(i - 1.2) * 0.09, (i - 1.5) * 0.06);
+        const f = mkFinger(hand, (i - 1.5) * 0.028, 0.006, 0.062, 1 - Math.abs(i - 1.2) * 0.09, (i - 1.5) * 0.055);
         f.phase = i * 0.9;
         this._fingers.push(f);
       }
@@ -430,10 +459,11 @@ export class Skull {
   grab(id, mesh) {
     // called by fetch targets: clamp an item in the teeth — and make sure the
     // player FEELS the clamp: snap-shut jaw, flourish spin, chime
-    this.carry = { id, mesh };
+    this.carry = { id, mesh, scale: mesh.scale.x };
     if (mesh.parent) mesh.parent.remove(mesh);
     mesh.position.set(0, -0.01, 0.045);
     mesh.rotation.set(0.4, 0, 0);
+    mesh.scale.setScalar(Math.min(mesh.scale.x, 0.9));   // world keys are sized to be FOUND; teeth-sized once clamped
     this.jawMount.add(mesh);
     this.jaw.rotation.x = 0.3;
     this._flourishT = 0.45;

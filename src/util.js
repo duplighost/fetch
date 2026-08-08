@@ -67,7 +67,9 @@ export function canvasTexture(w, h, draw, opts = {}) {
   // treat canvas art as linear albedo — sRGB decode would crush the dark tones
   tex.colorSpace = THREE.NoColorSpace;
   tex.wrapS = tex.wrapT = opts.repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
-  tex.anisotropy = 2;
+  // 8x anisotropy: grazing-angle textures (floors, brick walls, turned wood)
+  // were shimmering/crawling as you moved (playtest 3b "texture flickering")
+  tex.anisotropy = 8;
   return tex;
 }
 

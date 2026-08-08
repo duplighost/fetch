@@ -118,9 +118,17 @@ class Game {
     this.skull.setLayers((o) => o.layers.set(LAYER_HELD));
     // the skull is the light you carry — throw it and the light leaves with it
     this.skullLight = new THREE.PointLight(0xb6cfdd, 42, 9, 1.6);
+    // the lantern lights the WORLD only: at point-blank range it was clipping
+    // the whole viewmodel to white (the hands and skull never showed a single
+    // form in hand). The viewmodel gets its own calibrated lamp instead.
+    this.skullLight.layers.set(0);
     this.skull.root.add(this.skullLight);
     this.fillLight = new THREE.PointLight(0x28323c, 8, 3.5, 1.4);
     this.camera.add(this.fillLight);
+    this.holdLight = new THREE.PointLight(0xd8bb90, 2.7, 1.4, 1.7);
+    this.holdLight.position.set(0.06, -0.12, -0.42);
+    this.holdLight.layers.set(LAYER_HELD);
+    this.camera.add(this.holdLight);
 
     this.input = new InputState();
     this._wireInput();

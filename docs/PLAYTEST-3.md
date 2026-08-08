@@ -89,5 +89,20 @@ Alex's call, so no default change ships until he judges.
 - `[OPEN]` Forest look polish from the eaten-path kit: trunk lean, overhead
   canopy closure, shrub walls, two-ribbon ground, fog-matched background
   (seal mechanics + witnessing shipped; this is the visual layer).
+- `[PROPOSAL — needs Alex]` THE CRAWL ROOM (Alex, 3b: "completely empty
+  basement room. good place for something terrifying and fun"): the room is
+  pitch dark and LOW — and the game's one light is a thing you THROW. The
+  beat: a wall of child-sized handprints in the dirt floor leads to a hole
+  in the far wall; something is IN the hole; the only way to see it is to
+  throw your light AT it — and while the skull is out, you are blind in a
+  room with something that only moves in the dark (Standing Kind rules,
+  but it stalks the LIGHT'S shadow, not you). Reward: non-key — the skull
+  comes back from the hole with something in its teeth it refuses to show
+  you until the graveyard. Fun + terrifying + pure fetch-grammar.
+- `[OPEN]` Graveyard car resculpt (Alex, 3b: "if this is supposed to be a
+  car... it is not even half passing lol"): the crashed prop needs to read
+  as a real derelict sedan — cabin greenhouse, wheel arches + flat tires,
+  doors with seams, a sprung hood, rust staining. Same primitive-kit
+  discipline as the furniture overhaul.
 - `[DESIGN]` Nursery mobile telegraphing (carried from PLAYTEST-2).
 - `[DESIGN]` The leading pass (light/sightlines/prop arrows), act by act.
