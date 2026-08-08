@@ -1,0 +1,10 @@
+{
+  "name": "fetch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node serve.mjs 8711",
+    "test": "node tests/smoke.mjs"
+  }
+}

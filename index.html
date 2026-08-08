@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="icon" href="data:,">
+<title>FETCH</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #app { position: fixed; inset: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ---- wordless in-game layer ---- */
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  #crosshair {
+    position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
+    margin: -2px 0 0 -2px; border-radius: 50%;
+    background: rgba(220, 226, 232, 0.55);
+    transition: width .12s, height .12s, margin .12s, background .12s;
+  }
+  #crosshair[data-target="1"] {
+    width: 8px; height: 8px; margin: -4px 0 0 -4px;
+    background: rgba(240, 244, 248, 0.9);
+  }
+  #crosshair[data-skull="away"] { background: rgba(220, 226, 232, 0.2); }
+  #vignette {
+    position: absolute; inset: 0; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 42%, rgba(10, 2, 2, 0.92) 100%);
+    transition: opacity .18s;
+  }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 1; transition: opacity 1.2s; }
+  #fade.slow { transition: opacity 4s; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
+  }
+
+  /* ---- overlays (reading costs nothing here) ---- */
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1.2rem;
+    background: #000; color: #b9bfc6;
+    font-family: Georgia, 'Times New Roman', serif;
+    text-align: center; user-select: none; z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+  .overlay h1 { font-size: 3.4rem; letter-spacing: 1.1rem; margin: 0; font-weight: normal; color: #d8dde2; text-indent: 1.1rem; }
+  .overlay .tag { font-size: 1.05rem; opacity: 0.75; margin: 0; font-style: italic; }
+  .overlay .keys { font-size: 0.85rem; opacity: 0.55; line-height: 1.9; margin: 0.6rem 0 0; font-family: 'Segoe UI', system-ui, sans-serif; font-style: normal; }
+  .overlay .go { font-size: 0.95rem; opacity: 0.85; margin-top: 1.4rem; animation: breathe 3.2s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
+  #die h1 { font-size: 2rem; letter-spacing: 0.6rem; text-indent: 0.6rem; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="hud">
+  <div id="vignette"></div>
+  <div id="crosshair"></div>
+  <div id="fade"></div>
+  <span id="srState" class="sr-only" role="status" aria-live="polite"></span>
+</div>
+
+<div id="title" class="overlay">
+  <h1>FETCH</h1>
+  <p class="tag">Throw it. It comes back.</p>
+  <p class="keys">
+    hold left mouse &mdash; it goes where you look, and stays out &nbsp;&middot;&nbsp; let go &mdash; it comes back<br>
+    WASD &mdash; move &nbsp;&middot;&nbsp; shift &mdash; run &nbsp;&middot;&nbsp; space &mdash; jump &nbsp;&middot;&nbsp; E &mdash; use<br>
+    headphones on
+  </p>
+  <p class="go">click</p>
+</div>
+
+<div id="die" class="overlay hidden">
+  <h1>IT KEEPS YOU</h1>
+  <p class="go">click</p>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/jsm/" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

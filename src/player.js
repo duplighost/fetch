@@ -1,0 +1,199 @@
+// player.js — first-person controller. Capsule-vs-AABB with axis separation and
+// stairs-as-ground-height, ported from the uninvited engine (its most proven part).
+import * as THREE from 'three';
+import { clamp, lerp, damp } from './util.js';
+
+export const EYE = 1.62;
+const RADIUS = 0.34;
+const STEP_UP = 0.5;     // colliders topping out below feet+this are walkable
+const HEAD = 1.75;       // colliders starting above feet+this are overhead
+const WALK = 2.7;
+const RUN = 4.7;
+const GRAV = 14;
+const JUMP_V = 5.2;
+const SENS = 0.0022;
+
+export class Player {
+  constructor(camera, world, audio) {
+    this.camera = camera;
+    this.world = world;
+    this.audio = audio;
+
+    this.pos = new THREE.Vector3(0, 0, 0);   // feet
+    this.vel = new THREE.Vector3();          // smoothed horizontal intent
+    this.fallV = 0;
+    this.grounded = true;
+    this.yaw = 0;
+    this.pitch = 0;
+    this.yawVel = 0;                          // rad/s, feeds skull steering bonus
+    this.pitchVel = 0;
+
+    this.bobPhase = 0;
+    this.bobY = 0;
+    this.landKick = 0;
+    this.frozen = false;                      // cutscenes / overlays
+    this.reel = null;                         // { point, t, onArrive } rope launch
+    this.running = false;
+    this.speedRatio = 0;
+    this.noise = 0;                           // how loud you are (walkers listen)
+  }
+
+  look(dx, dy) {
+    if (this.frozen) return;
+    this.yaw -= dx * SENS;
+    this.pitch = clamp(this.pitch - dy * SENS, -1.35, 1.35);
+  }
+
+  launchTo(point, onArrive) {
+    this.reel = { point: point.clone(), t: 0, onArrive };
+    this.fallV = 0;
+  }
+
+  update(dt, frame) {
+    const prevYaw = this.yaw, prevPitch = this.pitch;
+    if (frame && !this.frozen) {
+      if (frame.lookX || frame.lookY) this.look(frame.lookX || 0, frame.lookY || 0);
+    }
+    this.yawVel = (this.yaw - prevYaw) / Math.max(dt, 1e-4);
+    this.pitchVel = (this.pitch - prevPitch) / Math.max(dt, 1e-4);
+
+    if (this.reel) { this._updateReel(dt); this._sync(dt); return; }
+
+    const mX = this.frozen ? 0 : (frame ? frame.moveX || 0 : 0);
+    const mZ = this.frozen ? 0 : (frame ? frame.moveZ || 0 : 0);
+    this.running = !this.frozen && !!(frame && frame.run) && mZ > 0.01;
+    const speed = this.running ? RUN : WALK;
+
+    // wish direction: forward = (-sin yaw, -cos yaw)
+    const s = Math.sin(this.yaw), c = Math.cos(this.yaw);
+    const fx = -s, fz = -c, rx = c, rz = -s;
+    let wx = rx * mX + fx * mZ, wz = rz * mX + fz * mZ;
+    const wl = Math.hypot(wx, wz);
+    if (wl > 1) { wx /= wl; wz /= wl; }
+
+    this.vel.x = lerp(this.vel.x, wx * speed, Math.min(1, dt * 10));
+    this.vel.z = lerp(this.vel.z, wz * speed, Math.min(1, dt * 10));
+
+    // axis-separated integration against AABBs
+    this._moveAxis(this.vel.x * dt, 0);
+    this._moveAxis(0, this.vel.z * dt);
+
+    // vertical: ground height with stair glide
+    const gh = this.world.groundHeightAt(this.pos.x, this.pos.z, this.pos.y);
+    const dy = this.pos.y - gh;
+    if (frame && frame.jumpPressed && this.grounded && !this.frozen) {
+      this.fallV = JUMP_V;
+      this.grounded = false;
+    }
+    if (!this.grounded || dy > 0.35) {
+      this.fallV -= GRAV * dt;
+      this.pos.y += this.fallV * dt;
+      if (this.pos.y <= gh) {
+        if (this.fallV < -6) {
+          this.landKick = clamp(-this.fallV / 14, 0.2, 1);
+          this.audio.footstep(this.world.surfaceAt(this.pos), { gain: 0.5 });
+          this.noise = Math.max(this.noise, 0.7);
+        }
+        this.pos.y = gh;
+        this.fallV = 0;
+        this.grounded = true;
+      }
+    } else if (dy > 0.02) {
+      this.pos.y = Math.max(gh, this.pos.y - 8 * dt);       // descending stairs glide
+    } else {
+      this.pos.y = lerp(this.pos.y, gh, Math.min(1, dt * 14)); // climbing steps
+      this.grounded = true;
+    }
+
+    // world may clamp us into a corridor (forest spline)
+    if (this.world.postClamp) this.world.postClamp(this.pos, dt);
+
+    // head bob drives footsteps — feet and sound can never desync
+    const horiz = Math.hypot(this.vel.x, this.vel.z);
+    this.speedRatio = clamp(horiz / RUN, 0, 1);
+    if (this.grounded && horiz > 0.3) {
+      const rate = this.running ? 9.4 : 6.2;
+      const prev = Math.sin(this.bobPhase);
+      this.bobPhase += dt * rate * (0.4 + this.speedRatio * 0.6);
+      if (prev >= 0 && Math.sin(this.bobPhase) < 0 || prev < 0 && Math.sin(this.bobPhase) >= 0) {
+        const surf = this.world.surfaceAt(this.pos);
+        this.audio.footstep(surf, { gain: this.running ? 0.5 : 0.3 });
+        this.noise = Math.max(this.noise, this.running ? 0.85 : 0.35);
+        if (this.onStep) this.onStep(surf);
+      }
+    }
+    this.noise = Math.max(0, this.noise - dt * 1.6);
+    this._sync(dt);
+  }
+
+  _updateReel(dt) {
+    const r = this.reel;
+    r.t += dt;
+    const eye = this.pos.y + EYE;
+    const to = new THREE.Vector3(r.point.x - this.pos.x, r.point.y - eye, r.point.z - this.pos.z);
+    const d = to.length();
+    const arrive = d < 1.6 || r.t > 3;
+    if (arrive) {
+      this.fallV = 4.5;                       // small pop at the top
+      this.grounded = false;
+      const cb = r.onArrive;
+      this.reel = null;
+      if (cb) cb();
+      return;
+    }
+    const speed = Math.min(19, 10 + d * 0.5) * Math.min(1, r.t * 5);
+    to.normalize();
+    this.pos.x += to.x * speed * dt;
+    this.pos.y += to.y * speed * dt;
+    this.pos.z += to.z * speed * dt;
+    // keep wall collision honest even mid-flight
+    this._moveAxis(0, 0);
+  }
+
+  _moveAxis(dx, dz) {
+    this.pos.x += dx;
+    this.pos.z += dz;
+    const feet = this.pos.y;
+    for (const c of this.world.colliders) {
+      if (c.max.y <= feet + STEP_UP) continue;   // walkable step
+      if (c.min.y >= feet + HEAD) continue;      // overhead
+      // closest point in XZ
+      const cx = clamp(this.pos.x, c.min.x, c.max.x);
+      const cz = clamp(this.pos.z, c.min.z, c.max.z);
+      let px = this.pos.x - cx, pz = this.pos.z - cz;
+      const d2 = px * px + pz * pz;
+      if (d2 >= RADIUS * RADIUS) continue;
+      if (d2 > 1e-8) {
+        const d = Math.sqrt(d2);
+        const push = (RADIUS - d) / d;
+        this.pos.x += px * push;
+        this.pos.z += pz * push;
+      } else {
+        // center inside the box: push out the shallowest face
+        const outs = [
+          [this.pos.x - (c.min.x - RADIUS), -1, 0],
+          [(c.max.x + RADIUS) - this.pos.x, 1, 0],
+          [this.pos.z - (c.min.z - RADIUS), 0, -1],
+          [(c.max.z + RADIUS) - this.pos.z, 0, 1],
+        ].sort((a, b) => a[0] - b[0])[0];
+        this.pos.x += outs[1] * outs[0];
+        this.pos.z += outs[2] * outs[0];
+      }
+    }
+  }
+
+  _sync(dt) {
+    this.bobY = 0;
+    if (this.grounded) {
+      const amp = this.running ? 0.05 : 0.028;
+      this.bobY = Math.abs(Math.sin(this.bobPhase)) * amp * this.speedRatio;
+    }
+    this.landKick = Math.max(0, this.landKick - dt * 2.8);
+    const dip = this.landKick * this.landKick * 0.14;
+    this.camera.position.set(
+      this.pos.x + Math.sin(this.bobPhase * 0.5) * 0.02 * this.speedRatio,
+      this.pos.y + EYE + this.bobY - dip,
+      this.pos.z);
+    this.camera.rotation.set(this.pitch, this.yaw, Math.sin(this.bobPhase * 0.5) * 0.004 * this.speedRatio, 'YXZ');
+  }
+}
