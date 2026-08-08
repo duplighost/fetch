@@ -74,6 +74,17 @@ Environment traps (hard-won — do not relearn):
   Alex's playtest punch list = the current work queue. `docs/HANDOFF.md` —
   session diary.
 
+## Cloud agents & the gates
+
+The three gates need Alex's machine: a real GPU (system Chrome, d3d11 ANGLE —
+never swiftshader) and playwright-core resolved from a local npx cache. If you
+are running in a cloud sandbox (Codex/Sol): you cannot run them, and that's
+expected. Instead: (1) `node --check` every file you touched, (2) keep changes
+inside your lane, (3) say plainly in the PR body that gates weren't run and
+why. The reviewing agent on Alex's machine runs all three gates against your
+branch before merge — a PR is not mergeable until someone has. Never weaken,
+skip, or edit the gates themselves to get green.
+
 ## Team protocol
 
 - `main` is canonical. Anything non-trivial: branch + PR, gates green, then

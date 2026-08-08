@@ -38,7 +38,7 @@ pass; PHASE-2 items are the art/feel overhaul (next major work).
 
 ## The house
 
-- [PHASE-2] **"Filled with ugly little blocks."** Real furniture pass —
+- [PHASE-2 DONE] **"Filled with ugly little blocks."** Real furniture pass —
   port the furnishing kits from uninvited/blackthorn (beds with posts,
   wardrobes with doors, chairs with legs, framed art, rugs, curtains,
   clutter). Alex explicitly offers reuse from the existing games.
