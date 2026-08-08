@@ -328,6 +328,12 @@ export class Forest {
       this.game.audio.stoneGrind({ pos: this.posAt(this.sealS), gain: 0.5 });
       this._lookWindow = 5.0;
     }
+    // fall rescue: terrain gaps must never eat the player (playtest 3b —
+    // "i fell into the ground into nothingness"). The path takes you back.
+    if (pos.y < -6) {
+      const p = this.posAt(Math.max(pr.s, this.sealS + SEAL_TRAIL));
+      pos.x = p.x; pos.z = p.z; pos.y = 0.6;
+    }
     const hw = this.halfW[pr.i] - 0.38;
     const lat = clamp(pr.lat, -hw, hw);
     // self-heal: if the frontier is impossibly far AHEAD of the player, a

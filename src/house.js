@@ -2,7 +2,7 @@
 // Declarative tables for the world compiler + furnishing + the act-gating props.
 // Grid: origin (-12,-14), 12x10 cells of 2m. Backyard begins at world z=6.
 import * as THREE from 'three';
-import { clamp } from './util.js';
+import { clamp, TAU } from './util.js';
 
 export const HOUSE_TABLES = {
   origin: [-12, -14],
@@ -564,6 +564,19 @@ export function buildHouse(game) {
     }
   }
 
+  // the cellar stairs are solid now (playtest 3b: you could stroll into the
+  // empty volume UNDER the descending ramp from the basement corridor, and
+  // step off its west edge through the scullery floor slab). Fill the
+  // under-stair wedge with stepped colliders (tops held under the walking
+  // surface) and seal the west face where the slab band was exposed.
+  // NOTE: the corridor UNDER the hanging flight is real walkway (the basement
+  // spawn is there) — so the fix is a boxed-in stair skirt you can't see
+  // through, plus one collider only where headroom truly runs out.
+  for (let i = 0; i < 4; i++) {
+    world.box(M.woodDark, 10, -(0.75 * i + 0.42), 2.5 + i, 4.04, 0.9, 1.04);
+  }
+  world.addCollider(8, -3.3, 4.7, 12, -2.2, 6);      // the crawl-height dead end under the low steps
+
   // roof slabs: over ground cells with no first-floor room, and over first
   const firstCells = new Set();
   for (const [id, x0, z0, x1, z1, lv] of HOUSE_TABLES.rooms) {
@@ -762,14 +775,115 @@ function furnish(game) {
     }
   });
 
-  // webs across the basement corridor — brushed aside as you pass
-  const webGeo = new THREE.PlaneGeometry(1.9, 2.2);
+  // webs across the basement corridor — real strand geometry, not cartoon
+  // planes (playtest 3b): radial spokes, sagging spiral rings, a couple of
+  // torn gaps, and dew strands that catch the skull light. Brushed aside as
+  // you pass, same as before.
+  const strandMat = new THREE.LineBasicMaterial({ color: 0xb4bac0, transparent: true, opacity: 0.26, depthWrite: false });
+  const dewMat = new THREE.LineBasicMaterial({ color: 0xd8dde2, transparent: true, opacity: 0.5, depthWrite: false });
+  const mkWeb = (seed) => {
+    let s = seed >>> 0;
+    const r = () => { s = Math.imul(s ^ (s >>> 15), 1 | s); s ^= s + Math.imul(s ^ (s >>> 7), 61 | s); return ((s ^ (s >>> 14)) >>> 0) / 4294967296; };
+    const main = [], dew = [];
+    const spokes = 9 + Math.floor(r() * 3);
+    const angles = [];
+    for (let i = 0; i < spokes; i++) angles.push((i / spokes) * TAU + (r() - 0.5) * 0.22);
+    const R = 0.95 + r() * 0.25;
+    const torn = Math.floor(r() * spokes);                  // one ragged sector
+    for (const a of angles) {
+      main.push(0, 0, 0, Math.cos(a) * R * (0.85 + r() * 0.3), Math.sin(a) * R * (0.85 + r() * 0.3), (r() - 0.5) * 0.05);
+    }
+    for (let ring = 0.18; ring < R; ring += 0.13 + r() * 0.05) {
+      for (let i = 0; i < spokes; i++) {
+        if (i === torn && ring > R * 0.45 && r() < 0.75) continue;   // the tear
+        const a0 = angles[i], a1 = angles[(i + 1) % spokes];
+        const sag = 0.04 + ring * 0.06;
+        const r0 = ring * (0.92 + r() * 0.16), r1 = ring * (0.92 + r() * 0.16);
+        const x0 = Math.cos(a0) * r0, y0 = Math.sin(a0) * r0;
+        const x1 = Math.cos(a1) * r1, y1 = Math.sin(a1) * r1;
+        const xm = (x0 + x1) / 2, ym = (y0 + y1) / 2 - sag;
+        const bucket = r() < 0.07 ? dew : main;
+        bucket.push(x0, y0, 0, xm, ym, (r() - 0.5) * 0.03);
+        bucket.push(xm, ym, (r() - 0.5) * 0.03, x1, y1, 0);
+      }
+    }
+    // anchor lines running off-frame
+    for (let i = 0; i < 4; i++) {
+      const a = r() * TAU;
+      main.push(Math.cos(a) * R, Math.sin(a) * R, 0, Math.cos(a) * (R + 0.8), Math.sin(a) * (R + 0.8) + 0.3, (r() - 0.5) * 0.3);
+    }
+    const g = new THREE.Group();
+    for (const [arr, mat] of [[main, strandMat], [dew, dewMat]]) {
+      if (!arr.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      g.add(new THREE.LineSegments(geo, mat));
+    }
+    return g;
+  };
+
+  // unlit near-black: a spider is a silhouette that moves, not a lit object
+  const spiderBody = new THREE.MeshBasicMaterial({ color: 0x0a0806 });
+  const mkSpider = (scale = 1) => {
+    const sp = new THREE.Group();
+    const abdomen = new THREE.Mesh(new THREE.SphereGeometry(0.042 * scale, 8, 6), spiderBody);
+    abdomen.scale.set(0.85, 0.75, 1.15);
+    abdomen.position.z = -0.045 * scale;
+    sp.add(abdomen);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.024 * scale, 7, 5), spiderBody);
+    head.position.z = 0.012 * scale;
+    sp.add(head);
+    for (let i = 0; i < 8; i++) {
+      const side = i < 4 ? -1 : 1;
+      const k = i % 4;
+      const leg = new THREE.Group();
+      leg.position.set(side * 0.02 * scale, 0, (k - 1.4) * 0.02 * scale);
+      leg.rotation.z = side * (0.7 + k * 0.12);
+      leg.rotation.y = side * (k - 1.5) * 0.35;
+      const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.0035 * scale, 0.0025 * scale, 0.075 * scale, 4), spiderBody);
+      seg1.position.y = 0.034 * scale;
+      leg.add(seg1);
+      const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.0025 * scale, 0.0015 * scale, 0.07 * scale, 4), spiderBody);
+      seg2.position.set(0, 0.068 * scale, 0.01 * scale);
+      seg2.rotation.x = 1.25;
+      leg.add(seg2);
+      sp.add(leg);
+    }
+    return sp;
+  };
+
   for (let i = 0; i < 5; i++) {
-    const w = new THREE.Mesh(webGeo, game.mats.web);
+    const w = mkWeb(0x1234 + i * 977);
     w.position.set(6.5 - i * 2.1, B + 1.2, 3.05 + (i % 2) * 0.5);
     w.rotation.y = Math.PI / 2 + (i - 2) * 0.12;
     scene.add(w);
     game.webs.push(w);
+    // every other web is occupied. the occupant minds you coming.
+    if (i % 2 === 0) {
+      const sp = mkSpider(0.8 + (i % 3) * 0.25);
+      sp.position.set((i - 2) * 0.11, 0.25 + (i % 2) * 0.3, 0.02);
+      sp.rotation.z = (i - 2) * 0.9;
+      w.add(sp);
+      const home = sp.position.clone();
+      let darted = 0, trembleT = 2 + i;
+      game.tickers.push((dt, t) => {
+        if (w.scale.y < 0.5) { sp.visible = false; return; }   // web brushed away: it's gone. somewhere.
+        trembleT -= dt;
+        if (trembleT <= 0) {
+          trembleT = 2.5 + Math.random() * 4;
+          sp.position.x = home.x + (Math.random() - 0.5) * 0.03;
+        }
+        const wp = w.getWorldPosition(_vDread);
+        const d = Math.hypot(wp.x - game.player.pos.x, wp.z - game.player.pos.z);
+        if (d < 1.7 && darted <= 0) {
+          darted = 6;                                          // it FLEES you — motion is the scare
+          const a = Math.random() * TAU;
+          home.set(home.x + Math.cos(a) * 0.45, Math.min(0.9, home.y + 0.3), 0.02);
+        }
+        darted -= dt;
+        sp.position.lerp(home, Math.min(1, dt * 9));
+      });
+    }
   }
 }
 
@@ -1037,8 +1151,10 @@ function basementAct(game) {
   const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.14, 10), sootDark);
   collar.position.set(0.22, 1.7, -0.12);
   inc.add(collar);
-  const flue = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 1.0, 10), soot);
-  flue.position.set(0.22, 2.2, -0.12);
+  // flue ends inside the ceiling slab — it was poking a pale tip clean
+  // through into the kitchen floor (playtest 3b: "that thing in the wall")
+  const flue = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.72, 10), soot);
+  flue.position.set(0.22, 2.12, -0.12);
   inc.add(flue);
   // firebox cavity + ember bed, visible when the door swings
   const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.66, 0.5),
