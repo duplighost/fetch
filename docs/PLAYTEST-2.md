@@ -62,10 +62,13 @@ breaking them through the door without ever seeing them.
   (`framedArt` on the x=4 wall at z 2.35, ground). Bookcase parked in front
   of the study's west window (`bookshelf` at z 1.1 on the x=-12 wall).
   Second bookcase oddly placed beside it. All being re-seated.
-- `[OPEN]` Systematic audit: walk every `framedArt`/furniture placement against
-  the door/window hole tables in `house.js` (`HOUSE_TABLES.doors/windows` —
-  wall plane = cell*2-12 for x, cell*2-14 for z, holes span the cell). Flag or
-  fix anything overlapping a hole or blocking a window/door approach.
+- `[SHIPPED 2026-08-08]` Systematic audit: `tools/audit-furnishings.mjs` now
+  checks every furnish() placement against the hole tables, wall segments,
+  door/window approaches, stair shafts and wall penetration (same edge model
+  as world.js). First run found 3: nursery wardrobe crowding the landing
+  doorway, living fireplace across the west window (under its own curtains),
+  study painting floating 0.8m off any wall. All re-seated; audit runs clean.
+  Re-run it after any furnishing change.
 
 ## Guidance
 
