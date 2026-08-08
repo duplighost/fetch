@@ -20,6 +20,7 @@ const FIXED_DT = 1 / 120;
 const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const _impV = new THREE.Vector3();
 const VERSION = '0.1.0-wake';
 
 // ------------------------------------------------------------------- input
@@ -90,7 +91,7 @@ class Game {
     this.checkpointPose = null;
     this.gorePool = [];
     this.goreGeo = new THREE.IcosahedronGeometry(0.08, 0);
-    this.goreMat = new THREE.MeshStandardMaterial({ color: 0x1a1216, roughness: 0.75 });
+    this.goreMat = new THREE.MeshStandardMaterial({ color: 0x3a3236, roughness: 0.75 });   // must read in the dark
 
     this._setupRenderer();
     this._setupScene();
@@ -302,18 +303,47 @@ class Game {
   residentHeard(n) { this.director.residentHeard(n); }
 
   impact(kind, pos) {
-    if (kind === 'break') { this.hitStop = Math.max(this.hitStop, 0.085); this.shake(0.46); }
-    else if (kind === 'hurt') { this.hitStop = Math.max(this.hitStop, 0.05); this.shake(0.28); }
+    // THE IMPACT LANGUAGE (kick-ball law): the load-bearing distinction is
+    // TIME. quiet stun = short stop; the pop owns the longest stop in the
+    // game; 'locked' collapses inward — this cannot be put down yet.
+    if (kind === 'pop') { this.hitStop = Math.max(this.hitStop, 0.13); this.shake(0.6); this.fovKick = Math.max(this.fovKick || 0, 2.5); }
+    else if (kind === 'break') { this.hitStop = Math.max(this.hitStop, 0.085); this.shake(0.46); this.fovKick = Math.max(this.fovKick || 0, 1.8); }
+    else if (kind === 'hurt') { this.hitStop = Math.max(this.hitStop, 0.05); this.shake(0.28); this.fovKick = Math.max(this.fovKick || 0, 1.2); }
+    else if (kind === 'locked') { this.hitStop = Math.max(this.hitStop, 0.06); this.shake(0.2); }
     else this.shake(0.11);
+    if (pos) this._impactFx(kind, pos);
   }
 
-  gore(pos, n) {
+  _impactFx(kind, pos) {
+    // contact bloom + ring at the point of impact — brightness and motion
+    // carry the meaning, never hue. outward ring = hurt; inward = locked.
+    if (!this._impactLight) {
+      this._impactLight = new THREE.PointLight(0xd8cbb0, 0, 7, 1.8);
+      this.scene.add(this._impactLight);
+      this._impactRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.16, 0.21, 24),
+        new THREE.MeshBasicMaterial({ color: 0xcfd6da, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+      this.scene.add(this._impactRing);
+    }
+    this._impactLight.position.copy(pos);
+    this._impactLight.intensity = kind === 'pop' ? 70 : kind === 'locked' ? 16 : 32;
+    const R = this._impactRing;
+    R.position.copy(pos);
+    R.lookAt(this.camera.getWorldPosition(_impV));
+    this._ringT = 0.22;
+    this._ringIn = kind === 'locked';
+    R.material.opacity = kind === 'pop' ? 0.8 : 0.5;
+    R.scale.setScalar(this._ringIn ? 3.2 : 0.6);
+  }
+
+  gore(pos, n, speed = 20) {
+    const k = 0.7 + clamp(speed / 40, 0, 1) * 0.8;   // harder hits burst harder
     for (let i = 0; i < n; i++) {
       const m = new THREE.Mesh(this.goreGeo, this.goreMat);
       m.scale.setScalar(0.65 + Math.random() * 0.7);
       m.position.copy(pos);
       m.position.y += 1;
-      const v = new THREE.Vector3((Math.random() - 0.5) * 7, Math.random() * 6, (Math.random() - 0.5) * 7);
+      const v = new THREE.Vector3((Math.random() - 0.5) * 7 * k, Math.random() * 6 * k, (Math.random() - 0.5) * 7 * k);
       this.scene.add(m);
       this.gorePool.push({ m, v, t: 1.6 });
     }
@@ -494,8 +524,35 @@ class Game {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
     }
+    // impact fx breathe every rendered frame — including inside hit-stop
+    const rdt = this._lastShakeDt || 0.016;
+    if (this._impactLight && this._impactLight.intensity > 0.1)
+      this._impactLight.intensity *= Math.exp(-rdt * 9);
+    if (this._ringT > 0) {
+      this._ringT -= rdt;
+      const R = this._impactRing, k = Math.max(0, this._ringT / 0.22);
+      R.scale.setScalar(this._ringIn ? 0.5 + k * 2.7 : 0.6 + (1 - k) * 2.6);
+      R.material.opacity *= Math.exp(-rdt * 6.5);
+      if (this._ringT <= 0) R.material.opacity = 0;
+    }
+    // FOV punch, decayed fast — a flinch, not a zoom
+    this.fovKick = Math.max(0, (this.fovKick || 0) - rdt * 10);
+    const fov = 71 + this.fovKick;
+    if (Math.abs(fov - this.camera.fov) > 0.01) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
+    // rotational flinch: first-person reads rotation as a hit to the HEAD;
+    // applied for this frame only, removed after render
+    let rkx = 0, rky = 0;
+    const s2r = this._shake * this._shake;
+    if (!REDUCED_MOTION && s2r > 0.0001) {
+      rkx = (Math.random() - 0.5) * s2r * 0.05;
+      rky = (Math.random() - 0.5) * s2r * 0.04;
+      this.camera.rotation.x += rkx;
+      this.camera.rotation.y += rky;
+    }
     const mirrored = this.finale.render(this.scene, this.camera);
     this.renderer.render(this.scene, this.camera);
+    this.camera.rotation.x -= rkx;
+    this.camera.rotation.y -= rky;
     const info = this.renderer.info.render;
     this.lastRender = { drawCalls: info.calls, triangles: info.triangles };
     this.renderer.autoClear = false;
@@ -531,7 +588,15 @@ class Game {
       last = now;
       this._lastShakeDt = rawDt;
       if (TEST_MODE && !this._selfStep) { this.render(); return; }
-      if (this.hitStop > 0) { this.hitStop -= rawDt; this.render(); return; }   // edges buffered, not lost
+      if (this.hitStop > 0) {
+        // living freeze: the sim holds its breath but the cosmetic layer
+        // drifts — hands, shake decay, impact bloom. A held breath, not a
+        // dropped frame. Edges buffered, not lost.
+        this.hitStop -= rawDt;
+        this.skull._updateHands(rawDt * 0.2);
+        this.render();
+        return;
+      }
       acc = Math.min(acc + rawDt, FIXED_DT * 10);
       let first = true;
       while (acc >= FIXED_DT) {
@@ -706,8 +771,12 @@ async function runAutotest(game) {
   F.stepWith(0.4);   // clear the post-hit immunity window before the second throw
   F.setSkull(game.player.pos.x + 1, 1.2, game.player.pos.z, 20, 0, 0, 'outbound');
   F.stepWith(0.5);
-  check('stunned-walker-pops', () => !game.enemies.list.includes(e) && game.flags.has('firstPop'));
-  F.stepWith(2.5);
+  // the pop is now a physical death: the corpse is launched and tumbles for
+  // 0.62s before removal — assert the arc, then the removal
+  check('stunned-walker-pops', () => (e.state === 'dying' || !game.enemies.list.includes(e)) && game.flags.has('firstPop'));
+  F.stepWith(1.0);
+  check('popped-walker-is-gone', () => !game.enemies.list.includes(e));
+  F.stepWith(1.5);
   game.enemies.clear();
   game.dead = false; game.player.frozen = false;
 

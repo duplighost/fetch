@@ -213,6 +213,14 @@ try {
     beat('out-in-the-graveyard', g.act === 'graveyard', g.act);
     snap('03-graveyard');
 
+    // the glint that chimed through the bedroom glass all game: the tree is
+    // right here now, and the line is clear from the ground
+    walkTo(5.1, 16.5, 15);
+    throwAt(5.2, 7.55, 13.85, 0.45);
+    for (let t = 0; t < 4 && !g.flags.has('keepsake'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('the-locket-answered', g.flags.has('keepsake'), g.skull.getState());
+
     // ---- ACT 3: graveyard ----------------------------------------------
     walkTo(-4, 14, 20); walkTo(2, 26, 25); walkTo(2, 41, 25);
     walkTo(2, 45, 10);
@@ -305,6 +313,17 @@ try {
     beat('skull-given-to-the-waterfall', g.flags.has('waterfallTaken') && g.skull.mode === 'gone', g.skull.mode);
     F.stepWith(8);                                   // the bridge rises
     beat('bridge-rose', g.bridgeStones.every((s) => s.position.y > 0.05));
+
+    // the falls kept the skull but not the keepsake — it's on the shore.
+    // go AROUND the plunge pool along the east rim, both ways.
+    walkTo(g.clearingCenter.x + 8, g.clearingCenter.z + 8, 20);
+    walkTo(g.clearingCenter.x + 8.7, g.clearingCenter.z + 17.1, 20);
+    F.stepWith(1.5);
+    useAt(g.clearingCenter.x + 9.3, 0.1, g.clearingCenter.z + 17.5);
+    F.stepWith(0.3);
+    beat('it-left-the-locket', g.flags.has('locketKept'));
+    walkTo(g.clearingCenter.x + 8, g.clearingCenter.z + 8, 20);
+    walkTo(g.clearingCenter.x, g.clearingCenter.z + 6, 20);
 
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 14, 20);
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 21, 15);   // through the fall

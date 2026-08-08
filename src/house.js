@@ -544,6 +544,26 @@ export function buildHouse(game) {
     if (d.opts.ajar) { d.setOpen(true); d.update(5); }
   }
 
+  // foundation skirt: the band between basement ceiling (-0.55) and ground
+  // floor (0) has no wall — levels build floor..ceil — and the cellar stair
+  // shaft cuts both slabs, so descending you could see clean out of the house
+  // through the seam (playtest 3). A stone footing seals it and reads right
+  // from the yard too.
+  {
+    const gcells = new Set();
+    for (const [id, x0, z0, x1, z1, lv] of HOUSE_TABLES.rooms) {
+      if (lv !== 'ground') continue;
+      for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) gcells.add(cx + ',' + cz);
+    }
+    for (const key of gcells) {
+      const [cx, cz] = key.split(',').map(Number);
+      if (!gcells.has(cx + ',' + (cz - 1))) world.box(M.brick, -12 + cx * 2 + 1, -0.38, -14 + cz * 2, 2.04, 0.8, 0.5);
+      if (!gcells.has(cx + ',' + (cz + 1))) world.box(M.brick, -12 + cx * 2 + 1, -0.38, -14 + (cz + 1) * 2, 2.04, 0.8, 0.5);
+      if (!gcells.has((cx - 1) + ',' + cz)) world.box(M.brick, -12 + cx * 2, -0.38, -14 + cz * 2 + 1, 0.5, 0.8, 2.04);
+      if (!gcells.has((cx + 1) + ',' + cz)) world.box(M.brick, -12 + (cx + 1) * 2, -0.38, -14 + cz * 2 + 1, 0.5, 0.8, 2.04);
+    }
+  }
+
   // roof slabs: over ground cells with no first-floor room, and over first
   const firstCells = new Set();
   for (const [id, x0, z0, x1, z1, lv] of HOUSE_TABLES.rooms) {
@@ -796,6 +816,67 @@ function bedroomAct(game) {
       skull.grab('bedroomKey', key);
       game.audio.glassTink({ pos: key.getWorldPosition(new THREE.Vector3()), gain: 0.5 });
       game.flag('gotBedroomKey');
+      return 'return';
+    },
+  });
+
+  // ---- the locket -----------------------------------------------------
+  // A second glint hangs DEEPER in the canopy, past where any straight
+  // throw can go — the front boughs knock the skull back. Throw out the
+  // window, HOLD, and steer it around under the leaves: the poise grammar's
+  // first real lesson, taught in a safe sky. And this one isn't a fetch:
+  // the skull KEEPS it. It wears it on its jaw for the rest of the game.
+  // (Playtest 3: "not everything has to be a fucking key.")
+  world.addCollider(2.2, 6.3, 8.6, 8.8, 11.5, 12.0);   // the front boughs, solid to a thrown thing
+  const brassMat = new THREE.MeshStandardMaterial({ color: 0xb9a06a, metalness: 0.85, roughness: 0.3, emissive: 0x4a3c14, emissiveIntensity: 0.6 });
+  const locket = new THREE.Group();
+  const twig = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.02, 0.9, 5), M.bark);
+  twig.position.y = 0.62;
+  locket.add(twig);
+  const chainL = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.34, 4),
+    new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
+  chainL.position.y = 0.05;
+  locket.add(chainL);
+  const oval = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), brassMat);
+  oval.scale.set(0.8, 1, 0.34);
+  oval.position.y = -0.16;
+  locket.add(oval);
+  locket.position.set(5.2, 7.55, 13.85);
+  scene.add(locket);
+  // it glints and chimes faintly in the night air — the eye finds it from the window
+  let chimeT = 4;
+  game.tickers.push((dt, t) => {
+    if (game.flags.has('keepsake')) return;
+    brassMat.emissiveIntensity = 0.45 + Math.max(0, Math.sin(t * 2.1)) * 0.75;
+    locket.rotation.y = Math.sin(t * 0.7) * 0.5;
+    chimeT -= dt;
+    if (chimeT <= 0) {
+      chimeT = 5 + Math.random() * 4;
+      game.audio.glassTink({ pos: locket.position, gain: 0.16, rate: 1.9 });
+    }
+  });
+  world.addFetchTarget({
+    id: 'locket', object: oval, radius: 0.6,
+    onHit(skull) {
+      if (!game.flags.has('gotBedroomKey')) return 'continue';
+      this.enabled = false;
+      scene.remove(locket);
+      // it clamps the chain in its teeth and never lets go
+      const dangle = new THREE.Group();
+      const c1 = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.05, 4),
+        new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
+      c1.position.y = -0.02;
+      dangle.add(c1);
+      const worn = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), brassMat);
+      worn.scale.set(0.8, 1, 0.34);
+      worn.position.y = -0.055;
+      dangle.add(worn);
+      dangle.position.set(0.048, -0.04, 0.055);
+      skull.jaw.add(dangle);
+      game.locketDangle = dangle;
+      game.flag('keepsake');
+      game.audio.glassTink({ pos: skull.pos, gain: 0.55, rate: 1.4 });
+      game.audio.catchThud({ pos: skull.pos, gain: 0.3, rate: 1.5 });
       return 'return';
     },
   });

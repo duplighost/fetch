@@ -20,6 +20,8 @@ const KIND = {
 };
 
 const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x16141a };
+const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
+const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 const V = {
   a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(),
   d: new THREE.Vector3(),
@@ -411,16 +413,42 @@ export class Enemies {
         }
         case 'stunned': {
           e.stunT -= dt;
+          // the body gives ground: recoil snap, then a stagger it has to catch
+          if (e.recoilT > 0) {
+            e.recoilT -= dt;
+            e.mesh.rotation.x = -0.3 * (e.recoilT / 0.12);
+          } else if (Math.abs(e.mesh.rotation.x) > 0.001) {
+            e.mesh.rotation.x *= Math.exp(-8 * dt);
+          }
+          if (e.knockV && e.knockV.lengthSq() > 0.001) {
+            this._moveWithPush(e, e.knockV.x * dt * 6, e.knockV.z * dt * 6);
+            e.knockV.multiplyScalar(Math.exp(-8 * dt));
+          }
           // convulsion + dimming — never a hue change
           const k = Math.sin(e.stunT * 34) * 0.12;
           e.mesh.rotation.z = k;
           e.mesh.userData.mat.color.setScalar(0.06 + Math.abs(k));
           if (e.stunT <= 0) {
             e.mesh.rotation.z = 0;
+            e.mesh.rotation.x = 0;
             e.mesh.userData.mat.color.setHex(BASE_COLOR[e.kind]);
             e.state = 'wind';
             e.windT = e.spec.windup * 0.5;
           }
+          break;
+        }
+        case 'dying': {
+          // a physical death: launched along the throw, tumbling, shrinking —
+          // a corpse that goes somewhere instead of a mesh that blinks out
+          e.deadT -= dt;
+          e.pos.x += e.deadV.x * dt;
+          e.pos.z += e.deadV.z * dt;
+          e.deadY = Math.max(0, (e.deadY ?? 0) + e.deadV.y * dt);
+          e.deadV.y -= 13 * dt;
+          e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1) + e.deadY;
+          e.mesh.rotation.x += dt * 5.5;
+          e.mesh.scale.setScalar(Math.pow(Math.max(0.001, e.deadT / 0.62), 0.65) * e.spec.scale);
+          if (e.deadT <= 0) this._remove(e);
           break;
         }
       }
@@ -440,9 +468,9 @@ export class Enemies {
           L.arms[1].rotation.x = Math.sin(e.phase) * 0.35;
         }
       }
-      e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
+      if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
-      if (e.state !== 'dormant' && dist > 0.1) {
+      if (e.state !== 'dormant' && e.state !== 'dying' && dist > 0.1) {
         e.mesh.rotation.y = Math.atan2(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
       }
       // a stunned Standing One resumes standing, not chasing
@@ -453,17 +481,43 @@ export class Enemies {
       // just stunned and auto-pops it — making the quiet option impossible.
       // A hit grants 0.6s immunity; popping takes a deliberate second THROW.
       e.iframes = Math.max(0, (e.iframes || 0) - dt);
-      if (e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8) {
+      if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8) {
         if (this._skullIntersects(e, skull.prevPos, skull.pos)) {
           e.iframes = 0.6;
+          const speed = skull.vel.length();
+          const hitInt = clamp((speed - 8) / 30, 0, 1);
+          // the carom: contact must be visible in the trajectory — the skull
+          // kicks off the body BEFORE the return law bends it home. No clock
+          // is touched, so the kick-ball law survives intact.
+          const away = V.d.set(skull.pos.x - e.pos.x, (skull.pos.y - (e.pos.y + 1.2)) * 0.3, skull.pos.z - e.pos.z).normalize();
+          const travX = skull.pos.x - skull.prevPos.x, travZ = skull.pos.z - skull.prevPos.z;
+          const travL = Math.hypot(travX, travZ) || 1;
           if (e.state === 'stunned' && e.spec.hp !== Infinity) {
-            this._pop(e);
+            this._pop(e, travX / travL, travZ / travL, speed);
+            skull.vel.copy(away).multiplyScalar(speed * 0.5);
+            skull.jaw.rotation.x = 0.65;             // it comes back grinning
             skull.beginReturn('hit');
           } else if (e.state !== 'stunned') {
+            // QUIET tier: it staggers, gives ground, and its voice gasps
             e.state = 'stunned';
             e.stunT = e.spec.stun;
-            game.impact('break', skull.pos);
-            game.audio.thud({ pos: e.pos, gain: 0.8, rate: 0.7 });
+            e.recoilT = 0.12;
+            if (!e.knockV) e.knockV = new THREE.Vector3();
+            e.knockV.set(travX / travL, 0, travZ / travL)
+              .multiplyScalar(clamp(speed * 0.03, 0.45, 0.9));
+            game.impact('hurt', skull.pos);
+            game.audio.thud({ pos: e.pos, gain: 0.55 + hitInt * 0.35, rate: 0.9 + hitInt * 0.3, intensity: hitInt, crack: true });
+            if (e.loop && e.loop.choke) e.loop.choke();
+            skull._flourishT = 0.3;                  // the tooth CLACK is the hit marker
+            game.audio.catchThud({ pos: skull.pos, gain: 0.35, rate: 1.8 });
+            skull.vel.copy(away).multiplyScalar(speed * 0.35);
+            skull.beginReturn('hit');
+          } else {
+            // re-hitting a stunned unkillable: the collapsing ring — it cannot
+            // be put down, only paused. taught with zero words.
+            game.impact('locked', skull.pos);
+            game.audio.thud({ pos: e.pos, gain: 0.5, rate: 0.55, intensity: 0.2 });
+            skull.vel.copy(away).multiplyScalar(speed * 0.45);
             skull.beginReturn('hit');
           }
         }
@@ -496,12 +550,28 @@ export class Enemies {
     game.audio.setTension(Math.max(game.baseTension || 0, maxThreat));
   }
 
-  _pop(e) {
+  _pop(e, dirX = 0, dirZ = 0, speed = 20) {
     const game = this.game;
-    game.impact('break', e.pos);
+    // the LOUD tier owns the longest stop in the game — the load-bearing
+    // distinction is time: if the game stutters, you ended something.
+    game.impact('pop', e.pos);
     game.audio.pop({ pos: e.pos, gain: 1.0 });
-    game.gore(e.pos, 14);
-    this._remove(e);
+    game.gore(e.pos, 10 + Math.round(clamp((speed - 8) / 30, 0, 1) * 8), speed);
+    // the corpse goes SOMEWHERE: launched along the throw, tumbling, shrinking
+    e.state = 'dying';
+    e.deadT = 0.62;
+    e.deadY = 0.9;
+    e.deadV = new THREE.Vector3(dirX, 0, dirZ).multiplyScalar(5.5);
+    e.deadV.y = 4.5;
+    if (e.loop) { e.loop.stop(); e.loop = null; }
+    // the house keeps the score: a dark stain where it burst, forever
+    const stain = new THREE.Mesh(STAIN_GEO, STAIN_MAT);
+    stain.rotation.x = -Math.PI / 2;
+    stain.position.set(e.pos.x,
+      game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1) + 0.015, e.pos.z);
+    stain.rotation.z = Math.random() * Math.PI;
+    stain.scale.set(0.8 + Math.random() * 0.5, 1 + Math.random() * 0.6, 1);
+    game.scene.add(stain);
     game.flag('firstPop');
     // popping is loud. everything nearby turns toward the sound.
     this.wakeAll(e.pos.x, e.pos.z, 30);

@@ -65,11 +65,29 @@ Alex's call, so no default change ships until he judges.
 - `[SHIPPED 2026-08-08]` Combat feel pass v1 (#6): hit-stop, impact audio
   layers, directional stagger, hot returns, whiff audio — ported from
   PARTY ANIMAL / kick-ball feel DNA. Chatter (#7) untouched.
-- `[PROPOSAL — needs Alex]` Window puzzle v1: after the tree key, a second
-  thing hangs on the FAR side of the canopy, visible from the bedroom
-  window but unreachable by a straight throw — throw OUT the window, HOLD
-  to poise, steer around the canopy, snatch it, release. Teaches
-  poise-steering with zero new systems. Reward (non-key, per #5): TBD by
-  Alex — candidates: a story object, a skull "toy", a light upgrade.
+- `[SHIPPED 2026-08-08]` THE LOCKET (new, Claude-authored): a second glint
+  hangs deep in the tree canopy, chiming faintly — visible from the bedroom
+  window all game, but the front boughs knock every throw back. The moment
+  you climb out of the basement into the graveyard, the tree is above you
+  and the line is clear. The skull clamps the chain and WEARS it on its jaw
+  for the rest of the game. At the waterfall, the falls take the skull — but
+  a few breaths later the locket is lying on the shore, chain snapped. Pick
+  it up (E) and it rides in your empty hands to the very end; the
+  reflection's skull, when you meet it, still wears its own. Non-key,
+  wordless, colorblind-safe. Both beats covered in the playthrough gate.
+- `[PROPOSAL — needs Alex]` Window puzzle (throw out one window, in through
+  another): engine truth learned building the locket — a HELD throw chases a
+  guide that always sits ~7m beyond your aim, so steering sweeps DIRECTION,
+  never range. Window-to-window sweeps at range fit the grammar (park it
+  out, sweep it across the far window's plane); mid-range point-snatches
+  don't. Concrete v1 when you want it: the sealed guest room's east window
+  as the entry, sweep across at ~15m, snatch something off the guest bed.
+- `[PROPOSAL — needs Alex]` The foyer mirror (THE LAG DNA): the black-glass
+  foyer mirror turns true mirror for ONE beat mid-game — your reflection's
+  skull lags half a second behind yours. Pure finale foreshadowing; the
+  pooled mirror machinery already exists.
+- `[OPEN]` Forest look polish from the eaten-path kit: trunk lean, overhead
+  canopy closure, shrub walls, two-ribbon ground, fog-matched background
+  (seal mechanics + witnessing shipped; this is the visual layer).
 - `[DESIGN]` Nursery mobile telegraphing (carried from PLAYTEST-2).
 - `[DESIGN]` The leading pass (light/sightlines/prop arrows), act by act.
