@@ -119,9 +119,9 @@ Known issues / active work: `docs/PLAYTEST-1.md`, `docs/PLAYTEST-2.md`.
 Walker/enemy body resculpt (visual, high value), skull sculpt round 3,
 furniture-vs-openings audit, nursery mobile telegraphing (design first),
 window-puzzle prototypes (after Alex's designs), audio texture passes.
-Claude currently owns (branch `playtest-2`): viewmodel composition, door
+Claude has already SHIPPED (2026-08-08, on main): viewmodel composition, door
 language, cellar-board staging, reported furniture fixes, Resident
-pathfinding. Don't duplicate those.
+pathfinding. Don't redo those — build on them.
 
 ## Live deployment
 
