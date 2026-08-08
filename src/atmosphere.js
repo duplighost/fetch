@@ -753,14 +753,23 @@ function buildCaveDress(game, track, own) {
   teeth.name = 'cave stalactites';
   track(teeth, toothMatrices.length);
 
+  // This was a wayfinding read carried by HUE — bright cyan mica against grey
+  // rock, and the authored comment said out loud that it was meant to become a
+  // spatial memory. Alex is colourblind: to him it was grey mica on grey rock,
+  // which is no trail at all. Same idea, legal channel — the crystals GROW and
+  // BRIGHTEN the closer you get to the way out, so the read is "these are
+  // getting bigger, I am going the right way".
   const crystalMat = own(new THREE.MeshStandardMaterial({
-    color: 0x77d8df,
-    emissive: 0x1c6977,
-    emissiveIntensity: 1.55,
+    color: 0xc9d4d6,
+    emissive: 0x8fa6ab,
+    emissiveIntensity: 0.85,
     roughness: 0.24,
     metalness: 0.12,
+    vertexColors: true,
   }));
   const crystalMatrices = [];
+  const crystalTints = [];
+  const legs = Math.max(1, path.length - 1);
   for (let leg = 0; leg < path.length - 1; leg++) {
     const [ax, az] = path[leg], [bx, bz] = path[leg + 1];
     const dx = bx - ax, dz = bz - az;
@@ -768,22 +777,31 @@ function buildCaveDress(game, track, own) {
     const nx = tz, nz = -tx;
     for (let d = 0.9; d < len; d += 2.35) {
       const x = ax + tx * d, z = az + tz * d;
-      const sc = rng.range(0.22, 0.42);
-      // Repeating cyan mica on one wall becomes a spatial memory, not a HUD.
+      const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
+      const grow = 0.52 + 0.95 * t;
+      const bright = 0.38 + 0.62 * t;
+      const sc = rng.range(0.22, 0.42) * grow;
       crystalMatrices.push(compose(x + nx * 1.52, rng.range(0.42, 1.55), z + nz * 1.52,
         rng.range(-0.45, 0.45), rng.range(0, TAU), rng.range(-0.45, 0.45), sc, sc * rng.range(2.4, 4.2), sc));
+      crystalTints.push(bright);
       if (leg > 0 && rng.chance(0.38)) {
         const floorSc = sc * rng.range(0.58, 0.82);
         crystalMatrices.push(compose(x - nx * 1.10, floorSc * 1.2, z - nz * 1.10,
           rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
           floorSc, floorSc * rng.range(1.8, 3.0), floorSc));
+        crystalTints.push(bright * 0.9);
       }
     }
   }
   const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, crystalMatrices.length);
-  crystalMatrices.forEach((matrix, i) => crystals.setMatrixAt(i, matrix));
+  const tintCol = new THREE.Color();
+  crystalMatrices.forEach((matrix, i) => {
+    crystals.setMatrixAt(i, matrix);
+    crystals.setColorAt(i, tintCol.setScalar(crystalTints[i]));
+  });
+  if (crystals.instanceColor) crystals.instanceColor.needsUpdate = true;
   finishInstances(crystals, false, false);
-  crystals.name = 'cyan cave mica trail';
+  crystals.name = 'cave mica trail (grows toward the way out)';
   track(crystals, crystalMatrices.length);
 }
 

@@ -494,6 +494,8 @@ export class Forest {
       });
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
+      im.castShadow = true;
+      im.receiveShadow = true;
       scene.add(im);
       return im;
     };
@@ -558,6 +560,7 @@ export class Forest {
       g.setIndex(idx);
       g.computeVertexNormals();
       const m = new THREE.Mesh(g, mat);
+      m.receiveShadow = true;             // the trunks have to land ON something
       scene.add(m);
       return m;
     };

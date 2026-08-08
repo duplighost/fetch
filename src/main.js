@@ -117,11 +117,23 @@ class Game {
     this.skull = new Skull({ scene: this.scene, camera: this.camera, audio: this.audio, world: this.world, mats: this.mats, variant: Q.get('skull') });
     this.skull.setLayers((o) => o.layers.set(LAYER_HELD));
     // the skull is the light you carry — throw it and the light leaves with it
-    this.skullLight = new THREE.PointLight(0xb6cfdd, 42, 9, 1.6);
+    // Reaches further than it used to, because the world around it finally got
+    // dark. The fix for "I can't see" out here is to make the thing in your
+    // hands matter more, never to put the free light back — the free light was
+    // what made throwing it cost nothing.
+    this.skullLight = new THREE.PointLight(0xb6cfdd, 50, 10.5, 1.6);
     // the lantern lights the WORLD only: at point-blank range it was clipping
     // the whole viewmodel to white (the hands and skull never showed a single
     // form in hand). The viewmodel gets its own calibrated lamp instead.
     this.skullLight.layers.set(0);
+    // NOT a shadow caster, and the reason is measured, not assumed. The premise
+    // says the light you carry should throw shadows — but a PointLight shadow is
+    // six cube faces against everything already flagged castShadow (world.box
+    // flags every box it makes), and turning it on took the forest from 126 draw
+    // calls to 821, straight through the 700 gate. The cheap version is a
+    // one-face SpotLight shadow riding the skull, or a small proxy caster set;
+    // until one of those exists this stays off. Measure before re-enabling:
+    //   node tools/shot-areas.mjs  -> drawCalls per act.
     this.skull.root.add(this.skullLight);
     this.fillLight = new THREE.PointLight(0x28323c, 8, 3.5, 1.4);
     this.camera.add(this.fillLight);
@@ -188,6 +200,14 @@ class Game {
     tint('bone', 0xcfc9bb);
     tint('rock', 0x48545c);
     tint('headstone', 0x7b898f);
+    // The grade stopped at the front door. dirt, grass and bark own most of
+    // every frame after the house, and ungraded they came out BRIGHTER than the
+    // light the player is carrying — the forest floor outshone the skull's own
+    // pool and the trunks were the brightest objects on screen. A carried light
+    // needs something dark to carve.
+    tint('grass', 0x3d4a3c);
+    tint('dirt', 0x4a4239);
+    tint('bark', 0x4e4a42);
   }
 
   _buildGrain() {

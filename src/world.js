@@ -389,9 +389,18 @@ export class World {
   buildLights(scene) {
     // uninvited's floors — do not lower; 'the house feels empty' always meant lighting.
     // (r161 physical lighting: ambient/hemi carry the floor, point lights need candela-scale.)
-    scene.add(new THREE.AmbientLight(0x46536e, 0.95));
+    // These two were tuned for the HOUSE and then carried outdoors unchanged,
+    // which is why nothing after the house has a dark to be dark in. The
+    // director now scales them per act (AMBIENT_BY_ACT) — the house keeps
+    // exactly what it had, the outdoors gets to be night.
+    const ambient = new THREE.AmbientLight(0x46536e, 0.95);
+    scene.add(ambient);
     const hemi = new THREE.HemisphereLight(0x2c3852, 0x14100c, 0.75);
     scene.add(hemi);
+    this.ambient = ambient;
+    this.hemi = hemi;
+    this.ambientBase = 0.95;
+    this.hemiBase = 0.75;
     const moon = new THREE.DirectionalLight(0x8098c0, 1.3);
     moon.position.set(35, 60, -25);
     moon.castShadow = true;
@@ -406,7 +415,11 @@ export class World {
   freezeMoonShadow(renderer, scene, camera) {
     renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, camera);
-    renderer.shadowMap.autoUpdate = false;   // static sun => free shadows
+    // Freeze the MOON only. This used to switch renderer.shadowMap.autoUpdate
+    // off globally, from the bedroom, at boot — which baked the house's shadow
+    // map forever and meant nothing in the rest of the game could ever cast a
+    // shadow again, including the light the player carries in their hands.
+    if (this.moon) this.moon.shadow.autoUpdate = false;
   }
 
   _buildCandlePool() {
