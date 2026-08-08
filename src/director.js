@@ -22,11 +22,20 @@ const FOG_BY_ACT = {
   forest: 0.055, clearing: 0.018, cave: 0.07, mirror: 0.012,
 };
 const FOG_COLOR_BY_ACT = {
-  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x0a1422,
-  // forest fog == forest background (eaten-path's law): when they match, the
-  // corridor ends in a wall of dark instead of a visible geometry horizon, and
-  // the draw distance reads as authored rather than as a budget
-  forest: 0x030b10, clearing: 0x0d2731, cave: 0x07141a, mirror: 0x111620,
+  // Every outdoor act's fog == its own background (eaten-path's law): when they
+  // match, the world ends in a wall of dark instead of a visible geometry
+  // horizon, and the draw distance reads as authored rather than as a budget.
+  // Interiors keep a fog slightly off their background — a room SHOULD have a
+  // far wall, and matching there just flattens it.
+  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x050b16,
+  forest: 0x030b10, clearing: 0x071821, cave: 0x07141a, mirror: 0x111620,
+};
+// How much free light each act gets, as a scale on the house's tuning. The
+// house was never the problem and keeps exactly what it had; outdoors, ambient
+// and hemisphere were drowning the one light the player actually carries.
+const AMBIENT_BY_ACT = {
+  bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.42,
+  forest: 0.40, clearing: 0.5, cave: 0.26, mirror: 0.6,
 };
 const BACKGROUND_BY_ACT = {
   bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
@@ -78,6 +87,7 @@ export class Director {
     g.act = act;
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
+    g.ambientTarget = AMBIENT_BY_ACT[act] ?? 1;
     g.scene.fog.color.setHex(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
     g.scene.background.setHex(BACKGROUND_BY_ACT[act] ?? 0x03050a);
     this.approach = APPROACH_BY_ACT[act] ?? this.approach;
@@ -207,6 +217,15 @@ export class Director {
     // the ravine takes what falls in it
     if (g.act === 'forest' && g.player.pos.y < -4 && !g.dead) this.death(null);
     if (g.act === 'clearing' && g.player.pos.y < -1.5 && !g.dead) this.death(null);
+
+    // the free light eases toward the act's own floor, so walking out of the
+    // house is a walk into darkness rather than a change of wallpaper
+    const w = g.world;
+    if (w && w.ambient) {
+      const k = damp(w.ambient.intensity / w.ambientBase, g.ambientTarget ?? 1, 1.6, dt);
+      w.ambient.intensity = w.ambientBase * k;
+      w.hemi.intensity = w.hemiBase * k;
+    }
 
     // fear display: vignette breathes with tension; fog eases toward the act's density
     g.fx.fear = damp(g.fx.fear,

@@ -237,11 +237,20 @@ function buildGraveyardDress(game, track, own) {
   const s = new THREE.Vector3();
   const m = new THREE.Matrix4();
   const e = new THREE.Euler();
+  const col = new THREE.Color();
   stones.forEach((it, i) => {
     e.set(0, it.yaw, it.lean);
-    m.compose(p.set(it.x, 0.02, it.z), q.setFromEuler(e), s.set(rng.range(0.8, 1.18), it.tall, rng.range(0.82, 1.1)));
+    // some of them are being swallowed. A row of stones all standing at the
+    // same height on the same plane reads as a row of props; a few sunk to
+    // their shoulders reads as ground that has been moving for a century.
+    it.sink = rng.chance(0.3) ? rng.range(-0.34, -0.12) : rng.range(-0.04, 0.02);
+    m.compose(p.set(it.x, it.sink, it.z), q.setFromEuler(e), s.set(rng.range(0.8, 1.18), it.tall, rng.range(0.82, 1.1)));
     gothic.setMatrixAt(i, m);
+    // and no two of them weathered the same. Value only — the whole yard was
+    // one flat pale grey before this line.
+    gothic.setColorAt(i, col.setScalar(rng.range(0.48, 1.04)));
   });
+  if (gothic.instanceColor) gothic.instanceColor.needsUpdate = true;
   finishInstances(gothic, true, true);
   gothic.name = 'carved grave silhouettes';
   track(gothic, stones.length);
@@ -263,6 +272,108 @@ function buildGraveyardDress(game, track, own) {
   arms.name = 'grave crosses arms';
   track(upright, crossSites.length);
   track(arms, crossSites.length);
+
+  // ---- the three things that were actually missing from this yard ----
+
+  // 1. GRAVE MOUNDS. A headstone standing on flat ground is a slab in a field.
+  // The mound in front of it is what says something is buried there, and it is
+  // the cheapest possible geometry: a squashed hemisphere.
+  const moundGeo = new THREE.SphereGeometry(1, 9, 5, 0, TAU, 0, Math.PI / 2);
+  const moundMat = own(cloneTint(game.mats?.dirt, 0x3b3a30,
+    () => new THREE.MeshLambertMaterial({ color: 0x3b3a30 })));
+  moundMat.vertexColors = true;
+  const mounds = new THREE.InstancedMesh(moundGeo, moundMat, stones.length);
+  stones.forEach((it, i) => {
+    const sunken = it.sink < -0.1;                     // an old grave has fallen IN
+    q.setFromEuler(e.set(0, it.yaw, 0));
+    m.compose(
+      p.set(it.x + Math.sin(it.yaw) * 0.1, sunken ? -0.30 : -0.16, it.z + 1.15 + rng.range(-0.15, 0.15)),
+      q, s.set(rng.range(0.78, 1.05), sunken ? rng.range(0.16, 0.26) : rng.range(0.30, 0.44), rng.range(1.5, 1.95)),
+    );
+    mounds.setMatrixAt(i, m);
+    mounds.setColorAt(i, col.setScalar(rng.range(0.55, 1.0)));
+  });
+  if (mounds.instanceColor) mounds.instanceColor.needsUpdate = true;
+  finishInstances(mounds, false, true);
+  mounds.name = 'grave mounds';
+  track(mounds, stones.length);
+
+  // 2. GRASS. The ground was a bare sheet with props standing on it; nothing
+  // grew anywhere. Crossed alpha planes, same trick as the forest understory.
+  const bladeTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 64, 64);
+    for (let i = 0; i < 54; i++) {
+      const x = 4 + rng.float() * 56, w = rng.range(0.7, 1.9), h = rng.range(18, 54);
+      g.fillStyle = ['#2a2e26', '#22261f', '#31352c', '#191c17'][rng.int(0, 3)];
+      g.beginPath();
+      g.moveTo(x, 64);
+      g.quadraticCurveTo(x + rng.range(-9, 9), 64 - h * 0.6, x + rng.range(-14, 14), 64 - h);
+      g.lineTo(x + w, 64 - h * 0.94);
+      g.quadraticCurveTo(x + w + rng.range(-9, 9), 64 - h * 0.55, x + w, 64);
+      g.fill();
+    }
+    const t = new THREE.CanvasTexture(cv);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const tuftGeo = (() => {
+    const g = new THREE.BufferGeometry();
+    const pos = [], uv = [], idx = [];
+    for (let k = 0; k < 2; k++) {
+      const a = (k * Math.PI) / 2, c = Math.cos(a), sn = Math.sin(a), o = k * 4;
+      pos.push(-c, 0, -sn, c, 0, sn, c, 1, sn, -c, 1, -sn);
+      uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+      idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
+    }
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  })();
+  const tuftMat = own(new THREE.MeshLambertMaterial({
+    color: 0xffffff, map: bladeTex, alphaTest: 0.45, side: THREE.DoubleSide,
+  }));
+  const tufts = [];
+  for (let n = 0; n < 620; n++) {
+    const x = rng.range(-19.4, 23.4), z = rng.range(7.2, 41.4);
+    if (Math.abs(x - 2) < 1.9 && z > 33) continue;             // keep the gate lane bare
+    if (Math.abs(x) < 12 && z < 6.6) continue;                 // and the house apron
+    tufts.push({ x, z, sc: rng.range(0.13, 0.34), rotY: rng.float() * TAU, tint: rng.range(0.3, 0.78) });
+  }
+  const tuftMesh = new THREE.InstancedMesh(tuftGeo, tuftMat, tufts.length);
+  tufts.forEach((it, i) => {
+    q.setFromEuler(e.set(0, it.rotY, 0));
+    m.compose(p.set(it.x, -0.02, it.z), q, s.set(it.sc * 1.8, it.sc, it.sc * 1.8));
+    tuftMesh.setMatrixAt(i, m);
+    tuftMesh.setColorAt(i, col.setScalar(it.tint));
+  });
+  if (tuftMesh.instanceColor) tuftMesh.instanceColor.needsUpdate = true;
+  finishInstances(tuftMesh, false, false);
+  tuftMesh.name = 'graveyard grass';
+  track(tuftMesh, tufts.length);
+
+  // 3. A TREELINE. Beyond the fence there was nothing — the middle distance
+  // just stopped, and a yard with no horizon reads as a diorama on a table.
+  // These are pure silhouette: unlit, flat, fogged, never approached.
+  const wallMat = own(new THREE.MeshBasicMaterial({ color: 0x060d13, fog: true }));
+  const wallGeo = new THREE.IcosahedronGeometry(1, 0);
+  const wall = new THREE.InstancedMesh(wallGeo, wallMat, 120);
+  for (let i = 0; i < 120; i++) {
+    const a = rng.range(-0.35, Math.PI + 0.35);
+    const r = rng.range(46, 74);
+    const h = rng.range(7, 15);
+    q.setFromEuler(e.set(0, rng.float() * TAU, 0));
+    m.compose(p.set(2 + Math.cos(a) * r, h * 0.35, 24 + Math.sin(a) * r * 0.85), q,
+      s.set(rng.range(4, 9), h, rng.range(4, 9)));
+    wall.setMatrixAt(i, m);
+  }
+  finishInstances(wall, false, false);
+  wall.name = 'far treeline silhouette';
+  track(wall, 120);
 }
 
 function makeGothicStoneGeometry() {
@@ -331,10 +442,15 @@ function buildForestDress(game, track, own, tickers) {
   track(branches, branchMatrices.length);
 
   const fernGeo = makeFernGeometry();
+  // Was a glowing cyan understory. Two problems: Alex is colourblind, so a read
+  // carried by hue is no read at all — and self-lit flat triangles in an unlit
+  // forest look like teal paper cutouts hanging in the dark. Now they are dark
+  // foliage that reads by silhouette and by how the skull's light crosses them,
+  // which is the read that survives for him.
   const fernMat = own(new THREE.MeshLambertMaterial({
-    color: 0x245359,
-    emissive: 0x071a22,
-    emissiveIntensity: 0.34,
+    color: 0x2b3329,
+    emissive: 0x080d09,
+    emissiveIntensity: 0.06,
     side: THREE.DoubleSide,
   }));
   const fernMatrices = [];
@@ -362,7 +478,7 @@ function buildForestDress(game, track, own, tickers) {
   const ferns = new THREE.InstancedMesh(fernGeo, fernMat, fernMatrices.length);
   fernMatrices.forEach((matrix, i) => ferns.setMatrixAt(i, matrix));
   finishInstances(ferns, false, false);
-  ferns.name = 'cyan-value forest understory';
+  ferns.name = 'forest understory';
   track(ferns, fernMatrices.length);
 
   const canopyGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -539,7 +655,9 @@ function buildClearingDress(game, track, own, tickers) {
   tickers.push((dt, t) => { sprayMat.uniforms.uTime.value = t % 600; });
 
   const fernGeo = makeFernGeometry();
-  const fernMat = own(new THREE.MeshLambertMaterial({ color: 0x2f6666, emissive: 0x092328, emissiveIntensity: 0.4, side: THREE.DoubleSide }));
+  // the clearing is the one kind place in the game, so its understory sits a
+  // touch paler than the forest's — by VALUE, not by glowing teal
+  const fernMat = own(new THREE.MeshLambertMaterial({ color: 0x3a4436, emissive: 0x0b120c, emissiveIntensity: 0.08, side: THREE.DoubleSide }));
   const fernMatrices = [];
   for (let i = 0; i < 104; i++) {
     const a = rng.range(0, TAU);
@@ -635,14 +753,23 @@ function buildCaveDress(game, track, own) {
   teeth.name = 'cave stalactites';
   track(teeth, toothMatrices.length);
 
+  // This was a wayfinding read carried by HUE — bright cyan mica against grey
+  // rock, and the authored comment said out loud that it was meant to become a
+  // spatial memory. Alex is colourblind: to him it was grey mica on grey rock,
+  // which is no trail at all. Same idea, legal channel — the crystals GROW and
+  // BRIGHTEN the closer you get to the way out, so the read is "these are
+  // getting bigger, I am going the right way".
   const crystalMat = own(new THREE.MeshStandardMaterial({
-    color: 0x77d8df,
-    emissive: 0x1c6977,
-    emissiveIntensity: 1.55,
+    color: 0xc9d4d6,
+    emissive: 0x8fa6ab,
+    emissiveIntensity: 0.85,
     roughness: 0.24,
     metalness: 0.12,
+    vertexColors: true,
   }));
   const crystalMatrices = [];
+  const crystalTints = [];
+  const legs = Math.max(1, path.length - 1);
   for (let leg = 0; leg < path.length - 1; leg++) {
     const [ax, az] = path[leg], [bx, bz] = path[leg + 1];
     const dx = bx - ax, dz = bz - az;
@@ -650,22 +777,31 @@ function buildCaveDress(game, track, own) {
     const nx = tz, nz = -tx;
     for (let d = 0.9; d < len; d += 2.35) {
       const x = ax + tx * d, z = az + tz * d;
-      const sc = rng.range(0.22, 0.42);
-      // Repeating cyan mica on one wall becomes a spatial memory, not a HUD.
+      const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
+      const grow = 0.52 + 0.95 * t;
+      const bright = 0.38 + 0.62 * t;
+      const sc = rng.range(0.22, 0.42) * grow;
       crystalMatrices.push(compose(x + nx * 1.52, rng.range(0.42, 1.55), z + nz * 1.52,
         rng.range(-0.45, 0.45), rng.range(0, TAU), rng.range(-0.45, 0.45), sc, sc * rng.range(2.4, 4.2), sc));
+      crystalTints.push(bright);
       if (leg > 0 && rng.chance(0.38)) {
         const floorSc = sc * rng.range(0.58, 0.82);
         crystalMatrices.push(compose(x - nx * 1.10, floorSc * 1.2, z - nz * 1.10,
           rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
           floorSc, floorSc * rng.range(1.8, 3.0), floorSc));
+        crystalTints.push(bright * 0.9);
       }
     }
   }
   const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, crystalMatrices.length);
-  crystalMatrices.forEach((matrix, i) => crystals.setMatrixAt(i, matrix));
+  const tintCol = new THREE.Color();
+  crystalMatrices.forEach((matrix, i) => {
+    crystals.setMatrixAt(i, matrix);
+    crystals.setColorAt(i, tintCol.setScalar(crystalTints[i]));
+  });
+  if (crystals.instanceColor) crystals.instanceColor.needsUpdate = true;
   finishInstances(crystals, false, false);
-  crystals.name = 'cyan cave mica trail';
+  crystals.name = 'cave mica trail (grows toward the way out)';
   track(crystals, crystalMatrices.length);
 }
 
