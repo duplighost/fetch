@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
+import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
 
 export const FEEL_PROFILE = Object.freeze({
   name: 'fetch-core',
@@ -54,7 +56,8 @@ const W = {
 };
 
 export class Skull {
-  constructor({ scene, camera, audio, world, mats }) {
+  constructor({ scene, camera, audio, world, mats, variant }) {
+    this.variant = variant || null;
     this.scene = scene;
     this.camera = camera;
     this.audio = audio;
@@ -99,6 +102,19 @@ export class Skull {
 
   // ---------------------------------------------------------------- mesh
   _buildMesh() {
+    // Pro-farm variants: ?skull=a (the anatomist) / ?skull=b (the engineer).
+    // Alex judges in-game; the winner becomes the default.
+    if (this.variant === 'a' || this.variant === 'b') {
+      const parts = (this.variant === 'a' ? buildVariantA : buildVariantB)(this.mats.bone);
+      this.root = parts.root;
+      this.jaw = parts.jaw;
+      this.jawMount = parts.jawMount;
+      this.sockets = parts.sockets;
+      this.eyeL = parts.eyeL;
+      this.eyeR = parts.eyeR;
+      this.stageSets = parts.stageSets;
+      return;
+    }
     const bone = this.mats.bone;
     const g = new THREE.Group();
     g.name = 'skull';
@@ -344,6 +360,8 @@ export class Skull {
       const on = s <= this.stage;
       for (const m of this.stageSets[s]) m.visible = on;
     }
+    if (this.eyeL) this.eyeL.visible = this.stage >= 2;
+    if (this.eyeR) this.eyeR.visible = this.stage >= 3;
     // once it has a full face, sockets hide behind it
     for (const s of this.sockets) s.visible = this.stage < 5;
   }
