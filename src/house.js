@@ -611,7 +611,9 @@ function furnish(game) {
   K.rockingChair(-6.3, F, 5.0, 0.38);
   const nurseryDresser = K.dresser(-10.2, F, 1.05, 0, 1.24, 0.92);
   K.book(-10.42, nurseryDresser.top, 1.02, -0.17, 0);
-  K.wardrobe(-5.0, F, 0.12, Math.PI / 2, 1.25, 2.0);
+  // backed to the landing wall SOUTH of the doorway — its old spot put a
+  // corner into the door approach (furnishing audit: BLOCKS-DOOR first:4,7,W)
+  K.wardrobe(-4.44, F, -0.8, -Math.PI / 2, 1.25, 2.0);
   K.crate(-6.15, F, 0.18, -0.14, 0.56);
   K.curtains(-9, F + 0.02, 5.84, Math.PI, 1.6, 2.12);
   K.framedArt(-11.82, F + 1.48, 1.8, Math.PI / 2, 1, 0.56, 0.7);
@@ -636,12 +638,15 @@ function furnish(game) {
   K.chair(-6.0, G, -7.1, -2.2, true);
   const coffee = K.table(-8.2, G, -8.8, 1.15, 0.62, 0.08, 0.49);
   K.book(-8.36, coffee.top, -8.8, 0.2, 4);
-  const hearth = K.fireplace(-11.7, G, -8.0, Math.PI / 2);
-  K.oilLamp(-11.58, hearth.top, -7.7);
+  // chimney breast between the window and the study wall — at z -8 it sat
+  // straight across the west window's opening, under its own curtains
+  // (furnishing audit: BLOCKS-WINDOW ground:0,2,W)
+  const hearth = K.fireplace(-11.7, G, -6.5, Math.PI / 2);
+  K.oilLamp(-11.58, hearth.top, -6.2);
   K.curtains(-9, G + 0.02, -13.84, 0, 1.55, 2.28);
   K.curtains(-11.84, G + 0.02, -9, Math.PI / 2, 1.55, 2.28);
   K.framedArt(-5.0, 1.75, -13.82, 0, 4, 0.8, 1.0);
-  world.candles.push({ x: -11.1, y: G + 0.5, z: -8, intensity: 1.2, r: 4.5 });
+  world.candles.push({ x: -11.1, y: G + 0.5, z: -6.5, intensity: 1.2, r: 4.5 });
   // Dining: long table, six spindle-back chairs and abandoned settings.
   K.rug(9.2, G, -10.0, 4.7, 5.75);
   const diningTable = K.table(9.35, G, -10.05, 1.45, 4.0, 0, 0.79);
@@ -684,7 +689,7 @@ function furnish(game) {
   K.sofa(-6.25, G, -1.15, -Math.PI / 2, 1.72);
   K.curtains(-11.84, G + 0.02, 1, Math.PI / 2, 1.55, 2.2);
   K.framedArt(-7.75, 1.76, 5.82, Math.PI, 1, 0.76, 0.94);
-  K.framedArt(-5.2, 1.62, 3.7, -Math.PI / 2, 4, 0.58, 0.74);
+  K.framedArt(-4.17, 1.62, 3.7, -Math.PI / 2, 4, 0.58, 0.74);   // on the backhall wall — was floating 0.8m off it (audit: FLOATING)
   world.candles.push({ x: -9, y: G + 1.0, z: 2.2, intensity: 1.3, r: 4 });
   // foyer: coat stand, mirror frame (dark glass — the house mirror is elsewhere)
   K.rug(-1.9, G, -8.1, 1.25, 7.8);
