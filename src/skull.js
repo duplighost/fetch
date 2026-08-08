@@ -7,6 +7,8 @@ import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
 import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
 import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
+import { buildSkullMesh as buildVariantC } from './skull-variant-c.js';
+import { buildSkullMesh as buildVariantD } from './skull-variant-d.js';
 
 export const FEEL_PROFILE = Object.freeze({
   name: 'fetch-core',
@@ -102,10 +104,12 @@ export class Skull {
 
   // ---------------------------------------------------------------- mesh
   _buildMesh() {
-    // Pro-farm variants: ?skull=a (the anatomist) / ?skull=b (the engineer).
-    // Alex judges in-game; the winner becomes the default.
-    if (this.variant === 'a' || this.variant === 'b') {
-      const parts = (this.variant === 'a' ? buildVariantA : buildVariantB)(this.mats.bone);
+    // Sculpt-off variants: ?skull=a (anatomist) / b (engineer) / c (the
+    // familiar) / d (the wrong skull). Alex judges in-game; the winner
+    // becomes the default (then the switch and losing files go).
+    const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD };
+    if (VARIANTS[this.variant]) {
+      const parts = VARIANTS[this.variant](this.mats.bone);
       this.root = parts.root;
       this.jaw = parts.jaw;
       this.jawMount = parts.jawMount;
