@@ -247,25 +247,90 @@ export class Skull {
   }
 
   _buildViewmodel() {
-    // hands + cradle group parented to the camera; skull re-parents in/out of it
+    // real hands cradling the skull from below — fingers, knuckles, a thumb.
+    // The grip is expressive: it tightens with threat, trembles with the
+    // chatter, and falls open and empty while the skull is away.
     const hold = new THREE.Group();
     hold.position.set(0.19, -0.35, -0.72);
     hold.scale.setScalar(0.82);
-    const handMat = new THREE.MeshStandardMaterial({ color: 0x76695f, roughness: 0.8 });
+    const skin = new THREE.MeshStandardMaterial({ color: 0x74675c, roughness: 0.78 });
+    const knuckleSkin = new THREE.MeshStandardMaterial({ color: 0x7d7065, roughness: 0.72 });
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95 });
-    for (const s of [-1, 1]) {
-      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), handMat);
-      hand.scale.set(1, 0.6, 1.3);
-      hand.position.set(s * 0.085, -0.075, 0.01);
-      hand.rotation.z = s * -0.5;
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.062, 0.22, 8), sleeveMat);
-      sleeve.position.set(s * 0.13, -0.17, 0.1);
-      sleeve.rotation.x = 0.9;
-      sleeve.rotation.z = s * 0.35;
-      hold.add(hand, sleeve);
-    }
+
+    const mkFinger = (parent, x, y, z, scale, yaw) => {
+      const k1 = new THREE.Group();
+      k1.position.set(x, y, z);
+      k1.rotation.y = yaw;
+      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.034 * scale, 3, 6), skin);
+      s1.rotation.x = Math.PI / 2;
+      s1.position.z = 0.026 * scale;
+      k1.add(s1);
+      const k2 = new THREE.Group();
+      k2.position.set(0, 0, 0.052 * scale);
+      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0095 * scale, 0.03 * scale, 3, 6), knuckleSkin);
+      s2.rotation.x = Math.PI / 2;
+      s2.position.z = 0.021 * scale;
+      k2.add(s2);
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.0095 * scale, 6, 5), skin);
+      tip.position.set(0, 0.002, 0.042 * scale);
+      k2.add(tip);
+      k1.add(k2);
+      parent.add(k1);
+      return { k1, k2 };
+    };
+
+    this._fingers = [];
+    const mkHand = (side) => {
+      const hand = new THREE.Group();
+      const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 10, 8), skin);
+      palm.scale.set(1.15, 0.42, 1.45);
+      hand.add(palm);
+      const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 6), skin);
+      heel.position.set(0, -0.004, -0.05);
+      heel.scale.set(1.2, 0.55, 0.9);
+      hand.add(heel);
+      for (let i = 0; i < 4; i++) {
+        const f = mkFinger(hand, (i - 1.5) * 0.027, 0.006, 0.062, 1 - Math.abs(i - 1.2) * 0.09, (i - 1.5) * 0.06);
+        f.phase = i * 0.9;
+        this._fingers.push(f);
+      }
+      const thumb = mkFinger(hand, side * -0.055, 0.004, 0.005, 1.12, side * -1.15);
+      thumb.phase = 4.2;
+      thumb.thumb = true;
+      this._fingers.push(thumb);
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.068, 0.24, 8), sleeveMat);
+      sleeve.position.set(0, -0.03, -0.15);
+      sleeve.rotation.x = 1.3;
+      hand.add(sleeve);
+      return hand;
+    };
+
+    const L = mkHand(-1);
+    L.position.set(-0.088, -0.072, 0.005);
+    L.rotation.set(-0.55, 0.62, 0.42);
+    const R = mkHand(1);
+    R.position.set(0.088, -0.072, 0.005);
+    R.rotation.set(-0.55, -0.62, -0.42);
+    hold.add(L, R);
+
+    this._grip = 0.55;
     this.hold = hold;
     this.camera.add(hold);
+  }
+
+  _updateHands(dt) {
+    // grip target: cradling when held, tightening with threat, open when empty
+    const held = this.mode === 'held';
+    const target = held ? 0.5 + this.threat * 0.42 : 0.08;
+    this._grip = damp(this._grip, target, held ? 6 : 3, dt);
+    this._handT = (this._handT || 0) + dt;
+    const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
+    for (const f of this._fingers) {
+      const wave = Math.sin(this._handT * 0.7 + f.phase) * 0.03;   // idle micro-life
+      const curl = this._grip * (f.thumb ? 0.9 : 1.25) + wave + tremble;
+      f.k1.rotation.x = -(0.35 + curl * 0.75);
+      f.k2.rotation.x = -(0.3 + curl * 0.95);
+    }
   }
 
   setLayers(layerFn) {
@@ -405,6 +470,7 @@ export class Skull {
 
   // ---------------------------------------------------------------- update
   update(dt, ctx) {
+    this._updateHands(dt);
     switch (this.mode) {
       case 'held': this._updateHeld(dt, ctx); break;
       case 'outbound': this._updateFlight(dt, ctx, false); break;
