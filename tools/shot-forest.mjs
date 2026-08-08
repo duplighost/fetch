@@ -4,7 +4,7 @@
 import { ensureServer, launchBrowser, openPage, URL_BASE } from '../tests/lib/harness.mjs';
 import { writeFileSync } from 'node:fs';
 
-const [prefix = 'scratch-sculpts/out-forest/forest', walk = '260'] = process.argv.slice(2);
+const [prefix = 'scratch-sculpts/out-forest/forest', walk = '9'] = process.argv.slice(2);  // walk is SECONDS
 const server = await ensureServer();
 const browser = await launchBrowser();
 try {
@@ -15,20 +15,20 @@ try {
     const out = {};
     F.start();
     F.teleport('forest');
-    await F.step(1 / 60, 5);
+    F.stepWith(0.1);
     // walk in
-    await F.stepWith({ forward: 1 }, 1 / 60, walkFrames);
-    await F.step(1 / 60, 4);
+    F.stepWith(walkFrames, { moveZ: 1, run: true });
+    F.stepWith(0.08);
     g.render();
     out.ahead = g.renderer.domElement.toDataURL('image/png');
     // and turn around: the seal should be a wall, not a picket line
     g.player.yaw += Math.PI;
-    await F.step(1 / 60, 4);
+    F.stepWith(0.08);
     g.render();
     out.back = g.renderer.domElement.toDataURL('image/png');
     g.player.yaw -= Math.PI;
     g.player.pitch = 0.55;                       // look up: is there a sky left?
-    await F.step(1 / 60, 4);
+    F.stepWith(0.08);
     g.render();
     out.up = g.renderer.domElement.toDataURL('image/png');
     out.render = JSON.stringify(g.lastRender);
