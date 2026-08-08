@@ -23,7 +23,10 @@ const FOG_BY_ACT = {
 };
 const FOG_COLOR_BY_ACT = {
   bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x0a1422,
-  forest: 0x071820, clearing: 0x0d2731, cave: 0x07141a, mirror: 0x111620,
+  // forest fog == forest background (eaten-path's law): when they match, the
+  // corridor ends in a wall of dark instead of a visible geometry horizon, and
+  // the draw distance reads as authored rather than as a budget
+  forest: 0x030b10, clearing: 0x0d2731, cave: 0x07141a, mirror: 0x111620,
 };
 const BACKGROUND_BY_ACT = {
   bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
