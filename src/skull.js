@@ -267,10 +267,10 @@ export class Skull {
     // The grip is expressive: it tightens with threat, trembles with the
     // chatter, and falls open and empty while the skull is away.
     const hold = new THREE.Group();
-    hold.position.set(0.19, -0.35, -0.72);
-    hold.scale.setScalar(0.82);
-    const skin = new THREE.MeshStandardMaterial({ color: 0x74675c, roughness: 0.78 });
-    const knuckleSkin = new THREE.MeshStandardMaterial({ color: 0x7d7065, roughness: 0.72 });
+    hold.position.set(0.17, -0.31, -0.7);
+    hold.scale.setScalar(1.15);
+    const skin = new THREE.MeshStandardMaterial({ color: 0x584d42, roughness: 0.82 });
+    const knuckleSkin = new THREE.MeshStandardMaterial({ color: 0x60544a, roughness: 0.76 });
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.95 });
 
     const mkFinger = (parent, x, y, z, scale, yaw) => {
@@ -322,12 +322,28 @@ export class Skull {
     };
 
     const L = mkHand(-1);
-    L.position.set(-0.088, -0.072, 0.005);
-    L.rotation.set(-0.55, 0.62, 0.42);
+    L.position.set(-0.118, -0.2, 0.035);
+    L.rotation.set(-0.7, 0.78, 0.3);
     const R = mkHand(1);
-    R.position.set(0.088, -0.072, 0.005);
-    R.rotation.set(-0.55, -0.62, -0.42);
+    R.position.set(0.118, -0.2, 0.035);
+    R.rotation.set(-0.7, -0.78, -0.3);
     hold.add(L, R);
+
+    // forearms: sleeves running off the bottom corners of the frame — the
+    // hands must read as YOURS, arms rooted in your body, never as parts of
+    // the skull (playtest 2: "hands making glasses around its eyes")
+    const mkForearm = (side) => {
+      const a = new THREE.Vector3(side * 0.115, -0.2, -0.02);
+      const b = new THREE.Vector3(side * 0.3, -0.62, 0.34);
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 10), sleeveMat);
+      fore.position.copy(a).addScaledVector(dir, 0.5);
+      fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      hold.add(fore);
+    };
+    mkForearm(-1);
+    mkForearm(1);
 
     this._grip = 0.55;
     this.hold = hold;
@@ -532,11 +548,17 @@ export class Skull {
 
     // breathing sway; pulls back and up while charging — it knows what's coming
     const c = this.charge;
-    this.hold.position.x = 0.19 + Math.sin(t * 0.8) * 0.004;
-    this.hold.position.y = -0.35 + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05;
-    this.hold.position.z = -0.72 + c * 0.13;
+    this.hold.position.x = 0.17 + Math.sin(t * 0.8) * 0.004;
+    this.hold.position.y = -0.31 + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05;
+    this.hold.position.z = -0.7 + c * 0.13;
     this.hold.rotation.z = Math.sin(t * 0.5) * 0.02 - c * 0.25;
     this.hold.rotation.x = c * 0.4;
+
+    // eye contact (playtest-2 law): the held skull faces YOU — exactly,
+    // always, whatever the hold sway or your pitch is doing. Its face is +Z.
+    this.root.getWorldPosition(V.e);
+    this.camera.getWorldPosition(V.f);
+    if (V.e.distanceToSquared(V.f) > 1e-6) this.root.lookAt(V.f);
 
     // jaw: slow drift open, then SNAP shut. while charging it opens wide.
     this._jawSnapT -= dt;

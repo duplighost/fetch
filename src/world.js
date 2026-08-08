@@ -460,6 +460,8 @@ export class Door {
     this.h = h; this.w = w;
     this.floor = floor;
     this.unlockedOnce = false;
+    // doorway center on the wall plane — the nav node enemies steer through
+    this.center = H ? { x: mid, z: fixed } : { x: fixed, z: mid };
 
     const M = world.mats;
     const scene = world.scene;
@@ -467,11 +469,40 @@ export class Door {
     this.group = new THREE.Group();
     const panel = new THREE.Mesh(new THREE.BoxGeometry(w - 0.06, h - 0.05, 0.09), M.woodDark);
     panel.position.set((w - 0.06) / 2, 0, 0);
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6),
-      new THREE.MeshStandardMaterial({ color: 0x5d5648, metalness: 0.85, roughness: 0.35 }));
-    knob.position.set(w - 0.2, -0.05, 0.07);
-    this.group.add(panel, knob);
+    this.group.add(panel);
     this.panel = panel;
+
+    // door grammar (playtest 2): what a door will do must read at a glance,
+    // from either face. Knob = it opens. Knob above a keyhole plate = it
+    // needs a key. No knob at all = it never opens. Boards = throw the skull.
+    this.knobs = null;
+    this.rattleT = 0;
+    if (this.locked !== 'never') {
+      const brass = new THREE.MeshStandardMaterial({ color: 0xb08d4a, metalness: 0.85, roughness: 0.28 });
+      this.knobs = new THREE.Group();
+      for (const side of [1, -1]) {
+        const knob = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), brass);
+        knob.scale.z = 0.8;
+        knob.position.set(w - 0.2, -0.05, side * 0.085);
+        const rose = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.015, 10), brass);
+        rose.rotation.x = Math.PI / 2;
+        rose.position.set(w - 0.2, -0.05, side * 0.048);
+        this.knobs.add(knob, rose);
+      }
+      if (this.locked && this.locked !== 'boards') {
+        // keyhole escutcheon under the knob — pale plate, black slot
+        const plateM = new THREE.MeshStandardMaterial({ color: 0x918b7a, metalness: 0.6, roughness: 0.45 });
+        const slotM = new THREE.MeshBasicMaterial({ color: 0x000000 });
+        for (const side of [1, -1]) {
+          const plate = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.2, 0.012), plateM);
+          plate.position.set(w - 0.2, -0.25, side * 0.048);
+          const slot = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.075, 0.016), slotM);
+          slot.position.set(w - 0.2, -0.26, side * 0.05);
+          this.knobs.add(plate, slot);
+        }
+      }
+      this.group.add(this.knobs);
+    }
 
     if (H) {
       this.group.position.set(mid - w / 2, floor + h / 2, fixed);
@@ -512,8 +543,15 @@ export class Door {
       game.audio.doorClose({ pos: this.group.position });
       return;
     }
-    if (this.locked === 'never' || this.locked === 'boards') {
+    if (this.locked === 'never') {
+      // no knob, nothing to work: a dead thud. the door doesn't even shiver.
+      game.audio.thud({ pos: this.group.position, gain: 0.5, rate: 0.55 });
+      game.shake(0.08);
+      return;
+    }
+    if (this.locked === 'boards') {
       game.audio.lockedRattle({ pos: this.group.position });
+      this.rattleT = 0.45;
       game.shake(0.12);
       return;
     }
@@ -527,6 +565,8 @@ export class Door {
         }
       } else {
         game.audio.lockedRattle({ pos: this.group.position });
+        this.rattleT = 0.45;
+        game.shake(0.1);
         return;
       }
     }
@@ -552,6 +592,14 @@ export class Door {
       } else {
         this.group.rotation.y = (this.group.userData.baseRy ??= this.group.rotation.y) + e * 1.9;
       }
+    }
+    // locked jiggle: the knob works, the panel knocks in its frame, nothing gives
+    if (this.rattleT > 0) {
+      this.rattleT -= dt;
+      const baseRy = (this.group.userData.baseRy ??= this.group.rotation.y);
+      const k = this.rattleT > 0 ? Math.sin(this.rattleT * 60) * Math.min(1, this.rattleT * 4) : 0;
+      this.group.rotation.y = baseRy + k * 0.012;
+      if (this.knobs) this.knobs.rotation.x = k * 0.6;
     }
   }
 }

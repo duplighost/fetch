@@ -657,7 +657,7 @@ function furnish(game) {
   K.bottle(9.35, diningTable.top, -10.05, 1.08);
   K.consoleTable(11.5, G, -7.0, -Math.PI / 2, 1.25);
   K.curtains(11.84, G + 0.02, -11, -Math.PI / 2, 1.55, 2.28);
-  K.framedArt(4.16, 1.78, -9.8, Math.PI / 2, 0, 0.76, 0.95);
+  K.framedArt(4.16, 1.78, -8.9, Math.PI / 2, 0, 0.76, 0.95);
   // Kitchen and scullery: paneled cabinets, stone tops, iron range, open
   // shelves and practical clutter. The direct route to the cellar stays open.
   const counter = K.counter(11.35, G, -2.6, 0, 4.9);
@@ -676,7 +676,7 @@ function furnish(game) {
   // family landscapes. Dense at the perimeter, navigable in the middle.
   K.rug(-8.1, G, 1.0, 5.4, 4.35, -0.04);
   K.bookshelf(-11.72, G, -1.4, Math.PI / 2, 1.65, 2.18);
-  K.bookshelf(-11.72, G, 1.1, Math.PI / 2, 1.65, 2.18);
+  K.bookshelf(-11.72, G, -3.3, Math.PI / 2, 1.65, 2.18);
   const studyDesk = K.desk(-8.85, G, 2.25, 0.18);
   K.chair(-8.5, G, 1.25, Math.PI + 0.18, true);
   K.paper(-9.08, studyDesk.top, 2.15, 0.05, 0.28, 0.35);
@@ -696,7 +696,7 @@ function furnish(game) {
   K.rug(1.8, G, -12.0, 2.1, 2.6);
   K.consoleTable(3.45, G, -12.6, -Math.PI / 2, 0.9);
   K.rug(-0.2, G, 2.5, 1.35, 5.2);
-  K.framedArt(-3.82, 1.68, 1.2, Math.PI / 2, 0, 0.55, 0.7);
+  K.framedArt(-3.82, 1.68, -1.2, Math.PI / 2, 0, 0.55, 0.7);
 
   const B = -3.0;
   // boiler room: tank, boiler, pipes, pilot ember glow
@@ -886,9 +886,13 @@ function cellarBoards(game) {
   const door = world.doorById.cellarDoor;
   const p = door.group.position;
   game.boards = [];
+  // boards on the KITCHEN face (z-), pale rough wood: the player must SEE
+  // what's nailing the door shut to know to throw at it (playtest 2 — they
+  // were on the stair side, invisible, and the door was a mystery)
+  const boardMat = new THREE.MeshStandardMaterial({ color: 0x97815f, roughness: 0.85 });
   for (let i = 0; i < 3; i++) {
-    const b = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.24, 0.08), M.woodDark);
-    b.position.set(p.x + 0.65, 0.6 + i * 0.75, p.z + 0.16);
+    const b = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.24, 0.08), boardMat);
+    b.position.set(p.x + 0.65, 0.6 + i * 0.75, p.z - 0.16);
     b.rotation.z = (i - 1) * 0.16;
     scene.add(b);
     game.boards.push(b);
