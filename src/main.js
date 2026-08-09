@@ -137,10 +137,22 @@ class Game {
     this.skull.root.add(this.skullLight);
     this.fillLight = new THREE.PointLight(0x28323c, 8, 3.5, 1.4);
     this.camera.add(this.fillLight);
-    this.holdLight = new THREE.PointLight(0xd8bb90, 1.35, 1.4, 1.7);
-    this.holdLight.position.set(0.06, -0.12, -0.42);
+    // Keep the viewmodel lamp well behind the object instead of centimetres
+    // from its fingers. Inverse-square falloff at the old position bleached
+    // every phalanx bone-white and flattened the skull's relief. This broader,
+    // offset key preserves warm living skin, dark creases, and readable bone.
+    this.holdLight = new THREE.PointLight(0xd8bb90, 2.0, 2.0, 2.0);
+    this.holdLight.position.set(0.16, 0.18, -0.18);
     this.holdLight.layers.set(LAYER_HELD);
     this.camera.add(this.holdLight);
+    // A very soft opposing fill keeps the far cheek and finger joints from
+    // collapsing into one silhouette without making the skull feel evenly
+    // studio-lit. Value contrast still does the work; the cool tint is mood,
+    // never gameplay information.
+    this.holdFillLight = new THREE.PointLight(0x7890a0, 0.38, 2.2, 2.0);
+    this.holdFillLight.position.set(-0.3, -0.04, -0.08);
+    this.holdFillLight.layers.set(LAYER_HELD);
+    this.camera.add(this.holdFillLight);
 
     this.input = new InputState();
     this._wireInput();
@@ -426,7 +438,9 @@ class Game {
     this.after(1.1, () => this.audio.gasp({ pos: gaspPos, gain: 0.72, verb: 0.78 }));
     const t = this.el.title;
     t.querySelector('.keys').style.display = 'none';
-    t.querySelector('.tag').textContent = 'It kept you.';
+    // The catch and the breath are the ending. Do not explain the image with a
+    // model-authored epitaph; the only returning text surface is the title.
+    t.querySelector('.tag').textContent = '';
     t.querySelector('.go').textContent = '';
     t.classList.remove('hidden');
     document.exitPointerLock && document.exitPointerLock();
@@ -471,7 +485,16 @@ class Game {
       playerVel: new THREE.Vector3(this.player.vel.x, this.player.fallV, this.player.vel.z),
       yawVel: this.player.yawVel, pitchVel: this.player.pitchVel,
       callHeld: frame.callHeld, throwHeld: frame.throwHeld, bobY: this.player.bobY,
-      onCatch: (impactV, hard) => { this.shake(0.1 + impactV * 0.15); },
+      onCatch: (impactV, hard) => {
+        this.shake(0.13 + impactV * 0.2);
+        // The final hand-span now has a visible settle in skull.js. Give its
+        // arrival a camera-only kick; the sacred catch/throw loop never pauses
+        // simulation or delays the player's next input. Hard recovery catches
+        // remain deliberately quiet.
+        if (!hard) {
+          this.fovKick = Math.max(this.fovKick || 0, 0.45 + impactV * 0.45);
+        }
+      },
     };
 
     // input → skull verbs. Alex's grammar: press throws, hold keeps it out,
@@ -486,8 +509,14 @@ class Game {
       else this.snapBuffer = FEEL_PROFILE.snapBuffer;
     }
     if (this.snapBuffer > 0) {
-      if (this.skull.call()) this.snapBuffer = 0;
-      else this.snapBuffer -= dt;
+      if (this.skull.call()) {
+        // Backup call is the same release promise as letting go of LMB. If the
+        // skull was the pivot of a live rope swing, recall and rope pull must
+        // end in the same fixed step; otherwise held LMB can keep tugging the
+        // player toward a pivot the skull has already abandoned.
+        if (this.player.swing) this.player.endSwing();
+        this.snapBuffer = 0;
+      } else this.snapBuffer -= dt;
     }
     if (frame.interactPressed) this._interact();
 
@@ -557,6 +586,43 @@ class Game {
     return null;
   }
 
+  _updateWindowAimAffordance(dt) {
+    const openings = this.world.windowOpenings;
+    if (!openings || !openings.length) return;
+    if (!this._windowAimOrigin) {
+      this._windowAimOrigin = new THREE.Vector3();
+      this._windowAimDir = new THREE.Vector3();
+      this._windowAimHit = new THREE.Vector3();
+      this._windowAimTo = new THREE.Vector3();
+    }
+    const origin = this.camera.getWorldPosition(this._windowAimOrigin);
+    const dir = this.camera.getWorldDirection(this._windowAimDir);
+    for (const opening of openings) {
+      const denom = dir.dot(opening.normal);
+      let aimed = false;
+      if (Math.abs(denom) > 0.0001) {
+        const dist = this._windowAimTo.copy(opening.center).sub(origin).dot(opening.normal) / denom;
+        if (dist > 0.15 && dist < 24) {
+          const hit = this._windowAimHit.copy(origin).addScaledVector(dir, dist);
+          const across = opening.horizontal === 'x'
+            ? Math.abs(hit.x - opening.center.x)
+            : Math.abs(hit.z - opening.center.z);
+          aimed = across < opening.width * 0.47
+            && Math.abs(hit.y - opening.center.y) < opening.height * 0.47;
+        }
+      }
+      opening.aim += ((aimed ? 1 : 0) - opening.aim) * Math.min(1, dt * 13);
+      opening.hot = Math.max(0, opening.hot - dt * 0.7);
+      const pulse = (opening.hot > 0.01 || opening.aim > 0.01)
+        ? Math.sin(this.time * (opening.hot > 0.2 ? 17 : 9)) * 0.055 : 0;
+      opening.glint.material.opacity = 0.045
+        + opening.aim * (0.58 + pulse)
+        + opening.hot * (0.36 + pulse);
+      const s = 1 + opening.aim * 0.025 + opening.hot * 0.045;
+      opening.glint.scale.set(s, s, 1);
+    }
+  }
+
   // --------------------------------------------------------------- render
   render() {
     // embedded panes / headless report sizes late — self-correct every frame (chamber fix)
@@ -567,7 +633,12 @@ class Game {
       this.renderer.setSize(innerWidth, innerHeight);
     }
     // impact fx breathe every rendered frame — including inside hit-stop
-    const rdt = this._lastShakeDt || 0.016;
+    // Cosmetic time must never run backwards. A freshly resumed or automated
+    // browser can occasionally deliver a stale RAF timestamp; feeding that
+    // negative delta into the FOV decay *adds* kick every render until the
+    // perspective matrix crosses 180 degrees and the whole world turns into
+    // an inverted fisheye/starburst. Clamp at both consumption and capture.
+    const rdt = clamp(this._lastShakeDt || 0.016, 0, 0.05);
     if (this._impactLight && this._impactLight.intensity > 0.1)
       this._impactLight.intensity *= Math.exp(-rdt * 9);
     if (this._ringT > 0) {
@@ -591,13 +662,41 @@ class Game {
       this.camera.rotation.x += rkx;
       this.camera.rotation.y += rky;
     }
-    const mirrored = this.finale.render(this.scene, this.camera);
+    this._updateWindowAimAffordance(rdt);
+    if (this.houseMirror) this.houseMirror.render(this.scene, this.camera);
+    this.finale.render(this.scene, this.camera);
+
+    // Render the physical world and the first-person cradle as two depth
+    // passes. Three's light list is camera-global: merely putting the 58-cd
+    // skull lantern and the hands on different object layers did not stop that
+    // point-blank world light from bleaching every finger white. The world
+    // pass keeps the lantern's environmental pool; the cleared-depth held pass
+    // sees only its calibrated viewmodel key and can never clip into walls.
+    const cameraMask = this.camera.layers.mask;
+    this.camera.layers.set(0);
     this.renderer.render(this.scene, this.camera);
+    const worldInfo = {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    };
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.camera.layers.set(LAYER_HELD);
+    const worldBackground = this.scene.background;
+    this.scene.background = null; // do not paint over the completed world pass
+    this.renderer.render(this.scene, this.camera);
+    this.scene.background = worldBackground;
+    const heldInfo = {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+    };
+    this.camera.layers.mask = cameraMask;
     this.camera.rotation.x -= rkx;
     this.camera.rotation.y -= rky;
-    const info = this.renderer.info.render;
-    this.lastRender = { drawCalls: info.calls, triangles: info.triangles };
-    this.renderer.autoClear = false;
+    this.lastRender = {
+      drawCalls: worldInfo.calls + heldInfo.calls,
+      triangles: worldInfo.triangles + heldInfo.triangles,
+    };
     this.grainMat.uniforms.uTime.value = REDUCED_MOTION ? 0 : this.time % 300;
     this.grainMat.uniforms.uFear.value = this.fx.fear;
     this.renderer.render(this.grainScene, this.grainCam);
@@ -614,7 +713,7 @@ class Game {
     if (srState !== this._srState) { this._srState = srState; this.el.sr.textContent = srState; }
 
     // camera shake as canvas transform
-    this._shake = Math.max(0, this._shake - this._lastShakeDt * 2.8);
+    this._shake = Math.max(0, this._shake - rdt * 2.8);
     const s = this._shake * this._shake;
     this.renderer.domElement.style.transform = !REDUCED_MOTION && s > 0.0001
       ? `translate(${(Math.random() - 0.5) * s * 14}px, ${(Math.random() - 0.5) * s * 10}px)` : '';
@@ -626,7 +725,7 @@ class Game {
     let acc = 0;
     const tick = (now) => {
       requestAnimationFrame(tick);
-      const rawDt = Math.min(0.05, (now - last) / 1000);
+      const rawDt = clamp((now - last) / 1000, 0, 0.05);
       last = now;
       this._lastShakeDt = rawDt;
       if (TEST_MODE && !this._selfStep) { this.render(); return; }

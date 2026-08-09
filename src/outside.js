@@ -3,8 +3,10 @@
 // (eaten-path pattern): movement is projection onto the polyline, the seal
 // frontier IS the collider, rising instanced trees are its body.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RNG, clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+import { buildUnderfalls } from './underfalls.js';
 
 export const FOREST_GATE = { x: 2, z: 43 };
 export const CLEARING_BASIN = Object.freeze({
@@ -15,11 +17,68 @@ export const CLEARING_BASIN = Object.freeze({
   depth: 3.15,
 });
 
+// Collapse a static prop hierarchy to one mesh per material while preserving
+// its authored root transform. Exterior props often need many little pieces
+// to read (fingers, car pillars, torn panels), but none of those pieces moves
+// independently; paying a draw for each one is pure bookkeeping.
+function batchStaticGroup(group, name) {
+  group.updateWorldMatrix(true, true);
+  const inverseRoot = group.matrixWorld.clone().invert();
+  const buckets = new Map();
+  group.traverse((object) => {
+    if (!object.isMesh || object.isInstancedMesh || !object.geometry || Array.isArray(object.material)) return;
+    const material = object.material;
+    if (!buckets.has(material)) buckets.set(material, {
+      geometries: [], objects: [], cast: false, receive: false,
+    });
+    const bucket = buckets.get(material);
+    const relative = inverseRoot.clone().multiply(object.matrixWorld);
+    let geometry = object.geometry.clone();
+    if (geometry.index) {
+      const indexed = geometry;
+      geometry = indexed.toNonIndexed();
+      indexed.dispose();
+    }
+    geometry.applyMatrix4(relative);
+    bucket.geometries.push(geometry);
+    bucket.objects.push(object);
+    bucket.cast ||= object.castShadow;
+    bucket.receive ||= object.receiveShadow;
+  });
+  let i = 0;
+  for (const [material, bucket] of buckets) {
+    if (!bucket.geometries.length) continue;
+    const commonAttributes = new Set(Object.keys(bucket.geometries[0].attributes));
+    for (const geometry of bucket.geometries.slice(1)) {
+      for (const attribute of [...commonAttributes]) {
+        if (!geometry.getAttribute(attribute)) commonAttributes.delete(attribute);
+      }
+    }
+    for (const geometry of bucket.geometries) {
+      for (const attribute of Object.keys(geometry.attributes)) {
+        if (!commonAttributes.has(attribute)) geometry.deleteAttribute(attribute);
+      }
+    }
+    const geometry = mergeGeometries(bucket.geometries, false);
+    for (const source of bucket.geometries) source.dispose();
+    if (!geometry) continue;
+    for (const object of bucket.objects) object.parent?.remove(object);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.name = `${name} material ${++i}`;
+    mesh.castShadow = bucket.cast;
+    mesh.receiveShadow = bucket.receive;
+    group.add(mesh);
+  }
+  group.userData.batchedMaterials = i;
+  return group;
+}
+
 // ------------------------------------------------------------------ terrain
 export function terrainHeightFn(game) {
   return (x, z) => {
     const C = game.clearingCenter;
-    if (C && x > C.x - 6 && x < C.x + 30 && z > C.z + 20.4 && z < C.z + 50) return 0;   // cave floor
+    const underfallsY = game.underfalls?.groundAt(x, z);
+    if (underfallsY != null) return underfallsY;
     if (C && Math.abs(x - C.x) < 30 && z > C.z - 27 && z < C.z + 30) {
       // The plunge pool is a real obstacle. Once the bridge rises, its moving
       // stone tops become the only walkable ground across the basin.
@@ -145,6 +204,12 @@ function buildGraveyardLandmarks(game) {
   const { world, scene, mats: M } = game;
   const stone = M.headstone.clone();
   stone.color.multiplyScalar(0.64);
+  if ('emissive' in stone) {
+    // A distant mausoleum must stay a room-shaped value landmark even after
+    // the skull light falls off; the doorway remains absolute black.
+    stone.emissive = new THREE.Color(0x343a3c);
+    stone.emissiveIntensity = 0.38;
+  }
   const soil = M.dirt.clone();
   soil.color.multiplyScalar(0.72);
   const voidMat = new THREE.MeshBasicMaterial({ color: 0x010204 });
@@ -236,9 +301,19 @@ function buildResonantGraves(game) {
     base.position.y = 0.18;
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.48, 2.35, 5), stone);
     shaft.position.y = 1.38;
-    const crown = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.7, 5), stone);
-    crown.position.y = 2.9;
-    group.add(base, shaft, crown);
+    // The interactable marker used to finish in a perfect cone and read as a
+    // toy rocket. A split tuning-fork crown keeps its strong combat silhouette
+    // while making the resonance fiction physical and funerary.
+    const crownLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.17, 0.72, 5), stone);
+    crownLeft.position.set(-0.16, 2.82, 0);
+    crownLeft.rotation.z = -0.23;
+    const crownRight = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.17, 0.62, 5), stone);
+    crownRight.position.set(0.17, 2.77, 0.02);
+    crownRight.rotation.z = 0.3;
+    const brokenCap = new THREE.Mesh(new THREE.DodecahedronGeometry(0.2, 0), stone);
+    brokenCap.position.set(-0.04, 2.49, 0);
+    brokenCap.scale.set(1.25, 0.65, 0.8);
+    group.add(base, shaft, crownLeft, crownRight, brokenCap);
     for (let i = 0; i < 3; i++) {
       const seam = new THREE.Mesh(new THREE.BoxGeometry(0.018, 1.45, 0.012), seamMat);
       seam.position.set(Math.sin(i * 2.1) * 0.29, 1.55, Math.cos(i * 2.1) * 0.4);
@@ -374,6 +449,7 @@ function buildWreckedCar(game) {
   });
   const tyre = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.98 });
   const lamp = new THREE.MeshBasicMaterial({ color: 0xdde6de });
+  const cavity = new THREE.MeshBasicMaterial({ color: 0x020304 });
   const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
@@ -397,7 +473,21 @@ function buildWreckedCar(game) {
     bevelSize: 0.07, bevelThickness: 0.06,
   });
   shellGeo.translate(0, 0, -0.86);
-  add(shellGeo, paint, 0, 0, 0, 0.035, 0, -0.025);
+  // Crush and yaw the impact end at the vertex level. The old silhouette was
+  // still an intact station wagon with damage props stuck onto it; this makes
+  // the chassis itself carry the collision before the player sees any detail.
+  const shellPos = shellGeo.attributes.position;
+  for (let i = 0; i < shellPos.count; i++) {
+    const x = shellPos.getX(i), y = shellPos.getY(i), z = shellPos.getZ(i);
+    const crush = smoothstep(1.0, 2.42, x);
+    shellPos.setXYZ(i,
+      x - crush * (0.13 + Math.sin(z * 8.3 + y * 5.1) * 0.07),
+      y + crush * (Math.sin(z * 6.7) * 0.11 - 0.055),
+      z * (1 - crush * 0.16) + crush * 0.055,
+    );
+  }
+  shellGeo.computeVertexNormals();
+  const shell = add(shellGeo, paint, 0, 0, 0, 0.035, 0, -0.025);
 
   // A dark glasshouse with real roof line and pillars instead of a second box.
   const cabinShape = new THREE.Shape();
@@ -412,14 +502,60 @@ function buildWreckedCar(game) {
     bevelSize: 0.025, bevelThickness: 0.02,
   });
   cabinGeo.translate(0, 0, -0.73);
-  add(cabinGeo, glass, -0.05, 0, -0.01, 0.035, 0, -0.025);
-  add(new THREE.BoxGeometry(2.65, 0.11, 1.58), paint, -0.03, 1.68, 0, 0.02, 0, -0.025);
+  const cabin = add(cabinGeo, glass, -0.05, 0, -0.01, 0.035, 0, -0.025);
+  const roof = add(new THREE.BoxGeometry(2.65, 0.11, 1.58), paint, -0.03, 1.68, 0, 0.02, 0, -0.025);
   for (const x of [-1.06, 0.1, 1.07]) {
     add(new THREE.BoxGeometry(0.105, 0.82, 1.55), paint, x, 1.26, 0, 0, 0, x * -0.12);
   }
   add(new THREE.BoxGeometry(1.4, 0.08, 1.74), rust, 1.58, 0.99, 0, 0, 0, 0.12);
   add(new THREE.BoxGeometry(0.1, 0.48, 1.74), paint, 2.25, 0.65, 0);
-  for (const z of [-0.52, 0.52]) add(new THREE.SphereGeometry(0.13, 10, 7), lamp, 2.31, 0.7, z, 0, Math.PI / 2, 0);
+  add(new THREE.SphereGeometry(0.13, 10, 7), lamp, 2.31, 0.7, -0.52, 0, Math.PI / 2, 0);
+  add(new THREE.CylinderGeometry(0.14, 0.14, 0.05, 10), cavity, 2.315, 0.7, 0.52, 0, 0, Math.PI / 2);
+
+  // The glasshouse used to be an empty tinted volume.  Seats, a crooked wheel
+  // and a shattered windscreen turn it into the remains of an occupied car;
+  // crumple ribs and a torn bumper keep the silhouette from reading pristine.
+  const upholstery = new THREE.MeshStandardMaterial({ color: 0x17191a, roughness: 0.98 });
+  for (const [x, z, lean] of [[0.34, -0.39, -0.08], [0.3, 0.39, 0.11], [-0.55, -0.38, 0.04], [-0.55, 0.38, -0.05]]) {
+    add(new THREE.BoxGeometry(0.46, 0.66, 0.48), upholstery, x, 1.05, z, 0, 0, lean);
+    add(new THREE.BoxGeometry(0.38, 0.42, 0.12), upholstery, x - 0.08, 1.48, z, 0, 0, lean * 1.4);
+  }
+  add(new THREE.BoxGeometry(0.42, 0.18, 1.35), rust, 0.98, 1.02, 0, 0, 0, -0.08);
+  add(new THREE.TorusGeometry(0.19, 0.027, 6, 15), rust, 0.72, 1.28, 0.46, 0.12, Math.PI / 2, 0.08);
+  add(new THREE.CylinderGeometry(0.025, 0.03, 0.42, 6), rust, 0.91, 1.13, 0.46, 0, 0, Math.PI / 2);
+  for (let i = 0; i < 4; i++) {
+    add(new THREE.BoxGeometry(0.08, 0.08, 1.58), i % 2 ? rust : paint,
+      1.28 + i * 0.25, 1.02 + Math.sin(i * 2.2) * 0.09, 0,
+      0, 0, 0.09 + (i - 1.5) * 0.035);
+  }
+  const engineVoid = add(new THREE.BoxGeometry(0.18, 0.48, 1.28), cavity, 2.15, 1.08, 0, 0, 0, 0.08);
+  const tornHood = add(new THREE.BoxGeometry(0.92, 0.045, 1.22), paint, 1.72, 1.25, -0.03, 0.03, 0.04, 0.19);
+  tornHood.name = 'peeled hood sheet';
+  engineVoid.name = 'exposed engine cavity';
+  add(new THREE.BoxGeometry(0.12, 0.16, 1.82), rust, 2.43, 0.39, 0.06, 0.04, 0.08, 0.16);
+
+  const crackPos = [];
+  const crackCenter = new THREE.Vector3(1.245, 1.36, -0.18);
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.399;
+    const end = crackCenter.clone().add(new THREE.Vector3(
+      Math.sin(i * 17.3) * 0.055,
+      Math.sin(a) * (0.22 + (i % 3) * 0.045),
+      Math.cos(a) * (0.34 + (i % 2) * 0.08),
+    ));
+    crackPos.push(crackCenter.x, crackCenter.y, crackCenter.z, end.x, end.y, end.z);
+    if (i % 2 === 0) {
+      const fork = end.clone().add(new THREE.Vector3(-0.015, Math.cos(a) * 0.09, Math.sin(a) * 0.12));
+      crackPos.push(end.x, end.y, end.z, fork.x, fork.y, fork.z);
+    }
+  }
+  const crackGeo = new THREE.BufferGeometry();
+  crackGeo.setAttribute('position', new THREE.Float32BufferAttribute(crackPos, 3));
+  const cracks = new THREE.LineSegments(crackGeo, new THREE.LineBasicMaterial({
+    color: 0xaeb8b5, transparent: true, opacity: 0.52,
+  }));
+  cracks.name = 'shattered windshield star';
+  car.add(cracks);
 
   const wheelGeo = new THREE.CylinderGeometry(0.39, 0.39, 0.23, 14);
   const hubGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.25, 10);
@@ -452,6 +588,18 @@ function buildWreckedCar(game) {
   door.add(doorPanel, doorGlass, handle);
   car.add(door);
 
+  // Dozens of little seat, pillar, crack and wheel meshes used to cast their
+  // own moon/headlight shadow draw. Their silhouettes are already carried by
+  // the shell, roof and open door; shadowing every dashboard rib added more
+  // cost than visual truth in the widest arena view.
+  car.traverse((o) => { if (o.isMesh || o.isLine) o.castShadow = false; });
+  shell.castShadow = true;
+  roof.castShadow = true;
+  doorPanel.castShadow = true;
+  cabin.castShadow = false;
+
+  batchStaticGroup(car, 'wrecked wagon');
+
   car.position.set(-9, -0.02, 14);
   car.rotation.set(0.035, -0.96, 0.08);
   scene.add(car);
@@ -459,14 +607,48 @@ function buildWreckedCar(game) {
   const bounds = new THREE.Box3().setFromObject(car);
   world.addCollider(bounds.min.x + 0.12, -0.2, bounds.min.z + 0.12,
     bounds.max.x - 0.12, Math.min(1.75, bounds.max.y), bounds.max.z - 0.12);
+
+  // Debris stays outside the car group so the tight gameplay collider is not
+  // silently enlarged by a suitcase or glass shard several metres away.
+  const debris = new THREE.Group();
+  debris.name = 'station wagon ejected belongings';
+  const caseMat = M.curtain.clone();
+  if (caseMat.color) caseMat.color.multiplyScalar(0.55);
+  for (const [x, z, yaw, sc] of [[-6.55, 13.3, 0.34, 1], [-7.15, 12.65, -0.62, 0.76]]) {
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.68 * sc, 0.3 * sc, 0.5 * sc), caseMat);
+    bag.position.set(x, 0.14 * sc, z);
+    bag.rotation.set(0.08, yaw, yaw * 0.08);
+    bag.castShadow = true;
+    debris.add(bag);
+  }
+  const map = new THREE.Mesh(new THREE.PlaneGeometry(0.65, 0.48),
+    new THREE.MeshLambertMaterial({ color: 0x77776d, side: THREE.DoubleSide }));
+  map.rotation.set(-Math.PI / 2, 0, -0.38);
+  map.position.set(-6.75, 0.025, 12.15);
+  debris.add(map);
+  const shardGeo = new THREE.BufferGeometry();
+  shardGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+    -7.7, 0.025, 14.0, -7.35, 0.025, 13.78, -7.2, 0.025, 14.15,
+    -6.9, 0.026, 14.55, -6.55, 0.026, 14.18, -6.38, 0.026, 14.64,
+    -7.45, 0.027, 12.95, -7.12, 0.027, 12.83, -7.2, 0.027, 13.24,
+  ], 3));
+  const shard = new THREE.Mesh(shardGeo, new THREE.MeshStandardMaterial({
+    color: 0x43525a, roughness: 0.18, metalness: 0.42,
+    transparent: true, opacity: 0.66, side: THREE.DoubleSide,
+  }));
+  debris.add(shard);
+  scene.add(debris);
   game.graveCar = car;
+  game.graveCarDebris = debris;
 }
 
 function buildGraveyardBodies(game) {
   const { scene } = game;
   const clothes = [0x202329, 0x2b2628, 0x1c2526, 0x292922].map((color) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.95 }));
-  const skin = new THREE.MeshStandardMaterial({ color: 0x81756c, roughness: 0.92 });
+  // Desaturated, low-value flesh stays recognisably human under the headlight
+  // without turning the victims into white shop mannequins.
+  const skin = new THREE.MeshStandardMaterial({ color: 0x373634, roughness: 0.98 });
   const shoe = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.98 });
   const hair = new THREE.MeshStandardMaterial({ color: 0x11100f, roughness: 1 });
   const Y = new THREE.Vector3(0, 1, 0);
@@ -478,6 +660,34 @@ function buildGraveyardBodies(game) {
     { le: [-0.34, 0.22, -0.52], lh: [-0.6, 0.08, -0.83], re: [0.62, 0.12, -0.1], rh: [0.9, 0.07, 0.18], lk: [-0.5, 0.13, 0.76], lf: [-0.82, 0.08, 1.1], rk: [0.22, 0.16, 1.02], rf: [0.52, 0.08, 1.4] },
   ];
   const sites = [[-5.8, 18.3], [0.2, 22.4], [5.9, 27.1], [-1.6, 33.1]];
+
+  // Flattened drag shadows do more for the story than bright gore: every mark
+  // begins under a body and points back toward the house, while the hands and
+  // heads keep reaching for the shut forest gate.  The direction reads at a
+  // glance even when colour does not.
+  const dragGeo = new THREE.PlaneGeometry(0.86, 3.2);
+  dragGeo.rotateX(-Math.PI / 2);
+  const dragMat = new THREE.MeshBasicMaterial({
+    color: 0x030405, transparent: true, opacity: 0.62,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const dragMarks = new THREE.InstancedMesh(dragGeo, dragMat, sites.length);
+  const dragMtx = new THREE.Matrix4(), dragQ = new THREE.Quaternion();
+  const dragP = new THREE.Vector3(), dragScale = new THREE.Vector3();
+  const dragEuler = new THREE.Euler();
+  sites.forEach(([x, z], i) => {
+    const away = new THREE.Vector3(x - FOREST_GATE.x, 0, z - FOREST_GATE.z).normalize();
+    const gy = Math.sin(x * 0.23) * Math.sin(z * 0.31) * 0.22;
+    dragQ.setFromEuler(dragEuler.set(0, Math.atan2(away.x, away.z), 0));
+    dragMtx.compose(
+      dragP.set(x + away.x * 1.12, gy + 0.018, z + away.z * 1.12),
+      dragQ, dragScale.set(0.82 + i * 0.08, 1, 0.9 + (i % 2) * 0.25),
+    );
+    dragMarks.setMatrixAt(i, dragMtx);
+  });
+  dragMarks.instanceMatrix.needsUpdate = true;
+  dragMarks.name = 'graveyard body drag marks';
+  scene.add(dragMarks);
 
   const limb = (group, a, b, radius, mat) => {
     const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
@@ -501,6 +711,25 @@ function buildGraveyardBodies(game) {
     torso.scale.set(1.05, 1, 0.76);
     torso.castShadow = true;
     group.add(torso);
+    // A torn coat/skirt panel breaks the toy-doll capsule silhouette and pools
+    // against the ground in the direction the body was dragged.
+    const ragGeo = new THREE.BufferGeometry();
+    ragGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+      -0.29, 0, -0.08, 0.29, 0, -0.08, 0.42, 0, 0.74,
+      -0.29, 0, -0.08, 0.42, 0, 0.74, -0.34, 0, 0.91,
+    ], 3));
+    ragGeo.computeVertexNormals();
+    const rag = new THREE.Mesh(ragGeo, cloth);
+    rag.position.set(0, 0.16, 0.12);
+    rag.rotation.y = (i - 1.5) * 0.08;
+    rag.castShadow = true;
+    group.add(rag);
+    const coat = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.92, 7, 1, true), cloth);
+    coat.rotation.x = Math.PI / 2;
+    coat.rotation.z = (i - 1.5) * 0.08;
+    coat.position.set(0, 0.25, 0.08);
+    coat.scale.set(1.16, 1, 0.82);
+    group.add(coat);
     const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.24, 9, 7), cloth);
     pelvis.position.set(0, 0.2, 0.48);
     pelvis.scale.set(1.25, 0.65, 0.92);
@@ -510,16 +739,23 @@ function buildGraveyardBodies(game) {
     head.scale.set(0.9, 0.72, 1.06);
     head.rotation.y = (i - 1.5) * 0.35;
     group.add(head);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.22, 7), skin);
+    neck.rotation.x = Math.PI / 2;
+    neck.position.set(0, 0.2, -0.5);
+    group.add(neck);
     const scalp = new THREE.Mesh(new THREE.SphereGeometry(0.195, 9, 6, 0, TAU, 0, Math.PI * 0.56), hair);
     scalp.position.copy(head.position);
     scalp.rotation.copy(head.rotation);
     scalp.scale.copy(head.scale).multiplyScalar(1.01);
     group.add(scalp);
     const p = poses[i];
-    for (const [a, b] of [
-      [[-0.2, 0.25, -0.25], p.le], [p.le, p.lh],
-      [[0.2, 0.25, -0.25], p.re], [p.re, p.rh],
-    ]) limb(group, a, b, 0.065, i === 1 ? skin : cloth);
+    const armSegments = [
+      [[-0.2, 0.25, -0.25], p.le, false], [p.le, p.lh, true],
+      [[0.2, 0.25, -0.25], p.re, false], [p.re, p.rh, true],
+    ];
+    for (const [a, b, forearm] of armSegments) {
+      limb(group, a, b, 0.065, i === 1 && forearm ? skin : cloth);
+    }
     for (const hand of [p.lh, p.rh]) {
       const h = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 5), skin);
       h.position.set(...hand);
@@ -536,14 +772,36 @@ function buildGraveyardBodies(game) {
       f.rotation.y = i * 0.37;
       group.add(f);
     }
+    if (i === 3) {
+      const sheetMat = new THREE.MeshStandardMaterial({ color: 0x4a4d49, roughness: 1, side: THREE.DoubleSide });
+      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 1.45, 3, 4), sheetMat);
+      sheet.rotation.x = -Math.PI / 2;
+      sheet.rotation.z = -0.12;
+      sheet.position.set(0.04, 0.34, 0.24);
+      sheet.castShadow = true;
+      group.add(sheet);
+    }
+    // A body needs one coherent ground shadow, not a separate shadow-map draw
+    // for every finger, shoe and hair cap. Keep the torso/coat silhouette and
+    // let the smaller anatomy receive light without multiplying arena cost.
+    group.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = false;
+      o.receiveShadow = true;
+    });
+    torso.castShadow = true;
+    rag.castShadow = true;
+    coat.castShadow = true;
     const gy = Math.sin(x * 0.23) * Math.sin(z * 0.31) * 0.22;
     group.position.set(x, gy + 0.02, z);
     const away = new THREE.Vector3(x - FOREST_GATE.x, 0, z - FOREST_GATE.z).normalize();
     group.lookAt(new THREE.Vector3(x + away.x, group.position.y, z + away.z));
+    batchStaticGroup(group, `dragged body ${i + 1}`);
     scene.add(group);
     bodies.push(group);
   });
   game.graveBodies = bodies;
+  game.graveDragMarks = dragMarks;
 }
 
 // ------------------------------------------------------------------- forest
@@ -581,11 +839,38 @@ export class Forest {
       }
     }
     this.length = this.samples.length;
-    // corridor half-width narrows with depth, breathes, and opens at the arena
-    this.halfW = this.samples.map((s, i) => {
+
+    // Two optional side chapters interrupt the long forward pressure without
+    // changing the mandatory centreline. The ground is broad enough for a real
+    // held-throw swing, but the forest keeps its side wall closed until that
+    // pocket's knot has actually caught an outbound skull. Once caught, the
+    // same mouth stays walkable so release, landing, retry, and return are safe.
+    this.secretPockets = [
+      {
+        id: 'searchers-line', targetId: 'forestRope:searchersLine', flag: 'forestSecret:searchersBlind',
+        centerS: 74, fromS: 65, landingS: 75.5, side: 1, landingLat: 5.35,
+        widen: 5.45, span: 10.5,
+      },
+      {
+        id: 'bell-line', targetId: 'forestRope:bellLine', flag: 'forestSecret:bellCopse',
+        centerS: 179, fromS: 170, landingS: 181, side: -1, landingLat: 5.35,
+        widen: 5.55, span: 10.5,
+      },
+    ];
+    // Keep the ordinary corridor separate from its authored side-pocket ground.
+    // `halfW` still describes all rendered/grounded space; clampPlayer decides
+    // which one-sided pocket has been earned through the matching skull latch.
+    this.baseHalfW = this.samples.map((s, i) => {
       const t = i / this.length;
       let w = lerp(2.4, 1.5, smoothstep(0, 0.35, t)) * (0.9 + 0.2 * Math.sin(i * 0.29));
       w += 9 * Math.exp(-(((i - this.arenaS()) / 14) ** 2));       // the arena bulge
+      return w;
+    });
+    this.halfW = this.baseHalfW.map((base, i) => {
+      let w = base;
+      for (const pocket of this.secretPockets) {
+        w += pocket.widen * Math.exp(-(((i - pocket.centerS) / pocket.span) ** 2));
+      }
       return w;
     });
 
@@ -600,6 +885,8 @@ export class Forest {
     this._buildFlora(rng);
     this._buildSealPool();
     this._setpieces();
+    this._buildForestLandmarks();
+    this._buildOptionalRopes();
 
     // NOTE: the forest zone/surface are registered in buildOutside AFTER the
     // clearing and cave, so their tighter rects win the first-match scan.
@@ -627,7 +914,48 @@ export class Forest {
     const s = pr ? pr.s : best;
     this.sealS = Math.max(-SEAL_TRAIL, s - SEAL_TRAIL);
     this.entered = s > 2;
+    // Cumulative seal rows belong to one life. Merely moving the numeric
+    // frontier does not move or remove the already-stamped instances, so a
+    // checkpoint behind the place of death can otherwise wake inside the old
+    // solid wall. Rebuild only the local barrier behind the restored seat.
+    // Normal forward play never calls reseat(), so its cumulative look-back
+    // history remains untouched until a teleport/respawn explicitly begins a
+    // new spatial life.
+    if (this.sealAnim && this.sealMesh) {
+      this.sealAnim.length = 0;
+      this.sealMesh.count = 0;
+      this.sealMesh.instanceMatrix.needsUpdate = true;
+      this._sealPlaced = -999;
+      this._sealCreakT = 0;
+      this._lookWindow = 0;
+      this._idleT = 0;
+      this._idleS = s;
+      if (this.entered && this.sealS >= 0) this._placeSeal(true);
+    }
     return s;
+  }
+
+  // Authored no-surprises restore point for a requested spline distance. The
+  // centerline is always clear except for two deliberate beats; those beats get
+  // side-preserving pads rather than a magic teleport across their consequence.
+  // Returning both the resolved s and position lets probes verify the contract
+  // without knowing the forest's shape.
+  safeRespawnPad(requestedS) {
+    let s = clamp(requestedS, 1.25, this.length - 3.0);
+    const fallen = this.fallenS();
+    if (!this.game.flags.has('treeCleared') && Math.abs(s - fallen) < 3.4) {
+      s = s < fallen ? fallen - 3.6 : fallen + 3.6;
+    }
+    const ravine = this.ravineS();
+    // The rope's authored far-side checkpoint lands on the shallow outer lip
+    // around +3m and must restore exactly. Only relocate points in the actual
+    // deep gash, not legitimate grounded landings beside it.
+    if (Math.abs(s - ravine) < 2.75) {
+      s = s < ravine ? ravine - 4.25 : ravine + 4.25;
+    }
+    const pos = this.posAt(s, 0);
+    pos.y = this.heightAt(pos.x, pos.z) + 0.025;
+    return { s, pos };
   }
 
   // Put a position back ON the trail. Respawn hands us wherever the player died
@@ -636,17 +964,24 @@ export class Forest {
   // trees". Re-seating fixes what the forest BELIEVES; this fixes where the
   // player actually stands.
   recentre(pos) {
-    const s = this.reseat(pos.x, pos.z);
-    const sm = this.posAt(s);
-    const lat = Math.hypot(pos.x - sm.x, pos.z - sm.z);
-    const room = Math.max(0.2, this.halfW[clamp(Math.round(s), 0, this.length - 1)] - 0.55);
-    if (lat > room && lat > 1e-4) {
-      const k = room / lat;
-      pos.x = sm.x + (pos.x - sm.x) * k;
-      pos.z = sm.z + (pos.z - sm.z) * k;
-    }
-    pos.y = Math.max(pos.y, this.heightAt(pos.x, pos.z));
-    return s;
+    const original = pos.clone();
+    const requestedS = this.reseat(pos.x, pos.z);
+    const originalPr = this.project(original.x, original.z);
+    const safe = this.safeRespawnPad(requestedS);
+    const originalGround = this.heightAt(original.x, original.z);
+    const exactPoseIsSafe = originalPr
+      && Math.abs(originalPr.lat) <= 0.35
+      && Math.abs(safe.s - requestedS) < 1e-3
+      && Number.isFinite(original.y)
+      && Math.abs(original.y - originalGround) <= 0.4;
+    // Preserve an already-authored safe checkpoint byte-for-byte (notably the
+    // far-side rope landing). Edge-biased or hazardous restores use the pad.
+    pos.copy(exactPoseIsSafe ? original : safe.pos);
+    // The pad may have stepped away from the fallen log or ravine lip. Seat a
+    // second time on that actual final position so projection, seal frontier,
+    // and rendered seal rows all describe the same place before the next frame.
+    this.reseat(pos.x, pos.z);
+    return safe.s;
   }
   fallenS() { return Math.floor(this.length * 0.22); }
 
@@ -731,6 +1066,8 @@ export class Forest {
     if (pos.z < 42) return;              // not in the forest yet
     const pr = this.project(pos.x, pos.z);
     if (!pr) return;
+    const beforeClampX = pos.x;
+    const beforeClampZ = pos.z;
     // The final spline samples are the one authored exit. Never relinquish
     // containment merely because a lateral breach got far enough away: that
     // used to disable both the wall correction and the fall rescue.
@@ -761,8 +1098,21 @@ export class Forest {
       const p = this.posAt(Math.max(pr.s, this.sealS + SEAL_TRAIL));
       pos.x = p.x; pos.z = p.z; pos.y = 0.6;
     }
-    const hw = this.halfW[pr.i] - 0.38;
-    const lat = clamp(pr.lat, -hw, hw);
+    // Pocket widening is intentionally asymmetric and conditional. Before the
+    // matching outbound skull latch, ordinary walking only owns the base route;
+    // after it, that pocket's side opens all the way to its real grounded shelf.
+    // A tiny Gaussian tail is ignored so there is no invisible kilometre-long
+    // clamp, while every practically walkable part of the widening stays gated.
+    const baseHw = this.baseHalfW[pr.i] - 0.38;
+    let minLat = -baseHw;
+    let maxLat = baseHw;
+    for (const pocket of this.secretPockets) {
+      const extra = pocket.widen * Math.exp(-(((pr.s - pocket.centerS) / pocket.span) ** 2));
+      if (extra < 0.08 || !this.game.flags.has(`${pocket.flag}:latched`)) continue;
+      if (pocket.side > 0) maxLat = Math.max(maxLat, baseHw + extra);
+      else minLat = Math.min(minLat, -baseHw - extra);
+    }
+    const lat = clamp(pr.lat, minLat, maxLat);
     // self-heal: if the frontier is impossibly far AHEAD of the player, a
     // respawn/teleport put them behind sealed path — the forest re-opens to
     // them rather than crushing them (the wall stays standing; only the
@@ -807,6 +1157,27 @@ export class Forest {
         this._placeSeal();
       }
     }
+    // Player vertical integration ran before postClamp. If this hook changes
+    // XZ, the old `gh` belongs to a different point—occasionally the other side
+    // of a terrain ripple or a seam—and the next frame begins below its new
+    // floor. Resolve grounded feet against the corrected point in this same
+    // frame. Airborne motion stays airborne; only penetration is lifted. The
+    // authored ravine remains a real absence and is never paved by this safety.
+    if (Math.hypot(pos.x - beforeClampX, pos.z - beforeClampZ) > 1e-5) {
+      const finalPr = this.project(pos.x, pos.z);
+      if (finalPr) this._lastIdx = finalPr.i;
+      const inRavine = finalPr && Math.abs(finalPr.s - this.ravineS()) < 3.2;
+      if (!inRavine) {
+        const ground = this.heightAt(pos.x, pos.z);
+        const player = this.game.player;
+        if (player?.grounded) {
+          pos.y = ground;
+          player.fallV = 0;
+        } else if (pos.y < ground) {
+          pos.y = ground;
+        }
+      }
+    }
   }
 
   // The forest LOOK, ported from THE EATEN PATH (docs/analysis/eaten-path.json).
@@ -824,8 +1195,6 @@ export class Forest {
 
     const trunkGeo = new THREE.CylinderGeometry(0.13, 0.26, 1, 7);
     trunkGeo.translate(0, 0.5, 0);
-    const canopyGeo = new THREE.IcosahedronGeometry(1, 1);
-    canopyGeo.scale(1, 0.62, 1);
     const branchGeo = new THREE.CylinderGeometry(0.05, 0.085, 1, 5);
     branchGeo.translate(0, 0.5, 0);
     const rootGeo = new THREE.TorusGeometry(1, 0.09, 4, 8, Math.PI * 0.85);
@@ -846,6 +1215,27 @@ export class Forest {
       g.computeVertexNormals();
       return g;
     })();
+    // A crown made from several torn, intersecting leaf planes keeps the sky
+    // sealed without becoming a single black polygon when the player looks
+    // up.  The same alpha silhouette is reused by hundreds of instances, so
+    // this still costs one draw and leaves pinholes of moon-depth between
+    // overlapping layers.
+    const canopyGeo = (() => {
+      const plane = (rx, ry, rz, y) => {
+        const g = new THREE.PlaneGeometry(2, 2, 1, 1);
+        g.rotateX(rx);
+        g.rotateY(ry);
+        g.rotateZ(rz);
+        g.translate(0, y, 0);
+        return g;
+      };
+      return mergeGeometries([
+        plane(-Math.PI / 2, 0, 0.12, 0.10),
+        plane(-Math.PI / 2 + 0.34, 0.46, -0.28, 0.18),
+        plane(-Math.PI / 2 - 0.31, -0.61, 0.37, -0.08),
+        plane(-0.12, 0.84, 0.16, 0.02),
+      ], false);
+    })();
     const shrubTex = (() => {
       const cv = document.createElement('canvas');
       cv.width = cv.height = 64;
@@ -864,7 +1254,7 @@ export class Forest {
       return t;
     })();
 
-    const trunks = [], canopies = [], branches = [], shrubs = [], roots = [];
+    const trunks = [], canopies = [], branches = [], shrubs = [], roots = [], sideMasses = [];
     for (let i = 2; i < this.length - 2; i += 2) {
       const hw = this.halfW[i];
       for (const side of [-1, 1]) {
@@ -878,35 +1268,86 @@ export class Forest {
           const lean = off < hw + 2.4 ? rng.range(0.05, 0.17) : rng.range(-0.04, 0.06);
           trunks.push({ x: p.x, z: p.z, tx: p.tx, tz: p.tz, h, lean, side, tint: rng.range(0.42, 0.86) });
           canopies.push({
-            x: p.x + rng.gauss() * 0.8, y: h * rng.range(0.84, 0.98), z: p.z + rng.gauss() * 0.8,
-            sc: rng.range(1.6, 2.9), tint: rng.range(0.45, 0.92),
+            x: p.x + rng.gauss() * 0.8, y: Math.max(7.0, h * rng.range(1.05, 1.17)), z: p.z + rng.gauss() * 0.8,
+            sc: rng.range(1.0, 1.72), tint: rng.range(0.72, 1.06),
           });
         }
       }
       // the sky closes over the path: low canopy blobs above the corridor
-      if (rng.chance(0.42)) {
-        const p = at(i, rng.gauss() * hw * 0.6);
-        canopies.push({ x: p.x, y: rng.range(4.6, 7.2), z: p.z, sc: rng.range(2.1, 3.4), tint: rng.range(0.34, 0.66) });
+      if (rng.chance(0.38)) {
+        // Close the crown from alternating shoulders, never by parking one
+        // enormous solid object directly over the camera centreline.
+        const side = rng.chance(0.5) ? -1 : 1;
+        const p = at(i, side * (0.45 + hw * rng.range(0.24, 0.48)));
+        canopies.push({
+          x: p.x, y: rng.range(8.0, 10.3), z: p.z,
+          sc: rng.range(1.05, 1.62), tint: rng.range(0.65, 0.94),
+        });
       }
       // and branches knit across it, low enough to duck under
-      if (rng.chance(0.24)) {
+      if (rng.chance(0.13)) {
         const y = rng.range(2.9, 4.3);
         const a = at(i, -(hw + rng.range(0, 0.9))), b = at(i + rng.gauss() * 1.2, hw + rng.range(0, 0.9));
-        branches.push({ a: new THREE.Vector3(a.x, y + rng.gauss() * 0.4, a.z), b: new THREE.Vector3(b.x, y + rng.gauss() * 0.4, b.z) });
+        const av = new THREE.Vector3(a.x, y + rng.gauss() * 0.4, a.z);
+        const bv = new THREE.Vector3(b.x, y + rng.gauss() * 0.4, b.z);
+        const mid = av.clone().lerp(bv, rng.range(0.42, 0.58));
+        mid.y += rng.range(-0.48, 0.62);
+        mid.x += -a.tz * rng.range(-0.65, 0.65);
+        mid.z += a.tx * rng.range(-0.65, 0.65);
+        branches.push({ a: av, b: mid }, { a: mid, b: bv });
       }
     }
     // shrub walls line the corridor — the surfaces you actually walk between.
     // Use the UNPINCHED width so foliage never presses against the lens.
+    const shoulderLandmarks = [
+      21, this.ravineS() - 13, this.ravineS() + 18,
+      this.arenaS(), this.length - 11,
+      ...this.secretPockets.map((pocket) => pocket.centerS),
+    ];
     for (let i = 2; i < this.length - 2; i += 1) {
       if (rng.chance(0.25)) continue;
+      // Leave a narrow readable silhouette slot around authored objects while
+      // the deeper batched belt remains solid behind them. This is not an open
+      // side: it is the difference between seeing a waystone and seeing a
+      // shrub alpha-card pasted over a waystone.
+      if (shoulderLandmarks.some((s) => Math.abs(i - s) < 3.4)) continue;
       const wallW = Math.max(this.halfW[i], 1.9);
       for (const side of [-1, 1]) {
         const p = at(i, side * (wallW + rng.range(0.3, 1.1)));
-        shrubs.push({ x: p.x, z: p.z, sc: rng.range(0.55, 1.15), rotY: rng.float() * TAU, tint: rng.range(0.34, 0.72) });
+        shrubs.push({ x: p.x, z: p.z, sc: rng.range(0.55, 1.15), rotY: rng.float() * TAU, tint: rng.range(0.48, 0.86) });
         if (rng.chance(0.28)) {
           const p2 = at(i, side * (wallW + rng.range(1.7, 3.8)));
-          shrubs.push({ x: p2.x, z: p2.z, sc: rng.range(0.75, 1.5), rotY: rng.float() * TAU, tint: rng.range(0.26, 0.58) });
+          shrubs.push({ x: p2.x, z: p2.z, sc: rng.range(0.75, 1.5), rotY: rng.float() * TAU, tint: rng.range(0.38, 0.7) });
         }
+      }
+    }
+    // The former forest had enough trunks on a top-down count and still showed
+    // long blue rectangles of empty world between them at eye level.  Two
+    // volumetric belts close those sightlines: a low shoulder behind the alpha
+    // shrubs and a taller irregular mass behind the trunks.  They are visual
+    // only and begin outside the authored clamp, so density cannot become an
+    // invisible collision maze.  One InstancedMesh carries the whole 208m run.
+    for (let i = 1; i < this.length - 1; i += 1) {
+      const hw = this.halfW[i];
+      for (const side of [-1, 1]) {
+        const near = at(i + rng.gauss() * 0.28, side * (hw + rng.range(1.9, 2.7)));
+        sideMasses.push({
+          x: near.x, baseY: 0, z: near.z,
+          sx: rng.range(0.9, 1.45), sy: rng.range(1.05, 1.75), sz: rng.range(1.15, 1.8),
+          rotY: rng.float() * TAU, tint: rng.range(0.54, 0.9),
+        });
+        const far = at(i + rng.gauss() * 0.45, side * (hw + rng.range(3.8, 5.4)));
+        sideMasses.push({
+          x: far.x, baseY: rng.range(0.25, 0.75), z: far.z,
+          sx: rng.range(1.45, 2.35), sy: rng.range(1.65, 2.85), sz: rng.range(1.55, 2.6),
+          rotY: rng.float() * TAU, tint: rng.range(0.42, 0.74),
+        });
+        const upper = at(i + rng.gauss() * 0.55, side * (hw + rng.range(3.0, 5.2)));
+        sideMasses.push({
+          x: upper.x, baseY: rng.range(2.5, 3.4), z: upper.z,
+          sx: rng.range(1.2, 2.0), sy: rng.range(1.4, 2.45), sz: rng.range(1.35, 2.3),
+          rotY: rng.float() * TAU, tint: rng.range(0.34, 0.62),
+        });
       }
     }
     // roots breaking out of the dirt across the trail
@@ -944,10 +1385,17 @@ export class Forest {
       mtx.compose(sv.set(it.x, 0, it.z), q, v.set(1.1, it.h, 1.1));
     }, (it) => it.tint);
 
-    const canopyMat = new THREE.MeshLambertMaterial({ color: 0x0e1712 });
+    const canopyMat = new THREE.MeshLambertMaterial({
+      color: 0xd5ddd0,
+      map: shrubTex,
+      alphaTest: 0.36,
+      side: THREE.DoubleSide,
+      emissive: 0x070b07,
+      emissiveIntensity: 0.2,
+    });
     bake(canopyGeo, canopyMat, canopies, (it) => {
       e.set(0, it.tint * 6, 0); q.setFromEuler(e);
-      mtx.compose(v.set(it.x, it.y, it.z), q, sv.set(it.sc * 2.1, it.sc * 1.5, it.sc * 2.1));
+      mtx.compose(v.set(it.x, it.y, it.z), q, sv.set(it.sc * 1.65, it.sc * 0.92, it.sc * 1.65));
     }, (it) => it.tint);
 
     bake(branchGeo, M.bark, branches, (it) => {
@@ -958,8 +1406,29 @@ export class Forest {
     }, () => 0.85);
 
     const shrubMat = new THREE.MeshLambertMaterial({
-      color: 0xffffff, map: shrubTex, alphaTest: 0.42, side: THREE.DoubleSide,
+      color: 0xffffff,
+      map: shrubTex,
+      alphaTest: 0.42,
+      side: THREE.DoubleSide,
+      emissive: 0x080b07,
+      emissiveIntensity: 0.13,
     });
+    // The deep belts deliberately use the same perforated leaf silhouette as
+    // the shoulder shrubs.  Solid polyhedra closed the view but looked like
+    // green boulders; crossed foliage closes the void while preserving dozens
+    // of little depth holes and edges for the skull light to rake across.
+    const sideBeltMesh = bake(shrubGeo, shrubMat, sideMasses, (it) => {
+      e.set(0, it.rotY, 0); q.setFromEuler(e);
+      mtx.compose(v.set(it.x, it.baseY || 0, it.z), q, sv.set(it.sx, it.sy, it.sz));
+    }, (it) => it.tint);
+    sideBeltMesh.name = 'sealed forest side belts';
+    this.sideBeltMesh = sideBeltMesh;
+    this.floraStats = {
+      sideBeltInstances: sideMasses.length,
+      shoulderShrubs: shrubs.length,
+      trunks: trunks.length,
+      canopies: canopies.length,
+    };
     bake(shrubGeo, shrubMat, shrubs, (it) => {
       e.set(0, it.rotY, 0); q.setFromEuler(e);
       mtx.compose(v.set(it.x, 0, it.z), q, sv.set(it.sc, it.sc, it.sc));
@@ -1248,6 +1717,392 @@ export class Forest {
     });
     game.ravineRopeTarget = ravineRopeTarget;
   }
+
+  _buildForestLandmarks() {
+    const { scene, mats: M } = this.game;
+    const up = new THREE.Vector3(0, 1, 0);
+    const q = new THREE.Quaternion(), p = new THREE.Vector3(), scale = new THREE.Vector3();
+    const dir = new THREE.Vector3(), e = new THREE.Euler(), mtx = new THREE.Matrix4();
+    const wood = [], pale = [], stones = [];
+    const landmarks = [];
+
+    const groundPoint = (s, lat = 0) => {
+      const v = this.posAt(s, lat);
+      v.y = this.heightAt(v.x, v.z);
+      return v;
+    };
+    const segment = (a, b, radius, isPale = false) => {
+      const d = b.clone().sub(a);
+      const len = d.length();
+      if (len < 0.02) return;
+      (isPale ? pale : wood).push({
+        p: a.clone().add(b).multiplyScalar(0.5),
+        q: new THREE.Quaternion().setFromUnitVectors(up, d.divideScalar(len)),
+        radius, len,
+      });
+    };
+    const arch = (id, s, height, skew = 0) => {
+      const i = clamp(Math.round(s), 0, this.length - 1);
+      const spread = this.halfW[i] + 0.72;
+      const left = groundPoint(s - 0.45, -spread);
+      const right = groundPoint(s + 0.45, spread);
+      const crown = groundPoint(s + 0.7, skew);
+      crown.y += height;
+      segment(left, crown, 0.31);
+      segment(right, crown, 0.29);
+      const hook = groundPoint(s + 3.4, -skew * 0.5);
+      hook.y = crown.y - 1.0;
+      segment(crown, hook, 0.13);
+      const pos = groundPoint(s, 0);
+      landmarks.push({ id, s, pos });
+    };
+
+    // A handful of silhouettes divide the 208m run into remembered chapters.
+    // They sit beyond the movement shoulder and are shape/value landmarks, not
+    // glowing breadcrumbs: a split gate, a lightning-white snag, old stones,
+    // the arena ring, and a final crooked arch before the oasis opens.
+    arch('split-gate', 21, 6.1, -0.5);
+    arch('crooked-exit', this.length - 11, 5.7, 0.65);
+
+    const snagS = this.ravineS() - 13;
+    const snagI = Math.round(snagS);
+    const snag = groundPoint(snagS, -(this.halfW[snagI] + 0.8));
+    const snagTop = snag.clone().add(new THREE.Vector3(0, 8.7, 0));
+    segment(snag, snagTop, 0.34);
+    const sm = this.samples[snagI];
+    for (const [along, side, y] of [[2.7, 1.65, 6.8], [-2.0, 1.25, 5.4], [1.3, -1.75, 7.7]]) {
+      const tip = snag.clone().add(new THREE.Vector3(
+        sm.tx * along + -sm.tz * side, y, sm.tz * along + sm.tx * side,
+      ));
+      segment(snag.clone().setY(snag.y + y * 0.72), tip, 0.105, true);
+    }
+    landmarks.push({ id: 'lightning-snag', s: snagS, pos: snag.clone() });
+
+    const addStone = (s, lat, h, yaw = 0, lean = 0) => {
+      const v = groundPoint(s, lat);
+      stones.push({ p: v, h, yaw, lean, sx: 0.48 + (h % 0.37) * 0.3 });
+    };
+    const wayS = this.ravineS() + 18;
+    for (const [ds, side, h, lean] of [[-3, -1, 2.4, -0.12], [0, 1, 3.1, 0.08], [4, -1, 2.0, 0.17], [7, 1, 2.7, -0.1]]) {
+      const i = clamp(Math.round(wayS + ds), 0, this.length - 1);
+      addStone(wayS + ds, side * (this.halfW[i] + 0.72), h, side * 0.24, lean);
+    }
+    landmarks.push({ id: 'old-waystones', s: wayS, pos: groundPoint(wayS, 0) });
+
+    const arena = this.arenaS();
+    for (const [ds, side, h] of [[-9, -1, 3.5], [-3, -1, 2.8], [5, -1, 4.0], [-8, 1, 2.7], [-1, 1, 3.8], [7, 1, 3.1]]) {
+      const i = clamp(Math.round(arena + ds), 0, this.length - 1);
+      addStone(arena + ds, side * Math.max(5.8, this.halfW[i] * 0.72), h, side * 0.35 + ds * 0.015, side * 0.06);
+    }
+    // Three high dead-tree ribs turn the wide arena bulge into a room rather
+    // than a sudden patch of blackness. They remain well above and outside the
+    // combat lane; their job is silhouette, scale, and a remembered threshold.
+    for (const [ds, lean] of [[-7.5, -0.8], [0, 0.55], [7.2, -0.35]]) {
+      const s = arena + ds;
+      const i = clamp(Math.round(s), 0, this.length - 1);
+      const spread = Math.max(5.4, this.halfW[i] * 0.68);
+      const left = groundPoint(s - 0.35, -spread);
+      const right = groundPoint(s + 0.35, spread);
+      const crown = groundPoint(s + lean, 0);
+      crown.y += 5.5 + (ds === 0 ? 0.8 : 0);
+      segment(left, crown.clone().add(new THREE.Vector3(-0.2, 0, 0.15)), 0.22);
+      segment(right, crown.clone().add(new THREE.Vector3(0.2, 0.1, -0.15)), 0.2);
+      const brokenTip = groundPoint(s + 2.1 + lean, 0.55 * Math.sign(lean || 1));
+      brokenTip.y = crown.y - 0.75;
+      segment(crown, brokenTip, 0.085, true);
+    }
+    landmarks.push({ id: 'arena-ring', s: arena, pos: groundPoint(arena, 0) });
+
+    const bakeSegments = (items, material, name) => {
+      if (!items.length) return;
+      const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 7), material, items.length);
+      items.forEach((it, i) => {
+        mtx.compose(it.p, it.q, scale.set(it.radius, it.len, it.radius));
+        mesh.setMatrixAt(i, mtx);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = name;
+      scene.add(mesh);
+    };
+    bakeSegments(wood, M.bark, 'authored forest landmark wood');
+    const paleMat = M.headstone.clone();
+    paleMat.color.multiplyScalar(0.72);
+    if ('emissive' in paleMat) {
+      paleMat.emissive = new THREE.Color(0x24282a);
+      paleMat.emissiveIntensity = 0.16;
+    }
+    bakeSegments(pale, paleMat, 'lightning snag splinters');
+
+    const stoneMat = M.headstone.clone();
+    stoneMat.color.setHex(0x303638);
+    if ('emissive' in stoneMat) {
+      stoneMat.emissive = new THREE.Color(0x080d0f);
+      stoneMat.emissiveIntensity = 0.1;
+    }
+    const standingStoneGeo = new THREE.CylinderGeometry(0.52, 0.68, 1, 5, 1);
+    standingStoneGeo.translate(0, 0.5, 0);
+    const standingPos = standingStoneGeo.attributes.position;
+    for (let i = 0; i < standingPos.count; i++) {
+      const x = standingPos.getX(i), y = standingPos.getY(i), z = standingPos.getZ(i);
+      const high = smoothstep(0.45, 1, y);
+      const edge = 1 + Math.sin(Math.atan2(z, x) * 5 + y * 8.1) * 0.055;
+      standingPos.setXYZ(i, x * edge + high * 0.075, y, z * (2 - edge) - high * 0.035);
+    }
+    standingStoneGeo.computeVertexNormals();
+    const stoneMesh = new THREE.InstancedMesh(standingStoneGeo, stoneMat, stones.length);
+    stones.forEach((it, i) => {
+      q.setFromEuler(e.set(it.lean * 0.45, it.yaw, it.lean));
+      mtx.compose(p.set(it.p.x, it.p.y, it.p.z), q,
+        scale.set(it.sx, it.h, 0.42 + it.sx * 0.18));
+      stoneMesh.setMatrixAt(i, mtx);
+      stoneMesh.setColorAt(i, new THREE.Color().setScalar(0.72 + (i % 4) * 0.08));
+    });
+    stoneMesh.instanceMatrix.needsUpdate = true;
+    if (stoneMesh.instanceColor) stoneMesh.instanceColor.needsUpdate = true;
+    stoneMesh.castShadow = true;
+    stoneMesh.receiveShadow = true;
+    stoneMesh.name = 'old waystones and arena ring';
+    scene.add(stoneMesh);
+    this.landmarks = landmarks;
+  }
+
+  _buildOptionalRopes() {
+    const game = this.game;
+    const { world, scene, mats: M, audio } = game;
+    const up = new THREE.Vector3(0, 1, 0);
+    const ropeMat = M.curtain.clone();
+    if (ropeMat.color) ropeMat.color.multiplyScalar(1.35);
+    const knotMat = M.headstone.clone();
+    if (knotMat.color) knotMat.color.multiplyScalar(0.86);
+    if ('emissive' in knotMat) {
+      knotMat.emissive = new THREE.Color(0x41474a);
+      knotMat.emissiveIntensity = 0.24;
+    }
+    const markerMat = new THREE.MeshLambertMaterial({ color: 0x0f1314 });
+    const packMat = new THREE.MeshLambertMaterial({ color: 0x0b0d0a });
+    const blindMat = M.curtain.clone();
+    if (blindMat.color) blindMat.color.setHex(0x20241f);
+    const bellMat = new THREE.MeshStandardMaterial({
+      color: 0x171916, roughness: 0.9, metalness: 0.36,
+    });
+    const iron = M.metal;
+    const optionalRopes = [];
+    const discovered = new Set();
+
+    const addSegment = (group, a, b, radius, mat, sides = 6) => {
+      const d = b.clone().sub(a);
+      const len = d.length();
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.08, len, sides), mat);
+      mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(up, d.divideScalar(len));
+      mesh.castShadow = radius > 0.06;
+      group.add(mesh);
+      return mesh;
+    };
+    const ground = (v) => {
+      v.y = this.heightAt(v.x, v.z);
+      return v;
+    };
+
+    for (const spec of this.secretPockets) {
+      const i = clamp(Math.round(spec.centerS), 0, this.length - 1);
+      const start = ground(this.posAt(spec.fromS, 0));
+      const landing = ground(this.posAt(spec.landingS, spec.side * spec.landingLat));
+      const secretPos = ground(this.posAt(spec.centerS, spec.side * (spec.landingLat + 0.2)));
+      const supportBase = ground(this.posAt(spec.centerS - 0.7,
+        spec.side * (this.halfW[i] - 0.45)));
+      const supportTop = supportBase.clone().add(new THREE.Vector3(0, 7.2, 0));
+      const pivot = landing.clone().add(new THREE.Vector3(0, 4.25, 0));
+      const group = new THREE.Group();
+      group.name = `optional skull line: ${spec.id}`;
+      addSegment(group, supportBase, supportTop, 0.27, M.bark, 7);
+      addSegment(group, supportTop, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), 0.12, M.bark, 6);
+      addSegment(group, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.026, ropeMat, 5);
+      const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), knotMat);
+      knot.position.copy(pivot);
+      knot.scale.set(1.0, 1.35, 1.0);
+      knot.name = `${spec.id} pale knot`;
+      group.add(knot);
+      const streamerGeo = new THREE.PlaneGeometry(0.18, 0.92, 1, 3);
+      const streamerPos = streamerGeo.attributes.position;
+      for (let v = 0; v < streamerPos.count; v++) {
+        const y = streamerPos.getY(v);
+        streamerPos.setX(v, streamerPos.getX(v) + (0.46 - y) * 0.08);
+      }
+      streamerGeo.computeVertexNormals();
+      const streamer = new THREE.Mesh(streamerGeo, ropeMat);
+      streamer.position.copy(pivot).add(new THREE.Vector3(0.11 * spec.side, -0.57, 0.03));
+      streamer.rotation.y = Math.atan2(start.x - pivot.x, start.z - pivot.z);
+      streamer.name = `${spec.id} torn knot streamer`;
+      group.add(streamer);
+
+      // A long, low deadfall makes the still-closed rule physical instead of
+      // asking the player to discover an invisible clamp. It follows the base
+      // route edge far enough to cover every useful metre of the pocket's
+      // Gaussian widening. The successful latch makes the forest swallow it;
+      // by the time the player lands, the same opening is a clean walk-out.
+      const deadfall = new THREE.Group();
+      deadfall.name = `${spec.id} closed side-pocket deadfall`;
+      const gateReach = spec.span * 2.04;
+      const gateCount = 13;
+      let previousTop = null;
+      for (let k = 0; k < gateCount; k++) {
+        const gateS = spec.centerS + lerp(-gateReach, gateReach, k / (gateCount - 1));
+        const gateI = clamp(Math.round(gateS), 0, this.length - 1);
+        const edgeLat = spec.side * (this.baseHalfW[gateI] - 0.13);
+        const root = ground(this.posAt(gateS, edgeLat));
+        const crown = ground(this.posAt(
+          gateS + (k % 2 ? -0.7 : 0.7),
+          edgeLat + spec.side * (0.28 + (k % 3) * 0.08),
+        ));
+        crown.y = root.y + 1.2 + (k % 4) * 0.18;
+        addSegment(deadfall, root, crown, 0.09 + (k % 3) * 0.012, M.bark, 6);
+        if (previousTop) {
+          const braceEnd = root.clone().lerp(crown, k % 2 ? 0.34 : 0.52);
+          addSegment(deadfall, previousTop, braceEnd, 0.052 + (k % 2) * 0.012, M.bark, 5);
+        }
+        previousTop = crown.clone().lerp(root, 0.18);
+      }
+      group.add(deadfall);
+      const boundary = {
+        group: deadfall,
+        openT: game.flags.has(`${spec.flag}:latched`) ? 1 : 0,
+      };
+      deadfall.position.y = boundary.openT ? -2.9 : 0;
+      deadfall.visible = boundary.openT < 0.995;
+
+      // The pockets tell two small pieces of the search story without text.
+      // One is an abandoned search blind (pack, boots, dead lamp); the other is
+      // a bell copse whose marker stones all face back toward the house.
+      if (spec.id === 'searchers-line') {
+        // A real three-pole blind gives the pocket a readable silhouette. The
+        // tarp is torn open toward the route, as if whoever waited here left
+        // through the forest wall rather than back along the path.
+        const blindLeft = secretPos.clone().add(new THREE.Vector3(-1.35, 0.04, -0.72));
+        const blindRight = secretPos.clone().add(new THREE.Vector3(1.3, 0.04, -0.63));
+        const blindPeak = secretPos.clone().add(new THREE.Vector3(-0.1, 1.55, 0.24));
+        addSegment(group, blindLeft, blindPeak, 0.055, M.bark, 5);
+        addSegment(group, blindRight, blindPeak, 0.052, M.bark, 5);
+        addSegment(group, blindLeft, blindRight, 0.04, M.bark, 5);
+        const tarpGeo = new THREE.BufferGeometry();
+        tarpGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+          blindLeft.x, blindLeft.y + 0.04, blindLeft.z,
+          blindPeak.x - 0.14, blindPeak.y - 0.08, blindPeak.z,
+          secretPos.x - 0.15, secretPos.y + 0.12, secretPos.z - 0.62,
+        ], 3));
+        tarpGeo.computeVertexNormals();
+        const tarp = new THREE.Mesh(tarpGeo, blindMat);
+        tarp.name = 'torn search blind tarp';
+        group.add(tarp);
+
+        const pack = new THREE.Mesh(new THREE.DodecahedronGeometry(0.48, 1), packMat);
+        pack.position.copy(secretPos).add(new THREE.Vector3(0.25, 0.42, 0.08));
+        pack.rotation.set(-0.08, 0.48, 0.14);
+        pack.scale.set(0.82, 1.05, 0.48);
+        const flap = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.36, 0.09, 8, 1, false, 0, Math.PI), packMat);
+        flap.position.copy(pack.position).add(new THREE.Vector3(0, 0.27, -0.15));
+        flap.rotation.set(Math.PI / 2, 0.48, 0);
+        group.add(pack, flap);
+        for (let k = 0; k < 2; k++) {
+          const boot = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.16, 0.42), markerMat);
+          boot.position.copy(secretPos).add(new THREE.Vector3(-0.58 + k * 0.4, 0.09, -0.48 - k * 0.08));
+          boot.rotation.y = 0.18 + k * 0.4;
+          group.add(boot);
+        }
+        const lamp = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), knotMat);
+        lamp.position.copy(secretPos).add(new THREE.Vector3(-0.42, 0.28, 0.42));
+        group.add(lamp);
+      } else {
+        const postA = secretPos.clone().add(new THREE.Vector3(-1.18, 0, -0.2));
+        const postB = secretPos.clone().add(new THREE.Vector3(1.06, 0, 0.14));
+        const topA = postA.clone().add(new THREE.Vector3(0.22, 2.45, 0.02));
+        const topB = postB.clone().add(new THREE.Vector3(-0.14, 2.25, -0.04));
+        addSegment(group, postA, topA, 0.09, M.bark, 6);
+        addSegment(group, postB, topB, 0.085, M.bark, 6);
+        addSegment(group, topA, topB, 0.075, M.bark, 6);
+        const bellPos = topA.clone().lerp(topB, 0.52).add(new THREE.Vector3(0, -0.68, 0));
+        addSegment(group, topA.clone().lerp(topB, 0.52), bellPos.clone().add(new THREE.Vector3(0, 0.23, 0)), 0.018, ropeMat, 5);
+        const bell = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.64, 11, 1, true), bellMat);
+        bell.position.copy(bellPos);
+        bell.rotation.z = -0.13;
+        const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 5), knotMat);
+        clapper.position.copy(bellPos).add(new THREE.Vector3(0.06, -0.35, 0));
+        group.add(bell, clapper);
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * TAU + 0.3;
+          const markerH = 0.62 + (k % 2) * 0.28;
+          const markerGeo = new THREE.CylinderGeometry(0.13, 0.2, markerH, 5);
+          const marker = new THREE.Mesh(markerGeo, markerMat);
+          marker.position.copy(secretPos).add(new THREE.Vector3(Math.cos(a) * 1.5, markerH * 0.5, Math.sin(a) * 1.5));
+          marker.rotation.set((k - 2) * 0.035, a + Math.PI, (k % 2 ? -1 : 1) * 0.12);
+          group.add(marker);
+        }
+      }
+      group.traverse((o) => {
+        if (o.isMesh) { o.castShadow = o.castShadow || false; o.receiveShadow = true; }
+      });
+      scene.add(group);
+
+      const target = world.addFetchTarget({
+        id: spec.targetId,
+        object: knot,
+        radius: 0.92,
+        onHit(skull) {
+          // A repeatable knot must still distinguish a fresh throw from the
+          // same skull returning through the sphere it just occupied. Without
+          // this mode guard, release began the recall and the very next swept
+          // segment bit the knot again forever. `continue` preserves the live
+          // return; the target remains enabled for the next outbound throw.
+          if (skull.mode !== 'outbound' || game.player.swing) return 'continue';
+          skull.anchorAt(pivot, { swing: true, maxHold: 5.8 });
+          game.player.beginSwing(pivot, { maxT: 5.8 });
+          game.flag(`${spec.flag}:latched`);
+          boundary.openT = Math.max(boundary.openT, 0.06);
+          if (audio?.creak) audio.creak({ pos: supportTop, gain: 0.5, rate: spec.side > 0 ? 1.04 : 0.74 });
+          return 'anchor';
+        },
+      });
+      optionalRopes.push({
+        id: spec.id,
+        target,
+        targetId: spec.targetId,
+        start: start.clone(),
+        pivot: pivot.clone(),
+        landing: landing.clone(),
+        secretPos: secretPos.clone(),
+        flag: spec.flag,
+        centerS: spec.centerS,
+        fromS: spec.fromS,
+        landingS: spec.landingS,
+        side: spec.side,
+        boundary,
+      });
+    }
+
+    game.tickers.push((dt) => {
+      if (game.act !== 'forest') return;
+      for (const line of optionalRopes) {
+        const open = game.flags.has(`${line.flag}:latched`);
+        line.boundary.openT = clamp(line.boundary.openT + (open ? dt * 2.8 : -dt * 3.6), 0, 1);
+        const swallowed = smoothstep(0, 1, line.boundary.openT);
+        line.boundary.group.position.y = -2.9 * swallowed;
+        line.boundary.group.visible = line.boundary.openT < 0.995;
+        if (discovered.has(line.flag) || game.flags.has(line.flag)) continue;
+        if (Math.hypot(game.player.pos.x - line.secretPos.x, game.player.pos.z - line.secretPos.z) > 2.15) continue;
+        discovered.add(line.flag);
+        game.flag(line.flag);
+        const pos = line.secretPos.clone().setY(line.secretPos.y + 0.7);
+        if (line.id === 'searchers-line' && audio?.metalDrop) {
+          audio.metalDrop({ pos, gain: 0.34, rate: 1.32 });
+        } else if (audio?.whisper) {
+          audio.whisper({ pos, gain: 0.25, rate: 0.78 });
+        }
+      }
+    });
+    this.optionalRopes = optionalRopes;
+  }
 }
 
 // ----------------------------------------------------------------- clearing
@@ -1430,88 +2285,5 @@ export function buildClearing(game) {
 
 // --------------------------------------------------------------------- cave
 export function buildCave(game) {
-  const { world, scene, mats: M } = game;
-  const C = game.clearingCenter;
-  // tunnel behind the fall, kinking right, rising to the hatch chamber
-  const path = [
-    [C.x, C.z + 22], [C.x + 2, C.z + 30], [C.x + 7, C.z + 36],
-    [C.x + 14, C.z + 40], [C.x + 22, C.z + 42],
-  ];
-  game.caveZone = world.addZone('cave', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
-  game.caveZone.enabled = game.flags.has('waterfallTaken');
-  world.addSurface('stone', C.x - 6, C.z + 20.4, C.x + 30, C.z + 50, -4, 12);
-
-  for (let i = 0; i < path.length - 1; i++) {
-    const [ax, az] = path[i], [bx, bz] = path[i + 1];
-    const len = Math.hypot(bx - ax, bz - az);
-    const ang = Math.atan2(bx - ax, bz - az);
-    const mx = (ax + bx) / 2, mz = (az + bz) / 2;
-    // floor + walls + roof as rough slabs
-    world.box(M.rock, mx, -0.15, mz, 4.6, 0.3, len + 1.6, ang);
-    // The slabs are only the dark backing behind the decorative rock skin.
-    // Keep their inner faces wide enough that the tunnel reads as a route,
-    // rather than two flat panels pinching the camera at every elbow.
-    world.box(M.rock, mx + Math.cos(ang) * 2.18, 1.7, mz - Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
-    world.box(M.rock, mx - Math.cos(ang) * 2.18, 1.7, mz + Math.sin(ang) * 2.18, 0.52, 4.2, len + 1.35, ang);
-    world.box(M.rock, mx, 3.68, mz, 4.75, 0.34, len + 1.35, ang);
-    // NOTE: no wall colliders here — axis-aligned boxes on diagonal legs pinch
-    // the walkway shut at every elbow. The tunnel is kept walkable by a spine
-    // clamp below (forest-style projection); the rock walls stay visual.
-    // candles along the wall — someone lit these
-    world.candles.push({ x: mx + Math.cos(ang) * 1.6, y: 1.1, z: mz - Math.sin(ang) * 1.6, intensity: 1.3, r: 4 });
-  }
-
-  // spine clamp: project onto the tunnel polyline, clamp lateral drift.
-  // The hatch chamber (east of ex-1) is exempt — its real walls collide.
-  const [cex, cez] = path[path.length - 1];
-  const prevClamp = world.postClamp;
-  world.postClamp = (pos, dt) => {
-    const inCave = pos.x > C.x - 6 && pos.x < C.x + 30 && pos.z > C.z + 21 && pos.z < C.z + 50;
-    if (!inCave) { if (prevClamp) prevClamp(pos, dt); return; }
-    if (pos.x > cex - 1) return;                        // the chamber
-    let bestD = Infinity, bx2 = pos.x, bz2 = pos.z;
-    for (let i = 0; i < path.length - 1; i++) {
-      const [ax, az] = path[i], [bx, bz] = path[i + 1];
-      const vx = bx - ax, vz = bz - az;
-      const L2 = vx * vx + vz * vz;
-      const t = clamp(((pos.x - ax) * vx + (pos.z - az) * vz) / L2, 0, 1);
-      const px = ax + vx * t, pz = az + vz * t;
-      const d = Math.hypot(pos.x - px, pos.z - pz);
-      if (d < bestD) { bestD = d; bx2 = px; bz2 = pz; }
-    }
-    const HW = 1.65;
-    if (bestD > HW) {
-      const k = HW / bestD;
-      pos.x = bx2 + (pos.x - bx2) * k;
-      pos.z = bz2 + (pos.z - bz2) * k;
-    }
-  };
-
-  // hatch chamber at the end
-  const [ex, ez] = path[path.length - 1];
-  world.box(M.rock, ex + 2, -0.15, ez, 6, 0.3, 6);
-  world.box(M.rock, ex + 5, 1.9, ez, 0.8, 4.4, 6);
-  world.box(M.rock, ex + 2, 1.9, ez + 3, 6, 4.4, 0.8);
-  world.box(M.rock, ex + 2, 1.9, ez - 3, 6, 4.4, 0.8);
-  world.box(M.rock, ex + 2, 4.0, ez, 6.4, 0.5, 6.4);
-  world.addCollider(ex + 4.6, -1, ez - 3, ex + 5.4, 4, ez + 3);
-  world.addCollider(ex - 1, -1, ez + 2.6, ex + 5, 4, ez + 3.4);
-  world.addCollider(ex - 1, -1, ez - 3.4, ex + 5, 4, ez - 2.6);
-  world.candles.push({ x: ex + 2, y: 0.6, z: ez, intensity: 1.5, r: 5 });
-
-  // the hatch above — through it, a room much like the first
-  const hatch = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 1.1), M.woodDark);
-  hatch.position.set(ex + 2, 3.75, ez);
-  scene.add(hatch);
-  // invisible reach-post below it: a ceiling hatch aimed at through a pitch
-  // clamp needs a forgiving target — E works from anywhere underneath
-  const post = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.8, 1.4),
-    new THREE.MeshBasicMaterial({ visible: false }));
-  post.position.set(ex + 2, 2.9, ez);
-  scene.add(post);
-  world.registerInteract(post, 'caveHatch', () => {
-    if (game.act !== 'cave' || !game.flags.has('waterfallTaken')) return;
-    game.director.enterMirrorRoom();
-  });
-  game.caveEnd = new THREE.Vector3(ex + 2, 0, ez);
+  return buildUnderfalls(game);
 }

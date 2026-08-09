@@ -48,6 +48,7 @@ export const FEEL_PROFILE = Object.freeze({
 });
 
 const MODES = ['held', 'outbound', 'poised', 'returning', 'anchored', 'gone'];
+const HOLD_POSE = Object.freeze({ x: 0.13, y: -0.19, z: -0.64, scale: 1.34 });
 
 const V = {
   a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(),
@@ -63,7 +64,10 @@ const W = {
 
 export class Skull {
   constructor({ scene, camera, audio, world, mats, variant }) {
-    this.variant = variant || null;
+    // The continuous anatomical shell is the shipping sculpt. `?skull=v0`
+    // deliberately falls through to the original inline courier for visual
+    // comparisons; the named sculpt-off variants remain available as well.
+    this.variant = variant || 'e';
     this.scene = scene;
     this.camera = camera;
     this.audio = audio;
@@ -108,14 +112,20 @@ export class Skull {
 
     this._buildMesh();
     this._buildViewmodel();
+    this._buildTether();
+    // A tiny jaw lamp only exists to make a carried key or charm readable in
+    // flight. It is not a second flashlight and never changes progression.
+    this.carryLight = new THREE.PointLight(0xd6b879, 0, 1.15, 2.0);
+    this.carryLight.layers.set(0);
+    this.jawMount.add(this.carryLight);
     this.holdNow();
   }
 
   // ---------------------------------------------------------------- mesh
   _buildMesh() {
     // Sculpt-off variants: ?skull=a (anatomist) / b (engineer) / c (the
-    // familiar) / d (the wrong skull). Alex judges in-game; the winner
-    // becomes the default (then the switch and losing files go).
+    // familiar) / d (the wrong skull) / e (the continuous anatomical shell).
+    // `e` is the shipping default; `v0` keeps the old courier reachable.
     const VARIANTS = { a: buildVariantA, b: buildVariantB, c: buildVariantC, d: buildVariantD, a2: buildVariantA2, e: buildVariantE };
     if (VARIANTS[this.variant]) {
       const parts = VARIANTS[this.variant](this.mats.bone);
@@ -126,6 +136,7 @@ export class Skull {
       this.eyeL = parts.eyeL;
       this.eyeR = parts.eyeR;
       this.stageSets = parts.stageSets;
+      this.stage5Hide = parts.stage5Hide || [];
       return;
     }
     const bone = this.mats.bone;
@@ -280,45 +291,49 @@ export class Skull {
     // The grip is expressive: it tightens with threat, trembles with the
     // chatter, and falls open and empty while the skull is away.
     const hold = new THREE.Group();
-    hold.position.set(0.17, -0.31, -0.7);
-    hold.scale.setScalar(1.15);
+    hold.position.set(HOLD_POSE.x, HOLD_POSE.y, HOLD_POSE.z);
+    hold.scale.setScalar(HOLD_POSE.scale);
     // human hands, not talons (playtest 3b): fleshy tapered phalanges that
     // overlap at the joints, knuckle mass, a static distal curl with a
     // NAIL — the anim contract (k1/k2 rotation.x) is unchanged.
-    const skin = new THREE.MeshStandardMaterial({ color: 0x6b5648, roughness: 0.88 });
-    const crease = new THREE.MeshStandardMaterial({ color: 0x53423a, roughness: 0.92 });
-    const nailMat = new THREE.MeshStandardMaterial({ color: 0x9a8a76, roughness: 0.55 });
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x101216, roughness: 1.0, metalness: 0 });
+    // These must read as the player's living hands, not a second skeleton.
+    // A physically lit, very rough surface gives the joints their volume; the
+    // viewmodel key in main.js is deliberately far enough away that it cannot
+    // clip the skin to white at point-blank range.
+    const skin = new THREE.MeshStandardMaterial({ color: 0x684238, roughness: 0.97, metalness: 0 });
+    const crease = new THREE.MeshStandardMaterial({ color: 0x57372f, roughness: 1.0, metalness: 0 });
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x7c5a4e, roughness: 0.82, metalness: 0 });
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
 
     const mkFinger = (parent, x, y, z, scale, yaw) => {
       const k1 = new THREE.Group();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
       // proximal: fattest, sunk into the palm so no gap shows
-      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0145 * scale, 0.03 * scale, 3, 7), skin);
+      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0145 * scale, 0.03 * scale, 4, 10), skin);
       s1.rotation.x = Math.PI / 2;
       s1.position.z = 0.02 * scale;
       k1.add(s1);
-      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.0135 * scale, 7, 6), crease);
+      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.0122 * scale, 10, 8), crease);
       kn.position.z = 0.046 * scale;
       kn.scale.set(1, 0.9, 0.85);
       k1.add(kn);
       const k2 = new THREE.Group();
       k2.position.set(0, 0, 0.048 * scale);
       // middle phalanx
-      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 * scale, 0.024 * scale, 3, 7), skin);
+      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 * scale, 0.024 * scale, 4, 10), skin);
       s2.rotation.x = Math.PI / 2;
       s2.position.z = 0.018 * scale;
       k2.add(s2);
       // distal: a static curl off k2 — pad, slight inward bend, nail on top
       const d = new THREE.Group();
-      d.position.set(0, -0.001, 0.038 * scale);
+      d.position.set(0, -0.001, 0.0335 * scale);
       d.rotation.x = -0.35;
-      const s3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.016 * scale, 3, 7), skin);
+      const s3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.016 * scale, 4, 10), skin);
       s3.rotation.x = Math.PI / 2;
       s3.position.z = 0.012 * scale;
       d.add(s3);
-      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.0105 * scale, 7, 6), skin);
+      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.0105 * scale, 10, 8), skin);
       pad.position.set(0, -0.002, 0.024 * scale);
       pad.scale.set(1, 0.85, 1);
       d.add(pad);
@@ -335,28 +350,50 @@ export class Skull {
     this._fingers = [];
     const mkHand = (side) => {
       const hand = new THREE.Group();
-      const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 10, 8), skin);
-      palm.scale.set(1.15, 0.42, 1.45);
+      const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 14, 10), skin);
+      palm.scale.set(1.28, 0.58, 1.35);
       hand.add(palm);
-      const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 6), skin);
-      heel.position.set(0, -0.004, -0.05);
-      heel.scale.set(1.2, 0.55, 0.9);
+      const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 8), skin);
+      heel.position.set(0, -0.004, -0.04);
+      heel.scale.set(1.3, 0.65, 0.9);
       hand.add(heel);
       // webbing: flesh across the finger bases so they grow FROM the hand
-      const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), skin);
+      const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), skin);
       web.position.set(0, 0.004, 0.058);
-      web.scale.set(2.05, 0.5, 0.7);
+      web.scale.set(2.05, 0.62, 0.7);
       hand.add(web);
+      // Human fingers terminate at meaningfully different heights.  The old
+      // near-flat profile made each hand read as four identical organ pipes,
+      // especially while empty.  Mirror the hierarchy so the index remains
+      // nearest each thumb: pinky, ring, middle, index on the left hand and
+      // the reverse on the right.
+      const fingerScale = side < 0
+        ? [0.76, 0.96, 1.0, 0.84]
+        : [0.84, 1.0, 0.96, 0.76];
+      const rootArc = side < 0
+        ? [-0.004, 0.001, 0.003, 0.0]
+        : [0.0, 0.003, 0.001, -0.004];
       for (let i = 0; i < 4; i++) {
-        const f = mkFinger(hand, (i - 1.5) * 0.028, 0.006, 0.062, 1 - Math.abs(i - 1.2) * 0.09, (i - 1.5) * 0.055);
+        const f = mkFinger(
+          hand,
+          (i - 1.5) * 0.028,
+          0.006,
+          0.062 + rootArc[i],
+          fingerScale[i],
+          (i - 1.5) * 0.075,
+        );
         f.phase = i * 0.9;
         this._fingers.push(f);
       }
-      const thumb = mkFinger(hand, side * -0.055, 0.004, 0.005, 1.12, side * -1.15);
+      const thumb = mkFinger(hand, side * -0.055, 0.012, 0.013, 1.12, side * -0.95);
+      // A thumb is a short, thick opposing mass, not a fifth long finger.
+      // Scaling its existing rig preserves the animation contract while making
+      // the cradle silhouette unmistakably human.
+      thumb.k1.scale.set(1.22, 1.12, 0.72);
       thumb.phase = 4.2;
       thumb.thumb = true;
       this._fingers.push(thumb);
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.068, 0.24, 8), sleeveMat);
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.068, 0.24, 12), sleeveMat);
       sleeve.position.set(0, -0.03, -0.15);
       sleeve.rotation.x = 1.3;
       hand.add(sleeve);
@@ -392,10 +429,84 @@ export class Skull {
     this.camera.add(hold);
   }
 
+  _buildTether() {
+    // The button has always *behaved* like a tether. Give that relationship a
+    // physical read: a hair-thin, sagging dark filament from the open hands to
+    // the skull. It is depth-tested, so walls can swallow it, and value/motion
+    // carry the read rather than colour. This is presentation only; none of the
+    // calibrated flight law consults it.
+    const points = 13;
+    const positions = new Float32Array(points * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const material = new THREE.LineBasicMaterial({
+      color: 0x8a5f55,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: true,
+    });
+    const tether = new THREE.Line(geometry, material);
+    tether.name = 'skull-tether';
+    tether.frustumCulled = false;
+    tether.visible = false;
+    tether.renderOrder = 3;
+    this.scene.add(tether);
+    this.tether = tether;
+    this._tetherPoints = points;
+    this._tetherStart = new THREE.Vector3();
+    this._tetherEnd = new THREE.Vector3();
+    this._tetherDelta = new THREE.Vector3();
+    this._tetherSide = new THREE.Vector3();
+    this._tetherPoint = new THREE.Vector3();
+  }
+
+  _updateTether() {
+    const live = this.mode === 'outbound' || this.mode === 'poised'
+      || this.mode === 'returning' || this.mode === 'anchored';
+    if (!live) {
+      this.tether.visible = false;
+      this.tether.material.opacity = 0;
+      return;
+    }
+
+    this.camera.updateMatrixWorld();
+    // The hands open when the skull leaves. The filament begins in the gap
+    // between them, so it can never be mistaken for a wrist-mounted weapon.
+    const start = this._tetherStart.set(0.055, -0.245, -0.46)
+      .applyMatrix4(this.camera.matrixWorld);
+    const end = this._tetherEnd.copy(this.pos);
+    const delta = this._tetherDelta.copy(end).sub(start);
+    const distance = delta.length();
+    const side = this._tetherSide.set(-delta.z, 0, delta.x);
+    if (side.lengthSq() > 1e-6) side.normalize();
+    const attr = this.tether.geometry.getAttribute('position');
+    for (let i = 0; i < this._tetherPoints; i++) {
+      const u = i / (this._tetherPoints - 1);
+      const arc = Math.sin(u * Math.PI);
+      const p = this._tetherPoint.copy(start).addScaledVector(delta, u);
+      // A little gravity and a smaller heartbeat keep the line organic, never
+      // laser-straight. Both fade to zero at its endpoints.
+      p.y -= arc * Math.min(0.68, 0.045 + distance * 0.018);
+      p.addScaledVector(side, arc * Math.sin(this._sfxClock * 6.2 + u * 8.0)
+        * Math.min(0.032, distance * 0.0018));
+      attr.setXYZ(i, p.x, p.y, p.z);
+    }
+    attr.needsUpdate = true;
+    this.tether.visible = true;
+    const stateGain = this.mode === 'returning' ? 1
+      : this.mode === 'anchored' ? 0.76 : 0.58;
+    this.tether.material.opacity = (0.32 + Math.min(distance / 28, 1) * 0.22)
+      * stateGain;
+  }
+
   _updateHands(dt) {
     // grip target: cradling when held, tightening with threat, open when empty
     const held = this.mode === 'held';
-    const target = held ? 0.5 + this.threat * 0.42 : 0.08;
+    const catchClose = this._catchFx
+      ? smoothstep(0.24, 0.86, this._catchFx.t / this._catchFx.dur)
+      : 1;
+    const target = held ? (0.5 + this.threat * 0.42) * catchClose : 0.08;
     this._grip = damp(this._grip, target, held ? 6 : 3, dt);
     this._handT = (this._handT || 0) + dt;
     const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
@@ -409,7 +520,7 @@ export class Skull {
 
   setLayers(layerFn) {
     // main.js calls this to put viewmodel content on LAYER_HELD
-    this.hold.traverse(layerFn);
+    this.hold.traverse((object) => { if (!object.isLight) layerFn(object); });
   }
 
   setStage(n) {
@@ -419,10 +530,13 @@ export class Skull {
       const on = s <= this.stage;
       for (const m of this.stageSets[s]) m.visible = on;
     }
+    for (const m of this.stage5Hide || []) m.visible = this.stage === 4;
     if (this.eyeL) this.eyeL.visible = this.stage >= 2;
     if (this.eyeR) this.eyeR.visible = this.stage >= 3;
-    // once it has a full face, sockets hide behind it
-    for (const s of this.sockets) s.visible = this.stage < 5;
+    // The anatomical shell ends as a torn, incomplete face. Keep its dark
+    // apertures readable through the tissue instead of creating a blank mask.
+    const openFinalApertures = this.variant === 'e' && this.stage === 5;
+    for (const s of this.sockets) s.visible = this.stage < 5 || openFinalApertures;
   }
 
   requestStage(n) {
@@ -448,12 +562,16 @@ export class Skull {
   holdNow() {
     this.mode = 'held';
     this.anchor = null;
+    this._catchFx = null;
     if (this.root.parent) this.root.parent.remove(this.root);
     this.root.position.set(0, 0, 0.02);
     this.root.rotation.set(0.52, 0, 0);   // face tipped up: it is looking at you
     this.root.scale.setScalar(1);
     this.hold.add(this.root);
-    this.root.traverse((o) => o.layers.set(LAYER_HELD));
+    // Keep the carried lantern on the world layer. The viewmodel is rendered
+    // in its own pass so the 58-cd world light cannot bleach the hands; after a
+    // return the light must not inherit the held mesh layer with the skull.
+    this.root.traverse((o) => { if (!o.isLight) o.layers.set(LAYER_HELD); });
     this.audio.skullMoanStop();
   }
 
@@ -467,10 +585,14 @@ export class Skull {
     // player FEELS the clamp: snap-shut jaw, flourish spin, chime
     this.carry = { id, mesh, scale: mesh.scale.x };
     if (mesh.parent) mesh.parent.remove(mesh);
-    mesh.position.set(0, -0.01, 0.045);
+    mesh.position.set(0, -0.018, 0.057);
     mesh.rotation.set(0.4, 0, 0);
-    mesh.scale.setScalar(Math.min(mesh.scale.x, 0.9));   // world keys are sized to be FOUND; teeth-sized once clamped
+    // Do not make the objective vanish at the exact moment it is acquired.
+    // It hangs below and ahead of the incisors, large enough to read while the
+    // skull is returning without becoming a key-shaped billboard.
+    mesh.scale.setScalar(Math.min(mesh.scale.x, 1.15));
     this.jawMount.add(mesh);
+    this.carryLight.intensity = 0.82;
     this.jaw.rotation.x = 0.3;
     this._flourishT = 0.45;
     this.audio.catchThud({ pos: this.pos, gain: 0.55, rate: 1.6 });   // tooth CLACK
@@ -482,6 +604,7 @@ export class Skull {
     const c = this.carry;
     this.jawMount.remove(c.mesh);
     this.carry = null;
+    this.carryLight.intensity = 0;
     return c;
   }
 
@@ -557,6 +680,7 @@ export class Skull {
     // the waterfall. it does not come back.
     this.mode = 'gone';
     if (this.root.parent) this.root.parent.remove(this.root);
+    this.tether.visible = false;
     this.audio.skullMoanStop();
   }
 
@@ -578,6 +702,7 @@ export class Skull {
       case 'anchored': this._updateAnchored(dt, ctx); break;
       case 'gone': break;
     }
+    this._updateTether();
   }
 
   _updatePoised(dt, ctx) {
@@ -614,12 +739,30 @@ export class Skull {
     // breathing sway; pulls back and up while charging — it knows what's coming
     const c = this.charge;
     const fearTremble = this.graveFear ? Math.sin(t * 23) * 0.0035 : 0;
-    this.hold.position.x = 0.17 + Math.sin(t * 0.8) * 0.004 + fearTremble;
-    this.hold.position.y = -0.31 + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05
+    this.hold.position.x = HOLD_POSE.x + Math.sin(t * 0.8) * 0.004 + fearTremble;
+    this.hold.position.y = HOLD_POSE.y + Math.sin(t * 1.7) * 0.006 + (ctx ? ctx.bobY * 0.4 : 0) + c * 0.05
       + (this.graveFear ? 0.018 : 0);
-    this.hold.position.z = -0.7 + c * 0.13;
+    this.hold.position.z = HOLD_POSE.z + c * 0.11;
     this.hold.rotation.z = Math.sin(t * 0.5) * 0.02 - c * 0.25;
     this.hold.rotation.x = c * 0.4;
+
+    // A normal catch does not teleport from world space into a perfect grip.
+    // It crosses the last hand-span, overshoots by a few millimetres, and the
+    // fingers close *after* the bone is already between them. Hard failsafes
+    // still reseat instantly, preserving their invisible recovery contract.
+    let catchScale = 1;
+    if (this._catchFx) {
+      this._catchFx.t = Math.min(this._catchFx.dur, this._catchFx.t + dt);
+      const u = this._catchFx.t / this._catchFx.dur;
+      const q = u - 1;
+      const settle = 1 + 2.35 * q * q * q + 1.35 * q * q;
+      this.root.position.lerpVectors(this._catchFx.start, this._catchFx.target, settle);
+      catchScale = 1 + Math.sin(u * Math.PI) * 0.075;
+      if (u >= 1) {
+        this.root.position.copy(this._catchFx.target);
+        this._catchFx = null;
+      }
+    }
 
     // eye contact (playtest-2 law): the held skull faces YOU — exactly,
     // always, whatever the hold sway or your pitch is doing. Its face is +Z.
@@ -644,6 +787,11 @@ export class Skull {
       this.audio.skullChatter(0.25, this.root.getWorldPosition(V.c));
     } else {
       this.jaw.rotation.x = damp(this.jaw.rotation.x, 0, 6, dt);
+    }
+    if (this.carry) {
+      // An occupied mouth never seals the objective behind its own teeth.
+      const clampTick = Math.max(0, Math.sin(t * 3.7)) * 0.035;
+      this.jaw.rotation.x = Math.max(this.jaw.rotation.x, 0.14 + clampTick);
     }
 
     // eyes (stage 2+): track threats; otherwise wander; sometimes stare AT you
@@ -677,7 +825,9 @@ export class Skull {
     // stage 3+: it breathes
     if (this.stage >= 3) {
       const b = 1 + Math.sin(t * 2.1) * 0.012;
-      this.root.scale.setScalar(b);
+      this.root.scale.setScalar(b * catchScale);
+    } else {
+      this.root.scale.setScalar(catchScale);
     }
   }
 
@@ -825,7 +975,18 @@ export class Skull {
     // hard = failsafe fired: it is simply in your hands again. don't explain.
     const impact = clamp((this.vel.length() - 14) / 30, 0, 1);
     const catchPos = this.camera.getWorldPosition(V.a).clone();
+    this.hold.updateMatrixWorld(true);
+    const incomingLocal = this.hold.worldToLocal(this.pos.clone());
     this.holdNow();
+    if (!hard) {
+      const target = new THREE.Vector3(0, 0, 0.02);
+      const offset = incomingLocal.sub(target);
+      if (offset.length() > 0.44) offset.setLength(0.44);
+      const start = target.clone().add(offset);
+      this._catchFx = { t: 0, dur: 0.24, start, target };
+      this.root.position.copy(start);
+      this._grip = 0.06;
+    }
     this._lastD = undefined;
     this.audio.catchThud({ pos: catchPos, gain: 0.5 + impact * 0.5, rate: hard ? 0.8 : 1 });
     if (ctx && ctx.onCatch) ctx.onCatch(impact, hard);
@@ -908,8 +1069,14 @@ export class Skull {
     // bounces inside 0.4s means it's wedged in geometry; it comes home.
     this._bounceTimes = (this._bounceTimes || []).filter((t) => now - t < 0.4);
     this._bounceTimes.push(now);
-    if (this._bounceTimes.length >= 3 && this.mode === 'outbound') {
-      this.beginReturn('auto');
+    if (this._bounceTimes.length >= 3) {
+      if (this.mode === 'outbound') this.beginReturn('auto');
+      else if (this.mode === 'returning') {
+        // Let _updateFlight perform the catch with its real input context on
+        // this frame instead of allowing a returning skull to machine-gun the
+        // compressor from inside a collider.
+        this.returnStuck = FEEL_PROFILE.returnStuckFallback + 0.001;
+      }
       return;
     }
     // SFX cooldown so stacked thuds can't max the compressor out

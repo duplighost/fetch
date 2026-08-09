@@ -11,7 +11,7 @@ const report = { url: `${URL_BASE}/?test=1&mute=1`, checks: [], browserErrors: [
 
 try {
   const { page, errors } = await openPage(browser, report.url);
-  report.browserErrors.push(...errors);
+  report.browserErrors = errors;
   await page.waitForFunction(
     () => window.__FETCH?.ready === true && window.__game,
     null, { timeout: 60000, polling: 100 },

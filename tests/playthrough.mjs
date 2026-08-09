@@ -266,6 +266,32 @@ try {
       const d = (en) => Math.hypot(en.pos.x - g.player.pos.x, en.pos.z - g.player.pos.z);
       const downed = es.filter((en) => en.state === 'stunned' && (en.iframes || 0) <= 0).sort((a, b) => d(a) - d(b));
       const threats = es.filter((en) => en.state !== 'stunned').sort((a, b) => d(a) - d(b));
+      // A committed strike is stationary, audible, and visibly reaches before
+      // it lands. Honour that telegraph like a competent player: create space
+      // first instead of turning toward a crowd-control grave and pretending
+      // the following throw/return animation is atomic.
+      const imminent = threats.find((en) => en.state === 'strike' && d(en) < 2.5);
+      if (imminent) {
+        let evadeT = 0;
+        while (!g.dead && imminent.state === 'strike' && evadeT < 0.9) {
+          let awayX = g.player.pos.x - imminent.pos.x;
+          let awayZ = g.player.pos.z - imminent.pos.z;
+          if (g.player.pos.x < -16) awayX += (-16 - g.player.pos.x) * 4;
+          if (g.player.pos.x > 20) awayX -= (g.player.pos.x - 20) * 4;
+          if (g.player.pos.z < 10) awayZ += (10 - g.player.pos.z) * 4;
+          if (g.player.pos.z > 39) awayZ -= (g.player.pos.z - 39) * 4;
+          g.player.yaw = Math.atan2(-awayX, -awayZ);
+          g.player._sync(0);
+          F.stepWith(0.1, { moveZ: 1, run: true });
+          evadeT += 0.1;
+        }
+        continue;
+      }
+      const urgentClaimant = threats.find((en) => en.graveClaimed && d(en) < 5.5);
+      if (urgentClaimant) {
+        graveThrowPoint(urgentClaimant.pos.x, urgentClaimant.pos.y + 1.2, urgentClaimant.pos.z);
+        continue;
+      }
       const readyGraves = (g.resonantGraves || []).filter((grave) => grave.cooldown <= 0.01)
         .map((grave) => {
           const p = grave.group.position;
@@ -289,7 +315,21 @@ try {
     }
     beat('graveyard-horde-survived', g.flags.has('graveyardCleared') && !g.dead,
       { dead: g.dead, waves: g.director.graveArena && g.director.graveArena.wave, guard: graveGuard });
-    walkTo(2, 41, 25);
+    // Combat can legitimately finish inside either open mausoleum. Leave it
+    // through its visible front doorway before bearing for the forest gate;
+    // otherwise a straight-line bot keeps walking into the rear wall and
+    // reports a false progression failure even though ordinary turning works.
+    for (const [mx, mz] of [[15.6, 31.5], [-14.6, 34.2]]) {
+      const inside = Math.abs(g.player.pos.x - mx) < 1.45
+        && g.player.pos.z > mz - 1.3 && g.player.pos.z < mz + 1.35;
+      if (inside) {
+        walkTo(mx, mz - 0.75, 8);
+        walkTo(mx, mz - 2.35, 8);
+      }
+    }
+    walkTo(2, 30, 30);
+    walkTo(2, 38, 18);
+    walkTo(2, 41, 10);
     walkTo(2, 45, 10);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later
@@ -398,8 +438,34 @@ try {
     beat('inside-the-cave', g.act === 'cave', g.act);
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
 
-    walkTo(g.clearingCenter.x + 7, g.clearingCenter.z + 36, 20);
-    walkTo(g.clearingCenter.x + 14, g.clearingCenter.z + 40, 20);
+    // The old cave was a short straight tube. The Underfalls is a real bent,
+    // multi-level district; exercise every authored main-route leg with the
+    // same ordinary movement input a player uses instead of bearing straight
+    // through its chapel and sluice walls.
+    const underfallsLayout = g.underfalls?.layout;
+    const underfallsMain = Array.isArray(underfallsLayout?.main) ? underfallsLayout.main : [];
+    const underfallsRouteReady = underfallsMain.length >= 13
+      && underfallsLayout.mainLength > 110
+      && underfallsLayout.chambers?.length >= 5;
+    const underfallsLegs = [];
+    if (underfallsRouteReady) {
+      for (const node of underfallsMain.slice(2)) {
+        underfallsLegs.push(walkTo(node.x, node.z, 20));
+        if (g.dead) break;
+      }
+    }
+    beat('crossed-the-underfalls', underfallsRouteReady
+      && underfallsLegs.length === underfallsMain.length - 2
+      && underfallsLegs.every(Boolean) && !g.dead,
+    {
+      routeReady: underfallsRouteReady,
+      legs: underfallsLegs,
+      routeNodes: underfallsMain.length,
+      routeLength: underfallsLayout?.mainLength ?? null,
+      chambers: underfallsLayout?.chambers?.length ?? 0,
+      act: g.act,
+      dead: g.dead,
+    });
     walkTo(g.caveEnd.x - 1.2, g.caveEnd.z, 20);   // stand OFF-center: straight up is beyond the pitch clamp
     useAt(g.caveEnd.x, 3.7, g.caveEnd.z);            // the hatch above
     F.stepWith(4.5);

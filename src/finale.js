@@ -143,11 +143,15 @@ export class Finale {
     const rug = addMesh(scene, new THREE.PlaneGeometry(3.35, 4.35), rugMat,
       CX - 0.15, 0.012, CZ + 0.15, -Math.PI / 2);
     rug.receiveShadow = true;
+    this.rug = rug;
+    this.rugHomeScale = rug.scale.clone();
+    this.rugHomePosition = rug.position.clone();
 
     const fixtureMat = new THREE.MeshStandardMaterial({
-      color: 0xa8b9c1, emissive: 0x607985, emissiveIntensity: 0.38,
-      roughness: 0.32, metalness: 0.16,
+      color: 0x59666b, emissive: 0x182328, emissiveIntensity: 0.13,
+      roughness: 0.72, metalness: 0.12,
     });
+    this.fixtureMat = fixtureMat;
     addCylinder(scene, fixtureMat, 0.31, 0.31, 0.055,
       CX, ROOM_H - 0.025, CZ, 20);
     addMesh(scene, new THREE.TorusGeometry(0.36, 0.025, 6, 24), brass,
@@ -274,8 +278,8 @@ export class Finale {
 
     // Cold motivated light holds a readable middle value. It intensifies only
     // slightly as the room closes; the skull, not a hue shift, is the focal cue.
-    const lamp = new THREE.PointLight(0xb3c9d3, 54, 9, 1.65);
-    lamp.position.set(CX, ROOM_H - 0.3, CZ);
+    const lamp = new THREE.PointLight(0xb3c9d3, 46, 8.2, 1.7);
+    lamp.position.set(CX, ROOM_H - 0.48, CZ);
     scene.add(lamp);
     this.lamp = lamp;
 
@@ -339,6 +343,46 @@ export class Finale {
       o.userData.homeScale = o.scale.clone();
       o.userData.homeVisible = o.visible;
     }
+
+    // The large props cannot remain whole inside the last metre without either
+    // projecting through the opposite pane or popping out of existence. Small,
+    // non-colliding remnants make that consumption physical: bed slats, drawer
+    // rails, a muntin and torn dark cloth are pushed into the player's remaining
+    // square of floor. Shared geometry keeps the four reflection passes cheap.
+    const debris = new THREE.Group();
+    debris.name = 'finale-crush-remnants';
+    debris.position.set(CX, 0, CZ);
+    const splinterGeo = new THREE.BoxGeometry(0.34, 0.045, 0.065);
+    const clothGeo = new THREE.BoxGeometry(0.28, 0.028, 0.16);
+    const splinterMat = woodEdge.clone();
+    splinterMat.color.setHex(0x3f3934);
+    const debrisSpecs = [
+      [1.84, 0.055, 1.68, 0.22, 0.045, 0.2, -0.2, 0.65, 0],
+      [1.48, 0.085, 2.2, 0.08, 0.075, 0.25, 0.12, -0.92, 0],
+      [-1.72, 0.055, 2.18, -0.2, 0.045, 0.19, 0.16, 0.78, 0],
+      [-2.18, 0.075, 1.62, -0.08, 0.065, 0.27, -0.1, -0.58, 0],
+      [0.82, 0.095, 2.78, 0.24, 0.08, 0.02, 0.05, 1.12, 0],
+      [-2.7, 0.09, -0.92, -0.24, 0.075, -0.06, -0.18, 0.5, 0],
+      [1.25, 0.035, 1.05, 0.13, 0.035, -0.2, 0.08, -0.32, 1],
+      [-1.45, 0.04, 1.48, -0.14, 0.04, -0.21, -0.06, 0.28, 1],
+    ];
+    const remnants = [];
+    for (let i = 0; i < debrisSpecs.length; i++) {
+      const [sx, sy, sz, ex, ey, ez, rx, rz, clothPiece] = debrisSpecs[i];
+      const piece = addMesh(debris, clothPiece ? clothGeo : splinterGeo,
+        clothPiece ? blanket : splinterMat, sx, sy, sz, rx, i * 0.31, rz);
+      piece.visible = false;
+      piece.userData.start = new THREE.Vector3(sx, sy, sz);
+      piece.userData.end = new THREE.Vector3(ex, ey, ez);
+      piece.userData.startRotation = piece.rotation.clone();
+      piece.userData.spin = new THREE.Vector3(
+        (i % 2 ? -1 : 1) * (0.3 + i * 0.04),
+        (i % 3 - 1) * 0.55,
+        (i % 2 ? 1 : -1) * (0.42 + i * 0.03));
+      remnants.push(piece);
+    }
+    scene.add(debris);
+    this.crushDebris = { group: debris, remnants };
   }
 
   _makeReflection(M) {
@@ -420,7 +464,7 @@ export class Finale {
 
     // This light is visible only to mirror cameras. It supplies a pale rim to
     // the exact bone geometry without creating a hue-only gameplay signal.
-    const headLight = new THREE.PointLight(0xc8dce3, 7, 2.5, 2);
+    const headLight = new THREE.PointLight(0xb6c9cb, 1.45, 2.2, 2);
     headLight.position.set(0, 1.79, 0.34);
     figure.add(headLight);
 
@@ -556,6 +600,8 @@ export class Finale {
     this._wallPressure.fill(0);
     this._rattled = false;
     this._grind = 0;
+    this._bedSnap = false;
+    this._dresserSnap = false;
     this.poses = [];
     this._mountExactSkull();
 
@@ -570,6 +616,7 @@ export class Finale {
     fd.headMount.rotation.set(0, 0, 0);
     fd.headMount.scale.setScalar(1);
     fd.torso.rotation.x = 0;
+    this.figure.scale.set(1, 1, 1);
     if (fd.exactJaw) fd.exactJaw.rotation.x = fd.exactJawHomeX || 0;
     this.veilMat.opacity = 1;
     for (const veil of this.wallVeils) veil.visible = true;
@@ -579,10 +626,19 @@ export class Finale {
       this.fractures[i].visible = false;
       this.fractures[i].material.opacity = 0;
     }
-    this.lamp.intensity = 54;
+    this.lamp.intensity = 46;
     this.dresserGlow.intensity = 4.5;
-    fd.headLight.intensity = 7;
-    fd.headLight.distance = 2.5;
+    fd.headLight.intensity = 1.45;
+    fd.headLight.distance = 2.2;
+    this.fixtureMat.emissiveIntensity = 0.13;
+    this.rug.position.copy(this.rugHomePosition);
+    this.rug.scale.copy(this.rugHomeScale);
+    for (const piece of this.crushDebris.remnants) {
+      piece.visible = false;
+      piece.position.copy(piece.userData.start);
+      piece.rotation.copy(piece.userData.startRotation);
+      piece.scale.set(1, 1, 1);
+    }
     this._placeWalls();
 
     this._captureEmptyHands();
@@ -590,10 +646,15 @@ export class Finale {
 
     // enterMirrorRoom invokes begin at full black. Reorient only during that
     // hidden transition; a visible debug entry preserves the current look.
-    g.player.pos.set(CX, 0, CZ - 0.6);
+    // Stand in the narrow gap between the remembered dresser and window. From
+    // here the first revealed reflection is not hidden behind either prop.
+    g.player.pos.set(CX - 0.65, 0, CZ - 0.6);
     const frameHidden = !g.el || !g.el.fade ||
       Number.parseFloat(g.el.fade.style.opacity || '1') >= 0.99;
-    if (frameHidden) g.player.yaw = 0;
+    // The original spawn faced a blank wallpaper slab for the entire seven
+    // second stillness. During the already-black transition, face the remembered
+    // bed/window composition so recognition lands before the room betrays it.
+    if (frameHidden) g.player.yaw = Math.PI;
     g.player.frozen = false;
     g.player._sync(0);
     // Route the transition through the Director so old cave beats are scoped
@@ -709,7 +770,13 @@ export class Finale {
         .copy(this._paneBaseTint).lerp(this._paneHotTint, tint * pulse);
 
       const cracks = this.fractures[i];
-      const crackOpacity = clamp(local * 0.28 + contactU * 0.38 + chosen * 0.34, 0, 0.82) * pulse;
+      // At contact the old version lit all four fracture fields equally. Their
+      // reflections stacked into a bright CAD wireframe and erased both jaw and
+      // hands. Keep pressure local and let the viewed pane own the final break;
+      // the other walls retain only a hairline echo.
+      const crackOpacity = clamp(
+        local * 0.24 + contactU * 0.035 + chosen * 0.62,
+        0, 0.74) * pulse;
       cracks.material.opacity = crackOpacity;
       cracks.visible = crackOpacity > 0.006;
     }
@@ -721,51 +788,97 @@ export class Finale {
     const bedScale = this.bed.userData.homeScale;
     const bedEat = 1 - smoothstep(1.12, 2.74, h);
     const bedMove = Math.sqrt(clamp(bedEat, 0, 1));
-    this.bed.position.x = lerp(bedHome.x, CX + h + 0.9, bedMove);
-    this.bed.position.z = lerp(bedHome.z, CZ + 0.25, bedEat * 0.38);
+    const bedEdge = Math.max(0.14, h - 0.16);
+    this.bed.position.x = lerp(bedHome.x, CX + bedEdge, bedMove);
+    this.bed.position.z = lerp(bedHome.z, CZ + Math.min(0.22, bedEdge), bedEat * 0.72);
     this.bed.rotation.x = this.bed.userData.homeRotation.x - bedEat * 0.16;
     this.bed.rotation.z = this.bed.userData.homeRotation.z + bedEat * 1.18;
     this.bed.scale.set(
-      bedScale.x * (1 - bedEat * 0.3),
-      bedScale.y * (1 - bedEat * 0.42),
-      bedScale.z);
-    this.bed.visible = bedEat < 0.94;
+      bedScale.x * (1 - bedEat * 0.58),
+      bedScale.y * (1 - bedEat * 0.5),
+      bedScale.z * (1 - bedEat * 0.7));
+    this.bed.visible = true;
 
     const dresserHome = this.dresser.userData.homePosition;
     const dresserScale = this.dresser.userData.homeScale;
     const dresserEat = 1 - smoothstep(1.08, 2.68, h);
     const dresserMove = Math.sqrt(clamp(dresserEat, 0, 1));
-    this.dresser.position.x = lerp(dresserHome.x, CX - 0.35, dresserEat * 0.25);
-    this.dresser.position.z = lerp(dresserHome.z, CZ + h + 0.38, dresserMove);
+    const dresserEdge = Math.max(0.13, h - 0.15);
+    this.dresser.position.x = lerp(dresserHome.x, CX - dresserEdge, dresserMove);
+    this.dresser.position.z = lerp(
+      dresserHome.z, CZ + Math.min(0.2, dresserEdge), dresserMove);
     this.dresser.rotation.x = this.dresser.userData.homeRotation.x - dresserEat * 0.72;
     this.dresser.rotation.z = this.dresser.userData.homeRotation.z - dresserEat * 0.16;
     this.dresser.scale.set(
-      dresserScale.x * (1 - dresserEat * 0.22),
-      dresserScale.y * (1 - dresserEat * 0.38),
-      dresserScale.z * (1 - dresserEat * 0.42));
-    this.dresser.visible = dresserEat < 0.94;
+      dresserScale.x * (1 - dresserEat * 0.52),
+      dresserScale.y * (1 - dresserEat * 0.48),
+      dresserScale.z * (1 - dresserEat * 0.64));
+    this.dresser.visible = true;
+
+    if (!this._bedSnap && bedEat > 0.52) {
+      this._bedSnap = true;
+      this.bed.getWorldPosition(this._v2);
+      this.game.audio.creak({ pos: this._v2, gain: 0.62, rate: 0.48, verb: 0.64 });
+      this.game.shake(0.075);
+    }
+    if (!this._dresserSnap && dresserEat > 0.68) {
+      this._dresserSnap = true;
+      this.dresser.getWorldPosition(this._v2);
+      this.game.audio.knock({ pos: this._v2, gain: 0.46, rate: 0.62, verb: 0.7 });
+      this.game.audio.metalDrop({ pos: this._v2, gain: 0.22, rate: 1.36, verb: 0.66 });
+      this.game.shake(0.09);
+    }
+
+    const debrisU = smoothstep(0.42, 0.84, closeness);
+    const debrisLimit = Math.max(0.16, h - 0.075);
+    for (let i = 0; i < this.crushDebris.remnants.length; i++) {
+      const piece = this.crushDebris.remnants[i];
+      piece.visible = debrisU > 0.015;
+      piece.position.lerpVectors(piece.userData.start, piece.userData.end, debrisU);
+      piece.position.x = clamp(piece.position.x, -debrisLimit, debrisLimit);
+      piece.position.z = clamp(piece.position.z, -debrisLimit, debrisLimit);
+      piece.position.y += Math.sin(elapsed * 1.8 + i * 1.7) * 0.018 * (1 - debrisU);
+      const home = piece.userData.startRotation, spin = piece.userData.spin;
+      piece.rotation.set(
+        home.x + spin.x * debrisU,
+        home.y + spin.y * debrisU,
+        home.z + spin.z * debrisU);
+      const squash = 1 - debrisU * 0.22;
+      piece.scale.set(squash, 1 - debrisU * 0.35, squash);
+    }
+
+    // The rug cannot remain four metres long in a 74cm room. It bunches into a
+    // raised dark patch under the last playable square rather than extending
+    // invisibly through all four mirrors.
+    const rugX = clamp((h * 2 - 0.12) / 3.35, 0.1, 1);
+    const rugZ = clamp((h * 2 - 0.12) / 4.35, 0.08, 1);
+    this.rug.scale.set(this.rugHomeScale.x * rugX, this.rugHomeScale.y * rugZ, 1);
+    this.rug.position.x = lerp(this.rugHomePosition.x, CX, closeness);
+    this.rug.position.y = this.rugHomePosition.y + closeness * 0.026;
+    this.rug.position.z = lerp(this.rugHomePosition.z, CZ, closeness);
 
     // The door and window belong to their walls. They stay usable/readable as
     // long as possible, but their frames squeeze to the remaining span instead
     // of projecting through the opposite glass at the last meter.
     const innerSpan = Math.max(0.18, h * 2 - 0.12);
+    const frameCrush = smoothstep(0.38, 0.9, closeness);
     const doorHome = this.doorPanel.userData.homePosition;
     const doorScale = this.doorPanel.userData.homeScale;
     this.doorPanel.position.x = Math.max(doorHome.x, CX - h + 0.05);
     this.doorPanel.scale.set(
       doorScale.x * clamp(innerSpan / 1.48, 0.16, 1),
-      doorScale.y, doorScale.z);
+      doorScale.y * (1 - frameCrush * 0.62), doorScale.z);
     this.doorPanel.rotation.z = this.doorPanel.userData.homeRotation.z +
-      smoothstep(0.18, 1, closeness) * 0.14;
+      smoothstep(0.18, 1, closeness) * 0.22;
 
     const winHome = this.winFrame.userData.homePosition;
     const winScale = this.winFrame.userData.homeScale;
     this.winFrame.position.z = Math.min(winHome.z, CZ + h - 0.07);
     this.winFrame.scale.set(
       winScale.x * clamp(innerSpan / 1.74, 0.14, 1),
-      winScale.y, winScale.z);
+      winScale.y * (1 - frameCrush * 0.72), winScale.z);
     this.winFrame.rotation.z = this.winFrame.userData.homeRotation.z -
-      smoothstep(0.18, 1, closeness) * 0.12;
+      smoothstep(0.18, 1, closeness) * 0.2;
   }
 
   _beginContact() {
@@ -822,17 +935,34 @@ export class Finale {
     }
     fd.headMount.position.y = fd.headMount.userData.baseY +
       0.015 * open + 0.065 * lunge;
-    fd.headMount.position.z = 0.2 * lunge;
+    // The skull may approach the glass, but it must never cross its clip plane.
+    // The old 20cm lunge plus 1.38x scale split the face into inverted chunks in
+    // the last playable frame. Jaw, tilt, arms and light now carry the attack.
+    fd.headMount.position.z = 0.025 * lunge;
     fd.headMount.rotation.x = -0.08 * open - 0.16 * lunge;
-    fd.headMount.scale.setScalar(1 + lunge * 0.38);
-    fd.torso.rotation.x = -0.065 * lunge;
+    fd.headMount.rotation.y = Math.sin(this.contactT * 12.5) * 0.026 * lunge;
+    fd.headMount.rotation.z = -0.075 * lunge;
+    fd.headMount.scale.setScalar(1 + lunge * 0.13);
+    fd.torso.rotation.x = -0.11 * lunge;
+    fd.torso.rotation.z += Math.sin(this.contactT * 9.5) * 0.006 * lunge;
+    fd.arms[0].shoulder.rotation.x = lerp(fd.arms[0].shoulder.rotation.x, -0.3, lunge);
+    fd.arms[1].shoulder.rotation.x = lerp(fd.arms[1].shoulder.rotation.x, -0.3, lunge);
+    fd.arms[0].shoulder.rotation.z = lerp(0.08, 0.42, lunge);
+    fd.arms[1].shoulder.rotation.z = lerp(-0.08, -0.42, lunge);
+    fd.arms[0].elbow.rotation.x = lerp(fd.arms[0].elbow.rotation.x, -0.12, lunge);
+    fd.arms[1].elbow.rotation.x = lerp(fd.arms[1].elbow.rotation.x, -0.12, lunge);
+    // Contact begins in the same already-compressed body state as the last
+    // closing frame. Expanding back to unit scale here made elbows and shins
+    // cross the last 74cm room even though the final attack pose happened to
+    // tuck them in again.
+    this.figure.scale.set(0.92 - u * 0.08, 1.018 + u * 0.02, 0.9 - u * 0.08);
     const pulse = 0.84 + Math.sin(this.contactT * (8 + u * 12)) * 0.16;
     // Pull the rim inward as it brightens. A huge-range point light turned the
     // whole torso into a flat white cutout; a tight bone light keeps the jaw and
     // sockets legible while the body remains a silhouette.
-    fd.headLight.intensity = lerp(18, 38, u) * pulse;
-    fd.headLight.distance = lerp(2.5, 1.35, u);
-    this.lamp.intensity = lerp(68, 84, u) * (0.9 + pulse * 0.1);
+    fd.headLight.intensity = lerp(3.4, 4.5, u) * pulse;
+    fd.headLight.distance = lerp(1.45, 0.82, u);
+    this.lamp.intensity = lerp(25, 13, u) * (0.94 + pulse * 0.06);
     g.baseTension = 1;
     g.audio.setTension(1);
 
@@ -873,15 +1003,30 @@ export class Finale {
     g.audio.duck(0, 12);
     // The image now earns its cut. This is intentionally almost instantaneous,
     // not the old five seconds of watching a CSS layer become opaque.
-    g.fadeOut(0.06, () => {
+    g.fadeOut(0.045, () => {
       g.player.frozen = true;
-      this.phase = 'end';
-      g.showEnd();
+      // Hold the impossible absence for one breath. The prior version exposed
+      // the title in the same instant the image vanished, turning the cut into
+      // a menu transition. Controls die only now, behind hard black; the known
+      // catch and the stranger's gasp then arrive from showEnd in their existing
+      // tested order.
+      g.after(0.72, () => {
+        if (this.phase !== 'black') return;
+        this.phase = 'end';
+        // The last playable image has already cut to hard black. Retire the
+        // mirror renderer here so the finished game does not keep allocating
+        // poses and drawing four 1024px reflection targets behind the title.
+        this.active = false;
+        g.showEnd();
+      });
     });
   }
 
   update(dt) {
-    if (!this.active) return;
+    // Once contact has cut to black there is no remaining visual simulation;
+    // the delayed catch/title is owned by Game.after above. Freezing this
+    // subsystem preserves the last authored frame without background churn.
+    if (!this.active || this.phase === 'black' || this.phase === 'end') return;
     const g = this.game;
     this.t += dt;
 
@@ -922,13 +1067,22 @@ export class Finale {
     // pushing. Keep its body just inside the mirrored volume: without this the
     // head crossed the oblique mirror clip plane and vanished precisely when
     // the player struggled hardest.
-    const figureRoom = Math.max(0.03, this.half - 0.3);
+    const bodySqueeze = smoothstep(0.68, 1, closeness);
+    const figureRoom = Math.max(0.025, this.half - lerp(0.3, 0.315, bodySqueeze));
     f.position.set(
       clamp(pose.x, CX - figureRoom, CX + figureRoom),
       g.player.pos.y,
       clamp(pose.z, CZ - figureRoom, CZ + figureRoom));
     f.rotation.y = pose.yaw + Math.PI;
-    const stride = Math.sin(pose.ph) * 0.46 * pose.sr;
+    f.scale.set(
+      1 - bodySqueeze * 0.08,
+      1 + bodySqueeze * 0.018,
+      1 - bodySqueeze * 0.1);
+    // A running gait is readable while there is room to run. In the final
+    // square it becomes a braced, nearly stationary struggle so the reflected
+    // body cannot scissor its limbs through the mirror planes.
+    const strideRoom = 1 - smoothstep(0.72, 1, closeness) * 0.92;
+    const stride = Math.sin(pose.ph) * 0.46 * pose.sr * strideRoom;
     fd.legs[0].hip.rotation.x = stride;
     fd.legs[1].hip.rotation.x = -stride;
     fd.legs[0].knee.rotation.x = Math.max(0, -stride) * 0.28;
@@ -940,8 +1094,9 @@ export class Finale {
     fd.torso.rotation.z = Math.sin(pose.ph * 2) * 0.012 * pose.sr;
     fd.headMount.position.y = fd.headMount.userData.baseY +
       Math.abs(Math.sin(pose.ph)) * 0.012 * pose.sr;
-    fd.headLight.intensity = lerp(7, 18, smoothstep(0.15, 1, closeness));
-    this.lamp.intensity = lerp(54, 68, smoothstep(0.25, 1, closeness));
+    fd.headLight.intensity = lerp(1.45, 3.4, smoothstep(0.15, 1, closeness));
+    this.lamp.intensity = lerp(46, 25, smoothstep(0.25, 1, closeness));
+    this.fixtureMat.emissiveIntensity = lerp(0.13, 0.045, smoothstep(0.3, 1, closeness));
 
     const closingElapsed = Math.max(0, this.t - 7);
     const practicalLife = 1 - smoothstep(2, 18, closingElapsed);
@@ -1024,7 +1179,7 @@ export class Finale {
   }
 
   render(scene, camera) {
-    if (!this.active) return false;
+    if (!this.active || this.phase === 'black' || this.phase === 'end') return false;
     this.mirrors.update(scene, camera);
     return true;
   }

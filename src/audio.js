@@ -336,6 +336,54 @@ export class GameAudio {
         for (let j = 0; j < 90 && at + j < n; j++) d[at + j] += (R() * 2 - 1) * 0.6 * Math.pow(1 - j / 90, 3);
       }
     });
+    // ---- grave walkers: dirt-birth, committed inhale, missed collapse ----
+    // These are positional body sounds, not score stings. The player hears the
+    // soil/cloth before a risen silhouette, then gets one unmistakable inhale
+    // for the lethal commitment and a dry exhale when sprinting clears it.
+    this._walkerRiseBuf = this._mono(1.08, (d, sr, n) => {
+      let dirt = 0, cloth = 0;
+      const knocks = [0.19, 0.43, 0.76];
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const w = R() * 2 - 1;
+        dirt += 0.09 * (w - dirt);
+        cloth += 0.012 * (w - cloth);
+        const rise = Math.sin(Math.PI * Math.min(1, t / 1.02));
+        let bones = 0;
+        for (const at of knocks) {
+          const q = t - at;
+          if (q >= 0 && q < 0.055) bones += Math.sin(TAU * (310 - q * 1700) * q) * Math.exp(-q * 85);
+        }
+        d[i] = dirt * rise * 1.8 + cloth * rise * 0.42 + bones * 0.34;
+      }
+    });
+    this._walkerStrikeBuf = this._mono(0.74, (d, sr, n) => {
+      let breath = 0, prev = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const w = R() * 2 - 1;
+        breath += 0.045 * (w - breath);
+        const hp = w - prev; prev = w;
+        const draw = Math.pow(Math.sin(Math.PI * Math.min(1, t / 0.66)), 0.8);
+        const throat = Math.sin(TAU * (68 + t * 52) * t) * (0.18 + draw * 0.32);
+        const jawAt = t - 0.23;
+        const jaw = jawAt >= 0 && jawAt < 0.065
+          ? hp * Math.exp(-jawAt * 95) * 0.72
+          : 0;
+        d[i] = breath * draw * 2.8 + throat * draw + jaw;
+      }
+    });
+    this._walkerMissBuf = this._mono(0.48, (d, sr, n) => {
+      let breath = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const w = R() * 2 - 1;
+        breath += 0.07 * (w - breath);
+        const env = Math.exp(-t * 6.2);
+        const jaw = Math.max(0, Math.sin(TAU * 17 * t)) ** 7;
+        d[i] = breath * env * 2.1 + Math.sin(TAU * 118 * t) * env * 0.2 + w * jaw * env * 0.16;
+      }
+    });
     // ---- jaw ticks: soft (far, muffled bone) and hard (close, sharp rattle) ----
     this._tickSoft = []; this._tickHard = [];
     for (let v = 0; v < 3; v++) {
@@ -454,6 +502,41 @@ export class GameAudio {
         }),
       },
     };
+
+    // The Drowned Choir is not in the walker palette. Its far layer is three
+    // almost-human fundamentals sharing one lung; the close layer is pressure
+    // hiss and displaced droplets. Both are routed through moving HRTF panners
+    // by drownedChoirLoop() below.
+    this._choirBufs = {
+      far: this._loopBuf(2.4, (d, sr, n) => {
+        let wet = 0;
+        for (let i = 0; i < n; i++) {
+          const t = i / sr;
+          const lung = 0.28 + Math.max(0, Math.sin(TAU * (t / 2.4))) ** 1.7 * 0.72;
+          const wobble = Math.sin(TAU * 0.42 * t) * 1.8;
+          const voices =
+            Math.sin(TAU * (52 + wobble) * t) * 0.36
+            + Math.sin(TAU * (65.5 - wobble * 0.7) * t + 1.7) * 0.25
+            + Math.sin(TAU * (78.2 + wobble * 0.35) * t + 3.9) * 0.17;
+          const w = R() * 2 - 1;
+          wet += 0.035 * (w - wet);
+          d[i] = (voices * lung + wet * 1.8 * (0.2 + lung * 0.45)) * 0.62;
+        }
+      }),
+      pressure: this._loopBuf(0.72, (d, sr, n) => {
+        let lpv = 0, last = 0;
+        for (let i = 0; i < n; i++) {
+          const t = i / sr;
+          const w = R() * 2 - 1;
+          lpv += 0.22 * (w - lpv);
+          const spray = w - last; last = w;
+          const swell = 0.2 + 0.8 * Math.max(0, Math.sin(TAU * 1.39 * t)) ** 2;
+          const throat = Math.sin(TAU * 116 * t + Math.sin(TAU * 7 * t) * 0.7) * 0.18;
+          const bead = fract(t * 9.7) < 0.035 ? spray * 0.8 : 0;
+          d[i] = (lpv * 1.9 * swell + spray * 0.1 + throat * swell + bead) * 0.5;
+        }
+      }),
+    };
   }
 
   // ---------------- routing helpers ----------------
@@ -501,7 +584,10 @@ export class GameAudio {
     g.gain.value = baseGain * (opts.gain ?? 1);
     const nodes = [g];
     let tail = g;
-    if (opts.pos) { const p = this._panner(opts.pos); g.connect(p); tail = p; nodes.push(p); }
+    if (opts.pos) {
+      const p = this._panner(opts.pos, opts.ref ?? 2.4, opts.roll ?? 1.5);
+      g.connect(p); tail = p; nodes.push(p);
+    }
     tail.connect(this.master);
     const verb = opts.verb ?? baseVerb;
     if (verb > 0) { const vs = ctx.createGain(); vs.gain.value = verb; tail.connect(vs).connect(this.verbBus); nodes.push(vs); }
@@ -868,6 +954,112 @@ export class GameAudio {
     });
   }
 
+  // ---------------- under-falls positional ecology ----------------
+
+  caveDrip(opts = {}) {
+    // A drip without a source is just a UI click. Refuse to make one: every
+    // cave detail must occupy a stable point the player can turn toward.
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.15, 0.7, opts.verb ?? 0.86);
+    const ping = ctx.createOscillator(); ping.type = 'sine';
+    const rate = opts.rate ?? 1;
+    ping.frequency.setValueAtTime((1600 + Math.random() * 700) * rate, t);
+    ping.frequency.exponentialRampToValueAtTime((520 + Math.random() * 160) * rate, t + 0.11);
+    const pg = ctx.createGain();
+    this._env(pg, t, 0.23, 0.0015, 0.34);
+    ping.connect(pg).connect(out); ping.start(t); ping.stop(t + 0.42);
+    const body = ctx.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(145 * rate, t + 0.018);
+    body.frequency.exponentialRampToValueAtTime(58 * rate, t + 0.24);
+    const bg = ctx.createGain();
+    this._env(bg, t + 0.018, 0.16, 0.002, 0.25);
+    body.connect(bg).connect(out); body.start(t + 0.018); body.stop(t + 0.34);
+    return true;
+  }
+
+  drownedCall(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const rate = opts.rate ?? (opts.distant ? 0.86 : 1);
+    const out = this._bus(opts, 3.0, opts.distant ? 0.62 : 0.82, opts.verb ?? 0.92);
+    // Three throats enter one after another. No centered sting sits beneath it;
+    // the exact HRTF point is the whole warning.
+    for (let i = 0; i < 3; i++) {
+      const at = t + i * 0.105;
+      const o = ctx.createOscillator(); o.type = i === 1 ? 'triangle' : 'sine';
+      const f = [72, 91, 116][i] * rate;
+      o.frequency.setValueAtTime(f * 0.82, at);
+      o.frequency.exponentialRampToValueAtTime(f * 1.18, at + 0.58);
+      o.frequency.exponentialRampToValueAtTime(f * 0.72, at + 1.85);
+      const g = ctx.createGain();
+      this._env(g, at, 0.22 - i * 0.035, 0.24, 1.75);
+      o.connect(g).connect(out); o.start(at); o.stop(at + 2.1);
+    }
+    const breath = ctx.createBufferSource(); breath.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.9;
+    bp.frequency.setValueAtTime(430, t);
+    bp.frequency.exponentialRampToValueAtTime(1700, t + 1.05);
+    const bg = ctx.createGain(); this._env(bg, t, 0.28, 0.32, 1.55);
+    breath.connect(bp).connect(bg).connect(out);
+    breath.start(t); breath.stop(t + 2.0);
+    return true;
+  }
+
+  drownedSurge(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const rate = opts.rate ?? 1;
+    const out = this._bus(opts, 1.9, opts.pressure ? 0.95 : 0.76, opts.verb ?? 0.72);
+    const rush = ctx.createBufferSource(); rush.buffer = this._noiseBuf; rush.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.75;
+    bp.frequency.setValueAtTime(260 * rate, t);
+    bp.frequency.exponentialRampToValueAtTime((opts.pressure ? 2800 : 1700) * rate, t + 0.62);
+    const rg = ctx.createGain(); this._env(rg, t, 0.72, 0.16, 1.05);
+    rush.connect(bp).connect(rg).connect(out);
+    rush.start(t); rush.stop(t + 1.35);
+    const sub = ctx.createOscillator(); sub.type = 'sine';
+    sub.frequency.setValueAtTime(68 * rate, t);
+    sub.frequency.exponentialRampToValueAtTime(27 * rate, t + 0.95);
+    const sg = ctx.createGain(); this._env(sg, t, opts.pressure ? 0.68 : 0.38, 0.035, 1.0);
+    sub.connect(sg).connect(out); sub.start(t); sub.stop(t + 1.2);
+    return true;
+  }
+
+  sprayReveal(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    this._play(this._splashBufs[(Math.random() * 2) | 0], {
+      pos: opts.pos, gain: 0.52 * (opts.gain ?? 1), rate: 1.35, verb: opts.verb ?? 0.78,
+    });
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.35, 0.58, opts.verb ?? 0.78);
+    const hiss = ctx.createBufferSource(); hiss.buffer = this._noiseBuf;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2300;
+    const hg = ctx.createGain(); this._env(hg, t, 0.42, 0.025, 0.78);
+    hiss.connect(hp).connect(hg).connect(out);
+    hiss.start(t); hiss.stop(t + 0.9);
+    return true;
+  }
+
+  drownedImpact(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.45, 0.92, opts.verb ?? 0.62);
+    const choke = ctx.createBufferSource(); choke.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(1200, t);
+    bp.frequency.exponentialRampToValueAtTime(180, t + 0.62);
+    const cg = ctx.createGain(); this._env(cg, t, 0.78, 0.006, 0.72);
+    choke.connect(bp).connect(cg).connect(out);
+    choke.start(t); choke.stop(t + 0.84);
+    const sub = ctx.createOscillator(); sub.type = 'sine';
+    sub.frequency.setValueAtTime(96, t);
+    sub.frequency.exponentialRampToValueAtTime(31, t + 0.44);
+    const sg = ctx.createGain(); this._env(sg, t, 0.72, 0.003, 0.5);
+    sub.connect(sg).connect(out); sub.start(t); sub.stop(t + 0.58);
+    return true;
+  }
+
   brushCrash(opts = {}) {
     if (!this._ready) return;
     this._play(this._brushBuf, {
@@ -882,6 +1074,39 @@ export class GameAudio {
       pos: opts.pos, gain: 0.6 * (opts.gain ?? 1),
       rate: (0.92 + Math.random() * 0.16) * (opts.rate ?? 1), verb: opts.verb ?? 0.25,
     });
+  }
+
+  walkerRise(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    this._play(this._walkerRiseBuf, {
+      pos: opts.pos,
+      gain: 0.72 * (opts.gain ?? 1),
+      rate: opts.rate ?? 1,
+      verb: opts.verb ?? 0.62,
+    });
+    return true;
+  }
+
+  walkerStrike(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    this._play(this._walkerStrikeBuf, {
+      pos: opts.pos,
+      gain: 0.9 * (opts.gain ?? 1),
+      rate: opts.rate ?? 1,
+      verb: opts.verb ?? 0.38,
+    });
+    return true;
+  }
+
+  walkerMiss(opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    this._play(this._walkerMissBuf, {
+      pos: opts.pos,
+      gain: 0.58 * (opts.gain ?? 1),
+      rate: opts.rate ?? 1,
+      verb: opts.verb ?? 0.25,
+    });
+    return true;
   }
 
   thud(opts = {}) {
@@ -1129,6 +1354,77 @@ export class GameAudio {
     this._play(this._tickHard[(Math.random() * 3) | 0], {
       pos: opts.pos, gain: 0.5 * (opts.gain ?? 1), rate: 1.1, when: 0.03, verb: 0.1,
     });
+  }
+
+  drownedChoirLoop(pos = { x: 0, y: 1.4, z: 0 }) {
+    if (!this._ready) {
+      return { panningModel: 'HRTF', setPos() {}, setState() {}, douse() {}, stop() {} };
+    }
+    const ctx = this.ctx;
+    const farP = this._panner(pos, 12, 1.18);
+    const pressureP = this._panner(pos, 5.5, 0.92);
+    farP.connect(this.master); pressureP.connect(this.master);
+    const farWet = ctx.createGain(); farWet.gain.value = 0.68;
+    const pressureWet = ctx.createGain(); pressureWet.gain.value = 0.5;
+    farP.connect(farWet).connect(this.verbBus);
+    pressureP.connect(pressureWet).connect(this.verbBus);
+
+    const farSrc = ctx.createBufferSource(); farSrc.buffer = this._choirBufs.far; farSrc.loop = true;
+    const pressureSrc = ctx.createBufferSource(); pressureSrc.buffer = this._choirBufs.pressure; pressureSrc.loop = true;
+    const farG = ctx.createGain(); farG.gain.value = 0.0001;
+    const pressureG = ctx.createGain(); pressureG.gain.value = 0.0001;
+    farSrc.connect(farG).connect(farP);
+    pressureSrc.connect(pressureG).connect(pressureP);
+    farSrc.start(); pressureSrc.start();
+
+    const self = this;
+    const h = {
+      panningModel: 'HRTF',
+      _dead: false,
+      setPos(x, y, z) {
+        if (this._dead) return;
+        self._setPos(farP, x, y, z, 0.045);
+        self._setPos(pressureP, x, y, z, 0.028);
+      },
+      setState(presence, reveal, pressure, rear) {
+        if (this._dead) return;
+        const t = ctx.currentTime;
+        const p = clamp01(presence), r = clamp01(reveal), a = clamp01(pressure);
+        const behind = clamp01(rear);
+        const farVol = 0.025 + p * 0.31 + behind * 0.11;
+        const nearVol = r * 0.16 + a * 0.66 + behind * p * 0.12;
+        farG.gain.setTargetAtTime(Math.max(0.0001, farVol), t, 0.11);
+        pressureG.gain.setTargetAtTime(Math.max(0.0001, nearVol), t, 0.055);
+        farSrc.playbackRate.setTargetAtTime(0.82 + p * 0.22 + a * 0.26, t, 0.12);
+        pressureSrc.playbackRate.setTargetAtTime(0.74 + r * 0.38 + a * 0.72, t, 0.075);
+        farWet.gain.setTargetAtTime(0.54 + (1 - r) * 0.28, t, 0.16);
+        pressureWet.gain.setTargetAtTime(0.38 + a * 0.32, t, 0.1);
+      },
+      douse(exposure = 1) {
+        if (this._dead) return;
+        const t = ctx.currentTime;
+        pressureSrc.playbackRate.cancelScheduledValues(t);
+        pressureSrc.playbackRate.setTargetAtTime(1.45 + clamp01(exposure) * 0.65, t, 0.025);
+        pressureSrc.playbackRate.setTargetAtTime(0.92, t + 0.18, 0.38);
+        farG.gain.setTargetAtTime(0.025, t, 0.035);
+      },
+      stop() {
+        if (this._dead) return;
+        this._dead = true;
+        const t = ctx.currentTime;
+        farG.gain.cancelScheduledValues(t); farG.gain.setTargetAtTime(0.0001, t, 0.12);
+        pressureG.gain.cancelScheduledValues(t); pressureG.gain.setTargetAtTime(0.0001, t, 0.1);
+        setTimeout(() => {
+          try { farSrc.stop(); pressureSrc.stop(); } catch {}
+          for (const n of [farP, pressureP, farWet, pressureWet, farG, pressureG]) {
+            try { n.disconnect(); } catch {}
+          }
+        }, 800);
+        self._loops.delete(h);
+      },
+    };
+    this._loops.add(h);
+    return h;
   }
 
   // ---------------- enemy presence loops ----------------

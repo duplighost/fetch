@@ -69,6 +69,8 @@ export class Director {
     this._gestureT = 0;
     this._silence = null;
     this._scope = 0;
+    this._caveEcology = null;
+    this._mirrorTransition = false;
   }
 
   after(t, fn, { global = false } = {}) {
@@ -88,6 +90,7 @@ export class Director {
     if (g.act === act && !hard) return;
     const prev = g.act;
     if (prev !== act) this._scope++;
+    if (prev === 'cave' && act !== 'cave') this._leaveCave(act);
     g.act = act;
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
@@ -113,7 +116,7 @@ export class Director {
     if (act === 'graveyard') this._enterGraveyard();
     if (act === 'forest') this._enterForest();
     if (act === 'clearing') this._enterClearing();
-    if (act === 'cave') g.baseTension = 0.15;
+    if (act === 'cave') this._enterCave();
     if (act === 'mirror') g.baseTension = 0;
   }
 
@@ -194,6 +197,75 @@ export class Director {
     this._gesturing = true;
   }
 
+  _enterCave() {
+    const g = this.game;
+    const C = g.clearingCenter;
+    const layout = g.underfalls?.layout || null;
+    g.checkpoint('cave');
+    g.baseTension = 0.2;
+    this.dread = 0.72;
+    this._mirrorTransition = false;
+
+    // All ambience hangs on authored world points. The waterfall is the first
+    // source; the remaining sites are the actual cave candle/stone seams, not
+    // random offsets around the listener.
+    const waterfall = new THREE.Vector3(C.x, 0.65, C.z + 20.02);
+    let choirSource;
+    if (layout) {
+      // Four metres back along the last dry ambulatory: close enough that a
+      // walking player eventually earns a pressure commitment, far enough that
+      // its full audio-only warning plus ordinary forward motion remain mercy.
+      const lowerI = layout.main.indexOf(layout.lowerSluice);
+      const lower = layout.lowerSluice;
+      const behind = layout.main[Math.max(0, lowerI - 1)];
+      const dx = behind.x - lower.x, dz = behind.z - lower.z;
+      const d = Math.hypot(dx, dz) || 1;
+      const k = Math.min(4, d) / d;
+      choirSource = new THREE.Vector3(
+        lower.x + dx * k,
+        lower.y + (behind.y - lower.y) * k,
+        lower.z + dz * k,
+      );
+    } else {
+      choirSource = new THREE.Vector3(C.x, 0, C.z + 20.68);
+    }
+    const foreshadow = layout
+      ? new THREE.Vector3(layout.main[2].x, layout.main[2].y + 1.15, layout.main[2].z)
+      : waterfall.clone();
+    const z = g.caveZone;
+    const sites = layout
+      ? [
+          ...layout.main.slice(1).map((p, i) => new THREE.Vector3(p.x, p.y + 1.15 + (i % 2) * 0.65, p.z)),
+          ...layout.chambers.map((p) => new THREE.Vector3(p.x, p.y + 2.25, p.z)),
+        ]
+      : g.world.candles
+        .filter((c) => !z || (c.x >= z.min.x && c.x <= z.max.x && c.z >= z.min.z && c.z <= z.max.z))
+        .map((c) => new THREE.Vector3(c.x, c.y + 0.4, c.z));
+    if (g.caveEnd) sites.push(new THREE.Vector3(g.caveEnd.x, 2.85, g.caveEnd.z));
+    this._caveEcology = {
+      age: 0,
+      dripT: 2.15,
+      callT: 7.1,
+      site: 0,
+      sites,
+      waterfall,
+      foreshadow,
+      choirSource,
+      choirTriggerZ: layout ? layout.chapel.z + 7 : -Infinity,
+      choirArmed: false,
+    };
+    // The passive displaced-spray figure in the pump chapel is the first visual
+    // lie. The actual predator only answers after the player has passed it.
+    // A positioned call from the intake apse begins the sound-story now.
+    g.audio.drownedCall({ pos: foreshadow, gain: 0.3, distant: true, ref: 8, roll: 1.1 });
+  }
+
+  _leaveCave(reason = 'leave') {
+    this._caveEcology = null;
+    this._mirrorTransition = reason === 'mirror';
+    this.game.enemies.endDrownedChoir(reason);
+  }
+
   // ---------------------------------------------------------------- update
   update(dt) {
     const g = this.game;
@@ -231,6 +303,7 @@ export class Director {
     this._updateArena(dt);
     this._updateKneeler(dt);
     this._updateGesture(dt);
+    this._updateCaveHorror(dt);
     this._updateSilence(dt);
 
     // the ravine takes what falls in it
@@ -256,6 +329,12 @@ export class Director {
   onPlayerStep(surf) {
     const g = this.game;
     if (g.act === 'bedroom' || g.act === 'clearing' || g.act === 'mirror' || g.dead) return;
+    if (g.act === 'cave') {
+      // Running is still the valid escape, but it writes a louder, longer-lived
+      // target into the cave. The Choir follows that target, not player.pos.
+      g.enemies.drownedChoirHear(g.player.pos, g.player.running ? 1 : 0.68, 'step');
+      return;
+    }
     if (g.player.running) return;               // your own noise masks it
     this._mimicCool -= 1;
     if (this._mimicCool > 0) return;
@@ -277,14 +356,28 @@ export class Director {
     if (this._voidCool > 0) return;
     this._voidCool = 5;
     if (g.act === 'cave') {
-      const cs = g.world.candles.filter((c) => Math.hypot(c.x - g.player.pos.x, c.z - g.player.pos.z) < 30);
-      const c = cs[Math.floor(Math.random() * cs.length)];
+      const e = g.enemies.drownedChoirHear(g.player.pos, 1.25, 'call');
+      if (!e && this._caveEcology) {
+        g.audio.drownedCall({
+          pos: this._caveEcology.foreshadow,
+          gain: 0.42,
+          distant: true,
+          ref: 8,
+          roll: 1.1,
+        });
+      }
+      const cs = g.world.candles
+        .filter((c) => Math.hypot(c.x - g.player.pos.x, c.z - g.player.pos.z) < 30)
+        .sort((a, b) => {
+          const p = e?.pos || g.player.pos;
+          return Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z);
+        });
+      const c = cs[0];
       if (c) {
         const base = c.intensity;
-        c.intensity = base * 2.6;
-        this.after(0.7, () => { c.intensity = base; });
+        c.intensity = base * 0.16;
+        this.after(0.58, () => { c.intensity = base; });
       }
-      g.audio.stoneGrind({ pos: new THREE.Vector3(g.player.pos.x + 14, 1, g.player.pos.z + 8), gain: 0.16, rate: 0.6, verb: 0.8 });
     }
   }
 
@@ -442,7 +535,7 @@ export class Director {
     // the combat ground; the iron forest gate is visibly shut from frame one.
     if (!this.graveArena) {
       if (g.player.pos.z < 18) return;
-      this.graveArena = { wave: 0, pending: 0, t: 1.35, done: false };
+      this.graveArena = { wave: 0, pending: 0, t: 1.35, done: false, engaged: false };
       g.baseTension = 0.42;
       g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 60);
       g.audio.skullScream(g.camera.getWorldPosition(new THREE.Vector3()));
@@ -454,10 +547,25 @@ export class Director {
     if (a.done) return;
     const alive = g.enemies.list.filter((e) => e.graveArena && e.state !== 'dying').length;
     a.t -= dt;
-    if (alive > 0 || a.pending > 0 || a.t > 0) return;
+    if (alive > 0 || a.pending > 0) {
+      a.engaged = true;
+      return;
+    }
+    if (a.engaged) {
+      // `a.t` used to count down while the wave was alive, so the next horde
+      // arrived on the same frame as the final loud pop. Give the player one
+      // authored breath to catch the returning skull and choose new ground.
+      a.engaged = false;
+      a.t = 1.35 + Math.min(0.45, a.wave * 0.15);
+      g.baseTension = 0.25;
+      g.enemies._graveClaimRecovery = Math.max(g.enemies._graveClaimRecovery, 0.7);
+      return;
+    }
+    if (a.t > 0) return;
 
     if (a.wave < 3) {
       a.wave++;
+      g.baseTension = 0.42;
       const sites = [
         [-17, 13], [20, 13], [-17, 38], [20, 37],
         [-8, 34], [13, 29], [-2, 21], [10, 18],
@@ -475,12 +583,15 @@ export class Director {
           const z = site[1] + Math.cos(i * 4.3 + a.wave) * 0.7;
           const e = g.enemies.spawn('walker', x, z, 'wind');
           e.graveArena = true;
+          e.graveRiseDur = 1.08;
+          e.graveRiseT = e.graveRiseDur;
           e.windT = -i * 0.13;
           a.pending--;
           g.audio.stoneGrind({ pos: e.pos, gain: 0.28 + a.wave * 0.06, rate: 1.35 - a.wave * 0.1, verb: 0.55 });
+          g.audio.walkerRise({ pos: e.pos, gain: 0.42 + a.wave * 0.06, rate: 1.08 - a.wave * 0.05, verb: 0.62 });
         });
       }
-      a.t = 2.2;
+      a.t = 0;
       g.audio.sting(0.4 + a.wave * 0.14);
       return;
     }
@@ -624,6 +735,42 @@ export class Director {
     }
   }
 
+  _updateCaveHorror(dt) {
+    const g = this.game;
+    const c = this._caveEcology;
+    if (!c || g.act !== 'cave' || g.dead || this._mirrorTransition) return;
+    c.age += dt;
+
+    if (!c.choirArmed && g.player.pos.z >= c.choirTriggerZ) {
+      c.choirArmed = true;
+      // It begins behind, in the dark ambulatory beyond the false sighting, and
+      // is still audio-only for its own full warning cadence before it pursues.
+      g.enemies.beginDrownedChoir({ pos: c.choirSource, heardPos: g.player.pos });
+    }
+
+    c.dripT -= dt;
+    if (c.dripT <= 0 && c.sites.length) {
+      const site = c.sites[c.site % c.sites.length];
+      g.audio.caveDrip({
+        pos: site,
+        gain: 0.38 + (c.site % 3) * 0.07,
+        rate: 0.86 + (c.site % 4) * 0.08,
+        verb: 0.9,
+      });
+      const cadence = [2.7, 4.05, 3.25, 4.8];
+      c.dripT = cadence[c.site % cadence.length];
+      c.site++;
+    }
+
+    c.callT -= dt;
+    if (c.callT <= 0) {
+      const e = g.enemies.choir;
+      const source = e?.pos || c.foreshadow;
+      g.audio.drownedCall({ pos: source, gain: 0.27, distant: true, verb: 0.94, ref: 8, roll: 1.1 });
+      c.callT = 8.4;
+    }
+  }
+
   waterfallTaken() {
     const g = this.game;
     this._gesturing = false;
@@ -645,7 +792,22 @@ export class Director {
 
   enterMirrorRoom() {
     const g = this.game;
+    if (this._mirrorTransition) return;
+    this._mirrorTransition = true;
+    const choir = g.enemies.choir;
+    if (choir) {
+      // The hatch is an earned escape, not a 1.6-second black-screen death
+      // lottery. Its last pressure rush remains precisely behind the player.
+      g.audio.drownedSurge({ pos: choir.pos, gain: 0.52, rate: 0.58, verb: 0.9 });
+    }
+    this._caveEcology = null;
+    g.enemies.endDrownedChoir('hatch');
     g.fadeOut(1.6, () => {
+      // Restore the cave culler's saved scene state before Finale.begin makes
+      // its own deliberate visibility changes. Otherwise the cave ticker can
+      // replay the figure's pre-cave `false` value later in this same step and
+      // silently erase the real-route reflection forever.
+      g.underfalls?.visibility?.restore?.();
       g.finale.begin();
       g.fadeIn(2.2);
     });
@@ -661,6 +823,10 @@ export class Director {
   death(enemy) {
     const g = this.game;
     if (g.dead) return;
+    if (g.act === 'cave') {
+      this._caveEcology = null;
+      g.enemies.endDrownedChoir('death');
+    }
     g.dead = true;
     g.audio.sting(1.0);
     g.audio.duck(0.05, 8);
@@ -679,6 +845,7 @@ export class Director {
     g.player.frozen = false;
     g.player.movementLocked = false;
     g.fx.fear = 0;
+    this._mirrorTransition = false;
     const saved = g.checkpointPose ? { ...g.checkpointPose } : null;
     const cp = saved?.act || g.lastCheckpoint || 'bedroom';
     g.enemies.clear((e) => e !== this.kneeler);
@@ -687,6 +854,7 @@ export class Director {
     if (this.graveArena && !this.graveArena.done) {
       this.graveArena = null;
       this._graveSpawned = false;
+      g.enemies.resetGraveClaims();
       if (g.graveyardGate) g.graveyardGate.reset();
     }
     g.teleport(cp);

@@ -593,20 +593,20 @@ export function buildSkullMesh(boneMaterial) {
   // teeth barely above bone, never a bright keyboard in the middle of the face
   const enamel = mk(0x7f7867, 0.48, { vertexColors: true, bumpScale: 0.06 });
   const enamelStain = mk(0x6a6353, 0.60, { vertexColors: true, bumpScale: 0.07 });
-  const muscle = mk(0x7d2a22, 0.44, { side: THREE.DoubleSide });
-  const muscle2 = mk(0x963c2c, 0.52, { side: THREE.DoubleSide });
-  const skin = mk(0xa88a74, 0.64, { side: THREE.DoubleSide });
-  const skinPale = mk(0xbc9c85, 0.60, { side: THREE.DoubleSide });
+  const muscle = mk(0x4d1715, 0.48, { side: THREE.DoubleSide });
+  const muscle2 = mk(0x68231d, 0.55, { side: THREE.DoubleSide });
+  const skin = mk(0x70483d, 0.68, { side: THREE.DoubleSide });
+  const skinPale = mk(0x865d4f, 0.64, { side: THREE.DoubleSide });
   const hair = mk(0x241f1b, 0.97, { side: THREE.DoubleSide });
   // A pale ball in a black socket is a googly eye no matter how small it is.
   // What belongs in a half-grown socket is something DARK and wet that catches
   // one hard highlight — you find it by the glint, not by the white.
   const sclera = mk(0x3d3b33, 0.16);
   const iris = mk(0x141712, 0.20);
-  const lip = mk(0x84544a, 0.54, { side: THREE.DoubleSide });
   const voidMat = new THREE.MeshBasicMaterial({ color: 0x010101, side: THREE.DoubleSide });
 
   const stageSets = [[], [], [], [], [], []];
+  const stage5Hide = [];
   const add = (mesh, parent, stage = 0) => {
     (parent || body).add(mesh);
     mesh.visible = stage === 0;
@@ -618,7 +618,11 @@ export function buildSkullMesh(boneMaterial) {
   // ------------------------------------------------------------- the shell
   // ring density is biased toward the face: the parametrisation spends its
   // triangles where the orbits, nose and tooth line are, not on the dome
-  const U = 54, V = 38;
+  // Spend a small amount of the vault's near-uniform tessellation budget on
+  // the growing tissue rims below. 52x37 remains smooth at held distance, and
+  // the freed triangles stop those organic borders reading as eight-sided
+  // paper stars during the stages the player studies most closely.
+  const U = 52, V = 37;
   const phiOf = (() => {
     const S = 400, cdf = new Array(S + 1);
     const dens = (i) => { const phi = (i / S) * Math.PI; return 1 + 1.55 * bell(phi - 1.88, 0.46) + 0.55 * bell(phi - 1.25, 0.34); };
@@ -735,8 +739,8 @@ export function buildSkullMesh(boneMaterial) {
     // no socket at all.
     const dd = new THREE.Vector3();
     sockets.push(M(gridGeo(12, 2, (u, v) => {
-      orbitDir(u * TAU, v * 0.88, s, dd);
-      const r = shellRadius(dd.x, dd.y, dd.z) + 0.0005;
+      orbitDir(u * TAU, v * 0.96, s, dd);
+      const r = shellRadius(dd.x, dd.y, dd.z) + 0.0011;
       return [dd.x * r, dd.y * r, dd.z * r];
     }), voidMat));
 
@@ -744,14 +748,16 @@ export function buildSkullMesh(boneMaterial) {
     // ball that fills the aperture with a flat iris disc and a pupil dot in the
     // middle is a bullseye, and a bullseye in a skull is a googly eye.
     const pivot = new THREE.Group();
-    pivot.position.copy(A.o).multiplyScalar(shellRadius(A.o.x, A.o.y, A.o.z) + 0.0124);
+    // Seat the eye behind the orbital rim. The old positive offset pushed a
+    // near-orbit-sized ball in front of the socket and read as a googly eye.
+    pivot.position.copy(A.o).multiplyScalar(shellRadius(A.o.x, A.o.y, A.o.z) - 0.0048);
     pivot.visible = false;
     body.add(pivot);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0106, 10, 7), sclera);
-    const ir = new THREE.Mesh(new THREE.CircleGeometry(0.0078, 12), iris);
-    ir.position.z = 0.00715;
-    const pu = new THREE.Mesh(new THREE.CircleGeometry(0.0040, 10), new THREE.MeshBasicMaterial({ color: 0x020202 }));
-    pu.position.z = 0.00735;
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.0074, 10, 7), sclera);
+    const ir = new THREE.Mesh(new THREE.CircleGeometry(0.0045, 12), iris);
+    ir.position.z = 0.00505;
+    const pu = new THREE.Mesh(new THREE.CircleGeometry(0.0025, 10), new THREE.MeshBasicMaterial({ color: 0x020202 }));
+    pu.position.z = 0.00522;
     pivot.add(ball, ir, pu);
     eyePivot[s] = pivot;
   }
@@ -905,8 +911,10 @@ export function buildSkullMesh(boneMaterial) {
     });
 
   // stage 1 — muscle finds its anchors first, the way a body rebuilds
-  M(patch([-0.88, 0.14, 0.32], 0.44, { seed: 31, uSeg: 8 }), muscle, body, 1);
-  M(patch([0.89, 0.12, 0.28], 0.40, { seed: 37, uSeg: 8 }), muscle2, body, 1);
+  M(patch([-0.88, 0.14, 0.32], 0.44,
+    { seed: 31, wobble: 0.18, uSeg: 12, vSeg: 5 }), muscle, body, 1);
+  M(patch([0.89, 0.12, 0.28], 0.40,
+    { seed: 37, wobble: 0.18, uSeg: 12, vSeg: 5 }), muscle2, body, 1);
   for (const s of [-1, 1]) {
     M(sweepGeo([
       jawLocal([s * 0.0540, -0.0140, 0.0200]),
@@ -915,18 +923,25 @@ export function buildSkullMesh(boneMaterial) {
     ], () => new THREE.Vector3(s, 0, 0), (t) => ({ w: 0.0034, h: 0.0072 + 0.0042 * Math.sin(t * Math.PI) }), 5),
       s < 0 ? muscle : muscle2, jaw, 1);
   }
-  M(patch([-0.22, 0.62, 0.75], 0.32, { offset: 0.0022, wobble: 0.3, seed: 5, uSeg: 8, vSeg: 3 }), muscle2, body, 1);
+  M(patch([-0.22, 0.62, 0.75], 0.32,
+    { offset: 0.0022, wobble: 0.18, seed: 5, uSeg: 12, vSeg: 5 }), muscle2, body, 1);
 
   // stage 2 — skin creeps in from the edges; the first eye arrives
-  M(patch([-0.54, 0.70, 0.40], 0.48, { offset: 0.0022, seed: 41 }), skin, body, 2);
-  M(patch([-0.62, -0.26, 0.74], 0.30, { offset: 0.0026, seed: 8, uSeg: 8, vSeg: 3 }), skin, body, 2);
-  M(patch([0.86, 0.40, 0.10], 0.32, { offset: 0.0024, seed: 43, uSeg: 8 }), skinPale, body, 2);
+  M(patch([-0.54, 0.70, 0.40], 0.48,
+    { offset: 0.0022, wobble: 0.17, seed: 41, uSeg: 14, vSeg: 5 }), skin, body, 2);
+  M(patch([-0.62, -0.26, 0.74], 0.30,
+    { offset: 0.0026, wobble: 0.17, seed: 8, uSeg: 12, vSeg: 5 }), skin, body, 2);
+  M(patch([0.86, 0.40, 0.10], 0.32,
+    { offset: 0.0024, wobble: 0.17, seed: 43, uSeg: 12, vSeg: 5 }), skinPale, body, 2);
   const eyeL = eyePivot[-1];
 
   // stage 3 — the second eye; more face than not
-  M(patch([0.52, 0.68, 0.42], 0.46, { offset: 0.0022, seed: 47 }), skinPale, body, 3);
-  M(patch([0.62, -0.26, 0.74], 0.30, { offset: 0.0026, seed: 9, uSeg: 8, vSeg: 3 }), skin, body, 3);
-  M(patch([0.02, -0.56, 0.83], 0.19, { offset: 0.0022, seed: 10, uSeg: 7, vSeg: 3 }), skin, body, 3);
+  M(patch([0.52, 0.68, 0.42], 0.46,
+    { offset: 0.0022, wobble: 0.17, seed: 47, uSeg: 14, vSeg: 5 }), skinPale, body, 3);
+  M(patch([0.62, -0.26, 0.74], 0.30,
+    { offset: 0.0026, wobble: 0.17, seed: 9, uSeg: 12, vSeg: 5 }), skin, body, 3);
+  M(patch([0.02, -0.56, 0.83], 0.19,
+    { offset: 0.0022, wobble: 0.16, seed: 10, uSeg: 12, vSeg: 5 }), skin, body, 3);
   const jawSkin = M(cap(0.017, 0.024, 0.005, { seed: 11 }), skinPale, jaw, 3);
   jawSkin.position.copy(jawLocal([-0.0468, -0.0790, 0.0170]));
   jawSkin.rotation.y = -1.15;
@@ -946,58 +961,52 @@ export function buildSkullMesh(boneMaterial) {
   // 30mm in front of a pit that has been carved 30mm back, and reads as a blade
   // stuck to the face. This is a ridge whose flanks curve back and land on the
   // maxilla either side of the aperture.
-  M(gridGeo(8, 4, (u, v) => {
-    const a = lerp(-1.86, 1.86, u);                 // past ±90° so the flanks tuck in
-    const halfW = lerp(0.0078, 0.0182, v);
-    const y = lerp(0.0140, -0.0450, v);
-    const depth = lerp(0.0060, 0.0125, v);
-    const zFront = lerp(0.0845, 0.0960, v);
+  stage5Hide.push(M(gridGeo(8, 4, (u, v) => {
+    const a = lerp(-1.55, 1.55, u);
+    const halfW = lerp(0.0052, 0.0120, v);
+    const y = lerp(-0.0020, -0.0370, v);
+    const depth = lerp(0.0040, 0.0080, v);
+    const zFront = lerp(0.0825, 0.0910, v);
     return [Math.sin(a) * halfW, y, zFront - (1 - Math.cos(a)) * depth];
-  }), skinPale, body, 4);
-  const tip = M(new THREE.SphereGeometry(1, 9, 6).scale(0.0132, 0.0106, 0.0118), skinPale, body, 4);
-  tip.position.set(0.0005, -0.0420, 0.0920);
+  }), skin, body, 4));
+  const tip = M(new THREE.SphereGeometry(1, 9, 6).scale(0.0090, 0.0070, 0.0080), skin, body, 4);
+  tip.position.set(0.0005, -0.0380, 0.0900);
+  stage5Hide.push(tip);
   for (const s of [-1, 1]) {
-    const ala = M(new THREE.SphereGeometry(1, 8, 5).scale(0.0070, 0.0058, 0.0080), skin, body, 4);
-    ala.position.set(s * 0.0098, -0.0452, 0.0862);
-    const nos = M(new THREE.CircleGeometry(0.0021, 8), voidMat, body, 4);
-    nos.position.set(s * 0.0052, -0.0498, 0.0886);
+    const ala = M(new THREE.SphereGeometry(1, 8, 5).scale(0.0050, 0.0040, 0.0060), muscle2, body, 4);
+    ala.position.set(s * 0.0068, -0.0405, 0.0858);
+    const nos = M(new THREE.CircleGeometry(0.0015, 8), voidMat, body, 4);
+    nos.position.set(s * 0.0039, -0.0430, 0.0880);
     nos.rotation.x = -1.05;
+    stage5Hide.push(ala, nos);
   }
 
-  // stage 5 — a whole face, laid over the whole skull
-  const faceGeo = (() => {
-    const g = new THREE.SphereGeometry(1, 20, 13);
-    const p = g.getAttribute('position');
-    const d = new THREE.Vector3();
-    for (let i = 0; i < p.count; i++) {
-      d.fromBufferAttribute(p, i).normalize();
-      // Skin does not fall into the sockets — it stretches across them. But it
-      // must also sit OUTSIDE every ridge the bone adds on top of the union
-      // (the orbital margin, the brow, the temporal line), or those poke
-      // through the face and the sockets read straight back out of it.
-      const r0 = Math.max(unionRadius(d.x, d.y, d.z), shellRadius(d.x, d.y, d.z)) + 0.0016;
-      let x = d.x * r0, y = d.y * r0, z = d.z * r0;
-      z += 0.0058 * bell(Math.abs(x) - 0.043, 0.018) * bell(y + 0.017, 0.022) * ss(0.01, 0.05, z);
-      x += Math.sign(x) * 0.0058 * ss(0.045, 0.062, Math.abs(x)) * band(y, -0.03, 0, 0.035, 0.055);
-      for (const s of [-1, 1]) {
-        const dd = Math.hypot(x - s * 0.0335, y - 0.0015);
-        z -= 0.0150 * bell(dd, 0.0104) * ss(0.02, 0.05, z);   // the eyes look out
-      }
-      if (y < -0.052 && z > 0.020) {                          // the mouth line
-        const over = -0.052 - y;
-        y = -0.052 - over * 0.20;
-        z = Math.min(z, 0.0760 - over * 0.5);
-      }
-      p.setXYZ(i, x, y, z);
-    }
-    g.computeVertexNormals();
-    return g;
-  })();
-  M(faceGeo, skin, body, 5);
-  M(sweepGeo(jawPts, jawOut, (t) => {
-    const m = 1 - Math.abs(t - 0.5) * 2;
-    return { w: 0.0086 + 0.0038 * ss(0.1, 0.6, m), h: 0.0148 + 0.0044 * ss(0.1, 0.6, m) };
-  }, 6), skin, jaw, 5);
+  // stage 5 — not a rubber human mask. The final growth is a nearly complete
+  // face that has torn itself open around the skull's defining apertures. It
+  // preserves the eye-contact and jaw silhouettes the player has learned to
+  // read while broad overlapping tissue makes it decisively no longer bone.
+  M(patch([0.00, 0.88, 0.48], 0.72,
+    { offset: 0.0034, wobble: 0.10, seed: 71, uSeg: 16, vSeg: 7 }), skin, body, 5);
+  M(patch([-0.69, 0.02, 0.72], 0.43,
+    { offset: 0.0030, wobble: 0.18, seed: 73, uSeg: 11, vSeg: 5 }), skinPale, body, 5);
+  M(patch([0.69, 0.00, 0.72], 0.42,
+    { offset: 0.0030, wobble: 0.17, seed: 79, uSeg: 11, vSeg: 5 }), skin, body, 5);
+  M(patch([-0.42, -0.56, 0.72], 0.29,
+    { offset: 0.0028, wobble: 0.20, seed: 83, uSeg: 9, vSeg: 4 }), skin, body, 5);
+  M(patch([0.42, -0.55, 0.72], 0.28,
+    { offset: 0.0028, wobble: 0.19, seed: 89, uSeg: 9, vSeg: 4 }), skinPale, body, 5);
+
+  // Tendon and cheek strips bind the jaw to the face while the human teeth
+  // and the threat-readable chatter remain exposed.
+  for (const s of [-1, 1]) {
+    M(sweepGeo([
+      jawLocal([s * 0.0490, -0.0200, 0.0180]),
+      jawLocal([s * 0.0460, -0.0500, 0.0330]),
+      jawLocal([s * 0.0350, -0.0790, 0.0520]),
+    ], () => new THREE.Vector3(s, 0, 0),
+    (t) => ({ w: 0.0044 + 0.0021 * Math.sin(t * Math.PI), h: 0.0085 }), 6),
+    s < 0 ? skin : skinPale, jaw, 5);
+  }
   for (const s of [-1, 1]) {
     const ear = M(cap(0.011, 0.019, 0.005, { seed: 17 + s, wobble: 0.18 }), skinPale, body, 5);
     ear.position.set(s * 0.0620, -0.0130, -0.0245);
@@ -1005,18 +1014,18 @@ export function buildSkullMesh(boneMaterial) {
     // no lid ring: the face shell already dimples an opening here, and a
     // second ring on top of it reads as concentric circles drawn on the face
   }
-  M(sweepGeo([
-    new THREE.Vector3(-0.0248, -0.0680, 0.0560),
-    new THREE.Vector3(-0.0094, -0.0656, 0.0716),
-    new THREE.Vector3(0, -0.0664, 0.0734),
-    new THREE.Vector3(0.0094, -0.0656, 0.0716),
-    new THREE.Vector3(0.0248, -0.0680, 0.0560),
-  ], () => new THREE.Vector3(0, 0, 1), (t) => ({ w: 0.0032, h: 0.0044 * Math.sin(clamp(t, 0.06, 0.94) * Math.PI) + 0.0013 }), 5), lip, body, 5);
-  M(sweepGeo([
-    jawLocal([-0.0238, -0.0760, 0.0600]),
-    jawLocal([0, -0.0738, 0.0748]),
-    jawLocal([0.0238, -0.0760, 0.0600]),
-  ], () => new THREE.Vector3(0, 0, 1), (t) => ({ w: 0.0034, h: 0.0058 * Math.sin(clamp(t, 0.06, 0.94) * Math.PI) + 0.0013 }), 5), lip, jaw, 5);
+  let triangleCount = 0;
+  root.traverse((node) => {
+    if (!node.isMesh || !node.geometry) return;
+    const geometry = node.geometry;
+    triangleCount += geometry.index
+      ? geometry.index.count / 3
+      : (geometry.getAttribute('position')?.count || 0) / 3;
+  });
+  root.userData.variant = 'e';
+  root.userData.source = 'real-shell';
+  root.userData.triangleCount = Math.round(triangleCount);
+  root.userData.triangleBudget = 9000;
 
-  return { root, jaw, jawMount, sockets, eyeL, eyeR, stageSets };
+  return { root, jaw, jawMount, sockets, eyeL, eyeR, stageSets, stage5Hide };
 }
