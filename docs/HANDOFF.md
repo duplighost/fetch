@@ -119,8 +119,8 @@ only the final mirror frame; the current worst sampled act is the graveyard at
 395 calls after the below-floor cull and the expanded cave is 124.
 
 The standalone artifact is `release/fetch-netlify.zip`: 24 root-relative
-shipping entries, 443,522 bytes, SHA-256
-`a5fcebc204d1b62be2155a14fbbf34c0d49d2e867073630d25733780605d622d`.
+shipping entries, 441,901 bytes, SHA-256
+`d4725965b2c2a2a6b529baba43d9edaed2f31ba4fc76c8665a8db5251f73cd45`.
 Two independent packer runs produced the same bytes. The malformed-archive
 suite is 5/5 (body CRC, truncated EOCD, broken central directory, declared-size
 inflation, and case-aliased output); a unique clean extraction then booted in
