@@ -342,6 +342,26 @@ signal, not as new information.
   between so cause and effect are separable. **No HUD, no text** — this has to
   be told in light, sound and the object itself.
 
+- **A hole at the waterfall.** *"it seems like there is a spot at the waterfall
+  where you can just fall into nothing even before the water."* Not reproduced
+  yet. `terrainHeightFn` in `outside.js` has several stacked special cases
+  around the clearing — a cave-floor rectangle, the plunge-basin cone, the
+  moving bridge stones — and the **order they are tested in** decides which one
+  wins. A gap between two of those regions is the obvious suspect. There is a
+  death catch at `g.act === 'clearing' && pos.y < -1.5` in `director.js`, so if
+  he is falling and *not* dying, he is probably outside the clearing act at that
+  moment, which narrows it further. Hunt it with a variant of
+  `tools/probe-bounds.mjs` seeded around the basin rim.
+- **The waterfall clearing should be the best place in the game.** *"that
+  waterfall area should be beautiful. a whole area to explore."* Right now it is
+  the emptiest. It is also the emotional pivot the whole broken-promise beat is
+  built on — `docs/DESIGN.md` calls it *"the first place that doesn't want you
+  dead"*. This is plan step 7 and it deserves more than dressing: somewhere to
+  go, something to find, a reason to stay before the game takes the skull.
+- **The scream is lame.** Alex's words. It is in `audio.js`, which synthesises
+  everything — no audio files anywhere — so this is a synthesis problem, not an
+  asset swap. `behind-you` is the donor to raid: HRTF spatial audio is that
+  game's entire mechanic.
 - **Textures flashing.** *"some of those glitchy textures that we caught
   flashing."* Almost certainly z-fighting: coplanar or near-coplanar surfaces
   with no depth separation. Prime suspects are the places where this codebase
@@ -389,6 +409,27 @@ transcripts in `C:\Users\Alex\.claude\projects\C--Users-Alex--claude\*.jsonl`.
   hits were instant 5-degree snaps. Now a real trunk with a root plate and
   snapped limbs, a collider matched to its actual silhouette, and a dt-driven
   roll that settles instead of snapping.
+- **Getting stuck in the forest.** Alex: *"the forest is easy to get stuck in
+  and not be able to go anywhere."* Reproduced with `tools/probe-stuck.mjs`,
+  which walks the corridor while steering down the trail and reports every place
+  the player stops moving. It pinned at the same spot on **every run**.
+  The cause was the fallen log. Its collider was a single axis-aligned box —
+  and the log lies **diagonally** across the trail, at about 37° here. The tight
+  AABB around a 7.4m diagonal log is roughly **six by seven metres**: it spans
+  the entire 3m corridor *and* three and a half metres of its length, so you are
+  stopped dead that far short of a log you can plainly see, with no way round
+  it. Now a stepped row of nine short boxes along the log's own axis — same
+  wall, a tenth of the footprint. After: no pins on any run.
+  **The general lesson, and it almost certainly bites elsewhere: this engine has
+  only axis-aligned colliders, and anything placed at an angle to the world axes
+  gets a hitbox far larger than it looks.** Grep for `addCollider` beside
+  anything rotated.
+  Two smaller repairs found on the way, both real but neither the culprit: the
+  corridor's wall-slide rebuilt the player's position from the *rounded* sample
+  while measuring their lateral offset from the *fractional* foot of the
+  projection — two different frames — and `Forest.recentre()` now puts a
+  respawned player back on the trail rather than only fixing what the forest
+  believes.
 - **The forest was too dark** after the first darkness pass — his words, *"the
   woods is a little dark to see now"*. Forest ambient 0.40 → 0.54 and the
   carried light 50/10.5m → 58/11.5m. Note the shape of that fix: when it is too

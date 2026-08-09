@@ -262,6 +262,25 @@ export class Forest {
     this.entered = s > 2;
     return s;
   }
+
+  // Put a position back ON the trail. Respawn hands us wherever the player died
+  // or wherever a checkpoint was taken, and "in the trees" is a legal answer to
+  // both — Alex: "especially if you die in the forest. respawn is often in
+  // trees". Re-seating fixes what the forest BELIEVES; this fixes where the
+  // player actually stands.
+  recentre(pos) {
+    const s = this.reseat(pos.x, pos.z);
+    const sm = this.posAt(s);
+    const lat = Math.hypot(pos.x - sm.x, pos.z - sm.z);
+    const room = Math.max(0.2, this.halfW[clamp(Math.round(s), 0, this.length - 1)] - 0.55);
+    if (lat > room && lat > 1e-4) {
+      const k = room / lat;
+      pos.x = sm.x + (pos.x - sm.x) * k;
+      pos.z = sm.z + (pos.z - sm.z) * k;
+    }
+    pos.y = Math.max(pos.y, this.heightAt(pos.x, pos.z));
+    return s;
+  }
   fallenS() { return Math.floor(this.length * 0.22); }
 
   contains(x, z) {
@@ -320,7 +339,10 @@ export class Forest {
     }
     const si = this.samples[clamp(Math.round(fs), 0, this.length - 1)];
     const lat = (x - fx) * -si.tz + (z - fz) * si.tx;   // signed lateral
-    return { s: fs, i: clamp(Math.round(fs), 0, this.length - 1), lat, sample: si };
+    // fx/fz is the FOOT of the projection — the point lat is measured from.
+    // Anything that reconstructs a position from lat must use this and not
+    // `sample`, or it rebuilds in a different frame than the one it measured in.
+    return { s: fs, i: clamp(Math.round(fs), 0, this.length - 1), lat, sample: si, fx, fz };
   }
 
   posAt(s, lat = 0) {
@@ -380,11 +402,20 @@ export class Forest {
       pos.x = p.x;
       pos.z = p.z;
     } else if (lat !== pr.lat) {
-      // wall slide: clamp lateral, preserve along-track so motion isn't erased
-      const sm = pr.sample;
-      const along = (pos.x - sm.x) * sm.tx + (pos.z - sm.z) * sm.tz;
-      pos.x = sm.x + -sm.tz * lat + sm.tx * along;
-      pos.z = sm.z + sm.tx * lat + sm.tz * along;
+      // WALL SLIDE. This rebuilt the position from pr.sample — the ROUNDED
+      // sample — while `lat` had been measured from the fractional foot of the
+      // projection. Two different frames: the correction landed at a point whose
+      // own projection was wrong by the same offset again, so it re-fired every
+      // frame and the player was nailed in place walking forward into a bend.
+      // (Alex: "the forest is easy to get stuck in and not be able to go
+      // anywhere." tools/probe-stuck.mjs pinned there for 33 seconds.)
+      // Rebuild from the foot, in the frame lat was measured in. `along` is ~0
+      // by construction — the foot IS the closest point — so this slides you
+      // sideways off the wall and leaves your progress along the trail alone.
+      const si = pr.sample;
+      const along = (pos.x - pr.fx) * si.tx + (pos.z - pr.fz) * si.tz;
+      pos.x = pr.fx + -si.tz * lat + si.tx * along;
+      pos.z = pr.fz + si.tx * lat + si.tz * along;
     }
     // frontier chases; lingering makes it creep — the creaks ask you to turn
     if (this.entered) {
@@ -745,8 +776,26 @@ export class Forest {
     log.position.set(fsm.x, LOG_R, fsm.z);
     log.rotation.set(0, Math.atan2(fsm.tx, -fsm.tz), 0.06);
     scene.add(log);
-    // the wall is now the log's actual silhouette, not a head-height mystery
-    const logCol = world.addCollider(fsm.x - 3.7, 0, fsm.z - 0.95, fsm.x + 3.7, LOG_R * 1.75, fsm.z + 0.95);
+    // A DIAGONAL LOG CANNOT BE ONE AXIS-ALIGNED BOX.
+    // It used to be exactly that — a fixed 6.8 x 1.6 box written as if the
+    // corridor always ran along X. Here the trail runs at about 37 degrees, so
+    // the tight AABB around a 7.4m log is roughly SIX BY SEVEN METRES: it spans
+    // the whole 3m corridor and three and a half metres of its length, and the
+    // player is stopped dead that far short of a log they can plainly see, with
+    // no way round. That is Alex's "the forest is easy to get stuck in and not
+    // be able to go anywhere" — tools/probe-stuck.mjs pins there on every run.
+    // Step it instead: a row of small boxes along the log's own axis, each one
+    // tight because each one is short. Same wall, a tenth of the footprint.
+    const px = -fsm.tz, pz = fsm.tx;                       // the log's long axis
+    const SEGS = 9, halfSeg = 3.6 / SEGS + 0.06, halfThick = 0.8;
+    const hx = Math.abs(px) * halfSeg + Math.abs(fsm.tx) * halfThick;
+    const hz = Math.abs(pz) * halfSeg + Math.abs(fsm.tz) * halfThick;
+    const logCols = [];
+    for (let i = 0; i < SEGS; i++) {
+      const u = (i / (SEGS - 1) - 0.5) * 7.2;
+      const cx = fsm.x + px * u, cz = fsm.z + pz * u;
+      logCols.push(world.addCollider(cx - hx, 0, cz - hz, cx + hx, LOG_R * 1.75, cz + hz));
+    }
     let logHits = 0;
     // dt-driven roll (chamber law: no setTimeout anywhere in a beat)
     const roll = { t: 1, from: 0, to: 0, dropFrom: 0, dropTo: 0, shove: 0 };
@@ -774,7 +823,7 @@ export class Forest {
         roll.t = 0;
         if (logHits >= 3) {
           this.enabled = false;
-          logCol.max.y = logCol.min.y;
+          for (const c of logCols) c.max.y = c.min.y;
           roll.dropTo = 0.34;
           roll.to = log.rotation.x + 1.35;                           // the last one rolls it clear
           game.flag('treeCleared');

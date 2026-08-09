@@ -451,7 +451,7 @@ class Game {
       this.forest.entered = false;
     }
     // and arriving IN the forest re-seats it on where we actually landed
-    if (this.forest && act === 'forest') this.forest.reseat(this.player.pos.x, this.player.pos.z);
+    if (this.forest && act === 'forest') this.forest.recentre(this.player.pos);
     if (this.forest && act === 'clearing') this.forest._lastIdx = this.forest.length - 1;
     if (this.forest && act === 'cave') this.forest._lastIdx = this.forest.length - 1;
     this.director.setAct(act, true);

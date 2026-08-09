@@ -618,7 +618,7 @@ export class Director {
     }
     // teleport re-seated the forest on the ACT SPAWN; if a checkpoint pose then
     // moved us somewhere else, re-seat again on where we actually ended up.
-    if (g.forest && g.act === 'forest') g.forest.reseat(g.player.pos.x, g.player.pos.z);
+    if (g.forest && g.act === 'forest') { g.forest.recentre(g.player.pos); g.player._sync(0); }
     if (g.flags.has('waterfallTaken')) {
       // The promise is already broken; death cannot un-break it or strand the
       // player with a half-raised bridge after scoped callbacks are cleared.
