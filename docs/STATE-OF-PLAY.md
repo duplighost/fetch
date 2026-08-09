@@ -499,3 +499,174 @@ first.** If two of them already do it, port the better one.
   implementation detail you legitimately removed, update it to assert the new
   mechanism and keep every behavioural assertion. Say that you did.
 - **Copy is Alex's voice.** Never write taglines or flavour text.
+
+---
+
+## 12b. NOTHING SINCE THE DARKNESS PASS HAS BEEN DEPLOYED
+
+Read this before assuming a bug is real. `origin/main` and the live site are at
+**faef4e3**. Five commits sit unmerged on branch `rope-as-a-verb`:
+
+    06424fe  the log collider was a 6x7m box — the forest "stuck" bug
+    3ab8fa4  backlog: flashing textures, the basement room
+    7376ed3  the forest log, brightness, and the mined backlog
+    e0503a8  the stale-projection bug behind "respawn walking through trees"
+    6920933  Rope: make the latch a verb instead of a cutscene
+
+**Alex has never played the rope swing.** He has also been re-reporting bugs
+that are already fixed on that branch — the forest pin, respawn in the trees,
+the log, the too-dark woods. Four gates are green on it. Deploying needs his
+explicit approval (site `AGENTS.md`), and until it lands, every live report he
+gives describes a build that is several fixes behind.
+
+### One thing to raise with him rather than fix quietly
+
+`src/main.js:422` sets the end card's tagline to **`'It kept you.'`** — words on
+screen, written by a model. That breaks two laws at once: no HUD and no
+on-screen words, and copy is Alex's voice and is never invented. It is the last
+thing a player sees before the game ends. Ask him what it should say, or whether
+it should say anything at all.
+
+---
+
+## 13. The full mined backlog — 44 candidates, verified against the source
+
+Every one of these came out of Alex's own messages in the old FETCH threads,
+and each was then checked against the current code before being listed. His
+quote sits on every entry because his words are the specification.
+
+### Ideas he asked for that were never built
+
+#### One real puzzle that isn't a key — put it in front of him  *(whole-game)*
+
+> i will also get very into helping design the puzzles and combat. i have just seen none of that yet.
+
+He is right that there is nothing to react to. The whole puzzle surface is 16 addFetchTarget registrations (12 house.js, 3 outside.js, 1 world.js) and 15 of them are single-step 'hit this thing'; the only spatial one is the bedroom locket (house.js:937-958), where a hand-placed collider forces you to throw, HOLD and steer round the boughs. Build ONE non-key puzzle in the `crawl` basement room — it is already compiled with two ajar doors (house.js:36, :60-61) and furnish() puts nothing in it: from basementAct (house.js:1121) register a target reachable only by throwing the skull down the crawl and holding it there as your light while you walk the dark behind it. Smallest build that shows him a puzzle that is not a key. Also raise with him rather than fixing silently: main.js:422 prints `'It kept you.'` on the end card — model-authored on-screen words, against the no-words law and against his voice.
+
+#### Killing is free in the house — and the scream arena only happens once  *(whole-game)*
+
+> if you do that, its loud and you get rushed by a lot more in round of combat
+
+Two halves of his combat economy, both cheap. (1) The two-tier kill is exactly his (enemies.js:484-524 stun then a deliberate second throw; _pop at :553-579 is a real burst with gore, a permanent stain and the corpse launched along the throw) but Director.onPop (director.js:636-651) only spawns company in the FOREST and caps it at two ever, plus one wakeAll in the graveyard. In the house and basement a pop summons nothing — the act that teaches you the skull is a weapon is the one act where violence costs nothing. Add a house/basement branch calling residentHeard(1) and spawning a walker at a _bestDoorNode-reachable spot (~10 lines, S). (2) He said the arena happens 'at certain points in the game' — plural. audio.skullScream (audio.js:1032) has exactly one call site and _startArena (director.js:457) is only reachable from _updateForestBeats (:453); the graveyard, his other open area, gets three walkers total (:153-161). Extract director.js:457-509 into startArena(center, waves, radius) and fire a second from _enterGraveyard (:148) — the wave logic, silence payoff and checkpoint are already act-agnostic; only f.posAt/arenaS are forest-specific (M).
+
+#### There is no wake — you start standing in the middle of the floor  *(bedroom)*
+
+> The player wakes up holding onto this skull.
+
+startGame (main.js:307-312) hides the title, fades in over 2.4s and starts the director; SPAWNS.bedroom (director.js:9) drops you standing mid-room facing the window while the bed is across the room at house.js:624. So the cold open he wrote — wake already cursed, no explanation — is currently 'a fade-in while standing up'. Move the spawn to the bed's edge (~x 9.9, z 3.35, facing the window), lengthen the opening fadeIn to ~4s slow so the first thing that resolves out of black is your own hands and the skull at sitting-eye height, and put two wrong things in the room per DESIGN.md:55, which the bedroom currently has none of: the door boarded/latched on YOUR side, and the covers thrown back from a body that isn't there. The room is furnished (house.js:620-632) but nothing in it is wrong.
+
+#### The cave never seals behind you  *(cave)*
+
+> it turns to rock behind you after you walk in.
+
+Three of his four cave beats are built: the rock bridge rises one stone at a time on the throw (director.js:557-563, outside.js:911-919), candles light the tunnel and chamber because you are empty-handed (outside.js:1023, :1062), and the ceiling hatch with its forgiving reach-post ends the act (outside.js:1064-1077). The seal is missing entirely — grep for seal in outside.js returns only the forest tree-seal machinery, and waterfallTaken (director.js:548-565) COLLAPSES the mouth barrier open (g.bridgeBarrier.max.y = min.y), with respawn re-collapsing it (:627). Nothing ever closes the way back. Add a scoped after() in waterfallTaken that restores g.waterfallBarrier.max.y once the player's z passes clearingCenter.z + 21, plus a small instanced rock plug and the stoneGrind that already exists. Small change, and it is the cave's entire premise.
+
+#### Give the skull more to do — knockables, a second anchor, and LAND THE ROPE  *(whole-game)*
+
+> the skull could be used for a lot.
+
+Merges his founding complaint — 'I just feel like the player should be able to fuck around with something while they're walking through that is fun' — with his ask that the uses keep multiplying. Three moves. (1) Nothing incidental answers a throw: addFetchTarget is called 15 times in the whole game and skull.js:872-896 treats every other collider as a dumb AABB reflector, so between authored targets a throw is one thud and nothing moves. Add world.addKnockable() beside addFetchTarget (world.js:101) — same swept-segment test in _checkTargets, directive 'continue', handler just nudges a mesh (books, the oil lamps at house.js:628/637/662, curtains, gravestones); ~20 of them across house and graveyard. (2) The back half of the game has three uses of the verb total; the cheapest multiplier is a second swing anchor in Forest._buildFlora, copied from outside.js:803-819 (addFetchTarget + skull.anchorAt + player.beginSwing), placed so releasing at the forward end of the arc lands you within reach of the next. (3) URGENT: the rope verb he invented is not deployed — I verified origin/main is at faef4e3 and four commits sit unmerged on branch rope-as-a-verb, including 6920933 'Rope: make the latch a verb instead of a cutscene' plus two forest fixes. Alex has never played it. Also outside.js:806 sets this.enabled = false, so one missed swing kills the rope forever; gate on `if (game.player.swing) return 'return'` instead.
+
+#### The catch is clean — he asked for surreal  *(skull)*
+
+> lands back in your hands in a spooky and surreal way.
+
+The moan half of this beat is fully delivered and is some of the best code in the repo (audio.js:936-986: hollow two-sine voice through a resonant cavity bandpass, breath noise through the sockets, a whoosh that only speaks on fast returns, rising to a scream with tension). The catch is not. _completeCatch (skull.js:820-827) calls holdNow(), which hard-sets root.position.set(0, 0, 0.02) in a single frame, and the entire arrival is one catchThud plus shake(0.1 + impact*0.15). That is a clean catch — the opposite of the ask. In holdNow set this._catchT = 0.28 and seed root.position from the skull's last world position converted into hold space, drive it home in _updateHeld on an overshoot curve, and keep this._grip low in _updateHands for the first ~0.12s so the skull is already in your hands before the fingers close on it. FEEL_PROFILE is untouched — this is presentation after the catch has resolved.
+
+#### Nothing in the house would make you want to quit  *(house)*
+
+> it should be the most horrifying stuff possible that makes you want to quit the game.
+
+The entire house horror engine is director.js:276-312 _updateScares — five randomised AUDIO cues on a 26-46s timer (overhead pacing, knock, whisper, nearest door drifts open, creak). The only two authored, non-random beats are the music box (director.js:332-364) and the Resident (:368-395). The dressing does not carry the tone either: grep house.js for blood/remains/violence/bath/hooks returns nothing — furnish() (house.js:615+) is period furniture, a crib, a rocking chair and two black mirrors. He deliberately left the house beats blank for us to fill and set the bar at quit-but-curious; we filled it with a sound shuffler. Author one fixed, unrepeatable set piece in a room the player must pass through: a new act fn beside nurseryAct (house.js:1016), registered from buildHouse (house.js:538), keyed off room entry rather than the scare timer. _updateScares structurally cannot deliver this — it can only reshuffle sounds.
+
+#### The crashed car is two boxes and the bodies are two capsules each  *(graveyard)*
+
+> a crashed car and several disfigured bodies are in the backyard.
+
+The crossing itself is genuinely built — buildGraveyard (outside.js:46) fences the yard with one gap at FOREST_GATE, 64 instanced headstones, dead trees. The crash is not: outside.js:127-142 is BoxGeometry(1.8,0.8,4.2) + BoxGeometry(1.6,0.55,2.0) + three cylinder wheels, and its only real idea is the dying headlight flicker (:144-151). The bodies (outside.js:153-168) are four groups of one capsule torso plus ONE capsule limb — correctly oriented crawling away from the gate, a good authored idea rendered as two capsules. atmosphere.js contributes nothing here (grep car/wreck/body/corpse → zero). Rebuild the car group in place using the same primitive vocabulary as createFurnitureKit (greenhouse with pillars, wheel arches, one flat/detached tyre, door seams, sprung hood) and move the collider at :143 to match the new silhouette. He has complained about box-props twice; this is the most visible survivor of that complaint.
+
+#### Window puzzles: out one window and back in another  *(house)*
+
+> if there were puzzles where it had to go out one window and come in another
+
+He pitched this himself and repeated it a message later ('window puzzle would be nice too') — the repeat is the signal. It cannot happen today: HOUSE_TABLES.windows (house.js:63-71) has ten windows and I verified exactly one carries open:true (line 69, bedroomWindow). Every other window takes the !open branch at world.js:322 and gets a glass pane plus a collider with no skullPass, which skull.js:873 treats as solid — there is physically no second aperture to come back in through. Add `open: true, w: 1.7` to ['first', 11, 3, 'E'] (guest room, which pairs with the bedroom window around the house's east corner) and register one exterior fetch target positioned so the only line that reaches it is out-A, HOLD, steer, in-B. The poise grammar and the skullPass plumbing already exist; this is table data plus one target. Depends on the window aim read in list B — without it the throw is a coin flip.
+
+#### The oasis is one puddle  *(clearing)*
+
+> You throw it through the waterfall. It doesn't come back.
+
+The broken promise itself is fully and correctly built — the waterfall target returns 'gone' (outside.js:922-929), skull.vanish() removes the root and stops its moan (skull.js:553-558), Director.waterfallTaken comments 'no failsafe fires' (director.js:548-565), respawn deliberately keeps it gone (:622-629), and the wordless gesture is a head-turn toward the falls every 5-9s (_updateGesture, director.js:535-546). What is thin is the place it happens in: he described a forest oasis of waterfalls and streams flowing into one another before a giant fall, and buildClearing (outside.js:824) has exactly one stream plane (:850), one circular pool (:855) and one fall (:877, itself hidden in favour of atmosphere.js's shader veil at :625). Nothing flows into anything; there are no cascades. Add two or three stepped basins above the pool with short spill planes feeding each other, reusing M.water and the existing map.offset.y scroll ticker at :859. Beauty is sincere here and it is what the gut-punch stands on.
+
+#### Zero secret paths exist  *(whole-game)*
+
+> definitely some stunningly cool secretpath ways
+
+The realism half of this ask has had real work (material grade pass in main.js ~205, act-keyed AMBIENT_BY_ACT at director.js:36-42, the eaten-path flora port in outside.js:403+). The secret half was never started. Door.secret exists in world.js:474 with its own slow 0.5-speed reveal at :603-608, but HOUSE_TABLES.doors (house.js:40-63) contains zero secret:true entries, and grep for mausoleum/pantry/streambed/crawlspace across src/ returns nothing despite DESIGN.md:149-153 authoring one per act. Ship exactly one to prove the pattern, with no key and no target — just something to have found. The cheapest hook is marking a door {secret:true} in the table; note the storeroom→crawl door (house.js:58) is the obvious candidate but crawl is also the proposed site for the first real puzzle above, so pick one or use a graveyard mausoleum instead. Related realism gap worth queueing: skullLight is deliberately not a shadow caster (main.js:129-136), which is the single biggest remaining look problem.
+
+#### Bosses: there is no thread to hang by  *(whole-game)*
+
+> you feel like you're always hanging on by a thread.
+
+Never built. Two things are called bosses in DESIGN.md:135,141 and neither is a battle: enemies.js:12-19 gives both resident and kneeler hp: Infinity so they can only be stunned; the Resident's entire boss logic is six lines (_updateResident, director.js:382-389 — if chasing for 9s, go back to stalking) and it is deleted outright on entering the basement (:134-142); the Kneeler spawns dormant (:511-517) and is enemies.clear-ed the moment you reach the clearing (:526-531). Critically there is no player health anywhere in the codebase — contact calls director.death (:582) instantly — so the sustained near-death feel he asked for is not expressible yet. Start with the Kneeler in _updateKneeler (director.js:519): a phase loop whose only opening is its existing 0.4s stun (enemies.js:17), so every throw buys you seconds and costs you your light while it is away. It is already staged in an open, authored spot 93% down the forest spline.
+
+### Bugs he reported that are still broken
+
+#### The skull: wrong sculpt is shipping, and it is too small  *(skull)*
+
+> The skull just looks silly. it doesn't even look like a real skull.
+
+His single biggest complaint, raised twice ('The skull itself looks terrible. no way to even tell its a skill') and it is also what is left of his original ask for an object you hate having to carry. The realistic sculpt already exists and nobody ships it: src/skull-variant-e.js is a genuine answer — one continuous cranio-facial shell from a smooth-union radius field, orbits/nasal aperture/temporal fossae carved as radial pits, cranial landmarks in millimetres, baked crevice occlusion, value-only aging for colourblindness — but I verified skull.js:112-127 _buildMesh only uses a variant when ?skull= names one, and main.js:117 passes Q.get('skull') with no fallback. The default build is still the inline sculpt at skull.js:128-273: a SphereGeometry(0.095) cranium, two 0.028 cheek spheres, two flattened black spheres for sockets, a 4-sided cone nose and box teeth. grep -rn "skull=e" across the repo returns nothing. Fix is one line: `const v = this.variant || 'e';`. His second complaint — 'its not directly facing the player and making eye contact. and it needs to be a bigger skull' — is half fixed: facing is a hard lookAt every frame (skull.js:620-624, 601, 712, 795, deliberate tumble only on the outbound leg), but size was never touched — I verified skull.js:280-281 still reads hold.position.set(0.17,-0.31,-0.7) / hold.scale.setScalar(1.15) from the initial commit, about a fifth of screen height parked low-right. Go to (0.15,-0.28,-0.58) and 1.45 and re-seat the hands at skull.js:364-368. VERIFY WITH `node tools/shot-held.mjs`, not render-sculpt.mjs (STATE-OF-PLAY §11: its lighting flatters) — and in the same shot confirm the rebuilt forearms (skull.js:371-385) still exit the bottom of frame at the larger scale; they are the entire fix for his 'hands making glasses around its eyes' note, which is right in source but has never been checked on screen.
+
+#### Skull audio: the catch and the moan aren't spatialised, and bounces clip then cut out  *(audio)*
+
+> Some of the sounds that the skull makes just don't seem like they're coming from the skull.
+
+Three concrete defects, all small, covering the two most-heard skull sounds — and they explain both of his audio reports. (1) skull.js:825 in _completeCatch calls audio.catchThud({gain, rate}) with NO pos; Audio._bus (audio.js:498-510) only builds the HRTF panner if opts.pos, so the most frequent skull sound in the game plays dry and dead-centre. grab() at skull.js:473 does pass pos, so this is an oversight, not policy. (2) audio.js:936-941 skullMoanStart builds its panner at {x:0,y:1.4,z:0} — world origin — and only skullMoanUpdate glides it to the skull (tau 0.03), so every throw's moan is born at 0,0,0 and takes ~90ms to arrive. Give skullMoanStart(pos) and seed it from skull.js:518. (3) His other report — 'the sound kind of maxing out and then cutting and coming back... when the skull gets stuck on stuff and hits stuff before it comes back' — is a sign bug I confirmed in source: _bounceFx (skull.js:899-915) computes `now = this.flightTime + this.returnTime`, and that clock runs BACKWARDS because tryThrow resets flightTime only (skull.js:504) and beginReturn resets returnTime only (:539). On every throw after the first, `now` drops the instant the skull turns for home, so the cooldown test `now - _lastBounceSfx < 0.1` sees a NEGATIVE difference and mutes every bounce on the return leg until the clock climbs back past the old stamp — literally cutting and coming back. The same flip makes the 0.4s _bounceTimes window never expire, and the pinball early-out is gated `&& this.mode === 'outbound'`, so a skull wedged in geometry on the RETURN has no bail-out and machine-guns audio.thud into a master compressor at threshold -18 / ratio 4 with no voice cap anywhere in _play/_bus — that is the maxing out. Fix: add this._sfxClock, advance it by dt at the top of update() (skull.js:566), use it as `now`, and drop the outbound-only gate. Second suspect for stacking: skullMoanStop (audio.js:988-999) nulls this._moan but leaves the oscillator chain alive 700ms, so a fast catch→rethrow runs two moan chains into the compressor — hold the dying chain in _dyingMoan and hard-stop it at the top of skullMoanStart.
+
+#### The boarded door wears 'openable' hardware and its planks can't be hit  *(house)*
+
+> I got a door open once and i still don't know how it works. it looked like it had some boards behind it.
+
+He is describing the cellar door and he is right on both counts. world.js:498 gates knob creation on `this.locked !== 'never'`, which is TRUE for locked:'boards', while the keyhole escutcheon is only added when locked && locked !== 'boards' — so cellarDoor (house.js:51) wears exactly the hardware the door grammar reserves for 'this will open', and tryUse (world.js:570) can only rattle it. And the planks can genuinely fail to break, which is his follow-up ('the planks are behind it and they just dont break and you cant see them'): house.js:1094-1101 makes each board a BoxGeometry(1.7, 0.24, 0.08) but registers it as a point-and-radius fetch target with radius 0.55, and skull.js:921-925 measures distance from the swept segment to that single point — a plank is ±0.85m long, so the outer ~35% of every board is dead geometry with no collider that the skull flies straight through with no sound and no reaction. Fix: add a locked==='boards' branch in the Door constructor (world.js:496-523) that omits the knob and fits an iron hasp instead, and register three targets per plank at x -0.55/0/+0.55 (or raise radius to 0.9 and add a real collider). Merged in his general ask — 'it should be abundently clear if a door is locked and if it has a door knob and if it will open when you see it': the grammar and the lockedRattle SFX both already exist (world.js:493-495, :571, :614-621), what is missing is the at-a-distance read, since hardware is 5cm of brass on a dark panel and the only proximity cue is the crosshair inside _ray.far = 2.9. Push a tiny world.candles entry (world.js:29) at the knob of every door that CAN open — brightness only, no hue. The same move answers his other question, 'Does that door on the stair way thats just out of reach ever get used?': it does — voidDoorAct (house.js:1395-1471) makes it arm the guest flame, which transfers into the skull's sockets and permanently upgrades your light to intensity 62 / distance 12.5 — but it wears an ordinary knob that says walk up and turn me. Put a candle just behind the closed panel (~x 4.3, y F+1.2, z -7) so from the stairs below you see light leaking around a door you cannot reach.
+
+#### The basement staircase has no colliders at all  *(basement)*
+
+> for some reason you walk right through this wood thing
+
+Two adjacent reports, one root cause — nothing about the cellar flight is solid. (a) house.js:575-577 builds four skirt boxes with World.box (world.js:49-55), which only pushes geometry into a merge list and NEVER creates a collider, so they are pure visuals. The comment above them claims their tops are held under the walking surface and that is arithmetically false: the cellar ramp (house.js:74, compiled at world.js:239-244) spans world z 2..6 / y 0..-3, so tread heights at the box centres are -0.375, -1.125, -1.875, -2.625 while the box top faces sit at +0.03, -0.72, -1.47, -2.22 — every box is 0.40m ABOVE its tread, spanning the full stair width (x 7.98..12.02), which is exactly the slab his legs pass through on every step. Key each box to the ramp (treadY = lerp(0,-3,(z-2)/4); centre + 0.45 <= treadY - 0.1) and add matching addCollider calls. (b) His second note, 'you can also walk through the stairs on the side', is World._buildStairs (world.js:365-386): the whole function body is this.box() calls with zero addCollider, so stairs exist only as merged visuals plus a height field in groundHeightAt (:126-146), while horizontal collision (player.js:141-142) tests world.colliders only. Concretely: standing in bcorr at y=-3 and walking east past x=8 at z=4, groundHeightAt rejects the ramp (it requires h <= curY + 0.55 and the ramp is at -1.5), so the player keeps floorY=-3 and strolls through the solid-looking stair mass. Emit flank colliders down both sides of the flight plus one per tread inside _buildStairs. Do NOT fill the volume under the flight — STATE-OF-PLAY §5 records that a previous attempt bricked the basement spawn and tests/playthrough.mjs caught it; gate on that test.
+
+#### Nothing points anywhere after the second key door  *(house)*
+
+> i didn't find what to do after the second key door.
+
+The flags exist and nothing reads them: flag('bedroomOpen') (house.js:1009), 'gotStairKey' (:1029), 'stairsOpen' (:1044), 'cellarOpen' (:1111) are all written and never consumed — flags.has appears in director.js only at :431/:439/:446/:622, all forest and waterfall. _enterHouse (:119-127) schedules two ambient scare sounds and nothing directional, and _updateScares (:266+) picks uniformly at random. The guidance beat proposed in PLAYTEST-1.md:57-59 does not exist (grep knives|guidance|leading across src → zero hits). Add _updateGuidance(dt) beside _updateScares: once flags.has('stairsOpen') and until 'cellarOpen', every ~20s raise the kitchen candle (the world.candles entry pushed at house.js:713) for a beat and play a scrape or knock from world.doorById.cellarDoor.group.position — light and sound only, no words, and it fires exactly where he stopped. Bundle his anti-lost rule here too ('we could isolate them in sections of the house until they get out of those sections'): real gates exist (bedroomDoor, stairDoor, cellarDoor, frontDoor locked:'never' answering with a dead thud) but every ground-floor door at house.js:42-50 is {} or {ajar:true}, so ten rooms are mutually open at once — change the foyer→backhall door (house.js:47) to a locked id and hang its opener beside cellarBoards, table data only. And his nursery confusion ('i don't completely understand the thing in the babies room that makes noise and the enemy') is _updateMusicBox (director.js:332-365): while mb.wound > 0.03 you get a quiet tick, and only once it decays past 0.03 AND you are inside p.x<-4 && p.y>3 && p.z>-2 does the shape grow and become a walker — a causal rule you can only learn by dying to it.
+
+#### Keys hang off nothing — both of them  *(house)*
+
+> the key is hovering and not on a branch.
+
+He reported this twice and the second time said 'again' — 'the second key again doesn't look like its actuall attached to that baby thing that makes sound' — so he wants a rule, not two patches. Tree key (house.js:904-924, untouched since the initial commit): at the string's z of 8.2 the branch axis passes through y ≈ 6.574 and its underside is ≈ 6.49, while the 0.5m string is centred at 5.98 so its top is 6.23 — a 0.26m gap of open air on a half-metre string. The key itself does meet the string; the string hangs off nothing. Worse, string and key are scene siblings and the sway ticker rotates each about its own centre instead of swinging them from the branch. Nursery key (house.js:1063-1073): better, since both are parented to the mobile, but keyString's bottom is at local -0.30 and the key's bow top is at ≈ -0.337 — a 3.7cm gap on a 0.7m bar — and the string's top sits at local x 0.35, exactly the END of the bar, so it appears to sprout off the tip; it also never swings, the mobile only spins in Y. Fix once as `hangFrom(anchor, localPos, item)` in house.js and call it at both sites: one Group at the anchor's underside, string and key parented into it with the string spanning exactly pivot→bow with no gap, and rotate the group so the whole assembly swings. world.addFetchTarget reads getWorldPosition (skull.js:923), so re-parenting is safe.
+
+#### Impact has no camera feel — the kick-ball language exists but the skull can't reach it  *(skull)*
+
+> The whole throw system and impact doesn't feel quite right. that other game i had with the kick ball had it so well.
+
+The control half he settled himself and signed off on ('feels fine to me... that seeems fine'), so what is left is impact. skull.js:899-915 _bounceFx is the skull's entire response to hitting the world: set a flag, run the pinball guard, play audio.thud — no camera feedback of any kind. The game already owns a full kick-ball-style impact language: Game.impact(kind, pos) at main.js:333-343 does hitStop + shake + fovKick + a contact bloom via _impactFx. The skull cannot call it — I verified the ctx literal handed to it each frame (main.js:463-468) contains only playerVel, yawVel, pitchVel, callHeld, throwHeld, bobY and onCatch. Even the catch is thin: `onCatch: (impactV, hard) => { this.shake(0.1 + impactV * 0.15); }` — 0.1-0.25 of shake, against 0.13s of hitStop plus 0.6 shake plus 2.5 fovKick for a 'pop'. Fix: add `impact: (kind, pos) => this.impact(kind, pos)` to that ctx literal; call ctx.impact('break', this.pos) from _bounceFx for speeds above ~18, behind the same 0.1s cooldown so a pinball storm can't machine-gun hitstop; and in _completeCatch raise the arrival to `this.hitStop = max(this.hitStop, 0.04 + impact*0.05)` plus a small fovKick. Then tune by feel against kick-ball. Touch nothing in FEEL_PROFILE.
+
+#### You can't see that the skull is carrying the key  *(skull)*
+
+> It should be very obvious when it has the key in its mouth.
+
+The CONNECT half is now sold on all three channels he named ('obvious when it connects with the key and gets it through sound and visuals and motion'): grab() (skull.js:462-475) snaps the jaw to 0.3, sets _flourishT = 0.45 for a proud spin with a 22% scale swell played out in _flightDress (:804-812), and fires a tooth CLACK plus a metal chime at the skull's position, with the tree key adding a glassTink (house.js:931). The CARRY half is still missing. skull.js:469 shrinks the key on pickup — `mesh.scale.setScalar(Math.min(mesh.scale.x, 0.9))` — so the tree key drops from 1.7 to 0.9 at the exact moment it becomes the thing you need to see, and it is then parked at jawMount (skull.js:186-188, local 0,-0.028,0.085) where the returning skull's own jaw and teeth occlude it. No light, no glint, nothing on the held skull. Fix: clamp to ~1.15 instead of 0.9, move jawMount a few cm forward and down so the key hangs clear of the teeth, park a small PointLight on jawMount while this.carry is set (brightness, never hue), and in _updateHeld (skull.js:626-643) hold the jaw slightly open with a periodic clamp-tick while carrying so the held skull visibly has something in its mouth.
+
+#### No read on whether a window throw clears the frame  *(house)*
+
+> sometimes it is hard to tell if your aim will send it out, or hit the edge
+
+He likes the windows otherwise ('The windows are cool'). An open window is a plain AABB with skullPass:true covering exactly the opening rect (world.js:309, :332-334) and the four frame bars around it are drawn with world.box, which creates no collider — so the boundary between 'through' and 'clip the jamb' is an invisible edge against the neighbouring wall segments emitted at world.js:288/306. There is no aiming affordance to read it with: grep for reticle|crosshair|aimAssist|trajectory|glint in skull.js returns nothing, and the game's only one is index.html:21's crosshair dot, which grows 4px→8px solely for world.interactables inside _ray.far = 2.9 (main.js:544). PLAYTEST-1.md:52 still carries this as unstarted. Fix: push each open window's opening rect onto a new world.windowOpenings[] in _spawnWindow, then in Game.render (main.js:599, where the crosshair already syncs) raycast the camera forward against those rects and raise emissiveIntensity on that window's four frame bars when the line is clean — brightness only, no hue, no HUD; it reads as the moonlit sill catching your eye. This also blocks the out-one-window-in-another puzzle he asked for twice.
+
+#### The house enemy: closing a door costs it nothing, and the reveal swaps models  *(house)*
+
+> it didn't have enough path finding at first to make it an obstacle to find the other doorway
+
+Two notes from his single encounter, and he loved the parts either side of them (shutting doors and watching its hands come through the wall; 'it ended up slowly coming up from the floor for me and i watched it before it expanded. that was cool'). (a) Routing is a single greedy hop, not pathfinding: chase now tracks e._stallT and calls _bestDoorNode after 0.8s of blocked progress (enemies.js:402, :581), but line 588 filters `passable = d.open || (e.kind === 'resident' && !d.locked)`, so an ordinary walker can only steer toward doors that are ALREADY open — the one you just shut is excluded, and so is every other closed door in the house. It then clears _via within 0.9m of the node (:392), beelines at the player, re-stalls, and with no exclusion memory can re-target the door it just came through (:591). Chain two hops: on reaching a node immediately pick the next passable node whose room (world.rooms, world.js:164) contains the player, and keep e._lastVia as a one-entry exclusion. (b) His 'the visuals of it were simple and pretty lame once it fully comes out': buildWalker was resculpted after that note (enemies.js:128, commit b829fcd — leaning capsule trunk, clavicle bar, hunched shoulder, angled head with jaw slab and eye glints, hands hanging below the knees), so it may now clear his bar and I cannot judge that from source — RUN IT: play to the nursery beat, or shoot the walker with the tools/shot-* harness, and look. What is certainly still wrong is that the silhouette he praised is not the creature: _updateMusicBox (director.js:346-363) grows a bare CapsuleGeometry(0.3, 1.5) for ~11s, then deletes it at scale 0.96 and spawns the real walker at full size — the reveal swaps objects at the punchline. Spawn the real walker dormant a body-length below the nursery floor and lerp its y up over the same 11s instead.
