@@ -342,6 +342,23 @@ signal, not as new information.
   between so cause and effect are separable. **No HUD, no text** — this has to
   be told in light, sound and the object itself.
 
+- **Textures flashing.** *"some of those glitchy textures that we caught
+  flashing."* Almost certainly z-fighting: coplanar or near-coplanar surfaces
+  with no depth separation. Prime suspects are the places where this codebase
+  stacks flat geometry at nearly the same height — the two forest ground ribbons
+  (`outside.js`, y = 0 and y = 0.03), the graveyard ground strips against the
+  displaced plane (`outside.js` `buildGraveyard`), the roof/floor slabs in
+  `house.js`, and the wide under-floor plane at y = −0.35. It was seen and never
+  chased down. Fix by separating the offending pairs in y, or by giving the
+  upper surface `polygonOffset`. **Find it by looking, not by reasoning** —
+  `tools/shot-areas.mjs` from several positions per act.
+- **The wide open basement room.** Raised twice now, alongside *"the basement
+  still has that empty room."* `HOUSE_TABLES.rooms` gives the basement `bcorr`,
+  `storeroom`, `boiler` and `crawl`; `crawl` has an authored proposal in
+  `docs/PLAYTEST-3.md` that has never been built. **Ask him which room he means
+  before building** — he has described it as both empty and as useful, and those
+  point at different rooms.
+
 ### Older, still unverified against the current build
 
 From his first playtest, none confirmed fixed:
