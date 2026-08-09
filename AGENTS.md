@@ -40,7 +40,7 @@ beats your instincts.
 ## Gates — all three must be green before any merge
 
 ```sh
-node tests/autotest.mjs      # 23 named checks (feel laws, fetch chain, stun/pop)
+node tests/autotest.mjs      # 24 named checks (feel laws, fetch chain, stun/pop)
 node tests/smoke.mjs         # per-act boot, budgets, screenshots
 node tests/playthrough.mjs   # plays the ENTIRE game via real inputs (10+ min)
 ```
@@ -63,7 +63,8 @@ Environment traps (hard-won — do not relearn):
 - `src/player.js` — controller (capsule-vs-AABB, stairs as ground height).
 - `src/world.js` — house compiler (rooms/doors/colliders from tables), Door.
 - `src/house.js` — Acts 0–2 tables + furnishing + act props.
-- `src/outside.js` — graveyard, spline forest + seal, clearing, cave.
+- `src/outside.js` — graveyard, spline forest + seal, clearing, cave entrance.
+- `src/underfalls.js` — the skull-less waterfall undercroft and cave route.
 - `src/enemies.js` — walkers / Resident / Kneeler / Standing Kind.
 - `src/director.js` — acts, beats (dt-driven, no setTimeout), scares, arena.
 - `src/finale.js` — mirror room, closing walls, the reflection.

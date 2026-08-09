@@ -1,9 +1,17 @@
 # FETCH — state of play, for a new model with zero context
 
+> **HISTORICAL FORENSIC SNAPSHOT — NOT CURRENT RELEASE TRUTH.** This file
+> records the pre-Underfalls investigation and retains old diagnoses/backlog for
+> provenance. Some later sections deliberately describe bugs or deployment
+> states that have since changed. Read `AGENTS.md` for current laws/workflow,
+> then the newest section of `docs/HANDOFF.md` for current code, gates, shipped
+> features, and remaining risk. Verify `origin/main` and production rather than
+> treating an uncrossed item below as live.
+
 **Read in this order:** `docs/BRIEFING.md` (what the game is + the sacred laws)
 → `AGENTS.md` (team playbook, gates, lanes) → `docs/DESIGN.md` (the authored
-spine, beats verbatim from Alex) → **this file** (what is actually true right
-now, what is broken, and what the plan is).
+spine, beats verbatim from Alex) → newest `docs/HANDOFF.md` section (current
+release truth) → **this file** (historical diagnoses and idea provenance).
 
 This document is written for GPT-5.6 joining a project that has been built by
 several models in sequence. It is deliberately blunt about what does not work.
@@ -54,7 +62,7 @@ The live game at **qualiacology.com/fetch/** is a *shelled copy* living at
 `fetch/` inside the site repo. **Never deploy from the game repo.** Flow:
 
 ```
-land on game main with four green gates
+land on game main with the canonical gates and release regressions green
   -> copy src/ into the site repo's fetch/src/
   -> branch, PR, inspect the Netlify deploy preview
   -> merge ONLY with Alex's explicit approval (merging = production, ~1 min)
@@ -71,12 +79,13 @@ used by a different agent. Work in `fetch-claude`.
 node serve.mjs 8711          # then http://localhost:8711/
 ```
 
-**The four gates. All must be green before anything lands.**
+**The three canonical merge gates, plus the release regression catalog.** All
+must be green before this release lands.
 
 ```sh
 node tests/smoke.mjs         # boots every act, asserts budgets, zero console errors
 node tests/autotest.mjs      # 24 named checks incl. the feel laws
-node tests/regressions.mjs   # 23 checks — irreversible-state traps
+node tests/regressions.mjs   # current catalog: 50 irreversible-state traps
 node tests/playthrough.mjs   # plays the WHOLE game through the real input path
 ```
 
@@ -121,16 +130,17 @@ headless. Read `canvas.toDataURL` instead. Every tool above already does.
 | `player.js` | movement, capsule-vs-AABB collision, and the rope swing |
 | `world.js` | static geometry, colliders, zones, surfaces, lights, candle pool |
 | `house.js` | the whole house — compiled from `HOUSE_TABLES` (rooms/ramps/holes), furnishings, door grammar |
-| `outside.js` | graveyard, the forest spline corridor, clearing, cave |
+| `outside.js` | graveyard, the forest spline corridor, clearing, and the waterfall exterior |
+| `underfalls.js` | the expanded skull-less cave district, route, chamber shell, spray zones, and hatch |
 | `atmosphere.js` | a *decorative-only* dressing layer. Owns no progression, no colliders, no audio. Can be removed without changing a single gameplay result |
 | `director.js` | acts, beats, fog/ambient per act, death and respawn, enemy direction |
-| `enemies.js` | the Resident, walkers, the Kneeler |
+| `enemies.js` | the Resident, walkers, the Kneeler, Standing Kind, and Drowned Choir |
 | `finale.js` / `mirrors.js` | the mirror room; pooled planar reflections ported from Alex's THE LAG |
 | `audio.js` | HRTF-spatialised synthesis. No audio files |
 | `textures.js` | every texture, painted on canvas at boot |
 
 Sculpt variants `skull-variant-{a,b,c,d,e}.js` are alternative skull meshes.
-**`e` is the newest and best.** The default skull is still the old inline one.
+**`e` is the shipping default.** `?skull=v0` retains the old courier for comparison.
 
 ---
 
@@ -502,30 +512,25 @@ first.** If two of them already do it, port the better one.
 
 ---
 
-## 12b. NOTHING SINCE THE DARKNESS PASS HAS BEEN DEPLOYED
+## 12b. Verify what is shipped; this checkout is shared
 
-Read this before assuming a bug is real. `origin/main` and the live site are at
-**faef4e3**. Five commits sit unmerged on branch `rope-as-a-verb`:
+Do not infer production state from an old hash, this document, or whichever
+branch happens to be checked out. The source of truth for development is
+`origin/main`. The live game is a separately shelled copy under `fetch/` in the
+Qualiacology repository, so a source merge and a website sync are two distinct
+events. The newest entry in `docs/HANDOFF.md` records the release candidate and
+its verification evidence; production is current only after the matching site
+PR is merged and `https://qualiacology.com/fetch/` is boot-checked.
 
-    06424fe  the log collider was a 6x7m box — the forest "stuck" bug
-    3ab8fa4  backlog: flashing textures, the basement room
-    7376ed3  the forest log, brightness, and the mined backlog
-    e0503a8  the stale-projection bug behind "respawn walking through trees"
-    6920933  Rope: make the latch a verb instead of a cutscene
+The Opus 5 foundation, forest rope verb, collision/respawn corrections, and
+darkness pass were merged before the Underfalls expansion began. Do not revive
+the former warning that those fixes are stranded on `rope-as-a-verb`; that was
+true only before the foundation PR landed.
 
-**Alex has never played the rope swing.** He has also been re-reporting bugs
-that are already fixed on that branch — the forest pin, respawn in the trees,
-the log, the too-dark woods. Four gates are green on it. Deploying needs his
-explicit approval (site `AGENTS.md`), and until it lands, every live report he
-gives describes a build that is several fixes behind.
-
-### One thing to raise with him rather than fix quietly
-
-`src/main.js:422` sets the end card's tagline to **`'It kept you.'`** — words on
-screen, written by a model. That breaks two laws at once: no HUD and no
-on-screen words, and copy is Alex's voice and is never invented. It is the last
-thing a player sees before the game ends. Ask him what it should say, or whether
-it should say anything at all.
+`C:\Users\Alex\Projects\fetch-claude` is a shared working checkout. Before any
+branch change, inspect `git status`, active PRs, and current collaborators. Never
+discard or overwrite unfamiliar changes. If a clean baseline is needed while
+another agent is working, create a separate worktree from `origin/main`.
 
 ---
 

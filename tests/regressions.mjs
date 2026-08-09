@@ -93,11 +93,14 @@ try {
       triangleCount: skull.root.userData.triangleCount,
       triangleBudget: skull.root.userData.triangleBudget,
     };
-    // OUR skull-off protocol: the courier sculpt stays default until Alex
-    // crowns a winner in-game; a/b/c/d/a2 all mount behind ?skull=.
+    // The realism rounds are resolved: the continuous anatomical shell is the
+    // shipping sculpt. Named comparison variants (including v0) remain opt-in.
     check(
-      'default query ships the courier sculpt (no variant pre-empted)',
-      skull.variant == null && skull.root.name === 'skull',
+      'default query ships the continuous anatomical shell',
+      skull.variant === 'e' && skull.root.name === 'skull'
+        && skull.root.userData.variant === 'e'
+        && skull.root.userData.source === 'real-shell'
+        && skull.root.userData.triangleCount <= skull.root.userData.triangleBudget,
       metadata,
     );
     check(
@@ -106,6 +109,61 @@ try {
         && skull.sockets.length >= 2 && !!skull.eyeL && !!skull.eyeR
         && Array.isArray(skull.stageSets) && skull.stageSets.length === 6,
       { sockets: skull.sockets?.length, stageSets: skull.stageSets?.length },
+    );
+
+    // Exercise the real press/hold/release path before changing growth state.
+    // The filament and the last-hand-span settle are presentation, but they
+    // must follow the sacred input grammar instead of inventing a second mode.
+    F.stepWith(FIXED_DT, { throwPressed: true, throwHeld: true }, false);
+    const tetherAttr = skull.tether.geometry.getAttribute('position');
+    const tetherFinite = Array.from(tetherAttr.array).every(Number.isFinite);
+    check(
+      'a held throw draws one finite depth-tested tether from hands to skull',
+      skull.mode === 'outbound'
+        && skull.tether.visible
+        && skull.tether.material.depthWrite === false
+        && skull.tether.material.opacity > 0
+        && tetherFinite,
+      {
+        mode: skull.mode,
+        visible: skull.tether.visible,
+        opacity: skull.tether.material.opacity,
+        points: tetherAttr.count,
+        finite: tetherFinite,
+      },
+    );
+    F.stepWith(FIXED_DT, { throwReleased: true }, false);
+    for (let i = 0; i < 300 && skull.mode !== 'held'; i++) {
+      F.stepWith(FIXED_DT, {}, false);
+    }
+    const caughtWithSettle = skull.mode === 'held' && !!skull._catchFx;
+    check(
+      'ordinary release catches into an animated hand-span settle and hides the tether',
+      caughtWithSettle && !skull.tether.visible && skull._grip < 0.2,
+      {
+        mode: skull.mode,
+        settle: skull._catchFx ? { t: skull._catchFx.t, dur: skull._catchFx.dur } : null,
+        tetherVisible: skull.tether.visible,
+        grip: skull._grip,
+      },
+    );
+    check(
+      'ordinary catch adds no global hit stop or input-freezing delay',
+      g.hitStop <= 0,
+      { hitStop: g.hitStop, fovKick: g.fovKick },
+    );
+    F.stepWith(0.32, {}, false);
+    check(
+      'catch settle ends in the exact calibrated cradle without retaining hidden state',
+      skull.mode === 'held'
+        && !skull._catchFx
+        && Math.hypot(skull.root.position.x, skull.root.position.y,
+          skull.root.position.z - 0.02) < 0.0001,
+      {
+        mode: skull.mode,
+        settleActive: !!skull._catchFx,
+        root: skull.root.position.toArray(),
+      },
     );
 
     skull.setStage(0);
@@ -184,6 +242,19 @@ try {
           stage: skull.stage,
           pendingStage: skull.pendingStage,
           applications,
+        },
+      );
+      check(
+        'final anatomical growth keeps the apertures open and retires the temporary nose',
+        skull.sockets.every((socket) => socket.visible)
+          && skull.stage5Hide.length >= 5
+          && skull.stage5Hide.every((mesh) => !mesh.visible)
+          && skull.eyeL.visible
+          && skull.eyeR.visible,
+        {
+          sockets: skull.sockets.map((socket) => socket.visible),
+          stage5Hidden: skull.stage5Hide.map((mesh) => !mesh.visible),
+          eyes: [skull.eyeL.visible, skull.eyeR.visible],
         },
       );
     } finally {
@@ -317,6 +388,7 @@ try {
   });
 
   await scenario('input-and-no-hud', () => {
+    const F = window.__FETCH;
     const g = window.__game;
     const checks = [];
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
@@ -361,6 +433,58 @@ try {
       );
     }
 
+    // Browser resume/test harnesses can surface a stale RAF timestamp. A
+    // negative cosmetic delta used to increase the FOV kick until perspective
+    // inverted past 180 degrees (the giant wedges/fisheye captures).
+    const savedDt = g._lastShakeDt;
+    const savedKick = g.fovKick;
+    const savedShake = g._shake;
+    g._lastShakeDt = undefined;
+    g._shake = 0.24;
+    g.render();
+    const coldStartShake = g._shake;
+    g._lastShakeDt = -20;
+    g.fovKick = 0;
+    g.render();
+    const projection = g.camera.projectionMatrix.elements;
+    check(
+      'a stale negative render timestamp cannot invert the camera projection',
+      g.camera.fov >= 70 && g.camera.fov <= 75
+        && projection[0] > 0 && projection[5] > 0
+        && Number.isFinite(coldStartShake) && coldStartShake < 0.24,
+      {
+        fov: g.camera.fov,
+        projectionX: projection[0],
+        projectionY: projection[5],
+        coldStartShake,
+      },
+    );
+    g._lastShakeDt = savedDt;
+    g.fovKick = savedKick;
+    g._shake = savedShake;
+
+    // The physical lantern and the foreground cradle deliberately share a
+    // transform but no longer share a lighting pass. Prove a catch/hold reset
+    // cannot put the 58-cd world lamp back on the held layer and bleach hands.
+    g.skull.holdNow();
+    g.render();
+    const heldMeshes = [];
+    g.skull.hold.traverse((object) => { if (object.isMesh) heldMeshes.push(object.layers.mask); });
+    check(
+      'world lantern and held cradle remain isolated across a hold reset',
+      g.skullLight.layers.mask === 1
+        && heldMeshes.length > 20 && heldMeshes.every((mask) => mask === (1 << 2))
+        && g.camera.layers.mask === ((1 << 0) | (1 << 2))
+        && g.lastRender.drawCalls > 0 && g.lastRender.drawCalls < 700,
+      {
+        lightMask: g.skullLight.layers.mask,
+        heldMeshes: heldMeshes.length,
+        heldMasks: [...new Set(heldMeshes)],
+        cameraMask: g.camera.layers.mask,
+        drawCalls: g.lastRender.drawCalls,
+      },
+    );
+
     return { checks, diagnostics: { inputAccessible: !!g.input } };
   });
 
@@ -395,6 +519,19 @@ try {
       'Standing pressure figures never steal a wave token',
       !g.enemies.list.some((e) => e.gravePressure && e.graveClaimed),
     );
+    g.player.running = false;
+    const claimRecoveryBeforeStep = g.enemies._graveClaimRecovery;
+    g.director.onPlayerStep('grass');
+    check(
+      'ordinary graveyard footsteps preserve the committed attack token',
+      claimedNow().length === 1 && claimedNow()[0] === first
+        && g.enemies._graveClaimRecovery === claimRecoveryBeforeStep,
+      {
+        claimed: claimedNow().map((e) => ({ state: e.state, x: e.pos.x, z: e.pos.z })),
+        recoveryBefore: claimRecoveryBeforeStep,
+        recoveryAfter: g.enemies._graveClaimRecovery,
+      },
+    );
 
     F.stepWith(0.08, {}, false);
     second.pos.set(2.12, second.pos.y, 21);
@@ -418,6 +555,17 @@ try {
       first.state === 'stunned' && claimedNow().length === 0
         && g.enemies._graveClaimRecovery > 0,
       { state: first.state, claimed: claimedNow().length, recovery: g.enemies._graveClaimRecovery },
+    );
+    const recoveryAfterStun = g.enemies._graveClaimRecovery;
+    g.director.onPlayerStep('grass');
+    check(
+      'ordinary graveyard footsteps preserve the post-stun recovery breath',
+      claimedNow().length === 0 && g.enemies._graveClaimRecovery === recoveryAfterStun,
+      {
+        claimed: claimedNow().length,
+        recoveryBefore: recoveryAfterStun,
+        recoveryAfter: g.enemies._graveClaimRecovery,
+      },
     );
 
     F.stepWith(0.6, {}, false);
@@ -528,11 +676,23 @@ try {
       // made an ordinary early release an unrecoverable traversal failure.
       F.setSkull(rope.pos.x, rope.pos.y, rope.pos.z, 0, 0, 0, 'outbound');
       const firstDirective = rope.onHit.call(rope, g.skull);
+      // The backup-call verb must release both halves of an active rope in the
+      // same fixed step, even if the primary throw button remains held.
+      F.stepWith(1 / 120, { callTap: true, throwHeld: true }, false);
+      const calledMode = g.skull.mode;
+      const swingAfterCall = !!g.player.swing;
       F.stepWith(0.12, { throwHeld: false }, false);
       check(
         'failed rope attempt stays retryable until the crossing is real',
-        firstDirective === 'anchor' && rope.enabled === true && !g.player.swing,
-        { firstDirective, ropeEnabled: rope.enabled, swingActive: !!g.player.swing },
+        firstDirective === 'anchor' && rope.enabled === true
+          && calledMode === 'returning' && !swingAfterCall && !g.player.swing,
+        {
+          firstDirective,
+          ropeEnabled: rope.enabled,
+          calledMode,
+          swingAfterCall,
+          swingActive: !!g.player.swing,
+        },
       );
       g.player.abortSwing && g.player.abortSwing();
       g.skull.holdNow();
@@ -807,17 +967,22 @@ try {
     F.stepWith(3.6, {}, false);
     g.render();
     const expectedAudio = ['skullMoanStart', 'skullMoanUpdate', 'skullMoanStop', 'catchThud', 'gasp'];
+    const endTag = g.el.title.querySelector('.tag').textContent;
     check(
       'impossible recall, hard black, catch, and localized human gasp occur in order',
       g.finale.phase === 'end'
         && g.flags.has('ended')
         && g.player.frozen
+        && !g.finale.active
+        && endTag === ''
         && expectedAudio.every((name, i) => audioCalls.indexOf(name) === i)
         && g.lastRender.drawCalls < 700,
       {
         phase: g.finale.phase,
         ended: g.flags.has('ended'),
         frozen: g.player.frozen,
+        finaleActive: g.finale.active,
+        endTag,
         audioCalls,
         drawCalls: g.lastRender.drawCalls,
       },

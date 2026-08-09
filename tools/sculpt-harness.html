@@ -65,9 +65,10 @@ try {
       const on = s <= stage;
       for (const mesh of (parts.stageSets[s] || [])) mesh.visible = on;
     }
+    for (const mesh of (parts.stage5Hide || [])) mesh.visible = stage === 4;
     if (parts.eyeL) parts.eyeL.visible = stage >= 2;
     if (parts.eyeR) parts.eyeR.visible = stage >= 3;
-    for (const s of (parts.sockets || [])) s.visible = stage < 5;
+    for (const s of (parts.sockets || [])) s.visible = stage < 5 || (stage === 5 && !!parts.stage5Hide);
   };
 
   const POSES = {

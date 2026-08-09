@@ -29,6 +29,7 @@ export function buildAtmosphere(game) {
   scene.add(root);
 
   const ownedMaterials = new Set();
+  const ownedTextures = new Set();
   const tickers = [];
   const track = (object, instances = 1) => {
     root.add(object);
@@ -43,12 +44,13 @@ export function buildAtmosphere(game) {
     return object;
   };
   const own = (material) => { ownedMaterials.add(material); return material; };
+  const ownTexture = (texture) => { ownedTextures.add(texture); return texture; };
 
   buildNightSky(game, root, track, own, tickers);
-  buildGraveyardDress(game, track, own);
+  buildGraveyardDress(game, track, own, ownTexture);
   buildForestDress(game, track, own, tickers);
   buildClearingDress(game, track, own, tickers);
-  buildCaveDress(game, track, own);
+  buildCaveDress(game, track, own, tickers);
 
   const ticker = (dt, t) => {
     for (const fn of tickers) fn(dt, t);
@@ -68,6 +70,7 @@ export function buildAtmosphere(game) {
       const geometries = new Set();
       root.traverse((o) => { if (o.geometry) geometries.add(o.geometry); });
       for (const g of geometries) g.dispose();
+      for (const t of ownedTextures) t.dispose();
       for (const m of ownedMaterials) m.dispose();
     },
   };
@@ -133,14 +136,29 @@ function buildNightSky(game, root, track, own, tickers) {
   const starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
   starGeo.setAttribute('color', new THREE.Float32BufferAttribute(starCol, 3));
-  const stars = new THREE.Points(starGeo, own(new THREE.PointsMaterial({
-    size: 0.72,
-    sizeAttenuation: true,
-    vertexColors: true,
+  const stars = new THREE.Points(starGeo, own(new THREE.ShaderMaterial({
     transparent: true,
-    opacity: 0.86,
     depthWrite: false,
     fog: false,
+    vertexShader: `
+      attribute vec3 color;
+      varying vec3 vColor;
+      void main(){
+        vColor = color;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = clamp(245.0 / max(1.0, -mv.z), 1.0, 2.4);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vColor;
+      void main(){
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float a = 1.0 - smoothstep(0.22, 0.5, d);
+        gl_FragColor = vec4(vColor, a * 0.86);
+      }
+    `,
   })));
   stars.name = 'fixed stars';
   stars.renderOrder = -990;
@@ -208,65 +226,126 @@ function statsProxy(track) {
 function noteObject(track, object, instances) { track(object, instances); }
 
 // --------------------------------------------------------------- graveyard
-function buildGraveyardDress(game, track, own) {
+function buildGraveyardDress(game, track, own, ownTexture) {
   const rng = new RNG(0xc0ff1e);
   const stoneMat = own(cloneTint(game.mats?.headstone, 0x98a4aa,
     () => new THREE.MeshLambertMaterial({ color: 0x98a4aa })));
+  if (stoneMat.color) stoneMat.color.multiplyScalar(0.58);
   stoneMat.emissive = new THREE.Color(0x101923);
-  stoneMat.emissiveIntensity = 0.16;
+  stoneMat.emissiveIntensity = 0.11;
 
+  const funeralPath = [[-8, 8.2], [-4.4, 14.8], [-1.6, 21.5], [1.2, 29.4], [2, 41.4]];
+  const nearPath = (x, z, pad = 1.65) => {
+    for (let i = 0; i < funeralPath.length - 1; i++) {
+      const [ax, az] = funeralPath[i], [bx, bz] = funeralPath[i + 1];
+      const dx = bx - ax, dz = bz - az;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) < pad) return true;
+    }
+    return false;
+  };
+  const reserved = [
+    [-9, 14, 4.25], [15.6, 31.5, 3.5], [-14.6, 34.2, 3.5],
+    [-7.2, 27, 1.9], [9.2, 23, 1.9], [-14.2, 18.4, 1.9], [11.8, 36.2, 1.9],
+    [-15.2, 27.2, 1.9], [14.5, 19.4, 1.9], [7.4, 35, 1.9],
+  ];
   const stones = [];
-  for (let row = 0; row < 7; row++) {
-    for (let col = 0; col < 7; col++) {
-      if (rng.chance(0.34)) continue;
-      const x = -16 + col * 5.7 + rng.range(-0.72, 0.72);
-      const z = 10.5 + row * 4.55 + rng.range(-0.55, 0.55);
-      if (Math.abs(x - 2) < 2.5 && z > 34) continue;
-      if (Math.hypot(x + 9, z - 14) < 3.8) continue;
-      stones.push({ x, z, tall: rng.range(0.85, 1.35), lean: rng.range(-0.16, 0.16), yaw: rng.range(-0.28, 0.28) });
+  for (let row = 0; row < 9; row++) {
+    for (let colI = 0; colI < 10; colI++) {
+      if (rng.chance(0.22)) continue;
+      const x = -17 + colI * 4.15 + rng.range(-0.78, 0.78);
+      const z = 9.2 + row * 3.75 + rng.range(-0.7, 0.7);
+      if (x > 23.2 || nearPath(x, z)) continue;
+      if (reserved.some(([rx, rz, rr]) => Math.hypot(x - rx, z - rz) < rr)) continue;
+      const roll = rng.float();
+      const kind = roll < 0.14 ? 'cross' : roll < 0.30 ? 'shouldered' : roll < 0.40 ? 'obelisk' : roll < 0.51 ? 'broken' : 'gothic';
+      stones.push({
+        x, z, kind,
+        tall: rng.range(0.78, 1.46),
+        lean: rng.range(-0.2, 0.2),
+        yaw: rng.range(-0.34, 0.34),
+        fallen: kind === 'broken' && rng.chance(0.42),
+      });
     }
   }
   // The gate is legible by silhouette: two taller stones frame, never occupy,
   // the playable opening.
-  stones.push({ x: -0.65, z: 40.4, tall: 1.65, lean: -0.08, yaw: 0.08 });
-  stones.push({ x: 4.65, z: 40.4, tall: 1.72, lean: 0.07, yaw: -0.09 });
+  stones.push({ x: -0.65, z: 40.4, kind: 'gothic', tall: 1.65, lean: -0.08, yaw: 0.08, fallen: false });
+  stones.push({ x: 4.65, z: 40.4, kind: 'gothic', tall: 1.72, lean: 0.07, yaw: -0.09, fallen: false });
 
-  const gothicGeo = makeGothicStoneGeometry();
-  const gothic = new THREE.InstancedMesh(gothicGeo, stoneMat, stones.length);
   const q = new THREE.Quaternion();
   const p = new THREE.Vector3();
   const s = new THREE.Vector3();
   const m = new THREE.Matrix4();
   const e = new THREE.Euler();
   const col = new THREE.Color();
-  stones.forEach((it, i) => {
-    e.set(0, it.yaw, it.lean);
+  stones.forEach((it) => {
     // some of them are being swallowed. A row of stones all standing at the
     // same height on the same plane reads as a row of props; a few sunk to
     // their shoulders reads as ground that has been moving for a century.
     it.sink = rng.chance(0.3) ? rng.range(-0.34, -0.12) : rng.range(-0.04, 0.02);
-    m.compose(p.set(it.x, it.sink, it.z), q.setFromEuler(e), s.set(rng.range(0.8, 1.18), it.tall, rng.range(0.82, 1.1)));
-    gothic.setMatrixAt(i, m);
+    it.width = rng.range(0.78, 1.2);
+    it.value = rng.range(0.36, 0.84);
     // and no two of them weathered the same. Value only — the whole yard was
     // one flat pale grey before this line.
-    gothic.setColorAt(i, col.setScalar(rng.range(0.48, 1.04)));
   });
-  if (gothic.instanceColor) gothic.instanceColor.needsUpdate = true;
-  finishInstances(gothic, true, true);
-  gothic.name = 'carved grave silhouettes';
-  track(gothic, stones.length);
 
-  const crossSites = stones.filter((_, i) => i % 5 === 2).slice(0, 10);
+  const stoneFamily = (kind, geo, name) => {
+    const sites = stones.filter((it) => it.kind === kind);
+    const mesh = new THREE.InstancedMesh(geo, stoneMat, sites.length);
+    sites.forEach((it, i) => {
+      e.set(it.fallen ? Math.PI * 0.47 : 0, it.yaw, it.lean);
+      q.setFromEuler(e);
+      m.compose(
+        p.set(it.x, it.fallen ? 0.08 : it.sink, it.z), q,
+        s.set(it.width, it.tall, rng.range(0.86, 1.14)),
+      );
+      mesh.setMatrixAt(i, m);
+      mesh.setColorAt(i, col.setScalar(it.value));
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    finishInstances(mesh, true, true);
+    mesh.name = name;
+    track(mesh, sites.length);
+  };
+  stoneFamily('gothic', makeGothicStoneGeometry(), 'arched family headstones');
+  stoneFamily('shouldered', makeShoulderedStoneGeometry(), 'shouldered family headstones');
+  stoneFamily('broken', makeBrokenStoneGeometry(), 'broken and fallen headstones');
+  // Broken memorial columns, not perfect pyramid-topped lawn ornaments.
+  const obeliskShape = new THREE.Shape();
+  obeliskShape.moveTo(-0.31, 0);
+  obeliskShape.lineTo(-0.31, 0.16);
+  obeliskShape.lineTo(-0.19, 0.23);
+  obeliskShape.lineTo(-0.16, 0.82);
+  obeliskShape.lineTo(-0.06, 1.04);
+  obeliskShape.lineTo(0.06, 0.91);
+  obeliskShape.lineTo(0.17, 1.01);
+  obeliskShape.lineTo(0.19, 0.23);
+  obeliskShape.lineTo(0.31, 0.16);
+  obeliskShape.lineTo(0.31, 0);
+  obeliskShape.closePath();
+  const obeliskGeo = new THREE.ExtrudeGeometry(obeliskShape, {
+    depth: 0.22, curveSegments: 1, bevelEnabled: true,
+    bevelSegments: 1, bevelSize: 0.018, bevelThickness: 0.016,
+  });
+  obeliskGeo.translate(0, 0, -0.11);
+  obeliskGeo.computeVertexNormals();
+  stoneFamily('obelisk', obeliskGeo, 'broken grave obelisk memorial columns');
+
+  const crossSites = stones.filter((it) => it.kind === 'cross');
   const upright = new THREE.InstancedMesh(new THREE.BoxGeometry(0.10, 1.16, 0.10), stoneMat, crossSites.length);
   const arms = new THREE.InstancedMesh(new THREE.BoxGeometry(0.58, 0.10, 0.10), stoneMat, crossSites.length);
   crossSites.forEach((it, i) => {
-    const yaw = it.yaw + rng.range(-0.1, 0.1);
-    q.setFromEuler(e.set(0, yaw, it.lean));
-    m.compose(p.set(it.x + 0.45, 0.65, it.z + 0.18), q, s.setScalar(1));
+    q.setFromEuler(e.set(0, it.yaw, it.lean));
+    m.compose(p.set(it.x, it.sink + 0.58 * it.tall, it.z), q, s.set(it.width, it.tall, it.width));
     upright.setMatrixAt(i, m);
-    m.compose(p.set(it.x + 0.45, 0.83, it.z + 0.18), q, s.setScalar(1));
+    upright.setColorAt(i, col.setScalar(it.value));
+    m.compose(p.set(it.x, it.sink + 0.82 * it.tall, it.z), q, s.set(it.width, it.tall, it.width));
     arms.setMatrixAt(i, m);
+    arms.setColorAt(i, col.setScalar(it.value));
   });
+  if (upright.instanceColor) upright.instanceColor.needsUpdate = true;
+  if (arms.instanceColor) arms.instanceColor.needsUpdate = true;
   finishInstances(upright, true, true);
   finishInstances(arms, true, true);
   upright.name = 'grave crosses upright';
@@ -299,6 +378,87 @@ function buildGraveyardDress(game, track, own) {
   mounds.name = 'grave mounds';
   track(mounds, stones.length);
 
+  // A single broken funeral walk composes the arena from the back door to the
+  // forest gate.  It is a value/texture read, never a collider or hue signal,
+  // and its bends preserve broad combat loops around the car and mausoleums.
+  const pathPos = [], pathUv = [], pathIdx = [];
+  for (let i = 0; i < funeralPath.length - 1; i++) {
+    const [ax, az] = funeralPath[i], [bx, bz] = funeralPath[i + 1];
+    const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1;
+    const nx = -dz / len, nz = dx / len;
+    const w0 = 0.92 + (i % 2) * 0.12, w1 = 0.98 + ((i + 1) % 2) * 0.11;
+    const k = pathPos.length / 3;
+    pathPos.push(
+      ax + nx * w0, 0.025, az + nz * w0,
+      ax - nx * w0, 0.025, az - nz * w0,
+      bx + nx * w1, 0.025, bz + nz * w1,
+      bx - nx * w1, 0.025, bz - nz * w1,
+    );
+    pathUv.push(0, i, 1, i, 0, i + 1, 1, i + 1);
+    pathIdx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+  }
+  const pathGeo = new THREE.BufferGeometry();
+  pathGeo.setAttribute('position', new THREE.Float32BufferAttribute(pathPos, 3));
+  pathGeo.setAttribute('uv', new THREE.Float32BufferAttribute(pathUv, 2));
+  pathGeo.setIndex(pathIdx);
+  pathGeo.computeVertexNormals();
+  const pathMat = own(cloneTint(game.mats?.dirt, 0x5b5e55,
+    () => new THREE.MeshLambertMaterial({ color: 0x5b5e55 })));
+  if ('roughness' in pathMat) pathMat.roughness = 1;
+  const funeralWalk = new THREE.Mesh(pathGeo, pathMat);
+  funeralWalk.receiveShadow = true;
+  funeralWalk.name = 'broken funeral walk';
+  track(funeralWalk, 1);
+
+  // Lantern cages ration pale verticals at the path bends.  They are emissive
+  // silhouettes only (no extra dynamic lights), keeping both performance and
+  // combat visibility predictable.
+  const lanternSites = [[-3.4, 15.6, -0.12], [0.45, 23.4, 0.08], [3.2, 32.0, -0.08]];
+  const postMat = own(cloneTint(game.mats?.metal, 0x20262a,
+    () => new THREE.MeshLambertMaterial({ color: 0x20262a })));
+  if (postMat.color) postMat.color.multiplyScalar(0.38);
+  const cageMat = own(new THREE.MeshBasicMaterial({ color: 0x343b3e, wireframe: true, fog: true }));
+  const emberMat = own(new THREE.MeshBasicMaterial({ color: 0xe4e7d6, fog: true }));
+  const posts = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.07, 2.35, 6), postMat, lanternSites.length);
+  const cages = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 0.4, 0.3), cageMat, lanternSites.length);
+  const embers = new THREE.InstancedMesh(new THREE.OctahedronGeometry(0.105, 0), emberMat, lanternSites.length);
+  lanternSites.forEach(([x, z, lean], i) => {
+    q.setFromEuler(e.set(0, 0, lean));
+    m.compose(p.set(x, 1.18, z), q, s.setScalar(1)); posts.setMatrixAt(i, m);
+    m.compose(p.set(x - lean * 0.2, 2.28, z), q, s.setScalar(1)); cages.setMatrixAt(i, m);
+    m.compose(p.set(x - lean * 0.2, 2.28, z), q, s.setScalar(1)); embers.setMatrixAt(i, m);
+  });
+  finishInstances(posts, true, true);
+  finishInstances(cages, true, true);
+  finishInstances(embers, false, false);
+  posts.name = 'funeral walk lantern posts';
+  cages.name = 'funeral walk lantern cages';
+  embers.name = 'funeral walk pale embers';
+  track(posts, lanternSites.length);
+  track(cages, lanternSites.length);
+  track(embers, lanternSites.length);
+
+  // Three static mourners live at the outer combat boundary.  Their averted
+  // heads make the yard feel inhabited without adding an enemy read or taking
+  // one centimetre from the player capsule.
+  const statueSites = [[-18.1, 12.8, 0.45], [21.5, 27.0, -0.75], [-17.6, 39.2, 0.18]];
+  const statueMat = own(cloneTint(game.mats?.headstone, 0x69747a,
+    () => new THREE.MeshLambertMaterial({ color: 0x69747a })));
+  const plinths = new THREE.InstancedMesh(new THREE.BoxGeometry(0.84, 0.42, 0.84), statueMat, statueSites.length);
+  const robes = new THREE.InstancedMesh(new THREE.ConeGeometry(0.38, 1.62, 7), statueMat, statueSites.length);
+  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.17, 8, 6), statueMat, statueSites.length);
+  statueSites.forEach(([x, z, yaw], i) => {
+    q.setFromEuler(e.set(0, yaw, 0));
+    m.compose(p.set(x, 0.21, z), q, s.setScalar(1)); plinths.setMatrixAt(i, m);
+    m.compose(p.set(x, 1.19, z), q, s.set(1, 1, 0.88)); robes.setMatrixAt(i, m);
+    m.compose(p.set(x + Math.sin(yaw) * 0.08, 2.14, z + Math.cos(yaw) * 0.08), q, s.set(0.9, 1.18, 0.94)); heads.setMatrixAt(i, m);
+  });
+  finishInstances(plinths, true, true);
+  finishInstances(robes, true, true);
+  finishInstances(heads, true, true);
+  plinths.name = 'mourner plinths'; robes.name = 'averted mourner robes'; heads.name = 'averted mourner heads';
+  track(plinths, statueSites.length); track(robes, statueSites.length); track(heads, statueSites.length);
+
   // 2. GRASS. The ground was a bare sheet with props standing on it; nothing
   // grew anywhere. Crossed alpha planes, same trick as the forest understory.
   const bladeTex = (() => {
@@ -318,7 +478,8 @@ function buildGraveyardDress(game, track, own) {
     }
     const t = new THREE.CanvasTexture(cv);
     t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+    t.name = 'atmosphere graveyard grass alpha';
+    return ownTexture(t);
   })();
   const tuftGeo = (() => {
     const g = new THREE.BufferGeometry();
@@ -359,22 +520,79 @@ function buildGraveyardDress(game, track, own) {
 
   // 3. A TREELINE. Beyond the fence there was nothing — the middle distance
   // just stopped, and a yard with no horizon reads as a diorama on a table.
-  // These are pure silhouette: unlit, flat, fogged, never approached.
-  const wallMat = own(new THREE.MeshBasicMaterial({ color: 0x060d13, fog: true }));
-  const wallGeo = new THREE.IcosahedronGeometry(1, 0);
-  const wall = new THREE.InstancedMesh(wallGeo, wallMat, 120);
-  for (let i = 0; i < 120; i++) {
+  // These are pure silhouette: unlit, fogged, never approached.  The old
+  // icosahedra read as a row of angular mountains; tapered yews read as trees.
+  const treeTex = (() => {
+    const cv = document.createElement('canvas');
+    cv.width = 64; cv.height = 128;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 64, 128);
+    g.fillStyle = '#ffffff';
+    g.fillRect(29, 91, 6, 37);
+    // Irregular branch tiers make the distant boundary read as woods instead
+    // of the old perfect-cone mountain saw. The texture is luminance-only.
+    for (let tier = 0; tier < 9; tier++) {
+      const y = 12 + tier * 10.2;
+      const half = 7 + tier * 2.55 + Math.sin(tier * 3.7) * 2.1;
+      g.beginPath();
+      g.moveTo(32, Math.max(1, y - 13));
+      g.lineTo(32 - half * 0.72, y + 2);
+      g.lineTo(32 - half, y + 8 + (tier % 2) * 2);
+      g.lineTo(32 - half * 0.36, y + 6);
+      g.lineTo(32, y + 13);
+      g.lineTo(32 + half * 0.42, y + 6);
+      g.lineTo(32 + half, y + 9 - (tier % 2));
+      g.lineTo(32 + half * 0.66, y + 1);
+      g.closePath();
+      g.fill();
+    }
+    const texture = new THREE.CanvasTexture(cv);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.name = 'atmosphere graveyard treeline alpha';
+    return ownTexture(texture);
+  })();
+  const wallMat = own(new THREE.MeshBasicMaterial({
+    color: 0x071016, map: treeTex, alphaTest: 0.42,
+    side: THREE.DoubleSide, fog: true,
+  }));
+  const wallGeo = (() => {
+    const geometry = new THREE.BufferGeometry();
+    const positions = [], uv = [], indices = [];
+    for (let k = 0; k < 2; k++) {
+      const a = k * Math.PI / 2, c = Math.cos(a), sn = Math.sin(a), o = k * 4;
+      positions.push(-c, 0, -sn, c, 0, sn, c, 1, sn, -c, 1, -sn);
+      uv.push(0, 0, 1, 0, 1, 1, 0, 1);
+      indices.push(o, o + 1, o + 2, o, o + 2, o + 3);
+    }
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  })();
+  const wall = new THREE.InstancedMesh(wallGeo, wallMat, 156);
+  for (let i = 0; i < 156; i++) {
     const a = rng.range(-0.35, Math.PI + 0.35);
-    const r = rng.range(46, 74);
-    const h = rng.range(7, 15);
+    const r = rng.range(44, 70);
+    const h = rng.range(8, 17);
     q.setFromEuler(e.set(0, rng.float() * TAU, 0));
-    m.compose(p.set(2 + Math.cos(a) * r, h * 0.35, 24 + Math.sin(a) * r * 0.85), q,
-      s.set(rng.range(4, 9), h, rng.range(4, 9)));
+    m.compose(p.set(2 + Math.cos(a) * r, -0.4, 24 + Math.sin(a) * r * 0.85), q,
+      s.set(rng.range(2.8, 5.7), h, rng.range(2.8, 5.7)));
     wall.setMatrixAt(i, m);
   }
   finishInstances(wall, false, false);
   wall.name = 'far treeline silhouette';
-  track(wall, 120);
+  track(wall, 156);
+
+  // Stable inspection data for deterministic composition/clearance probes.
+  // It deliberately contains no progression state and owns no collisions.
+  game.graveyardVisualLayout = {
+    funeralPath: funeralPath.map(([x, z]) => ({ x, z })),
+    lanternSites: lanternSites.map(([x, z]) => ({ x, z })),
+    statueSites: statueSites.map(([x, z]) => ({ x, z })),
+    stoneCount: stones.length,
+    stoneFamilies: [...new Set(stones.map((stone) => stone.kind))],
+  };
 }
 
 function makeGothicStoneGeometry() {
@@ -394,6 +612,45 @@ function makeGothicStoneGeometry() {
     bevelThickness: 0.025,
   });
   g.translate(0, 0, -0.075);
+  g.computeVertexNormals();
+  return g;
+}
+
+function makeShoulderedStoneGeometry() {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.42, 0);
+  shape.lineTo(-0.42, 0.7);
+  shape.lineTo(-0.28, 0.92);
+  shape.lineTo(-0.08, 0.86);
+  shape.lineTo(0.08, 0.96);
+  shape.lineTo(0.3, 0.84);
+  shape.lineTo(0.42, 0.68);
+  shape.lineTo(0.42, 0);
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.16, curveSegments: 1, bevelEnabled: true,
+    bevelSegments: 1, bevelSize: 0.025, bevelThickness: 0.022,
+  });
+  g.translate(0, 0, -0.08);
+  g.computeVertexNormals();
+  return g;
+}
+
+function makeBrokenStoneGeometry() {
+  const shape = new THREE.Shape();
+  shape.moveTo(-0.39, 0);
+  shape.lineTo(-0.39, 0.72);
+  shape.lineTo(-0.17, 0.82);
+  shape.lineTo(-0.03, 0.63);
+  shape.lineTo(0.19, 0.79);
+  shape.lineTo(0.39, 0.68);
+  shape.lineTo(0.39, 0);
+  shape.closePath();
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.18, curveSegments: 1, bevelEnabled: true,
+    bevelSegments: 1, bevelSize: 0.02, bevelThickness: 0.018,
+  });
+  g.translate(0, 0, -0.09);
   g.computeVertexNormals();
   return g;
 }
@@ -482,21 +739,36 @@ function buildForestDress(game, track, own, tickers) {
   ferns.name = 'forest understory';
   track(ferns, fernMatrices.length);
 
-  const canopyGeo = new THREE.IcosahedronGeometry(1, 1);
-  const canopyMat = own(new THREE.MeshLambertMaterial({ color: 0x101923, emissive: 0x030710, emissiveIntensity: 0.3 }));
+  // Far crowns supply depth behind the authored alpha-leaf canopy. Smooth,
+  // raised ellipsoids avoid the old giant triangular underside while staying
+  // far enough off the centreline that a straight-up look still sees layered
+  // leaf holes and night beyond it.
+  const canopyGeo = new THREE.SphereGeometry(1, 12, 8);
+  const canopyPos = canopyGeo.attributes.position;
+  for (let i = 0; i < canopyPos.count; i++) {
+    const x = canopyPos.getX(i), y = canopyPos.getY(i), z = canopyPos.getZ(i);
+    const wobble = 1 + Math.sin(x * 8.2 + z * 5.7 + y * 2.8) * 0.065;
+    canopyPos.setXYZ(i, x * wobble, y * wobble * 0.68, z * wobble);
+  }
+  canopyGeo.computeVertexNormals();
+  const canopyMat = own(new THREE.MeshLambertMaterial({
+    color: 0x1b2520,
+    emissive: 0x050906,
+    emissiveIntensity: 0.18,
+  }));
   const canopyMatrices = [];
   for (let i = 8; i < forestLength - 4; i += 8) {
     const sm = forest.samples[i];
     const hw = forest.halfW[i];
     const nx = -sm.tz, nz = sm.tx;
     for (const side of [-1, 1]) {
-      const size = rng.range(1.3, 2.35);
+      const size = rng.range(1.15, 1.88);
       canopyMatrices.push(compose(
-        sm.x + nx * side * (hw + rng.range(1.0, 2.8)),
-        rng.range(5.4, 7.7),
-        sm.z + nz * side * (hw + rng.range(1.0, 2.8)),
+        sm.x + nx * side * (hw + rng.range(1.8, 3.5)),
+        rng.range(7.4, 9.8),
+        sm.z + nz * side * (hw + rng.range(1.8, 3.5)),
         rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
-        size * 1.45, size * 0.62, size * 1.25,
+        size * 1.35, size * 0.72, size * 1.22,
       ));
     }
   }
@@ -557,11 +829,17 @@ function buildClearingDress(game, track, own, tickers) {
   const colours = [];
   const darkRock = new THREE.Color(0x46535d);
   const wetRock = new THREE.Color(0x788c98);
+  const sideFalls = [
+    [-14.4, 3.3, 10.8, -0.08], [-9.5, 2.5, 14.4, 0.05], [-5.3, 1.45, 8.4, -0.04],
+    [5.4, 1.55, 9.5, 0.05], [9.7, 2.45, 15.8, -0.04], [14.7, 3.15, 12.1, 0.07],
+  ];
 
   // A low-poly talus facade dissolves the original monolithic cliff box.
   for (let y = 0.4; y < 18.8; y += 2.05) {
     for (let x = -29.0; x <= 29.0; x += 2.15) {
       if (Math.abs(x) < 3.35 && y < 18) continue;
+      if (sideFalls.some(([fallX, width, height]) =>
+        y < height + 0.55 && Math.abs(x - fallX) < width * 0.52 + 0.72)) continue;
       const scale = rng.range(1.15, 1.85) * (1 + y / 70);
       matrices.push(compose(
         C.x + x + rng.range(-0.75, 0.75),
@@ -596,29 +874,35 @@ function buildClearingDress(game, track, own, tickers) {
     depthWrite: false,
     side: THREE.DoubleSide,
     blending: THREE.NormalBlending,
-    uniforms: { uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uSeal: { value: 0 } },
     vertexShader: `
       varying vec2 vUv;
       uniform float uTime;
+      uniform float uSeal;
       void main(){
         vUv = uv;
         vec3 p = position;
         float edge = sin(uv.y * 24.0 + uTime * 5.0 + uv.x * 17.0);
         p.x += edge * 0.045 * sin(uv.x * 3.14159);
         p.z += sin(uv.y * 38.0 - uTime * 7.0 + uv.x * 11.0) * 0.035;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        vec4 localPosition = vec4(p, 1.0);
+        #ifdef USE_INSTANCING
+          localPosition = instanceMatrix * localPosition;
+        #endif
+        gl_Position = projectionMatrix * modelViewMatrix * localPosition;
       }
     `,
     fragmentShader: `
       varying vec2 vUv;
       uniform float uTime;
+      uniform float uSeal;
       void main(){
         float ribbons = 0.5 + 0.5 * sin(vUv.x * 82.0 + sin(vUv.y * 17.0 - uTime * 3.2) * 1.8);
         float ripple = 0.5 + 0.5 * sin(vUv.y * 58.0 - uTime * 9.0 + vUv.x * 12.0);
         float edge = smoothstep(0.0, 0.11, vUv.x) * smoothstep(0.0, 0.11, 1.0 - vUv.x);
         float footFoam = 1.0 - smoothstep(0.0, 0.16, vUv.y);
         vec3 col = mix(vec3(0.25,0.53,0.66), vec3(0.82,0.95,0.98), ribbons * 0.45 + footFoam * 0.35);
-        float alpha = edge * (0.42 + ribbons * 0.28 + ripple * 0.08 + footFoam * 0.15);
+        float alpha = edge * (0.42 + ribbons * 0.28 + ripple * 0.08 + footFoam * 0.15) * (1.0 - uSeal * 0.94);
         gl_FragColor = vec4(col, alpha);
       }
     `,
@@ -627,7 +911,123 @@ function buildClearingDress(game, track, own, tickers) {
   fall.position.set(C.x, 9.5, C.z + 19.70);
   fall.name = 'layered waterfall veil';
   track(fall, 1);
-  tickers.push((dt, t) => { waterMat.uniforms.uTime.value = t % 600; });
+  let sealT = 0;
+  tickers.push((dt, t) => {
+    waterMat.uniforms.uTime.value = t % 600;
+    const sealed = game.flags?.has('waterfallTaken') && game.act === 'cave';
+    sealT += ((sealed ? 1 : 0) - sealT) * Math.min(1, dt * 0.62);
+    waterMat.uniforms.uSeal.value = sealT;
+  });
+
+  // DUSKFALL's strongest waterfall lesson was depth, not one bright rectangle:
+  // narrow side cataracts, each with a different drop and lean, turn the whole
+  // cliff into a watershed while the central veil remains the progression read.
+  const sideWaterMat = own(waterMat.clone());
+  sideWaterMat.uniforms.uSeal.value = 0;
+  const sideGeo = new THREE.PlaneGeometry(1, 1, 5, 22);
+  const sideMesh = new THREE.InstancedMesh(sideGeo, sideWaterMat, sideFalls.length);
+  sideFalls.forEach(([x, w, h, lean], i) => {
+    sideMesh.setMatrixAt(i, compose(C.x + x, h * 0.5 + 0.12, C.z + 19.66,
+      0, 0, lean, w, h, 1));
+  });
+  finishInstances(sideMesh, false, false);
+  sideMesh.name = 'six side cataracts';
+  track(sideMesh, sideFalls.length);
+  tickers.push((dt, t) => { sideWaterMat.uniforms.uTime.value = (t * 0.91) % 600; });
+
+  // Never draw a luminous ruler across the top of a fall. The old box lips
+  // exposed exactly how the water planes were suspended and their rectangular
+  // side cuts read like shower curtains. Irregular rock crowns now overlap the
+  // top seam while wet buttress stones step down both cut edges. Broken foam
+  // beads occupy only the gaps, so the authored skull aperture stays open.
+  const edgeRng = new RNG(0xfa115eed);
+  const edgeMatrices = [], edgeColours = [], foamMatrices = [];
+  const addEdgeRock = (x, y, sx, sy, sz, lean = 0) => {
+    edgeMatrices.push(compose(x, y, C.z + 19.28 + edgeRng.range(-0.08, 0.12),
+      edgeRng.range(-0.42, 0.42), edgeRng.range(0, TAU), lean + edgeRng.range(-0.28, 0.28),
+      sx, sy, sz));
+    edgeColours.push(wetRock.clone().multiplyScalar(edgeRng.range(0.58, 0.86)));
+  };
+  const crown = (x, w, h, lean, central = false) => {
+    const chunks = Math.max(4, Math.ceil(w / 0.72));
+    for (let k = 0; k < chunks; k++) {
+      const localX = -w * 0.5 + ((k + 0.5) / chunks) * w;
+      const y = h + Math.tan(lean) * localX + edgeRng.range(-0.28, 0.34);
+      const gap = central && Math.abs(localX) < 0.62;
+      if (!gap || k % 2 === 0) {
+        addEdgeRock(C.x + x + localX, y, edgeRng.range(0.48, 0.82),
+          edgeRng.range(0.32, 0.58), edgeRng.range(0.5, 0.84), lean);
+      }
+      if (k % 2 === 0 || edgeRng.chance(0.34)) {
+        foamMatrices.push(compose(C.x + x + localX + edgeRng.range(-0.18, 0.18),
+          y - edgeRng.range(0.18, 0.42), C.z + 19.18,
+          0, edgeRng.range(0, TAU), lean,
+          edgeRng.range(0.22, 0.48), edgeRng.range(0.08, 0.17), edgeRng.range(0.16, 0.3)));
+      }
+    }
+  };
+  for (const [x, w, h, lean] of sideFalls) {
+    crown(x, w, h, lean, false);
+    for (const side of [-1, 1]) {
+      for (let y = 0.65; y < h - 0.55; y += edgeRng.range(1.05, 1.45)) {
+        // Stagger rather than tile: water still flashes between the stones,
+        // but no uninterrupted ruler-straight cut survives.
+        const localX = side * w * 0.51 + edgeRng.range(-0.18, 0.18);
+        addEdgeRock(C.x + x + localX - Math.sin(lean) * (y - h * 0.5),
+          y + Math.sin(lean) * localX + edgeRng.range(-0.16, 0.16),
+          edgeRng.range(0.42, 0.74), edgeRng.range(0.48, 0.82), edgeRng.range(0.48, 0.8), lean);
+      }
+    }
+  }
+  crown(0, 6.75, 18.9, 0, true);
+  for (const side of [-1, 1]) {
+    for (let y = 1.1; y < 18.1; y += edgeRng.range(1.35, 1.8)) {
+      addEdgeRock(C.x + side * 3.35 + edgeRng.range(-0.22, 0.18), y,
+        edgeRng.range(0.55, 0.9), edgeRng.range(0.58, 0.96), edgeRng.range(0.58, 0.92));
+    }
+  }
+  const edgeRocks = new THREE.InstancedMesh(rockGeo, rockMat, edgeMatrices.length);
+  edgeMatrices.forEach((matrix, i) => {
+    edgeRocks.setMatrixAt(i, matrix);
+    edgeRocks.setColorAt(i, edgeColours[i]);
+  });
+  finishInstances(edgeRocks, true, true);
+  edgeRocks.name = 'cataract rock crowns and buttresses';
+  track(edgeRocks, edgeMatrices.length);
+
+  const lipMat = own(new THREE.MeshBasicMaterial({
+    color: 0xc5d9dc, transparent: true, opacity: 0.28,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+  const lips = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 4), lipMat, foamMatrices.length);
+  foamMatrices.forEach((matrix, i) => lips.setMatrixAt(i, matrix));
+  finishInstances(lips, false, false);
+  lips.name = 'broken cataract lip foam';
+  track(lips, foamMatrices.length);
+
+  // Only after the player crosses does the promised water become a rock seal
+  // behind them. It never collides or steals control; it is a silhouette and a
+  // one-way emotional fact, not another door mechanic.
+  const sealMat = own(cloneTint(game.mats?.rock, 0x10191d,
+    () => new THREE.MeshStandardMaterial({ color: 0x10191d, roughness: 0.95 })));
+  sealMat.transparent = true;
+  sealMat.opacity = 0;
+  sealMat.depthWrite = false;
+  const sealMatrices = [];
+  for (let y = 0.55; y <= 6.1; y += 1.25) {
+    for (let x = -2.35; x <= 2.35; x += 1.12) {
+      sealMatrices.push(compose(C.x + x + Math.sin(y * 3.7 + x) * 0.18,
+        y, C.z + 19.92 + Math.sin(x * 4.1) * 0.13,
+        x * 0.08, y * 0.21, x * -0.11, 0.78, 0.74, 0.62));
+    }
+  }
+  const seal = new THREE.InstancedMesh(rockGeo, sealMat, sealMatrices.length);
+  sealMatrices.forEach((matrix, i) => seal.setMatrixAt(i, matrix));
+  finishInstances(seal, true, true);
+  seal.name = 'waterfall stone seal silhouette';
+  track(seal, sealMatrices.length);
+  tickers.push(() => { sealMat.opacity = sealT * 0.97; });
+  if (game.underfalls) game.underfalls.veilSeal = { mesh: seal, material: sealMat, get progress() { return sealT; } };
 
   // Foam, lifting mist, and a few warm fireflies share one draw call.  Their
   // size, motion, and brightness—not red/green identity—carry their roles.
@@ -641,6 +1041,12 @@ function buildClearingDress(game, track, own, tickers) {
   }
   for (let i = 0; i < 105; i++) {
     p.push(C.x + rng.range(-5.2, 5.2), rng.range(0.18, 3.0), C.z + rng.range(14.0, 19.4));
+    phase.push(rng.range(0, TAU)); kind.push(1);
+  }
+  for (let i = 0; i < 84; i++) {
+    const fall = sideFalls[i % sideFalls.length];
+    p.push(C.x + fall[0] + rng.range(-fall[1] * 0.55, fall[1] * 0.55),
+      rng.range(0.1, Math.min(3.4, fall[2] * 0.35)), C.z + rng.range(18.65, 19.55));
     phase.push(rng.range(0, TAU)); kind.push(1);
   }
   for (let i = 0; i < 34; i++) {
@@ -678,21 +1084,28 @@ function buildClearingDress(game, track, own, tickers) {
 }
 
 // -------------------------------------------------------------------- cave
-function buildCaveDress(game, track, own) {
+function buildCaveDress(game, track, own, tickers) {
   const C = game.clearingCenter;
   if (!C) return;
-  const path = [
-    [C.x, C.z + 22], [C.x + 2, C.z + 30], [C.x + 7, C.z + 36],
-    [C.x + 14, C.z + 40], [C.x + 22, C.z + 42],
+  const layout = game.underfalls?.layout;
+  const path = layout?.main?.map((p) => [p.x, p.z, p.y, p.w]) || [
+    [C.x, C.z + 22, 0, 2.2], [C.x + 2, C.z + 30, 0, 2.2],
+    [C.x + 7, C.z + 36, 0, 2.2], [C.x + 14, C.z + 40, 0, 2.2],
+    [C.x + 22, C.z + 42, 0, 2.2],
   ];
   const rng = new RNG(0xca9e51de);
   const rockMat = own(cloneTint(game.mats?.rock, 0x3e4c56,
     () => new THREE.MeshStandardMaterial({ color: 0x3e4c56, roughness: 0.88, metalness: 0.03 })));
   if ('roughness' in rockMat) rockMat.roughness = 0.88;
+  if ('emissive' in rockMat) {
+    rockMat.emissive.setHex(0x071015);
+    rockMat.emissiveIntensity = 0.23;
+  }
   const rockMatrices = [];
 
   for (let leg = 0; leg < path.length - 1; leg++) {
-    const [ax, az] = path[leg], [bx, bz] = path[leg + 1];
+    const [ax, az, ay = 0, aw = 2.2] = path[leg];
+    const [bx, bz, by = 0, bw = 2.2] = path[leg + 1];
     const dx = bx - ax, dz = bz - az;
     const len = Math.hypot(dx, dz), tx = dx / len, tz = dz / len;
     const nx = tz, nz = -tx;
@@ -700,25 +1113,48 @@ function buildCaveDress(game, track, own) {
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       const x = ax + dx * t, z = az + dz * t;
+      const floorY = ay + (by - ay) * t;
+      const halfW = aw + (bw - aw) * t;
+      const inChamber = layout?.chambers?.some((chamber) =>
+        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.94);
+      if (inChamber) continue;
       for (const side of [-1, 1]) {
         // Four interlocked low-poly stones turn the structural wall backing
         // into a continuous, irregular cave silhouette.  Their inner edge
         // remains just outside the authored 1.65m movement spine.
-        for (const layerY of [0.42, 1.30, 2.18, 3.02]) {
-          const sc = rng.range(0.50, 0.78);
+        for (const layerY of [0.48, 1.38, 2.28, 3.14]) {
+          const sc = rng.range(0.42, 0.64);
           rockMatrices.push(compose(
-            x + nx * side * rng.range(1.94, 2.10),
-            layerY + rng.range(-0.24, 0.24),
-            z + nz * side * rng.range(1.94, 2.10),
-            rng.range(-0.7, 0.7), rng.range(0, TAU), rng.range(-0.7, 0.7),
-            sc * rng.range(0.78, 1.02), sc * rng.range(0.90, 1.28), sc * rng.range(1.00, 1.34),
+            x + nx * side * (halfW + rng.range(0.92, 1.28)),
+            floorY + layerY + rng.range(-0.16, 0.16),
+            z + nz * side * (halfW + rng.range(0.92, 1.28)),
+            rng.range(-0.48, 0.48), rng.range(0, TAU), rng.range(-0.48, 0.48),
+            sc * rng.range(0.82, 1.0), sc * rng.range(1.02, 1.34), sc * rng.range(0.92, 1.18),
           ));
         }
       }
       if (i % 2 === 0) {
-        const sc = rng.range(0.52, 0.78);
-        rockMatrices.push(compose(x + rng.range(-0.82, 0.82), 3.48, z + rng.range(-0.82, 0.82),
-          rng.range(-0.35, 0.35), rng.range(0, TAU), rng.range(-0.35, 0.35), sc * 1.4, sc * 0.72, sc * 1.18));
+        const sc = rng.range(0.44, 0.66);
+        rockMatrices.push(compose(x + rng.range(-halfW * 0.58, halfW * 0.58), floorY + 4.62, z + rng.range(-halfW * 0.58, halfW * 0.58),
+          rng.range(-0.24, 0.24), rng.range(0, TAU), rng.range(-0.24, 0.24), sc * 1.35, sc * 0.58, sc * 1.12));
+      }
+    }
+  }
+  if (layout?.chambers) {
+    for (const chamber of layout.chambers) {
+      const n = Math.max(14, Math.round(chamber.r * 2.8));
+      for (let i = 0; i < n; i++) {
+        const a = i / n * TAU;
+        for (const layerY of [0.58, 1.72, 2.86, 4.02]) {
+          const scale = rng.range(0.46, 0.68);
+          rockMatrices.push(compose(
+            chamber.x + Math.cos(a) * (chamber.r + rng.range(1.02, 1.42)),
+            chamber.y + layerY + rng.range(-0.14, 0.14),
+            chamber.z + Math.sin(a) * (chamber.r + rng.range(1.02, 1.42)),
+            rng.range(-0.42, 0.42), a + rng.range(-0.35, 0.35), rng.range(-0.42, 0.42),
+            scale * 1.08, scale * rng.range(1.18, 1.55), scale,
+          ));
+        }
       }
     }
   }
@@ -728,22 +1164,41 @@ function buildCaveDress(game, track, own) {
   caveRocks.name = 'cave broken wall skin';
   track(caveRocks, rockMatrices.length);
 
+  if (layout?.chambers) {
+    const capMatrices = layout.chambers.map((chamber) => compose(
+      chamber.x, chamber.y + (chamber.name === 'drowned pump chapel' ? 5.72 : 5.18), chamber.z,
+      0, Math.sin(chamber.x * 0.13) * 0.18, 0,
+      chamber.r * 0.96, 0.34, chamber.r * 0.96,
+    ));
+    const caps = new THREE.InstancedMesh(new THREE.CylinderGeometry(1, 1, 1, 12), rockMat, capMatrices.length);
+    capMatrices.forEach((matrix, i) => caps.setMatrixAt(i, matrix));
+    finishInstances(caps, true, true);
+    caps.name = 'underfalls chamber ceiling vaults';
+    track(caps, capMatrices.length);
+  }
+
   const toothMat = own(cloneTint(game.mats?.rock, 0x5b6670,
     () => new THREE.MeshLambertMaterial({ color: 0x5b6670 })));
   const toothMatrices = [];
   for (let leg = 0; leg < path.length - 1; leg++) {
-    const [ax, az] = path[leg], [bx, bz] = path[leg + 1];
+    const [ax, az, ay = 0, aw = 2.2] = path[leg];
+    const [bx, bz, by = 0, bw = 2.2] = path[leg + 1];
     const dx = bx - ax, dz = bz - az;
     const len = Math.hypot(dx, dz), tx = dx / len, tz = dz / len;
     const nx = tz, nz = -tx;
     for (let d = 1.2; d < len; d += 2.1) {
       const x = ax + tx * d, z = az + tz * d;
+      const routeT = d / len;
+      const floorY = ay + (by - ay) * routeT;
+      const halfW = aw + (bw - aw) * routeT;
+      if (layout?.chambers?.some((chamber) =>
+        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.94)) continue;
       const side = rng.sign();
       const h = rng.range(0.55, 1.45);
-      toothMatrices.push(compose(x + nx * side * rng.range(1.82, 2.02), 3.30, z + nz * side * rng.range(1.82, 2.02),
+      toothMatrices.push(compose(x + nx * side * (halfW + 0.18), floorY + 4.24, z + nz * side * (halfW + 0.18),
         Math.PI, rng.range(0, TAU), 0, rng.range(0.65, 1.15), h, rng.range(0.65, 1.15)));
       if (rng.chance(0.58)) {
-        toothMatrices.push(compose(x - nx * side * rng.range(1.82, 2.02), h * 0.42, z - nz * side * rng.range(1.82, 2.02),
+        toothMatrices.push(compose(x - nx * side * (halfW + 0.18), floorY + h * 0.42, z - nz * side * (halfW + 0.18),
           0, rng.range(0, TAU), 0, rng.range(0.55, 0.95), h * 0.75, rng.range(0.55, 0.95)));
       }
     }
@@ -761,9 +1216,9 @@ function buildCaveDress(game, track, own) {
   // BRIGHTEN the closer you get to the way out, so the read is "these are
   // getting bigger, I am going the right way".
   const crystalMat = own(new THREE.MeshStandardMaterial({
-    color: 0xc9d4d6,
-    emissive: 0x8fa6ab,
-    emissiveIntensity: 0.85,
+    color: 0x8f9ea1,
+    emissive: 0x586d72,
+    emissiveIntensity: 0.48,
     roughness: 0.24,
     metalness: 0.12,
     vertexColors: true,
@@ -772,24 +1227,30 @@ function buildCaveDress(game, track, own) {
   const crystalTints = [];
   const legs = Math.max(1, path.length - 1);
   for (let leg = 0; leg < path.length - 1; leg++) {
-    const [ax, az] = path[leg], [bx, bz] = path[leg + 1];
+    const [ax, az, ay = 0, aw = 2.2] = path[leg];
+    const [bx, bz, by = 0, bw = 2.2] = path[leg + 1];
     const dx = bx - ax, dz = bz - az;
     const len = Math.hypot(dx, dz), tx = dx / len, tz = dz / len;
     const nx = tz, nz = -tx;
     for (let d = 0.9; d < len; d += 2.35) {
       const x = ax + tx * d, z = az + tz * d;
+      const routeT = d / len;
+      const floorY = ay + (by - ay) * routeT;
+      const halfW = aw + (bw - aw) * routeT;
+      if (layout?.chambers?.some((chamber) =>
+        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.88)) continue;
       const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
       const grow = 0.52 + 0.95 * t;
       const bright = 0.38 + 0.62 * t;
-      const sc = rng.range(0.22, 0.42) * grow;
-      crystalMatrices.push(compose(x + nx * 1.52, rng.range(0.42, 1.55), z + nz * 1.52,
-        rng.range(-0.45, 0.45), rng.range(0, TAU), rng.range(-0.45, 0.45), sc, sc * rng.range(2.4, 4.2), sc));
+      const sc = rng.range(0.10, 0.21) * grow;
+      crystalMatrices.push(compose(x + nx * (halfW - 0.16), floorY + rng.range(0.34, 1.16), z + nz * (halfW - 0.16),
+        rng.range(-0.38, 0.38), rng.range(0, TAU), rng.range(-0.38, 0.38), sc, sc * rng.range(2.0, 3.15), sc));
       crystalTints.push(bright);
       if (leg > 0 && rng.chance(0.38)) {
-        const floorSc = sc * rng.range(0.58, 0.82);
-        crystalMatrices.push(compose(x - nx * 1.10, floorSc * 1.2, z - nz * 1.10,
+        const floorSc = sc * rng.range(0.62, 0.86);
+        crystalMatrices.push(compose(x - nx * (halfW - 0.28), floorY + floorSc * 1.1, z - nz * (halfW - 0.28),
           rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
-          floorSc, floorSc * rng.range(1.8, 3.0), floorSc));
+          floorSc, floorSc * rng.range(1.7, 2.65), floorSc));
         crystalTints.push(bright * 0.9);
       }
     }
@@ -804,6 +1265,74 @@ function buildCaveDress(game, track, own) {
   finishInstances(crystals, false, false);
   crystals.name = 'cave mica trail (grows toward the way out)';
   track(crystals, crystalMatrices.length);
+
+  if (layout) {
+    // The interior keeps changing its water vocabulary: wall leaks at the
+    // mouth, full sheets framing the pump nave, then a high spill that the
+    // player walks behind. One instanced draw call carries every drop.
+    const chapel = layout.chapel;
+    const overflow = layout.overflow;
+    const drops = [
+      [layout.main[1].x - 2.9, 0.0, layout.main[1].z + 1.8, 1.15, 4.4, -0.35],
+      [layout.main[2].x + 3.8, 0.0, layout.main[2].z + 0.8, 1.55, 5.0, 0.55],
+      [chapel.x - 6.0, chapel.y, chapel.z - 1.2, 2.25, 5.35, 0.72],
+      [chapel.x + 6.2, chapel.y, chapel.z + 2.1, 1.75, 4.85, -0.48],
+      [layout.sluiceRise.x + 1.75, layout.sluiceRise.y, layout.sluiceRise.z - 1.15, 1.55, 4.65, 0.58],
+      [overflow.x - 3.25, overflow.y, overflow.z - 0.7, 2.45, 5.6, 0.66],
+      [overflow.x + 3.05, overflow.y, overflow.z + 1.8, 1.35, 4.6, -0.52],
+    ];
+    const dropMat = own(new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.NormalBlending,
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        void main(){
+          vUv = uv;
+          vec3 p = position;
+          p.x += sin(uv.y * 31.0 - uTime * 5.1 + uv.x * 12.0) * 0.035;
+          gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(p, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform float uTime;
+        void main(){
+          float seam = 0.5 + 0.5 * sin(vUv.x * 53.0 + vUv.y * 11.0 - uTime * 2.3);
+          float bead = 0.5 + 0.5 * sin(vUv.y * 71.0 - uTime * 8.4 + vUv.x * 17.0);
+          float edge = smoothstep(0.0,0.13,vUv.x) * smoothstep(0.0,0.13,1.0-vUv.x);
+          float foot = 1.0 - smoothstep(0.0,0.20,vUv.y);
+          vec3 col = mix(vec3(0.13,0.24,0.29), vec3(0.74,0.88,0.90), seam * 0.5 + foot * 0.35);
+          gl_FragColor = vec4(col, edge * (0.25 + seam * 0.24 + bead * 0.08 + foot * 0.22));
+        }
+      `,
+    }));
+    const dropMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1, 6, 24), dropMat, drops.length);
+    drops.forEach(([x, y, z, w, h, yaw], i) => {
+      dropMesh.setMatrixAt(i, compose(x, y + h * 0.5, z, 0, yaw, 0, w, h, 1));
+    });
+    finishInstances(dropMesh, false, false);
+    dropMesh.name = 'underfalls interior cataracts';
+    track(dropMesh, drops.length);
+    tickers.push((dt, t) => { dropMat.uniforms.uTime.value = t % 600; });
+
+    const mistPos = [], mistPhase = [], mistKind = [];
+    for (let i = 0; i < 132; i++) {
+      const d = drops[i % drops.length];
+      mistPos.push(d[0] + rng.range(-d[3], d[3]), d[1] + rng.range(0.08, 2.25), d[2] + rng.range(-1.1, 1.1));
+      mistPhase.push(rng.range(0, TAU));
+      mistKind.push(1);
+    }
+    const mist = makeGlowPoints(mistPos, mistPhase, mistKind, own, {
+      cyan: new THREE.Color(0xb8dadd), amber: new THREE.Color(0xd9c48d), size: 14.0, opacity: 0.34,
+    });
+    mist.name = 'underfalls displaced spray';
+    track(mist, 1);
+    tickers.push((dt, t) => { mist.material.uniforms.uTime.value = t % 600; });
+  }
 }
 
 // --------------------------------------------------------------- utilities

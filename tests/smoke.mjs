@@ -59,13 +59,26 @@ try {
       g.player.pitch = 0;
       g.player._sync(0);
     });
-    await page.evaluate((frames) => window.__FETCH.step(1 / 60, frames), act === 'mirror' ? 540 : 90);
+    await page.evaluate((frames) => window.__FETCH.step(1 / 60, frames, false), act === 'mirror' ? 540 : 90);
+    // Sample the act we just exercised. Sim-only stepping does not render, and
+    // reading state first used to leave the previous/easiest act's renderer
+    // counters in place while claiming every act was under budget.
+    await page.evaluate(() => window.__game.render());
     const state = await page.evaluate(() => window.__FETCH.state());
     report.acts[act] = state;
     ok(state && state.act === act, `act ${act}: state.act === '${act}'`
       + (state && state.act !== act ? ` (got '${state && state.act}')` : ''));
     ok(errors.length === errBefore, `act ${act}: no new page errors`
       + (errors.length > errBefore ? ' -- ' + errors.slice(errBefore).join(' | ') : ''));
+    const actRender = state?.render;
+    ok(actRender && typeof actRender.drawCalls === 'number' && typeof actRender.geometries === 'number',
+      `act ${act}: exposes render counters`);
+    if (actRender) {
+      ok(actRender.drawCalls < 700,
+        `act ${act}: drawCalls ${actRender.drawCalls} < 700`);
+      ok(actRender.geometries < 1500,
+        `act ${act}: geometries ${actRender.geometries} < 1500`);
+    }
     // page.screenshot can't composite the accelerated canvas headless — read the
     // canvas itself (preserveDrawingBuffer is on for exactly this)
     const dataUrl = await page.evaluate(() => {
@@ -78,16 +91,30 @@ try {
   // Simulation-throughput probe: no render calls occur inside this burst.
   const elapsedMs = await page.evaluate(async () => {
     const t0 = performance.now();
-    await window.__FETCH.step(1 / 60, 300);
+    await window.__FETCH.step(1 / 60, 300, false);
     return performance.now() - t0;
   });
   const simFps = 300 / (elapsedMs / 1000);
   report.perf = { frames: 300, elapsedMs, simFps, kind: 'render-free simulation steps per second' };
   ok(simFps > 25, `perf: simulation throughput ${simFps.toFixed(1)} steps/s > 25 (300 steps in ${elapsedMs.toFixed(0)}ms)`);
 
-  // Render budgets via state().render.
-  const render = await page.evaluate(() => (window.__FETCH.state() || {}).render || null);
-  report.render = render;
+  // Preserve one compact worst-act summary for machines that consume the JSON,
+  // while the assertions above protect every sampled act individually.
+  const renderedActs = Object.entries(report.acts)
+    .filter(([, state]) => state?.render && typeof state.render.drawCalls === 'number');
+  const [worstAct, worstState] = renderedActs.reduce((worst, entry) => (
+    !worst || entry[1].render.drawCalls > worst[1].render.drawCalls ? entry : worst
+  ), null) || [null, null];
+  const geometryWorst = renderedActs.reduce((worst, entry) => (
+    !worst || entry[1].render.geometries > worst[1].render.geometries ? entry : worst
+  ), null);
+  const render = worstState?.render || null;
+  report.render = render ? {
+    ...render,
+    act: worstAct,
+    maxGeometryAct: geometryWorst?.[0] || worstAct,
+    maxGeometries: geometryWorst?.[1]?.render?.geometries ?? render.geometries,
+  } : null;
   ok(render && typeof render.drawCalls === 'number' && typeof render.geometries === 'number',
     'state().render exposes {drawCalls, triangles, geometries, textures}');
   if (render) {

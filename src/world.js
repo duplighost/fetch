@@ -28,6 +28,7 @@ export class World {
     this.rooms = [];                 // {id, level, x0,z0,x1,z1 (world), floorY}
     this.floorHoles = [];            // {level, x0,z0,x1,z1 (world)}
     this.candles = [];               // {x,y,z,intensity,r}
+    this.windowOpenings = [];        // physical apertures + world-space aim glints
     this.terrainHeight = null;       // fn(x,z) set by outside builder
     this.postClamp = null;           // fn(pos, dt) set by forest builder
     this.surfaceZones = [];          // {min,max, surface}
@@ -142,8 +143,18 @@ export class World {
       if (holed) continue;
       if (room.floorY <= curY + 0.55 && room.floorY > best) best = room.floorY;
     }
-    if (best > -Infinity) return best;
-    return this.terrainHeight ? this.terrainHeight(x, z) : 0;
+    // Terrain is another candidate layer only where there is no authored
+    // above-ground storey. This matters when a basement extends beyond the
+    // house footprint: someone walking over the pump gallery stays on the yard,
+    // while someone already below resolves to its cellar floor. Inside the
+    // house footprint, however, a floor hole is intentional architecture. Letting
+    // terrain y=0 compete there pins the cellar ramp to ground level and makes
+    // the canonical house -> basement descent impossible.
+    const terrain = this.terrainHeight ? this.terrainHeight(x, z) : 0;
+    const underSurfaceStorey = this.rooms.some((room) => room.level !== 'basement'
+      && x >= room.x0 && x <= room.x1 && z >= room.z0 && z <= room.z1);
+    if (!underSurfaceStorey && terrain <= curY + 0.55 && terrain > best) best = terrain;
+    return best > -Infinity ? best : terrain;
   }
 
   // --------------------------------------------------------- house compiler
@@ -339,6 +350,40 @@ export class World {
     const flags = open ? { skullPass: true } : undefined;
     if (H) this.addCollider(mid - w / 2, y0, fixed - t / 2, mid + w / 2, y1, fixed + t / 2, flags);
     else this.addCollider(fixed - t / 2, y0, mid - w / 2, fixed + t / 2, y1, mid + w / 2, flags);
+
+    if (open) {
+      // A thin line of reflected skull-light lives on the physical frame, not
+      // in a HUD. It brightens only when the camera ray passes cleanly through
+      // the aperture, so open windows can teach aiming by luminance and motion.
+      const hw = w / 2, hh = (y1 - y0) / 2;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-hw, -hh, 0), new THREE.Vector3(hw, -hh, 0),
+        new THREE.Vector3(hw, hh, 0), new THREE.Vector3(-hw, hh, 0),
+      ]);
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xbecbd0, transparent: true, opacity: 0.055,
+        depthWrite: false, toneMapped: false,
+      });
+      const glint = new THREE.LineLoop(geo, mat);
+      const inward = cut.dir === 'N' || cut.dir === 'W' ? 1 : -1;
+      if (H) glint.position.set(mid, (y0 + y1) / 2, fixed + inward * (t / 2 + 0.008));
+      else {
+        glint.position.set(fixed + inward * (t / 2 + 0.008), (y0 + y1) / 2, mid);
+        glint.rotation.y = Math.PI / 2;
+      }
+      glint.renderOrder = 2;
+      this.scene.add(glint);
+      this.windowOpenings.push({
+        id: cut.opts.id || `window:${cut.lv}:${cut.ex},${cut.ez}`,
+        level: cut.lv,
+        center: H
+          ? new THREE.Vector3(mid, (y0 + y1) / 2, fixed)
+          : new THREE.Vector3(fixed, (y0 + y1) / 2, mid),
+        normal: H ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0),
+        horizontal: H ? 'x' : 'z', width: w, height: y1 - y0,
+        glint, hot: 0, aim: 0,
+      });
+    }
   }
 
   _spawnDoor(cut, H, mid, fixed, floor, h, w, t) {

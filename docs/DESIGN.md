@@ -88,6 +88,12 @@ The skull (a full head now) gestures at the waterfall: throw me. You throw it
 through. **It doesn't come back.** A bridge of rocks emerges. You walk into the
 waterfall; it turns to stone behind you. Candles light a cave path.
 
+The cave is now the **Underfalls**, a full skull-less district rather than a
+short tube: stone veil, drowned pump chapel, vertical sluice, overflow walk,
+optional bell cistern, and the final hatch chamber. Water pressure reveals and
+repels the thing following you. Empty hands are the verb here; movement and
+listening replace combat.
+
 ### Act 6 — The room
 A hatch above. Through it: a bedroom, much like the first. Locked. No skull.
 Window closed. No key. The walls begin to move in — and they're mirrors now.
@@ -141,6 +147,11 @@ you: you end up needing the thing you can't stand to look at.
 - **The Kneeler** (forest boss, before the clearing) — something huge between
   the trunks, seen only in pieces. Weak point reachable only by rope-latch
   launches past it: throw, bite, launch, strike, survive the fall, again.
+- **The Drowned Choir** (Underfalls predator) — one legless corpse-mass beneath
+  a torn burial veil, carrying three drowned faces at different depths. It
+  follows the last place it heard you, commits to a fixed pressure point rather
+  than steering through its strike, and is exposed/repelled by authored spray.
+  The first catch hurts without killing; a moving player can always escape.
 
 ### Basement staging (Act 2)
 Webs drag across the camera and muffle audio until wiped. The "definitely
@@ -172,9 +183,9 @@ echoed behind you, offset shrinking act by act; silent in bedroom/clearing/
 mirror); finale reflection lag that closes with the walls and CROSSES at the
 last half-meter (the double moves first); Standing Kind (graveyard pair +
 basement dropcloths, one of which is real — chosen at boot); bodies posed
-crawling AWAY from the forest gate; the skull refuses long throws in the
-graveyard; calling into nothing in the cave answers with a distant candle
-flare and far-off stone; the end plays the catch you know, then someone
+crawling AWAY from the forest gate; graveyard fear changes expression only and
+never throw handling; calling into nothing in the cave answers with a distant
+candle flare and far-off stone; the end plays the catch you know, then someone
 else's gasp.
 
 NEXT SESSION (adopted, real scope): the telephone that rehearses you; dining

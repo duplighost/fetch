@@ -1,3 +1,140 @@
+# HANDOFF — 2026-08-09, Underfalls horror release (Codex)
+
+Read `AGENTS.md` first. The canonical source checkout is
+`C:\Users\Alex\Projects\fetch-claude`; the Desktop `Fetch` folder is only a
+handoff snapshot. This release was developed on
+`codex/fetch-underfalls-horror`, on top of the merged Opus 5 foundation
+(`d613efe`). It does not discard or reconstruct that foundation.
+
+## The production reports were treated as release blockers
+
+- **Forest holes / tree respawns / movement pins:** reproduced with randomized
+  edge-biased deaths. Reseat now destroys stale seal instances, chooses a
+  centerline safe pad, and recomputes ground in the same frame after lateral
+  correction. The intentional rope ravine still kills; the exact spent-rope
+  far-side checkpoint still survives death.
+- **Pale object through the basement ceiling:** identified by exact bounds as
+  the boiler flue. The flue now ends below the ceiling inside a soot-dark collar;
+  a focused assertion compares both real bounds against the ceiling plane.
+- **House-to-basement failure:** terrain y=0 was winning over the negative
+  cellar ramp inside an authored floor hole. Terrain no longer competes inside
+  an above-ground storey; the full route descends normally again.
+- **Cave-to-finale failure:** the old playthrough driver tried to walk directly
+  through a new 125m cave. It now traverses every authored Underfalls leg and
+  uses the real first-person ceiling-hatch ray. Runtime collision was not
+  weakened to satisfy the test.
+- **Distorted inverted camera frames:** a stale negative RAF delta could push
+  FOV past 180 degrees. Render deltas are clamped and projection signs are now
+  a regression assertion.
+- **White skeletal-looking hands:** the 58-intensity world skull lamp was still
+  lighting the foreground despite object layers. World and held content now use
+  separate render passes. Living hands have varied finger lengths, opposing
+  thumbs, palm mass, nails, creases, and a calibrated warm/cool view light.
+- **Integration bugs found only during final audit:** ordinary footsteps were
+  clearing persistent graveyard attack claims; post-clear Standing Kind still
+  used the arena orbit instead of their watched/unwatched law; and the cave
+  visibility culler could re-hide the finale figure one frame after the real
+  hatch. All three lifecycle seams now have real-path regressions.
+- **Optional rope pockets could be reached on foot:** reproduced with ordinary
+  movement at both forest secrets. Each pocket now remains behind a visible
+  deadfall and the narrow base corridor until its own outbound knot is latched;
+  held traversal, return, walk-out, and repeat throws remain possible.
+- **Cave systems leaked into every act:** all nine Underfalls lights and its
+  machine animation now sleep outside the cave, then restore on re-entry. The
+  focused test checks both light visibility and unchanged hidden transforms.
+
+## What was added
+
+- **Skull presentation without changing the feel law.** Variant E's continuous
+  anatomical shell is now the default; `?skull=v0` retains the old courier for
+  comparison. Sockets stay physically dark, growth tissue is smoother, fetched
+  objects remain visible in the jaw, the last hand-span of every normal return
+  visibly settles into the cradle, and a thin depth-tested filament makes the
+  press/hold/release tether relationship physical. `FEEL_PROFILE`, return
+  acceleration, and input grammar are unchanged. Ordinary catches never pause
+  simulation.
+- **More house.** A two-window relay makes one ordinary throw travel outside
+  the house, then lets a held skull drag a weathered trolley along the exterior
+  rail before release rings the study bell and physically removes the existing
+  blocker. A pooled 1.05-second lag mirror shows a delayed, human-but-wrong
+  inhabitant on the reflection layer only.
+- **More basement.** The crawl-room counterweight secret remains. Beyond it is
+  a flooded pump gallery: hold the skull in a real winch while moving across
+  five bridge leaves, release early to rewind/retry, reach the far pawl to latch
+  the route, then enter a blind archive of six differently built machines. This
+  is an optional 90–180 second district, not another key door.
+- **Graveyard combat and environment.** The yard has an opening/closing gate,
+  a derelict station wagon, dragged bodies, two mausoleums, open graves that are
+  visible but safe, 59 varied stones, three resonance instruments, and three
+  authored combat waves. Walkers now use a split human funeral mask, winding
+  sheet, asymmetric forearms, and hook hands. One lethal strike can commit at a
+  time; later waves retain a second pressure claimant without overlapping
+  instant kills. Permanent pop marks use one bounded 48-instance stain ring
+  rather than growing the scene forever. Stun/pop, token recovery, miss
+  recovery, post-clear watched behavior, death/respawn, and mausoleum egress
+  are all covered.
+- **Forest composition and verb reuse.** The safe spline is enclosed by dense
+  side belts and a perforated layered canopy rather than open void. Five
+  landmark chapters and two optional repeatable held-throw rope pockets add
+  navigation and traversal. A visible deadfall prevents simply walking into a
+  pocket before its matching outbound latch, while a returning skull can no
+  longer accidentally relatch a spent knot.
+- **Waterfall and Underfalls.** The visible plunge and mathematical basin agree.
+  Multiple rock-framed curtains, foam, spray, mist, and side cataracts replace
+  the exposed rectangular fall. Behind it is a 125.158m, 13-node skull-less
+  district: stone veil, drowned pump chapel, multi-height sluice, overflow,
+  optional 54.303m bell-cistern route, spray interactions, and hatch cistern.
+- **The Drowned Choir.** A new audio-first cave predator follows the player's
+  last audible position rather than reading coordinates. Its attack commits to
+  a fixed point, so movement is the counterplay; sprint speed remains faster.
+  The first catch is nonfatal. Authored spray reveals, repels, and resets it.
+  Visually it is one legless soaked corpse-mass beneath a torn pall, with three
+  recessed drowned faces, broken jaws, and a single asymmetric rib cage. Every
+  warning and lifecycle event is finite-position HRTF audio.
+- **Finale contact instead of a fade.** Props are consumed by the closing room;
+  frames squeeze, empty hands press and squeak against glass, and deterministic
+  fractures accumulate while movement/look remain live. At contact the exact
+  reflected skull opens, an impossible recall moan accelerates from 78m away,
+  the last playable image is contained between the real walls, and only then
+  does a 0.045-second cut reach hard black. Black holds for 0.72 seconds before
+  the catch/title, followed by a localized human gasp; the mirror renderer is
+  retired behind black instead of running forever under the end screen.
+
+## Release verification
+
+The frozen source has passed `autotest` 24/24, `regressions` 50/50, and per-act
+`smoke` with zero browser errors. Two consecutive fresh full runs then passed
+all 31 real-input beats from bedroom to ending; the graveyard and forest fights
+used different timings in each run. Focused suites additionally cover the house
+relay/mirror/pump route, the worst attainable mid-cross pump release and retry
+(9/9 twice), basement foundations, six seeded grave fights plus forced
+death/respawn, bounded stain recycling, post-clear watched/unwatched Standing
+Kind, forest edge/respawn soaks, both physically gated rope pockets, backup-call
+rope release, the complete 13-node Underfalls route/hatch and act-local lights,
+Drowned Choir walk/run/lifecycle with production HRTF nodes, and finale
+visibility, containment, input, shutdown, and audio order. The smoke gate now
+renders and budgets all eight acts individually instead of accidentally checking
+only the final mirror frame; the current worst sampled act is the graveyard at
+515 draw calls / 1,055 geometries, below the 700 / 1,500 budgets. Basement is
+395 calls after the below-floor cull and the expanded cave is 124.
+
+The standalone artifact is `release/fetch-netlify.zip`: 24 root-relative
+shipping entries, 443,522 bytes, SHA-256
+`a5fcebc204d1b62be2155a14fbbf34c0d49d2e867073630d25733780605d622d`.
+Two independent packer runs produced the same bytes. The malformed-archive
+suite is 5/5 (body CRC, truncated EOCD, broken central directory, declared-size
+inflation, and case-aliased output); a unique clean extraction then booted in
+system Chrome / D3D11 with Variant E, 474 bedroom draw calls, and zero browser
+errors.
+
+This remains a deliberately stylized, procedural browser horror game—not a
+claim of photoreal AAA production. The important release claim is narrower and
+testable: every authored route is finishable, the reported blockers are covered
+by reproductions, input is never intentionally stolen, and the new content is
+inside the shipped runtime rather than only in screenshots or scratch files.
+
+---
+
 # HANDOFF — 2026-08-09, expansion foundations (Codex)
 
 Read `AGENTS.md`, then this section, then the older diary below. Alex asked for

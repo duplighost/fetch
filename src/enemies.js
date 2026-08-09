@@ -6,7 +6,7 @@ import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 
 const KIND = {
   walker: {
-    h: 2.05, r: 0.3, chase: 5.6, stalk: 1.1, hp: 1, stun: 2.8, scale: 1, windup: 1.1,
+    h: 2.05, r: 0.3, chase: 5.6, stalk: 1.1, hp: 1, stun: 2.8, scale: 1, windup: 1.1, strike: 0.66,
     hit: { y0: 0.22, y1: 1.58, r: 0.32, shoulderY: 1.48, shoulderR: 0.42, headY: 1.79, headR: 0.23 },
   },
   resident: {
@@ -19,9 +19,28 @@ const KIND = {
   },
 };
 
+// Post-waterfall law: this is not another body to hit. The skull is gone, so
+// the cave threat has to be escaped, misdirected, or washed back by pressure.
+// It follows the last sound it was given, commits attacks to a fixed point,
+// and runs slower than a committed sprint. Those are its three fairness rails.
+const DROWNED_CHOIR = Object.freeze({
+  h: 2.75,
+  warning: 2.65,
+  drySpeed: 1.55,
+  heardSpeed: 4.35,
+  attackRange: 1.85,
+  attackCommit: 1.05,
+  attackRadius: 1.18,
+  recovery: 1.25,
+});
+
 const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x16141a };
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
+// More than the whole authored graveyard fight, with room for the house and
+// forest to keep their marks too. Once full, the oldest mark is overwritten:
+// the world remembers violence without adding one draw call forever per retry.
+const STAIN_CAP = 48;
 const V = {
   a: new THREE.Vector3(), b: new THREE.Vector3(), c: new THREE.Vector3(),
   d: new THREE.Vector3(),
@@ -39,7 +58,298 @@ const FIGURE_GEO = {
   slab: new THREE.BoxGeometry(1, 1, 1),
   spike: new THREE.ConeGeometry(0.5, 1, 5),
 };
+{
+  // One shared pall gives the walker a corpse under cloth, not a tombstone.
+  // The shoulder line breaks twice, the waist caves inward, and the hem forks
+  // into burial strips. All of that silhouette costs one draw call per body.
+  const cloth = new THREE.Shape();
+  cloth.moveTo(-0.08, 0.94);
+  cloth.lineTo(-0.33, 0.86);
+  cloth.lineTo(-0.59, 0.61);
+  cloth.lineTo(-0.52, 0.31);
+  cloth.lineTo(-0.39, 0.04);
+  cloth.lineTo(-0.49, -0.3);
+  cloth.lineTo(-0.39, -0.78);
+  cloth.lineTo(-0.25, -0.96);
+  cloth.lineTo(-0.12, -0.79);
+  cloth.lineTo(-0.02, -1.04);
+  cloth.lineTo(0.11, -0.86);
+  cloth.lineTo(0.27, -0.98);
+  cloth.lineTo(0.4, -0.74);
+  cloth.lineTo(0.34, -0.24);
+  cloth.lineTo(0.47, 0.05);
+  cloth.lineTo(0.4, 0.34);
+  cloth.lineTo(0.56, 0.58);
+  cloth.lineTo(0.31, 0.79);
+  cloth.lineTo(0.12, 0.87);
+  cloth.closePath();
+  FIGURE_GEO.walkerShroud = new THREE.ExtrudeGeometry(cloth, {
+    depth: 0.13, bevelEnabled: true, bevelSegments: 1, bevelSize: 0.02, bevelThickness: 0.02,
+  });
+  FIGURE_GEO.walkerShroud.center();
+
+  // A second, darker winding-sheet fold breaks the broad front plane. Its
+  // diagonal overlap implies ribs and a twisted pelvis under the pall without
+  // turning the body into a stack of mannequin capsules.
+  const fold = new THREE.Shape();
+  fold.moveTo(-0.16, 0.76);
+  fold.lineTo(-0.34, 0.5);
+  fold.lineTo(-0.2, 0.16);
+  fold.lineTo(-0.29, -0.3);
+  fold.lineTo(-0.13, -0.82);
+  fold.lineTo(0.015, -0.67);
+  fold.lineTo(0.14, -0.94);
+  fold.lineTo(0.25, -0.4);
+  fold.lineTo(0.13, 0.02);
+  fold.lineTo(0.29, 0.43);
+  fold.lineTo(0.12, 0.7);
+  fold.closePath();
+  FIGURE_GEO.walkerPallFold = new THREE.ShapeGeometry(fold, 3);
+
+  const hook = new THREE.Shape();
+  hook.moveTo(-0.055, 0.17);
+  hook.lineTo(0.04, 0.06);
+  hook.lineTo(0.085, -0.11);
+  hook.lineTo(0.045, -0.25);
+  hook.lineTo(-0.045, -0.34);
+  hook.lineTo(-0.1, -0.27);
+  hook.lineTo(-0.055, -0.15);
+  hook.lineTo(-0.09, -0.015);
+  hook.closePath();
+  FIGURE_GEO.walkerHook = new THREE.ShapeGeometry(hook, 2);
+
+  // A dimensional funeral mask built from cheek, brow and nose planes. The
+  // missing triangles are its two recessed sockets; a narrow split between
+  // the crown halves runs into the left brow. This avoids both a white ring
+  // and the paper-flat Halloween-mask read without adding another mesh.
+  const P = {
+    a: [-0.03, 0.48, 0], b: [0.025, 0.46, 0.025],
+    lc: [-0.22, 0.42, -0.015], rc: [0.17, 0.43, 0.01],
+    lt: [-0.34, 0.22, -0.035], rt: [0.3, 0.24, -0.02],
+    lto: [-0.25, 0.2, 0.025], lti: [-0.07, 0.2, 0.115],
+    lbo: [-0.24, 0.025, 0.02], lbi: [-0.075, 0.035, 0.105],
+    rti: [0.07, 0.19, 0.115], rto: [0.235, 0.17, 0.02],
+    rbi: [0.075, 0.03, 0.105], rbo: [0.22, 0.015, 0.02],
+    nb: [0, 0.18, 0.16], nm: [0.005, 0.07, 0.195], nt: [0.015, -0.06, 0.205],
+    lo: [-0.3, -0.06, -0.025], ro: [0.275, -0.04, -0.01],
+    lci: [-0.115, -0.09, 0.12], rci: [0.125, -0.08, 0.115],
+    ul: [-0.105, -0.16, 0.075], ur: [0.115, -0.16, 0.07],
+    lju: [-0.13, -0.25, 0.04], rju: [0.13, -0.26, 0.035],
+    lj: [-0.22, -0.32, -0.03], rj: [0.18, -0.35, -0.02],
+    c: [-0.035, -0.48, 0],
+  };
+  const faces = [
+    ['lc', 'a', 'lti'], ['lc', 'lti', 'lto'], ['lc', 'lto', 'lt'],
+    ['b', 'rc', 'rti'], ['rc', 'rto', 'rti'], ['rc', 'rt', 'rto'],
+    ['a', 'lti', 'nb'], ['b', 'nb', 'rti'],
+    ['lt', 'lo', 'lbo'], ['lt', 'lbo', 'lto'],
+    ['lo', 'lci', 'lbo'], ['lbo', 'lci', 'lbi'],
+    ['lti', 'nb', 'lbi'], ['nb', 'nm', 'lbi'],
+    ['rt', 'rto', 'rbo'], ['rt', 'rbo', 'ro'],
+    ['rbo', 'rbi', 'rci'], ['rbo', 'rci', 'ro'],
+    ['nb', 'rti', 'rbi'], ['nb', 'rbi', 'nm'],
+    ['nm', 'nt', 'lbi'], ['nm', 'rbi', 'nt'],
+    ['lbi', 'nt', 'lci'], ['rbi', 'rci', 'nt'],
+    ['lci', 'nt', 'ul'], ['nt', 'ur', 'ul'], ['nt', 'rci', 'ur'],
+    ['lo', 'lci', 'lju'], ['lci', 'ul', 'lju'],
+    ['ro', 'rju', 'rci'], ['rci', 'rju', 'ur'],
+    ['lo', 'lju', 'lj'], ['lj', 'lju', 'c'],
+    ['lju', 'rju', 'c'], ['rj', 'c', 'rju'], ['ro', 'rj', 'rju'],
+  ];
+  const maskPositions = [];
+  for (const face of faces) {
+    for (const key of face) maskPositions.push(...P[key]);
+  }
+  FIGURE_GEO.walkerMask = new THREE.BufferGeometry();
+  FIGURE_GEO.walkerMask.setAttribute('position', new THREE.Float32BufferAttribute(maskPositions, 3));
+  FIGURE_GEO.walkerMask.computeVertexNormals();
+
+  const mouth = new THREE.Shape();
+  mouth.moveTo(-0.13, 0.035);
+  mouth.lineTo(-0.025, 0.065);
+  mouth.lineTo(0.075, 0.025);
+  mouth.lineTo(0.14, -0.04);
+  mouth.lineTo(0.07, -0.12);
+  mouth.lineTo(-0.02, -0.07);
+  mouth.lineTo(-0.085, -0.145);
+  mouth.lineTo(-0.14, -0.055);
+  mouth.closePath();
+  FIGURE_GEO.walkerMouth = new THREE.ShapeGeometry(mouth, 2);
+
+  const jaw = new THREE.Shape();
+  jaw.moveTo(-0.045, 0.07);
+  jaw.lineTo(0.105, 0.085);
+  jaw.lineTo(0.16, 0.005);
+  jaw.lineTo(0.105, -0.09);
+  jaw.lineTo(0.005, -0.12);
+  jaw.lineTo(-0.055, -0.035);
+  jaw.closePath();
+  FIGURE_GEO.walkerJaw = new THREE.ShapeGeometry(jaw, 2);
+}
 const GLINT_MAT = new THREE.MeshBasicMaterial({ color: 0xe8ecef });
+const WALKER_BONE_MAT = new THREE.MeshStandardMaterial({
+  color: 0x30312f, roughness: 0.96, metalness: 0, flatShading: true,
+  side: THREE.DoubleSide,
+});
+const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x242126 });
+const WALKER_FOLD_MAT = new THREE.MeshLambertMaterial({ color: 0x0d0c11, side: THREE.DoubleSide });
+const WALKER_VOID_MAT = new THREE.MeshBasicMaterial({ color: 0x000000 });
+
+// One corpse-mass, three drowned faces. All geometry is shared across the one
+// live Choir instance and retries. Spray reveals planes already present in the
+// body; it never recolors the threat or turns mouths into luminous UI rings.
+const CHOIR_GEO = {
+  headMass: new THREE.SphereGeometry(0.5, 9, 7),
+  bodyMass: new THREE.SphereGeometry(0.5, 10, 8),
+};
+{
+  // A single shoulder-to-hem outline. It has no legs: soaked cloth narrows,
+  // tears, and hangs from the fused torsos like something dredged in a net.
+  const veil = new THREE.Shape();
+  veil.moveTo(-0.08, 1.13);
+  veil.lineTo(-0.38, 1.02);
+  veil.lineTo(-0.71, 0.79);
+  veil.lineTo(-0.96, 0.38);
+  veil.lineTo(-0.82, 0.08);
+  veil.lineTo(-0.94, -0.27);
+  veil.lineTo(-0.7, -0.55);
+  veil.lineTo(-0.79, -0.92);
+  veil.lineTo(-0.55, -1.11);
+  veil.lineTo(-0.36, -1.36);
+  veil.lineTo(-0.14, -1.2);
+  veil.lineTo(0.025, -1.46);
+  veil.lineTo(0.18, -1.21);
+  veil.lineTo(0.42, -1.34);
+  veil.lineTo(0.54, -1.03);
+  veil.lineTo(0.77, -0.88);
+  veil.lineTo(0.66, -0.56);
+  veil.lineTo(0.91, -0.3);
+  veil.lineTo(0.75, 0.02);
+  veil.lineTo(0.95, 0.29);
+  veil.lineTo(0.7, 0.57);
+  veil.lineTo(0.58, 0.86);
+  veil.lineTo(0.25, 1.04);
+  veil.closePath();
+  CHOIR_GEO.veil = new THREE.ShapeGeometry(veil, 5);
+
+  // A diagonal inner fold keeps the body from reading as a flat geometric
+  // plaque while remaining part of the same continuous burial silhouette.
+  const fold = new THREE.Shape();
+  fold.moveTo(-0.36, 0.82);
+  fold.lineTo(-0.58, 0.49);
+  fold.lineTo(-0.33, 0.12);
+  fold.lineTo(-0.48, -0.34);
+  fold.lineTo(-0.25, -0.92);
+  fold.lineTo(-0.04, -0.72);
+  fold.lineTo(0.14, -1.12);
+  fold.lineTo(0.34, -0.55);
+  fold.lineTo(0.2, -0.08);
+  fold.lineTo(0.48, 0.4);
+  fold.lineTo(0.21, 0.74);
+  fold.closePath();
+  CHOIR_GEO.veilFold = new THREE.ShapeGeometry(fold, 4);
+
+  // Faceted drowned flesh: unequal sockets are absent triangles, the nose is
+  // crushed left, one cheek collapses backward, and the chin hangs too low.
+  // A dark head mass behind this one mesh supplies real recessed hollows.
+  const F = {
+    crown: [-0.02, 0.47, -0.025], ul: [-0.23, 0.4, -0.04], ur: [0.18, 0.38, -0.005],
+    lt: [-0.33, 0.18, -0.085], rt: [0.29, 0.2, -0.055],
+    lto: [-0.255, 0.185, 0.025], lti: [-0.07, 0.19, 0.115],
+    lbo: [-0.235, 0.005, 0.005], lbi: [-0.06, 0.025, 0.1],
+    rti: [0.06, 0.17, 0.095], rto: [0.235, 0.14, 0.005],
+    rbi: [0.05, -0.015, 0.085], rbo: [0.22, -0.045, -0.025],
+    nb: [-0.01, 0.16, 0.16], nm: [-0.055, 0.04, 0.2], nt: [-0.12, -0.09, 0.17],
+    lo: [-0.3, -0.075, -0.045], ro: [0.28, -0.105, -0.07],
+    lci: [-0.13, -0.12, 0.095], rci: [0.12, -0.135, 0.075],
+    lipL: [-0.135, -0.19, 0.055], lipR: [0.095, -0.205, 0.035],
+    lju: [-0.145, -0.29, 0.005], rju: [0.1, -0.31, -0.005],
+    lj: [-0.23, -0.37, -0.065], rj: [0.15, -0.42, -0.075],
+    chin: [-0.065, -0.55, -0.065],
+  };
+  const faceTriangles = [
+    ['ul', 'crown', 'lti'], ['ul', 'lti', 'lto'], ['ul', 'lto', 'lt'],
+    ['crown', 'ur', 'rti'], ['ur', 'rto', 'rti'], ['ur', 'rt', 'rto'],
+    ['crown', 'lti', 'nb'], ['crown', 'nb', 'rti'],
+    ['lt', 'lo', 'lbo'], ['lt', 'lbo', 'lto'], ['lo', 'lci', 'lbo'],
+    ['lbo', 'lci', 'lbi'], ['lti', 'nb', 'lbi'], ['nb', 'nm', 'lbi'],
+    ['rt', 'rto', 'rbo'], ['rt', 'rbo', 'ro'], ['rbo', 'rbi', 'rci'],
+    ['rbo', 'rci', 'ro'], ['nb', 'rti', 'rbi'], ['nb', 'rbi', 'nm'],
+    ['nm', 'nt', 'lbi'], ['nm', 'rbi', 'nt'],
+    ['lbi', 'nt', 'lci'], ['rbi', 'rci', 'nt'],
+    ['lci', 'nt', 'lipL'], ['nt', 'lipR', 'lipL'], ['nt', 'rci', 'lipR'],
+    ['lo', 'lci', 'lju'], ['lci', 'lipL', 'lju'],
+    ['ro', 'rju', 'rci'], ['rci', 'rju', 'lipR'],
+    ['lo', 'lju', 'lj'], ['lj', 'lju', 'chin'],
+    ['lju', 'rju', 'chin'], ['rj', 'chin', 'rju'], ['ro', 'rj', 'rju'],
+  ];
+  const faceKeys = Object.keys(F);
+  const faceIndex = new Map(faceKeys.map((key, index) => [key, index]));
+  const facePositions = faceKeys.flatMap((key) => F[key]);
+  const faceIndices = faceTriangles.flatMap((triangle) => triangle.map((key) => faceIndex.get(key)));
+  CHOIR_GEO.drownedFace = new THREE.BufferGeometry();
+  CHOIR_GEO.drownedFace.setAttribute('position', new THREE.Float32BufferAttribute(facePositions, 3));
+  CHOIR_GEO.drownedFace.setIndex(faceIndices);
+  CHOIR_GEO.drownedFace.computeVertexNormals();
+
+  const mouth = new THREE.Shape();
+  mouth.moveTo(-0.13, 0.035);
+  mouth.lineTo(-0.035, 0.075);
+  mouth.lineTo(0.08, 0.025);
+  mouth.lineTo(0.14, -0.055);
+  mouth.lineTo(0.055, -0.16);
+  mouth.lineTo(-0.035, -0.095);
+  mouth.lineTo(-0.105, -0.19);
+  mouth.lineTo(-0.15, -0.06);
+  mouth.closePath();
+  CHOIR_GEO.mouthVoid = new THREE.ShapeGeometry(mouth, 3);
+
+  const jaw = new THREE.Shape();
+  jaw.moveTo(-0.08, 0.075);
+  jaw.lineTo(0.105, 0.09);
+  jaw.lineTo(0.16, 0.005);
+  jaw.lineTo(0.09, -0.12);
+  jaw.lineTo(-0.025, -0.16);
+  jaw.lineTo(-0.095, -0.04);
+  jaw.closePath();
+  CHOIR_GEO.jawFragment = new THREE.ShapeGeometry(jaw, 2);
+
+  // Five broken ribs and a snapped sternum share one geometry/draw call. They
+  // are deliberately incomplete and off-balance, never a glowing ladder.
+  const ribPositions = [];
+  const ribbon = (x0, y0, x1, y1, w = 0.025) => {
+    const dx = x1 - x0, dy = y1 - y0;
+    const d = Math.hypot(dx, dy) || 1;
+    const px = -dy / d * w, py = dx / d * w;
+    ribPositions.push(
+      x0 + px, y0 + py, 0, x1 + px, y1 + py, 0, x1 - px, y1 - py, 0,
+      x0 + px, y0 + py, 0, x1 - px, y1 - py, 0, x0 - px, y0 - py, 0,
+    );
+  };
+  ribbon(-0.03, 0.28, -0.53, 0.17, 0.024);
+  ribbon(0.02, 0.22, 0.43, 0.11, 0.022);
+  ribbon(-0.025, 0.04, -0.46, -0.08, 0.023);
+  ribbon(0.015, -0.04, 0.34, -0.15, 0.021);
+  ribbon(-0.01, -0.18, -0.31, -0.31, 0.02);
+  ribbon(-0.015, 0.35, 0.005, -0.35, 0.018);
+  CHOIR_GEO.ribCage = new THREE.BufferGeometry();
+  CHOIR_GEO.ribCage.setAttribute('position', new THREE.Float32BufferAttribute(ribPositions, 3));
+  CHOIR_GEO.ribCage.computeVertexNormals();
+}
+{
+  const drops = [];
+  for (let i = 0; i < 54; i++) {
+    const a = i * 2.3999632297;
+    const ring = 0.34 + (i % 7) * 0.065;
+    drops.push(
+      Math.cos(a) * ring,
+      0.18 + ((i * 17) % 53) / 53 * 2.55,
+      Math.sin(a) * ring * 0.58,
+    );
+  }
+  CHOIR_GEO.drops = new THREE.BufferGeometry();
+  CHOIR_GEO.drops.setAttribute('position', new THREE.Float32BufferAttribute(drops, 3));
+}
 
 function addPart(parent, geometry, material, x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(geometry, material);
@@ -51,9 +361,11 @@ function addPart(parent, geometry, material, x, y, z, sx, sy, sz, rx = 0, ry = 0
 }
 
 function addEyes(head, spread, y, z, sx = 0.025, sy = 0.018) {
+  const eyes = [];
   for (const s of [-1, 1]) {
-    addPart(head, FIGURE_GEO.smallSphere, GLINT_MAT, s * spread, y, z, sx, sy, 0.012);
+    eyes.push(addPart(head, FIGURE_GEO.smallSphere, GLINT_MAT, s * spread, y, z, sx, sy, 0.012));
   }
+  return eyes;
 }
 
 function pointSegmentDistanceSq(px, py, pz, a, b) {
@@ -126,38 +438,70 @@ function segmentVerticalDistanceSq(a, b, x, y0, y1, z) {
 }
 
 function buildWalker(g, mat, limbs) {
-  // A starved, forward-drawn thing: narrow trunk, coat-hanger shoulders, arms
-  // that end below its knees, and a skull carried at an inquisitive angle.
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.08, -0.015, 0.27, 0.61, 0.22, -0.08);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.48, -0.025, 0.17, 0.55, 0.18, 0, 0, Math.PI / 2);
-  addPart(g, FIGURE_GEO.sphere, mat, 0, 1.38, -0.13, 0.3, 0.28, 0.18);
+  // Exhumed pallbearer/corpse effigy: the pall is one broken outline, but an
+  // offset ribcage, hunch, and two separately sloped shoulders make a body push
+  // against it. Forearms live outside that outline even before the lunge.
+  const shroud = addPart(g, FIGURE_GEO.walkerShroud, mat,
+    0, 0.91, -0.15, 1.13, 1.03, 1.08, -0.13, 0, -0.035);
+  addPart(g, FIGURE_GEO.walkerPallFold, WALKER_FOLD_MAT,
+    -0.035, 0.91, -0.073, 1.06, 1.02, 1, -0.03, 0, -0.07);
+  addPart(g, FIGURE_GEO.sphere, mat,
+    -0.075, 1.36, -0.2, 0.4, 0.29, 0.27, -0.14, 0, -0.12);
+  const shoulders = [
+    addPart(g, FIGURE_GEO.sphere, mat,
+      -0.35, 1.43, -0.2, 0.36, 0.22, 0.28, -0.12, 0, 0.11),
+    addPart(g, FIGURE_GEO.sphere, mat,
+      0.315, 1.37, -0.18, 0.31, 0.2, 0.26, -0.04, 0, -0.08),
+  ];
 
   const head = new THREE.Group();
-  head.position.set(0.035, 1.78, 0.055);
-  head.rotation.set(-0.08, 0, 0.2);
-  addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.2, 0.24, 0.18);
-  addPart(head, FIGURE_GEO.slab, mat, 0, -0.19, 0.035, 0.17, 0.12, 0.14, 0.05);
-  addEyes(head, 0.062, 0.025, 0.17, 0.027, 0.018);
+  head.position.set(0.045, 1.72, 0.095);
+  head.rotation.set(-0.14, 0, 0.19);
+  addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
+    0, 0, 0, 0.72, 0.72, 1, 0, 0.03, -0.025);
+  const mouth = addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
+    0.005, -0.145, 0.045, 0.64, 0.48, 1, 0, 0, -0.08);
+  const jaw = addPart(head, FIGURE_GEO.walkerJaw, WALKER_BONE_MAT,
+    0.035, -0.235, 0.052, 0.67, 0.72, 1, 0, 0, 0.18);
+  const eyes = [
+    addPart(head, FIGURE_GEO.smallSphere, GLINT_MAT,
+      -0.115, 0.082, 0.055, 0.011, 0.008, 0.007),
+    addPart(head, FIGURE_GEO.smallSphere, GLINT_MAT,
+      0.108, 0.07, 0.055, 0.009, 0.007, 0.006),
+  ];
   g.add(head);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * 0.29, 1.5, 0.015);
-    armP.rotation.z = s * -0.08;
-    addPart(armP, FIGURE_GEO.limb, mat, 0, s < 0 ? -0.5 : -0.54, 0.025,
-      0.085, s < 0 ? 0.52 : 0.56, 0.075);
-    addPart(armP, FIGURE_GEO.sphere, mat, 0, s < 0 ? -1.02 : -1.1, 0.04, 0.11, 0.16, 0.075);
+    armP.position.set(s * (s < 0 ? 0.48 : 0.46), s < 0 ? 1.42 : 1.39, 0.105);
+    armP.rotation.z = s < 0 ? 0.15 : -0.075;
+    addPart(armP, FIGURE_GEO.limb, WALKER_WRAP_MAT,
+      0, s < 0 ? -0.53 : -0.59, 0.09,
+      0.102, s < 0 ? 0.58 : 0.64, 0.09, s * 0.035);
+    addPart(armP, FIGURE_GEO.walkerHook, WALKER_BONE_MAT,
+      s * 0.018, s < 0 ? -1.08 : -1.2, 0.145,
+      s * (s < 0 ? 0.78 : 0.9), s < 0 ? 0.72 : 0.82, 1,
+      0, 0, s < 0 ? -0.08 : 0.12);
     limbs.arms.push(armP);
     g.add(armP);
 
+    // The pall supplies the visible lower-body silhouette. Empty pivots retain
+    // the shared gait contract without spending meshes on hidden mannequin legs.
     const legP = new THREE.Group();
-    legP.position.set(s * 0.105, 0.75, -0.02);
-    legP.rotation.z = s * 0.08;
-    addPart(legP, FIGURE_GEO.limb, mat, 0, -0.39, 0, 0.105, 0.42, 0.095);
-    addPart(legP, FIGURE_GEO.slab, mat, 0, -0.81, 0.09, 0.14, 0.08, 0.27, -0.08);
+    legP.position.set(s * 0.105, 0.72, -0.045);
     limbs.legs.push(legP);
     g.add(legP);
   }
+  mouth.userData.baseScale = mouth.scale.clone();
+  jaw.userData.basePosition = jaw.position.clone();
+  jaw.userData.baseRotation = jaw.rotation.clone();
+  for (const eye of eyes) eye.userData.baseScale = eye.scale.clone();
+  for (const shoulder of shoulders) shoulder.userData.baseScale = shoulder.scale.clone();
+  head.userData.walker = {
+    head, shroud, shoulders, mouth, jaw, eyes,
+    headBase: head.position.clone(),
+    headRot: head.rotation.clone(),
+  };
   return head;
 }
 
@@ -251,7 +595,165 @@ function makeFigure(kind) {
       : buildWalker(g, mat, limbs);
   g.scale.setScalar(spec.scale);
   // Contract consumed by gait and stun code: keep these exact keys stable.
-  g.userData = { mat, head, limbs };
+  g.userData = { mat, head, limbs, walker: head.userData.walker || null };
+  return g;
+}
+
+function makeDrownedChoir() {
+  const g = new THREE.Group();
+  const voidMat = new THREE.MeshLambertMaterial({
+    color: 0x010305, transparent: true, opacity: 0.015, depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const skinMat = new THREE.MeshLambertMaterial({
+    color: 0x465255, transparent: true, opacity: 0.001,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const wetMat = new THREE.MeshLambertMaterial({
+    color: 0x69777a, transparent: true, opacity: 0.001,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const rimMat = new THREE.MeshLambertMaterial({
+    color: 0x172124, transparent: true, opacity: 0.001,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const mouthVoidMat = new THREE.MeshBasicMaterial({
+    color: 0x000000, transparent: true, opacity: 0.001,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const dropMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: {
+      uOpacity: { value: 0.001 },
+      uSize: { value: 0.035 },
+    },
+    vertexShader: `
+      uniform float uSize;
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = max(1.0, uSize * 120.0 / max(1.0, -mv.z));
+      }
+    `,
+    fragmentShader: `
+      uniform float uOpacity;
+      void main() {
+        float d = length(gl_PointCoord - vec2(0.5));
+        if (d > 0.5) discard;
+        float edge = 1.0 - smoothstep(0.24, 0.5, d);
+        gl_FragColor = vec4(0.92, 0.975, 1.0, edge * uOpacity);
+      }
+    `,
+  });
+
+  // Three overlapping cloth layers preserve the established test/debug
+  // contract while reading as one corpse veil: rear silhouette, outer pall,
+  // and a diagonal front fold. None is a separate segmented body anymore.
+  const curtains = [];
+  const veilSpecs = [
+    { geometry: CHOIR_GEO.veil, pos: [0, 1.29, -0.2], scale: [1.02, 0.96], rot: -0.035 },
+    { geometry: CHOIR_GEO.veil, pos: [0.018, 1.27, -0.075], scale: [0.91, 0.92], rot: 0.025 },
+    { geometry: CHOIR_GEO.veilFold, pos: [-0.04, 1.22, 0.015], scale: [0.94, 0.9], rot: -0.08 },
+  ];
+  for (const spec of veilSpecs) {
+    const curtain = new THREE.Mesh(spec.geometry, voidMat);
+    curtain.position.set(...spec.pos);
+    curtain.scale.set(spec.scale[0], spec.scale[1], 1);
+    curtain.rotation.z = spec.rot;
+    curtain.userData.basePos = curtain.position.clone();
+    curtain.userData.baseScale = curtain.scale.clone();
+    curtain.userData.baseRot = curtain.rotation.z;
+    g.add(curtain);
+    curtains.push(curtain);
+  }
+
+  const outline = new THREE.Mesh(CHOIR_GEO.veil, rimMat);
+  outline.position.set(-0.01, 1.29, -0.225);
+  outline.scale.set(1.065, 0.98, 1);
+  outline.rotation.z = -0.045;
+  outline.userData.basePos = outline.position.clone();
+  outline.userData.baseScale = outline.scale.clone();
+  outline.userData.baseRot = outline.rotation.z;
+  g.add(outline);
+  const outlines = [outline];
+
+  const mass = new THREE.Mesh(CHOIR_GEO.bodyMass, voidMat);
+  mass.position.set(-0.025, 1.22, -0.13);
+  mass.scale.set(0.83, 1.24, 0.46);
+  mass.userData.basePos = mass.position.clone();
+  mass.userData.baseScale = mass.scale.clone();
+  g.add(mass);
+
+  const mouths = [];
+  const jaws = [];
+  const faceSpecs = [
+    {
+      pos: [-0.39, 1.72, 0.13], scale: [0.63, 0.67], rot: [-0.08, 0.3, -0.29],
+      thrust: [-0.1, -0.04, 0.12], recoil: [-0.04, -0.1, -0.05], phase: 0.7,
+    },
+    {
+      pos: [0.035, 1.9, 0.205], scale: [0.76, 0.78], rot: [-0.04, -0.08, 0.055],
+      thrust: [0.015, 0.11, 0.24], recoil: [0.015, -0.14, -0.08], phase: 2.2,
+    },
+    {
+      pos: [0.35, 1.5, 0.075], scale: [0.58, 0.62], rot: [0.06, -0.34, 0.25],
+      thrust: [0.12, -0.015, 0.14], recoil: [0.05, -0.12, -0.06], phase: 4.5,
+    },
+  ];
+
+  for (let i = 0; i < faceSpecs.length; i++) {
+    const spec = faceSpecs[i];
+    const face = new THREE.Group();
+    face.position.set(...spec.pos);
+    face.scale.set(spec.scale[0], spec.scale[1], 1);
+    face.rotation.set(...spec.rot);
+    face.userData.base = face.position.clone();
+    face.userData.baseScale = face.scale.clone();
+    face.userData.baseRotation = face.rotation.clone();
+    face.userData.motion = spec;
+
+    const headMass = new THREE.Mesh(CHOIR_GEO.headMass, voidMat);
+    headMass.position.set(0, -0.025, -0.075);
+    headMass.scale.set(0.56, 0.79, 0.33);
+    const drownedFace = new THREE.Mesh(CHOIR_GEO.drownedFace, skinMat);
+    const hole = new THREE.Mesh(CHOIR_GEO.mouthVoid, mouthVoidMat);
+    hole.position.set(-0.015, -0.225, 0.045);
+    hole.scale.set(0.72, 0.62, 1);
+    const jaw = new THREE.Mesh(CHOIR_GEO.jawFragment, skinMat);
+    jaw.position.set(0.025, -0.36, 0.055);
+    jaw.scale.set(0.8, 0.76, 1);
+    jaw.rotation.z = [0.16, -0.11, 0.24][i];
+    hole.userData.baseScale = hole.scale.clone();
+    jaw.userData.basePos = jaw.position.clone();
+    jaw.userData.baseRot = jaw.rotation.z;
+    headMass.userData.baseScale = headMass.scale.clone();
+    face.add(headMass, drownedFace, hole, jaw);
+    g.add(face);
+    mouths.push(face);
+    jaws.push({ jaw, hole, headMass, drownedFace });
+  }
+
+  const ribCage = new THREE.Mesh(CHOIR_GEO.ribCage, wetMat);
+  ribCage.position.set(-0.015, 1.12, 0.09);
+  ribCage.scale.set(0.94, 0.88, 1);
+  ribCage.rotation.z = -0.09;
+  ribCage.userData.baseScale = ribCage.scale.clone();
+  ribCage.userData.baseRot = ribCage.rotation.z;
+  g.add(ribCage);
+  const ribs = [ribCage];
+
+  const droplets = new THREE.Points(CHOIR_GEO.drops, dropMat);
+  droplets.frustumCulled = false;
+  g.add(droplets);
+  const light = new THREE.PointLight(0xddecef, 0, 6, 1.8);
+  light.position.set(0, 1.45, 0.2);
+  g.add(light);
+  g.userData = {
+    drownedChoir: true,
+    voidMat, skinMat, wetMat, rimMat, mouthVoidMat, dropMat,
+    curtains, outlines, mass, mouths, jaws, ribs, ribCage, droplets, light,
+    ownedMaterials: [voidMat, skinMat, wetMat, rimMat, mouthVoidMat, dropMat],
+  };
   return g;
 }
 
@@ -261,6 +763,62 @@ export class Enemies {
     this.list = [];
     this._spawnSerial = 0;
     this._graveClaimRecovery = 0;
+
+    // One dynamic instance pool owns every pop stain for this game lifecycle.
+    // It deliberately survives ordinary death/respawn so the graveyard keeps
+    // the player's history; resetStains() is the explicit full-reset boundary.
+    this.stainPool = new THREE.InstancedMesh(STAIN_GEO, STAIN_MAT, STAIN_CAP);
+    this.stainPool.name = 'bounded enemy pop stains';
+    this.stainPool.userData.fetchEnemyStainPool = true;
+    this.stainPool.count = 0;
+    this.stainPool.frustumCulled = false;
+    this.stainPool.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    game.scene.add(this.stainPool);
+    this._stainCursor = 0;
+    this._stainVisible = 0;
+    this._stainTotal = 0;
+    this._stainMatrix = new THREE.Matrix4();
+    this._stainPosition = new THREE.Vector3();
+    this._stainQuaternion = new THREE.Quaternion();
+    this._stainScale = new THREE.Vector3();
+    this._stainEuler = new THREE.Euler();
+  }
+
+  stainState() {
+    return {
+      capacity: STAIN_CAP,
+      visible: this._stainVisible,
+      totalPlaced: this._stainTotal,
+      nextSlot: this._stainCursor,
+    };
+  }
+
+  resetStains() {
+    this._stainCursor = 0;
+    this._stainVisible = 0;
+    this._stainTotal = 0;
+    this.stainPool.count = 0;
+    this.stainPool.instanceMatrix.needsUpdate = true;
+    return this.stainState();
+  }
+
+  _placeStain(pos) {
+    const ground = this.game.world.groundHeightAt(pos.x, pos.z, pos.y + 1);
+    const y = Number.isFinite(ground) ? ground + 0.015 : pos.y + 0.015;
+    this._stainQuaternion.setFromEuler(
+      this._stainEuler.set(-Math.PI / 2, 0, Math.random() * Math.PI),
+    );
+    this._stainMatrix.compose(
+      this._stainPosition.set(pos.x, y, pos.z),
+      this._stainQuaternion,
+      this._stainScale.set(0.8 + Math.random() * 0.5, 1 + Math.random() * 0.6, 1),
+    );
+    this.stainPool.setMatrixAt(this._stainCursor, this._stainMatrix);
+    this._stainCursor = (this._stainCursor + 1) % STAIN_CAP;
+    this._stainVisible = Math.min(STAIN_CAP, this._stainVisible + 1);
+    this._stainTotal++;
+    this.stainPool.count = this._stainVisible;
+    this.stainPool.instanceMatrix.needsUpdate = true;
   }
 
   spawn(kind, x, z, state = 'stalk', yHint = 3) {
@@ -268,6 +826,7 @@ export class Enemies {
     // below it (a basement spawn with the default hint lands on the stairs above)
     const spec = KIND[kind];
     const mesh = makeFigure(kind);
+    const serial = this._spawnSerial++;
     const e = {
       kind, spec, mesh, state,
       pos: new THREE.Vector3(x, this.game.world.groundHeightAt(x, z, yHint), z),
@@ -275,14 +834,138 @@ export class Enemies {
       stunT: 0, windT: 0, stepT: 0,
       loop: this.game.audio.ready ? this.game.audio.enemyLoop(kind) : null,
       hits: 0,
-      orbitAngle: (this._spawnSerial * 2.399963) % TAU,
-      orbitSign: this._spawnSerial++ % 2 ? 1 : -1,
+      serial,
+      orbitAngle: (serial * 2.399963) % TAU,
+      orbitSign: serial % 2 ? 1 : -1,
     };
     mesh.position.copy(e.pos);
     this.game.scene.add(mesh);
     this.list.push(e);
     (this.game.spawnLog ||= []).push([kind, state, Math.round(x), Math.round(z), +this.game.time.toFixed(1)]);
     return e;
+  }
+
+  // Public contract for the cave/director and future authored spray volumes.
+  // `pos` is where the sound begins; `heardPos` is the last place the player
+  // made a noise. Keeping those separate lets the thing be audible before it
+  // is visible and prevents it from reading the player's live coordinates.
+  beginDrownedChoir({ pos = null, heardPos = null } = {}) {
+    this.endDrownedChoir('replace');
+    const game = this.game;
+    const source = pos || game.player.pos;
+    const y = source.y != null
+      ? source.y
+      : game.world.groundHeightAt(source.x, source.z, game.player.pos.y + 2);
+    const mesh = makeDrownedChoir();
+    const e = {
+      kind: 'choir',
+      spec: DROWNED_CHOIR,
+      mesh,
+      state: 'warning',
+      pos: new THREE.Vector3(source.x, y, source.z),
+      phase: 0,
+      age: 0,
+      stateT: 0,
+      revealT: 0,
+      wetT: 0,
+      memoryT: 3.5,
+      heardStrength: 0.35,
+      heardPos: new THREE.Vector3(
+        heardPos?.x ?? game.player.pos.x,
+        heardPos?.y ?? game.player.pos.y,
+        heardPos?.z ?? game.player.pos.z,
+      ),
+      strikePos: new THREE.Vector3(),
+      washV: new THREE.Vector3(),
+      warned: false,
+      loop: null,
+    };
+    e.loop = game.audio.drownedChoirLoop(e.pos);
+    mesh.position.copy(e.pos);
+    game.scene.add(mesh);
+    this.list.push(e);
+    this.choir = e;
+    (game.spawnLog ||= []).push(['choir', 'warning', Math.round(e.pos.x), Math.round(e.pos.z), +game.time.toFixed(1)]);
+    game.audio.drownedCall({ pos: e.pos, gain: 0.34, distant: true });
+    return e;
+  }
+
+  endDrownedChoir(reason = 'leave') {
+    let removed = 0;
+    for (const e of this.list.slice()) {
+      if (e.kind !== 'choir') continue;
+      e.endReason = reason;
+      this._remove(e);
+      removed++;
+    }
+    this.choir = null;
+    return removed;
+  }
+
+  drownedChoirHear(pos, intensity = 0.5, source = 'step') {
+    const e = this.choir;
+    if (!e || e.state === 'spent') return null;
+    e.heardPos.set(pos.x, pos.y ?? this.game.player.pos.y, pos.z);
+    e.heardStrength = Math.max(e.heardStrength || 0, clamp(intensity, 0, 1.25));
+    e.memoryT = Math.max(e.memoryT || 0, 1.4 + clamp(intensity, 0, 1.25) * 2.2);
+    if (source === 'call') {
+      e.revealT = Math.max(e.revealT, 0.45);
+      this.game.audio.drownedCall({ pos: e.pos, gain: 0.68, rate: 1.08 });
+    }
+    return e;
+  }
+
+  // Future under-falls geometry can call this from any real spray/sluice
+  // volume: game.enemies.caveSpray(worldPos, radius, strength). It reveals the
+  // displaced-water outline, cancels a committed pressure strike, and washes
+  // away the first-strike mark. No dependency on outside.js is required.
+  caveSpray(pos, radius = 5.5, strength = 1) {
+    let caught = 0;
+    for (const e of this.list) {
+      if (e.kind !== 'choir' || e.state === 'spent') continue;
+      const dx = e.pos.x - pos.x, dz = e.pos.z - pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > radius) continue;
+      const exposure = clamp(1 - d / Math.max(0.01, radius), 0, 1) * clamp(strength, 0.1, 2);
+      e.wetT = Math.max(e.wetT, 0.9 + exposure * 1.7);
+      e.revealT = Math.max(e.revealT, 1.4 + exposure * 1.8);
+      e.warned = false;
+      let awayX = d > 0.04 ? dx / d : e.pos.x - this.game.player.pos.x;
+      let awayZ = d > 0.04 ? dz / d : e.pos.z - this.game.player.pos.z;
+      let al = Math.hypot(awayX, awayZ);
+      // Exact overlap is possible at the center of a pressure volume. It must
+      // still repel instead of producing a zero-vector "successful" defense.
+      if (al < 0.001) {
+        awayX = Math.sin(e.phase * 0.73 + 0.91);
+        awayZ = Math.cos(e.phase * 0.73 + 0.91);
+        al = 1;
+      }
+      e.washV.x += awayX / al * (2.8 + exposure * 5.2);
+      e.washV.z += awayZ / al * (2.8 + exposure * 5.2);
+      if (e.state !== 'warning') {
+        e.state = 'recoil';
+        e.stateT = 0;
+      }
+      if (e.loop?.douse) e.loop.douse(exposure);
+      this.game.audio.sprayReveal({ pos: e.pos, gain: 0.42 + exposure * 0.45 });
+      caught++;
+    }
+    return caught;
+  }
+
+  getDrownedChoirState() {
+    const e = this.choir;
+    if (!e) return null;
+    return {
+      state: e.state,
+      age: e.age,
+      revealT: e.revealT,
+      wetT: e.wetT,
+      memoryT: e.memoryT,
+      warned: e.warned,
+      pos: [e.pos.x, e.pos.y, e.pos.z],
+      heardPos: [e.heardPos.x, e.heardPos.y, e.heardPos.z],
+    };
   }
 
   clear(pred) {
@@ -295,8 +978,17 @@ export class Enemies {
   _remove(e) {
     if (e.loop) e.loop.stop();
     this.game.scene.remove(e.mesh);
+    // Generic figures own one dark material each; anatomy accents are shared.
+    // The Choir owns five per-lifecycle transparent materials. Dispose only
+    // what the entity owns so three-wave retries do not grow GPU memory.
+    if (e.kind === 'choir') {
+      for (const material of e.mesh.userData.ownedMaterials || []) material.dispose();
+    } else if (e.mesh.userData.mat) {
+      e.mesh.userData.mat.dispose();
+    }
     const i = this.list.indexOf(e);
     if (i >= 0) this.list.splice(i, 1);
+    if (this.choir === e) this.choir = null;
   }
 
   wakeAll(centerX, centerZ, radius) {
@@ -319,6 +1011,7 @@ export class Enemies {
   resonancePulse(pos, radius = 8, stun = 1.5) {
     let caught = 0;
     for (const e of this.list) {
+      if (e.kind === 'choir') continue; // there is no skull here in story; debug throws do not rewrite that law
       if (e.state === 'dying') continue;
       const dx = e.pos.x - pos.x, dz = e.pos.z - pos.z;
       const d = Math.hypot(dx, dz);
@@ -349,11 +1042,12 @@ export class Enemies {
     // the slot. The Standing Kind remain orbiting pressure and never steal
     // wave tokens. Early waves commit one attacker; later waves earn two.
     const graveArena = game.director?.graveArena;
+    const graveArenaActive = !!graveArena && !graveArena.done;
     const graveWave = graveArena?.wave ?? 0;
     const graveClaimBudget = graveWave >= 2 ? 2 : 1;
     const claimableState = (e) => e.state === 'standing' || e.state === 'wind' ||
       e.state === 'chase' || e.state === 'strike';
-    const graveCandidates = graveArena && !graveArena.done
+    const graveCandidates = graveArenaActive
       ? this.list.filter((e) => e.graveArena && e.kind === 'walker' && claimableState(e))
       : [];
     const candidateSet = new Set(graveCandidates);
@@ -361,7 +1055,7 @@ export class Enemies {
     for (const e of this.list) {
       if (!e.graveClaimed || candidateSet.has(e)) continue;
       e.graveClaimed = false;
-      if (graveArena && !graveArena.done) {
+      if (graveArenaActive) {
         this._graveClaimRecovery = Math.max(this._graveClaimRecovery, 0.55);
       }
     }
@@ -385,6 +1079,14 @@ export class Enemies {
     let threatDir = null;
 
     for (const e of this.list.slice()) {
+      if (e.kind === 'choir') {
+        const choirThreat = this._updateDrownedChoir(e, dt, camPos, camFwd);
+        if (choirThreat.level > maxThreat) {
+          maxThreat = choirThreat.level;
+          threatDir = choirThreat.dir;
+        }
+        continue;
+      }
       const toP = V.c.set(player.pos.x - e.pos.x, 0, player.pos.z - e.pos.z);
       const dist = toP.length();
       // no hunting through floors: a storey of separation makes you unreachable
@@ -398,7 +1100,7 @@ export class Enemies {
           break;
         case 'standing': {
           if (!sameLevel) break;
-          if (e.gravePressure && game.director?.graveArena && !graveClaims.has(e)) {
+          if (e.gravePressure && graveArenaActive && !graveClaims.has(e)) {
             // In the horde, the Standing Kind obeys the same readable attack
             // budget as risen walkers instead of bypassing it with a silent
             // touch kill. Unclaimed figures occupy slow outer slots.
@@ -442,7 +1144,7 @@ export class Enemies {
             this._moveWithPush(e, toP.x * 0.85 * dt, toP.z * 0.85 * dt);
             e.phase += dt * 2.2;                 // silent gait — no footsteps. worse.
           } else if (dist <= 0.9 && !game.dead) {
-            if (e.gravePressure && game.director?.graveArena) {
+            if (e.gravePressure && graveArenaActive) {
               // In a crowd, even the Standing Kind has to commit. Its silence
               // gets it close; lifted arms and breath give the player one last
               // physical answer instead of converting overlap into death.
@@ -466,7 +1168,7 @@ export class Enemies {
           // the wind-up IS the mercy: sound tells you it's coming before it moves
           e.windT += dt;
           if (e.windT === dt) game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
-          e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.9 * Math.min(1, e.windT / e.spec.windup); });
+          e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.08 * Math.min(1, e.windT / e.spec.windup); });
           if (e.windT >= e.spec.windup) e.state = 'chase';
           break;
         }
@@ -500,7 +1202,13 @@ export class Enemies {
             // progress stalls, route through the doorway that best closes on
             // the player. The Resident goes further: it does doors (below).
             let tx = player.pos.x, tz = player.pos.z;
-            if (e._via) {
+            const graveExit = (e.graveArena || e.gravePressure)
+              ? this._graveEscapeTarget(e, player.pos)
+              : null;
+            if (graveExit) {
+              tx = graveExit.x;
+              tz = graveExit.z;
+            } else if (e._via) {
               const vd = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z);
               if (vd < 0.9) e._via = null;
               else { tx = e._via.x; tz = e._via.z; }
@@ -543,10 +1251,22 @@ export class Enemies {
             }
           } else if (!game.dead) {
             if (e.graveArena || e.gravePressure) {
-              // Arena contact begins a committed attack, not an invisible
-              // one-frame kill. Running clears it; freezing in reach does not.
-              e.state = 'strike';
-              e.strikeT = 0;
+              // Late waves may own two pursuit claimants, but never two lethal
+              // commitments. The previous rule let both bodies enter `strike`
+              // on the same fixed step and made a correct sprint a coin toss.
+              const strikeBusy = this.list.some((other) => other !== e
+                && (other.graveArena || other.gravePressure)
+                && other.state === 'strike');
+              if (strikeBusy) {
+                this._releaseGraveClaim(e, 0.34);
+                e.state = 'wind';
+                e.windT = e.spec.windup * 0.66;
+              } else {
+                // Contact begins a committed attack, not an invisible
+                // one-frame kill. Running clears it; freezing in reach does not.
+                e.state = 'strike';
+                e.strikeT = 0;
+              }
             } else {
               game.director.death(e);
             }
@@ -555,8 +1275,26 @@ export class Enemies {
         }
         case 'strike': {
           // The horde keeps the one-hit consequence, but earns it with a short
-          // readable commitment. Attack tokens continue to count this body, so
-          // a second walker cannot steal the warning window in early waves.
+          // readable commitment. A body that loses its claim or finds an older
+          // strike already active must fold back into the crowd; token trimming
+          // can never leave an unclaimed lethal state running for one frame.
+          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
+            e.state = e.standing ? 'standing' : 'wind';
+            e.windT = e.spec.windup * 0.62;
+            e.strikeT = 0;
+            break;
+          }
+          const olderStrike = this.list.some((other) => other !== e
+            && (other.graveArena || other.gravePressure)
+            && other.state === 'strike' && other.graveClaimed
+            && (other.serial ?? 0) < (e.serial ?? 0));
+          if (olderStrike) {
+            this._releaseGraveClaim(e, 0.34);
+            e.state = e.standing ? 'standing' : 'wind';
+            e.windT = e.spec.windup * 0.62;
+            e.strikeT = 0;
+            break;
+          }
           if (!sameLevel) {
             e.state = e.standing ? 'standing' : 'wind';
             e.windT = 0;
@@ -564,17 +1302,18 @@ export class Enemies {
           }
           e.strikeT = (e.strikeT || 0) + dt;
           if (e.strikeT === dt) {
-            game.audio.whisper({ pos: e.pos, gain: 0.72, rate: 0.58, verb: 0.32 });
+            game.audio.walkerStrike({ pos: e.pos, gain: 0.88, rate: 0.96, verb: 0.38 });
           }
-          const lift = Math.min(1, e.strikeT / 0.18);
-          e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -2.35 * lift; });
-          if (e.strikeT >= 0.48) {
+          const lift = Math.min(1, e.strikeT / 0.24);
+          e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.46 * lift; });
+          if (e.strikeT >= (e.spec.strike || 0.66)) {
             if (dist <= 0.95 && !game.dead) {
               game.director.death(e);
             } else {
               this._releaseGraveClaim(e, 0.42);
               e.state = e.standing ? 'standing' : 'wind';
               e.windT = 0;
+              game.audio.walkerMiss({ pos: e.pos, gain: 0.5, rate: 0.94, verb: 0.25 });
             }
           }
           break;
@@ -629,15 +1368,21 @@ export class Enemies {
         L.legs[0].rotation.x = Math.sin(e.phase) * 0.6;
         L.legs[1].rotation.x = -Math.sin(e.phase) * 0.6;
         if (e.state === 'chase') {
-          L.arms[0].rotation.x = -1.7 + Math.sin(e.phase * 2) * 0.15;   // reaching for you
-          L.arms[1].rotation.x = -1.7 - Math.sin(e.phase * 2) * 0.15;
+          L.arms[0].rotation.x = -1.02 + Math.sin(e.phase * 2) * 0.12;   // reaching for you
+          L.arms[1].rotation.x = -1.02 - Math.sin(e.phase * 2) * 0.12;
         } else {
           L.arms[0].rotation.x = -Math.sin(e.phase) * 0.35;
           L.arms[1].rotation.x = Math.sin(e.phase) * 0.35;
         }
       }
+      if (e.kind === 'walker') this._poseWalker(e, dt, graveClaims.has(e));
       if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
+      if (e.graveRiseT > 0 && e.state !== 'dying') {
+        e.graveRiseT = Math.max(0, e.graveRiseT - dt);
+        const remaining = e.graveRiseT / Math.max(0.001, e.graveRiseDur || 1.1);
+        e.mesh.position.y -= remaining * remaining * 1.35;
+      }
       if (e.state !== 'dormant' && e.state !== 'dying' && dist > 0.1) {
         e.mesh.rotation.y = Math.atan2(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
       }
@@ -721,6 +1466,273 @@ export class Enemies {
     game.audio.setTension(Math.max(game.baseTension || 0, maxThreat));
   }
 
+  resetGraveClaims() {
+    this._graveClaimRecovery = 0;
+    for (const e of this.list) e.graveClaimed = false;
+  }
+
+  _updateDrownedChoir(e, dt, camPos, camFwd) {
+    const game = this.game;
+    const player = game.player;
+    if (game.act !== 'cave') {
+      this._remove(e);
+      return { level: 0, dir: null };
+    }
+
+    e.age += dt;
+    e.stateT += dt;
+    e.phase += dt;
+    e.revealT = Math.max(0, e.revealT - dt);
+    e.wetT = Math.max(0, e.wetT - dt);
+    e.memoryT = Math.max(0, e.memoryT - dt);
+    e.heardStrength = Math.max(0, e.heardStrength - dt * 0.24);
+
+    // Spray applies momentum instead of teleporting the threat. The player can
+    // hear and watch it wash away, and authored water volumes can stack pushes.
+    if (e.washV.lengthSq() > 0.0001) {
+      e.pos.addScaledVector(e.washV, dt);
+      e.washV.multiplyScalar(Math.exp(-4.2 * dt));
+    }
+
+    let dx = player.pos.x - e.pos.x;
+    let dz = player.pos.z - e.pos.z;
+    let dist = Math.hypot(dx, dz);
+
+    switch (e.state) {
+      case 'warning':
+        // Audio owns the whole opening beat. An authored sluice/spray hook may
+        // expose it during that warning, but pursuit never begins early.
+        if (e.stateT >= DROWNED_CHOIR.warning) {
+          e.state = 'stalk';
+          e.stateT = 0;
+          e.revealT = Math.max(e.revealT, 1.35);
+          game.audio.drownedSurge({ pos: e.pos, gain: 0.58, rate: 0.82 });
+        }
+        break;
+
+      case 'stalk': {
+        // It goes to the last sound, never the live player coordinate. When the
+        // memory thins, it still finishes that dry interval at a slower creep.
+        const hx = e.heardPos.x - e.pos.x;
+        const hz = e.heardPos.z - e.pos.z;
+        const hd = Math.hypot(hx, hz);
+        if (hd > 0.12) {
+          const heard = clamp(e.heardStrength, 0, 1);
+          const speed = lerp(DROWNED_CHOIR.drySpeed, DROWNED_CHOIR.heardSpeed, heard)
+            * (e.wetT > 0 ? 0.08 : 1);
+          e.pos.x += hx / hd * speed * dt;
+          e.pos.z += hz / hd * speed * dt;
+        }
+        if (dist < DROWNED_CHOIR.attackRange && e.stateT > 0.22 && e.wetT <= 0) {
+          e.state = 'pressure';
+          e.stateT = 0;
+          e.strikePos.copy(player.pos); // commitment: this point never tracks after the warning begins
+          e.revealT = Math.max(e.revealT, DROWNED_CHOIR.attackCommit + 0.5);
+          game.audio.drownedSurge({ pos: e.pos, gain: 0.82, rate: 0.64, pressure: true });
+        }
+        break;
+      }
+
+      case 'pressure': {
+        if (e.stateT >= DROWNED_CHOIR.attackCommit) {
+          const miss = Math.hypot(player.pos.x - e.strikePos.x, player.pos.z - e.strikePos.z)
+            > DROWNED_CHOIR.attackRadius;
+          if (!miss && !e.warned) {
+            // The first caught wave teaches the consequence without killing.
+            // There is no HUD mark: choking audio, full-value camera fear, and
+            // the Choir physically recoiling carry the state.
+            e.warned = true;
+            e.state = 'recover';
+            e.stateT = 0;
+            const ax = e.pos.x - player.pos.x, az = e.pos.z - player.pos.z;
+            const al = Math.hypot(ax, az) || 1;
+            e.washV.x += ax / al * 3.8;
+            e.washV.z += az / al * 3.8;
+            game.fx.fear = 1;
+            game.shake(0.42);
+            game.audio.drownedImpact({
+              pos: new THREE.Vector3(player.pos.x, player.pos.y + 1.25, player.pos.z),
+              gain: 0.86,
+            });
+          } else if (!miss && !game.dead) {
+            e.state = 'spent';
+            game.director.death(e);
+          } else {
+            e.state = 'recover';
+            e.stateT = 0;
+          }
+        }
+        break;
+      }
+
+      case 'recover':
+        if (e.stateT >= DROWNED_CHOIR.recovery) {
+          e.state = 'stalk';
+          e.stateT = 0;
+        }
+        break;
+
+      case 'recoil':
+        if (e.stateT >= 0.9) {
+          e.state = 'stalk';
+          e.stateT = 0;
+        }
+        break;
+
+      case 'spent':
+        break;
+    }
+
+    e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1.5);
+    e.mesh.position.copy(e.pos);
+    dx = player.pos.x - e.pos.x;
+    dz = player.pos.z - e.pos.z;
+    dist = Math.hypot(dx, dz);
+    if (dist > 0.05) e.mesh.rotation.y = Math.atan2(dx, dz);
+
+    // Visibility is a pressure event, not a hue swap. Dry stalking is almost a
+    // hole in the cave; spray and attack reveal cheek planes, socket depth,
+    // broken ribs, displaced water and the one continuous burial silhouette.
+    const pressure = e.state === 'pressure'
+      ? smoothstep(0, 1, clamp(e.stateT / DROWNED_CHOIR.attackCommit, 0, 1))
+      : 0;
+    const recoil = e.state === 'recoil' ? 1 - clamp(e.stateT / 0.9, 0, 1) : 0;
+    const reveal = clamp(Math.max(
+      e.revealT / 1.35,
+      e.wetT / 1.15,
+      pressure,
+      recoil,
+    ), 0, 1);
+    const U = e.mesh.userData;
+    U.voidMat.opacity = 0.02 + reveal * 0.8;
+    U.skinMat.opacity = 0.001 + reveal * 0.43;
+    U.wetMat.opacity = 0.001 + reveal * 0.25;
+    U.rimMat.opacity = 0.001 + reveal * 0.2;
+    U.mouthVoidMat.opacity = 0.001 + reveal * 0.92;
+    U.dropMat.uniforms.uOpacity.value = 0.001 + reveal * 0.72;
+    U.dropMat.uniforms.uSize.value = 0.032 + reveal * 0.052;
+    U.light.intensity = reveal * (2.5 + pressure * 5.6);
+    U.light.distance = 4.2 + reveal * 2.3;
+    U.droplets.rotation.y = e.phase * (0.22 + pressure * 0.9);
+    U.droplets.position.y = Math.sin(e.phase * 2.7) * 0.055;
+
+    // The three retained curtain layers breathe as one soaked mass. Their tiny
+    // relative slips expose folds, never three stacked geometric bodies.
+    const bodySway = Math.sin(e.phase * 1.37) * (0.018 + pressure * 0.035);
+    for (let i = 0; i < U.curtains.length; i++) {
+      const shell = U.curtains[i];
+      const shellBase = shell.userData.basePos;
+      shell.position.set(
+        shellBase.x + bodySway * (0.7 + i * 0.16) + pressure * (i === 2 ? 0.025 : -0.012),
+        shellBase.y + pressure * (i === 1 ? 0.045 : -0.018) - recoil * (0.05 + i * 0.015),
+        shellBase.z + pressure * (i === 2 ? 0.055 : i === 1 ? 0.025 : -0.015),
+      );
+      shell.rotation.z = shell.userData.baseRot + bodySway * (1.1 + i * 0.2)
+        + pressure * (i === 2 ? -0.045 : 0.02) - recoil * (i === 2 ? 0.08 : 0.025);
+      const width = 1 + pressure * (i === 0 ? 0.11 : i === 1 ? 0.08 : 0.14) - recoil * 0.09;
+      const height = 1 + pressure * (i === 1 ? 0.09 : 0.045) - recoil * 0.07;
+      shell.scale.set(
+        shell.userData.baseScale.x * width,
+        shell.userData.baseScale.y * height,
+        shell.userData.baseScale.z,
+      );
+    }
+    const outline = U.outlines[0];
+    const outlineBase = outline.userData.basePos;
+    outline.position.set(
+      outlineBase.x + bodySway * 0.62,
+      outlineBase.y + pressure * 0.015 - recoil * 0.055,
+      outlineBase.z - pressure * 0.01,
+    );
+    outline.rotation.z = outline.userData.baseRot + bodySway * 0.85 - recoil * 0.025;
+    outline.scale.set(
+      outline.userData.baseScale.x * (1 + pressure * 0.1 - recoil * 0.08),
+      outline.userData.baseScale.y * (1 + pressure * 0.055 - recoil * 0.07),
+      outline.userData.baseScale.z,
+    );
+    U.mass.position.set(
+      U.mass.userData.basePos.x + bodySway * 0.45,
+      U.mass.userData.basePos.y + pressure * 0.035 - recoil * 0.08,
+      U.mass.userData.basePos.z + pressure * 0.035,
+    );
+    U.mass.scale.set(
+      U.mass.userData.baseScale.x * (1 + pressure * 0.09 - recoil * 0.1),
+      U.mass.userData.baseScale.y * (1 + pressure * 0.06 - recoil * 0.08),
+      U.mass.userData.baseScale.z,
+    );
+
+    // Each face owns a different depth, angle, damaged plane and thrust path.
+    // Mouths do not sing as oval meters; jaws slacken only as the fixed-point
+    // pressure commits, while spray pushes all three back into the veil.
+    for (let i = 0; i < U.mouths.length; i++) {
+      const face = U.mouths[i];
+      const faceBase = face.userData.base;
+      const faceScale = face.userData.baseScale;
+      const faceRot = face.userData.baseRotation;
+      const motion = face.userData.motion;
+      const drownedTwitch = Math.sin(e.phase * (1.15 + i * 0.08) + motion.phase);
+      face.position.set(
+        faceBase.x + motion.thrust[0] * pressure + motion.recoil[0] * recoil + drownedTwitch * 0.008,
+        faceBase.y + motion.thrust[1] * pressure + motion.recoil[1] * recoil + drownedTwitch * 0.006,
+        faceBase.z + motion.thrust[2] * pressure + motion.recoil[2] * recoil,
+      );
+      face.scale.set(
+        faceScale.x * (1 + pressure * (i === 1 ? 0.08 : 0.045) - recoil * 0.045),
+        faceScale.y * (1 + pressure * (i === 1 ? 0.11 : 0.065) - recoil * 0.065),
+        1,
+      );
+      face.rotation.set(
+        faceRot.x + drownedTwitch * 0.012 - pressure * (i === 1 ? 0.05 : 0.025),
+        faceRot.y + pressure * [0.08, -0.035, -0.1][i] - recoil * [0.04, -0.02, -0.05][i],
+        faceRot.z + drownedTwitch * 0.018 + pressure * [-0.045, 0.025, 0.06][i],
+      );
+
+      const anatomy = U.jaws[i];
+      const gap = pressure * [0.075, 0.145, 0.095][i]
+        + Math.max(0, drownedTwitch) ** 8 * 0.008;
+      anatomy.jaw.position.set(
+        anatomy.jaw.userData.basePos.x + pressure * [0.012, -0.015, 0.02][i],
+        anatomy.jaw.userData.basePos.y - gap,
+        anatomy.jaw.userData.basePos.z + pressure * 0.025,
+      );
+      anatomy.jaw.rotation.z = anatomy.jaw.userData.baseRot
+        + pressure * [0.11, -0.16, 0.2][i] - recoil * 0.08;
+      anatomy.jaw.rotation.x = pressure * (0.12 + i * 0.045);
+      anatomy.hole.scale.set(
+        anatomy.hole.userData.baseScale.x * (1 + pressure * 0.08),
+        anatomy.hole.userData.baseScale.y * (1 + pressure * [0.45, 0.7, 0.52][i]),
+        1,
+      );
+      anatomy.headMass.scale.set(
+        anatomy.headMass.userData.baseScale.x * (1 + pressure * 0.025),
+        anatomy.headMass.userData.baseScale.y * (1 + pressure * 0.045 - recoil * 0.03),
+        anatomy.headMass.userData.baseScale.z,
+      );
+    }
+
+    // One broken cage expands with the fused lung and folds under spray.
+    const rib = U.ribCage;
+    rib.scale.set(
+      rib.userData.baseScale.x * (1 + pressure * 0.2 - recoil * 0.17),
+      rib.userData.baseScale.y * (1 + pressure * 0.1 - recoil * 0.08),
+      1,
+    );
+    rib.rotation.z = rib.userData.baseRot + pressure * 0.035 - recoil * 0.1;
+    e.mesh.scale.setScalar(1 + pressure * 0.2 - recoil * 0.08);
+
+    const level = clamp(1 - (dist - 1) / 19, 0, 1)
+      * (e.state === 'warning' ? 0.36 : e.state === 'spent' ? 0.15 : 0.82 + pressure * 0.18);
+    const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
+    const el = toE.length() || 1;
+    toE.divideScalar(el);
+    const rear = clamp(-camFwd.dot(toE), 0, 1) * clamp(1 - dist / 10, 0, 1);
+    if (e.loop) {
+      e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
+      e.loop.setState(level, reveal, pressure, rear);
+    }
+    return { level, dir: toE.clone() };
+  }
+
   _pop(e, dirX = 0, dirZ = 0, speed = 20) {
     const game = this.game;
     this._releaseGraveClaim(e, 0.72);
@@ -736,14 +1748,10 @@ export class Enemies {
     e.deadV = new THREE.Vector3(dirX, 0, dirZ).multiplyScalar(5.5);
     e.deadV.y = 4.5;
     if (e.loop) { e.loop.stop(); e.loop = null; }
-    // the house keeps the score: a dark stain where it burst, forever
-    const stain = new THREE.Mesh(STAIN_GEO, STAIN_MAT);
-    stain.rotation.x = -Math.PI / 2;
-    stain.position.set(e.pos.x,
-      game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1) + 0.015, e.pos.z);
-    stain.rotation.z = Math.random() * Math.PI;
-    stain.scale.set(0.8 + Math.random() * 0.5, 1 + Math.random() * 0.6, 1);
-    game.scene.add(stain);
+    // The house keeps score, but a long night cannot grow the scene forever.
+    // The bounded ring preserves every normal grave fight and recycles only the
+    // oldest history after exceptional repeat deaths or long debug sessions.
+    this._placeStain(e.pos);
     game.flag('firstPop');
     // popping is loud. everything nearby turns toward the sound.
     this.wakeAll(e.pos.x, e.pos.z, 30);
@@ -787,6 +1795,138 @@ export class Enemies {
     } else {
       e._doorT = 0;
     }
+  }
+
+  _poseWalker(e, dt, claimed) {
+    const W = e.mesh.userData.walker;
+    if (!W) return;
+    const striking = e.state === 'strike'
+      ? smoothstep(0, 1, clamp((e.strikeT || 0) / (e.spec.strike || 0.66), 0, 1))
+      : 0;
+    const winding = e.state === 'wind'
+      ? clamp((e.windT || 0) / Math.max(0.001, e.spec.windup), 0, 1)
+      : 0;
+    const stunned = e.state === 'stunned' ? 1 : 0;
+    const awake = e.state !== 'dormant' && e.state !== 'dying' ? 1 : 0;
+    const attacker = claimed && awake ? 1 : 0;
+    const twitch = Math.sin(e.phase * 1.73 + e.serial * 0.91);
+    const chatter = awake * Math.max(0, Math.sin(e.phase * 3.1 + e.serial)) ** 5;
+
+    // An assigned attacker uncocks its mask and broadens the corpse's two
+    // uneven shoulders. The rest keep the sideways death-mask angle, so the
+    // token can be read through posture and tiny socket glints, never color.
+    // The rest keep the sideways corpse angle, so the token can be read through
+    // posture and brightness without an outline, marker, or color swap.
+    W.head.position.set(
+      W.headBase.x + twitch * 0.012,
+      W.headBase.y - stunned * 0.16 + striking * 0.035,
+      W.headBase.z + winding * 0.05 + striking * 0.15,
+    );
+    W.head.rotation.set(
+      W.headRot.x - winding * 0.08 - striking * 0.22 + stunned * 0.24,
+      twitch * (0.035 + attacker * 0.025),
+      W.headRot.z * (1 - attacker * 0.78) + twitch * 0.025 + stunned * 0.22,
+    );
+    W.mouth.scale.set(
+      W.mouth.userData.baseScale.x * (1 + striking * 0.24),
+      W.mouth.userData.baseScale.y * (1 + chatter * 0.25 + winding * 0.35 + striking * 1.85),
+      W.mouth.userData.baseScale.z,
+    );
+    W.jaw.position.set(
+      W.jaw.userData.basePosition.x + striking * 0.018,
+      W.jaw.userData.basePosition.y - winding * 0.012 - striking * 0.075,
+      W.jaw.userData.basePosition.z + striking * 0.025,
+    );
+    W.jaw.rotation.set(
+      W.jaw.userData.baseRotation.x + striking * 0.12,
+      W.jaw.userData.baseRotation.y,
+      W.jaw.userData.baseRotation.z + winding * 0.08 + striking * 0.2,
+    );
+    for (const eye of W.eyes) {
+      eye.scale.set(
+        eye.userData.baseScale.x * (1 + attacker * 0.68 + striking * 0.3),
+        eye.userData.baseScale.y * (1 + attacker * 0.22 + striking * 0.48),
+        eye.userData.baseScale.z,
+      );
+    }
+    for (const [index, shoulder] of W.shoulders.entries()) {
+      shoulder.scale.set(
+        shoulder.userData.baseScale.x * (1 + attacker * (index ? 0.12 : 0.18) + striking * 0.16),
+        shoulder.userData.baseScale.y * (1 + attacker * 0.06),
+        shoulder.userData.baseScale.z,
+      );
+    }
+    // Pressure bodies keep their forearms below and outside the pall. Only the
+    // committed strike snaps them fully at the camera; the hooks are therefore
+    // readable before impact instead of materializing on the lethal frame.
+    if (e.state === 'chase') {
+      const arms = e.mesh.userData.limbs.arms;
+      arms[0].rotation.x = -0.58 + Math.sin(e.phase * 2) * 0.08;
+      arms[1].rotation.x = -0.68 - Math.sin(e.phase * 2) * 0.08;
+    } else if (e.state === 'wind') {
+      const arms = e.mesh.userData.limbs.arms;
+      arms[0].rotation.x = -0.32 - winding * 0.22;
+      arms[1].rotation.x = -0.42 - winding * 0.2;
+    }
+    W.shroud.rotation.z = twitch * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
+    W.shroud.rotation.x = -0.08 - striking * 0.1;
+  }
+
+  _graveMausoleumAt(pos) {
+    // outside.js exposes the authored landmark groups. Identify the two hollow
+    // groups structurally instead of duplicating their coordinates here; pits
+    // are meshes and therefore cannot be mistaken for rooms.
+    for (const landmark of this.game.graveLandmarks || []) {
+      if (!landmark.isGroup || landmark.children.length < 6) continue;
+      if (Math.abs(pos.x - landmark.position.x) < 1.38
+        && pos.z > landmark.position.z - 1.34
+        && pos.z < landmark.position.z + 1.38) return landmark;
+    }
+    return null;
+  }
+
+  _graveEscapeTarget(e, playerPos) {
+    const inside = this._graveMausoleumAt(e.pos);
+    const playerInside = this._graveMausoleumAt(playerPos);
+    if (inside && playerInside === inside) {
+      e._graveEscape = null;
+      return null;
+    }
+    if (inside && (!e._graveEscape || e._graveEscape.room !== inside)) {
+      const dx = playerPos.x - inside.position.x;
+      e._graveEscape = {
+        room: inside,
+        phase: 'door',
+        side: Math.abs(dx) > 0.3 ? Math.sign(dx) : (e.orbitSign || 1),
+      };
+      e._via = null;
+    }
+    const route = e._graveEscape;
+    if (!route) return null;
+    const center = route.room.position;
+    let target;
+    if (route.phase === 'door') {
+      target = { x: center.x, z: center.z - 2.22 };
+      if (Math.hypot(e.pos.x - target.x, e.pos.z - target.z) < 0.48) route.phase = 'front';
+    }
+    if (route.phase === 'front') {
+      target = { x: center.x + route.side * 2.35, z: center.z - 2.24 };
+      if (Math.hypot(e.pos.x - target.x, e.pos.z - target.z) < 0.55) {
+        if (playerPos.z > center.z + 1.35) route.phase = 'rear';
+        else {
+          e._graveEscape = null;
+          return null;
+        }
+      }
+    }
+    if (route.phase === 'rear') {
+      target = { x: center.x + route.side * 2.38, z: center.z + 2.25 };
+      if (Math.hypot(e.pos.x - target.x, e.pos.z - target.z) < 0.58) {
+        e._graveEscape = null;
+        return null;
+      }
+    }
+    return target;
   }
 
   _moveWithPush(e, dx, dz) {

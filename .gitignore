@@ -4,3 +4,4 @@ _shots/
 node_modules/
 tests/probe.mjs
 release/
+scratch-*/

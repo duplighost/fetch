@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +21,20 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outputArg = process.argv.find((arg) => arg.startsWith('--output='))?.slice(9);
 const outputPath = resolve(outputArg || join(projectRoot, 'release', 'fetch-netlify.zip'));
 const shippingRoots = ['index.html', 'src', 'vendor'];
+
+if (extname(outputPath).toLowerCase() !== '.zip') {
+  throw new Error(`Release output must be a .zip file: ${outputPath}`);
+}
+for (const entry of shippingRoots) {
+  const shippingPath = resolve(projectRoot, entry);
+  const shippingPrefix = shippingPath.endsWith(sep) ? shippingPath : shippingPath + sep;
+  const comparableOutput = process.platform === 'win32' ? outputPath.toLowerCase() : outputPath;
+  const comparablePath = process.platform === 'win32' ? shippingPath.toLowerCase() : shippingPath;
+  const comparablePrefix = process.platform === 'win32' ? shippingPrefix.toLowerCase() : shippingPrefix;
+  if (comparableOutput === comparablePath || comparableOutput.startsWith(comparablePrefix)) {
+    throw new Error(`Refusing release output inside shipping source: ${outputPath}`);
+  }
+}
 
 const crcTable = new Uint32Array(256);
 for (let n = 0; n < 256; n += 1) {
@@ -53,12 +67,10 @@ function zipName(path) {
   return name;
 }
 
-function dosStamp(date) {
-  const year = Math.max(1980, Math.min(2107, date.getFullYear()));
-  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
-  const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
-  return { time, day };
-}
+// ZIP metadata must not make an otherwise identical release hash differently
+// on a copied checkout. DOS epoch (1980-01-01 00:00:00) is universally valid
+// and lets content alone determine the archive bytes.
+const REPRO_STAMP = Object.freeze({ time: 0, day: 33 });
 
 const sourceFiles = shippingRoots
   .flatMap((entry) => collect(join(projectRoot, entry)))
@@ -85,7 +97,7 @@ for (const path of sourceFiles) {
   const data = readFileSync(path);
   const compressed = deflateRawSync(data, { level: 9 });
   const checksum = crc32(data);
-  const stamp = dosStamp(lstatSync(path).mtime);
+  const stamp = REPRO_STAMP;
   const flags = 0x0800; // UTF-8 names.
   const method = 8; // DEFLATE.
 
