@@ -442,6 +442,8 @@ class Game {
     this.player.yaw = s.yaw || 0;
     this.player.pitch = 0;
     this.player.fallV = 0;
+    this.player.abortSwing();     // never wake up still holding a rope
+    this.player.vel.set(0, 0, 0);
     this.player._sync(0);
     if (this.forest && act !== 'forest' && act !== 'clearing' && act !== 'cave') {
       this.forest._lastIdx = 0;
@@ -466,6 +468,9 @@ class Game {
     // input → skull verbs. Alex's grammar: press throws, hold keeps it out,
     // release brings it home. The button is the tether.
     if (frame.throwPressed && this.skull.mode === 'held') this.skull.tryThrow(ctx);
+    // release ends an outbound throw AND lets go of a rope — one grammar, and
+    // the anchored case is handled inside _updateAnchored so the swing and the
+    // skull let go on the same frame
     if (frame.throwReleased && this.skull.mode === 'outbound') this.skull.beginReturn('snap');
     if (frame.callTap) {
       if (this.skull.mode === 'gone') this.director.onVoidCall();

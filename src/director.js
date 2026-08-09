@@ -419,6 +419,20 @@ export class Director {
     if (g.act !== 'forest') return;
     const f = g.forest;
     if (!f) return;
+
+    // The far-side checkpoint belongs to CROSSING the ravine, not to the launch
+    // that got you there. It used to fire from inside the rope's arrival
+    // callback, which tied an irreversible progress guarantee to one particular
+    // implementation of one particular jump. Now it fires when the player is
+    // actually past the gash, however they managed it.
+    if (!this._ravineCrossed && g.flags.has('ropeLatched')) {
+      const pr = f.project(g.player.pos.x, g.player.pos.z);
+      if (pr && pr.s >= f.ravineS() + 1 && g.player.grounded) {
+        this._ravineCrossed = true;
+        g.checkpoint('forest');
+      }
+    }
+
     if (g.flags.has('treeCleared') && !this._chaser1) {
       this._chaser1 = true;
       this.after(6, () => {

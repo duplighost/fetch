@@ -379,7 +379,7 @@ try {
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;
-    g.player.reel = null;
+    g.player.abortSwing && g.player.abortSwing();
     g.player._sync(0);
     g.enemies.clear();
 
@@ -389,9 +389,12 @@ try {
       F.setSkull(rope.pos.x, rope.pos.y, rope.pos.z, 0, 0, 0, 'outbound');
       directive = rope.onHit.call(rope, g.skull);
       let elapsed = 0;
-      while (g.player.reel && elapsed < 4) {
-        F.stepWith(0.05, {}, false);
+      // The rope is a verb now, not a scripted launch: it lives exactly as long
+      // as the button is held. Hold it, then let go and let the arc land.
+      while (elapsed < 4) {
+        F.stepWith(0.05, { throwHeld: elapsed < 2.0 }, false);
         elapsed += 0.05;
+        if (elapsed > 2.4 && g.player.grounded && !g.player.swing) break;
       }
     }
 
@@ -405,7 +408,7 @@ try {
         && directive === 'anchor'
         && rope.enabled === false
         && g.flags.has('ropeLatched')
-        && !g.player.reel
+        && !g.player.swing
         && checkpoint?.act === 'forest'
         && checkpointProjection?.s >= ravineS + 1,
       {
@@ -413,7 +416,7 @@ try {
         directive,
         ropeEnabled: rope?.enabled ?? null,
         ropeLatched: g.flags.has('ropeLatched'),
-        reelActive: !!g.player.reel,
+        swingActive: !!g.player.swing,
         checkpoint,
         checkpointS: checkpointProjection?.s ?? null,
         ravineS,
@@ -437,7 +440,7 @@ try {
       dead: g.dead,
       frozen: g.player.frozen,
       movementLocked: g.player.movementLocked,
-      reel: !!g.player.reel,
+      swing: !!g.player.swing,
     };
     const restoredProjection = forest.project(restored.x, restored.z);
     const restoreDistance = checkpoint
@@ -451,7 +454,7 @@ try {
         && restored.dead === false
         && restored.frozen === false
         && restored.movementLocked === false
-        && restored.reel === false
+        && restored.swing === false
         && rope?.enabled === false
         && g.flags.has('ropeLatched')
         && restoredProjection?.s >= ravineS + 1,

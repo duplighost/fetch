@@ -739,14 +739,16 @@ export class Forest {
       id: 'ravineRope', pos: this.ropeAnchor, radius: 1.1,
       onHit(skull) {
         this.enabled = false;   // one launch; a used rope must never re-anchor a combat throw
-        skull.anchorAt(new THREE.Vector3().copy(rope.position).setY(1.5).add(new THREE.Vector3(0.9, 0, 0)));
+        // The pivot sits ABOVE THE FAR-SIDE LANDING, not on the rope itself.
+        // Anchoring on the rope pulls you into the lip of the gash; anchoring
+        // over the ground beyond it means holding carries you up and across,
+        // and letting go drops you where the old scripted launch used to put
+        // you — same destination, except now you fly there under your own arc.
+        const pivot = new THREE.Vector3(landing.x, 3.4, landing.z);
+        skull.anchorAt(pivot, { swing: true, maxHold: 7 });
         game.flag('ropeLatched');
         audio.creak({ pos: rope.position, gain: 0.6 });
-        game.player.launchTo(new THREE.Vector3(landing.x, 1.2, landing.z), () => {
-          skull.anchor = null;
-          skull.beginReturn('snap');
-          game.checkpoint('forest');
-        });
+        game.player.beginSwing(pivot);
         return 'anchor';
       },
     });

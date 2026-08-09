@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+
+const _anchorLook = new THREE.Vector3();
 import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
 import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
 import { buildSkullMesh as buildVariantC } from './skull-variant-c.js';
@@ -829,7 +831,19 @@ export class Skull {
     if (!a) { this.beginReturn('auto'); return; }
     a.t += dt;
     this.root.position.copy(this.pos);
-    this.root.rotation.y += dt * 0.4;
+    if (a.swing) {
+      // A swing anchor lives exactly as long as you hold the button — the same
+      // grammar as every other throw. It also keeps facing you while it holds,
+      // because it is still your light and you are still going to need it.
+      this.root.lookAt(this.camera.getWorldPosition(_anchorLook));
+      if (!ctx.throwHeld && a.t > 0.06) {
+        this.anchor = null;
+        this.beginReturn('snap');
+        return;
+      }
+    } else {
+      this.root.rotation.y += dt * 0.4;
+    }
     // failsafe: never hang forever
     if (a.t > (a.maxHold || 3.5)) {
       this.anchor = null;
