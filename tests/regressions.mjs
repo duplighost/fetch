@@ -235,6 +235,13 @@ try {
 
     F.teleport('clearing');
     F.stepWith(1 / 120, {}, false);
+    const basin = g.clearingBasin;
+    const poolRadius = g.clearingPool?.userData.radius;
+    check(
+      'visible plunge-pool water covers the full mathematical basin',
+      !!basin && Number.isFinite(poolRadius) && poolRadius >= basin.outerR + 0.2,
+      { poolRadius: poolRadius ?? null, basinOuterRadius: basin?.outerR ?? null },
+    );
     const caveCenter = {
       x: (g.caveZone.min.x + g.caveZone.max.x) / 2,
       y: (g.caveZone.min.y + g.caveZone.max.y) / 2,
@@ -357,6 +364,137 @@ try {
     return { checks, diagnostics: { inputAccessible: !!g.input } };
   });
 
+  await scenario('graveyard-attack-tokens', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    g.player.pos.set(2, g.world.groundHeightAt(2, 21, 2), 21);
+    g.player.vel.set(0, 0, 0);
+    g.player._sync(0);
+    F.stepWith(0.1, {}, false);
+    g.enemies.clear((e) => e.graveArena);
+    g.enemies._graveClaimRecovery = 0;
+
+    const first = g.enemies.spawn('walker', 2.72, 21, 'chase');
+    const second = g.enemies.spawn('walker', 6.5, 21, 'chase');
+    first.graveArena = true;
+    second.graveArena = true;
+    F.stepWith(1 / 120, {}, false);
+
+    const claimedNow = () => g.enemies.list.filter((e) => e.graveClaimed);
+    check(
+      'early wave owns exactly one persistent claimant',
+      claimedNow().length === 1 && claimedNow()[0] === first,
+      claimedNow().map((e) => ({ pressure: !!e.gravePressure, state: e.state })),
+    );
+    check(
+      'Standing pressure figures never steal a wave token',
+      !g.enemies.list.some((e) => e.gravePressure && e.graveClaimed),
+    );
+
+    F.stepWith(0.08, {}, false);
+    second.pos.set(2.12, second.pos.y, 21);
+    F.stepWith(0.08, {}, false);
+    check(
+      'a committed strike keeps its token when another body becomes nearer',
+      first.state === 'strike' && first.graveClaimed && !second.graveClaimed
+        && claimedNow().length === 1,
+      {
+        first: { state: first.state, claimed: !!first.graveClaimed },
+        second: { state: second.state, claimed: !!second.graveClaimed },
+        count: claimedNow().length,
+      },
+    );
+
+    second.pos.set(8, second.pos.y, 21);
+    g.enemies.resonancePulse(first.pos.clone(), 0.65, 1.5);
+    F.stepWith(0.2, {}, false);
+    check(
+      'quiet stun releases the token without immediate reassignment',
+      first.state === 'stunned' && claimedNow().length === 0
+        && g.enemies._graveClaimRecovery > 0,
+      { state: first.state, claimed: claimedNow().length, recovery: g.enemies._graveClaimRecovery },
+    );
+
+    F.stepWith(0.6, {}, false);
+    check(
+      'a new attacker claims only after the recovery breath',
+      claimedNow().length === 1 && !claimedNow()[0].gravePressure,
+      claimedNow().map((e) => ({ state: e.state, pressure: !!e.gravePressure })),
+    );
+
+    return {
+      checks,
+      diagnostics: {
+        recovery: g.enemies._graveClaimRecovery,
+        claimed: claimedNow().map((e) => ({ state: e.state, x: e.pos.x, z: e.pos.z })),
+      },
+    };
+  });
+
+  await scenario('forest-mouth-boundary', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('forest');
+    F.stepWith(1 / 120, {}, false);
+    const forest = g.forest;
+    const last = forest.samples[forest.length - 1];
+    const half = forest.halfW[forest.length - 1];
+
+    // A point beside the final sample used to inherit s=last and bypass every
+    // clamp, leaving the clearing end of the forest open to empty space.
+    forest._lastIdx = forest.length - 1;
+    const side = g.player.pos.clone().set(
+      last.x + -last.tz * (half + 15),
+      0,
+      last.z + last.tx * (half + 15),
+    );
+    forest.clampPlayer(side, 1 / 120);
+    const sideProjection = forest.project(side.x, side.z);
+    check(
+      'final forest side remains authoritative even after a very large lateral breach',
+      !!sideProjection && Math.abs(sideProjection.lat) <= half - 0.15,
+      { beforeLat: half + 15, afterLat: sideProjection?.lat ?? null, half },
+    );
+
+    // The authored mouth itself must still release forward into the clearing.
+    const exit = g.player.pos.clone().set(
+      last.x + last.tx * 2.5,
+      0,
+      last.z + last.tz * 2.5,
+    );
+    const before = exit.clone();
+    forest.clampPlayer(exit, 1 / 120);
+    check(
+      'the narrow forward mouth still releases into the clearing',
+      exit.distanceTo(before) < 0.0001,
+      { moved: exit.distanceTo(before), exit: [exit.x, exit.z] },
+    );
+
+    F.teleport('mirror');
+    const mirrorBefore = g.player.pos.clone();
+    forest.clampPlayer(g.player.pos, 1 / 120);
+    check(
+      'forest post-clamp never rewrites the distant mirror room',
+      g.act === 'mirror' && g.player.pos.distanceTo(mirrorBefore) < 0.0001,
+      {
+        act: g.act,
+        before: [mirrorBefore.x, mirrorBefore.y, mirrorBefore.z],
+        after: [g.player.pos.x, g.player.pos.y, g.player.pos.z],
+      },
+    );
+
+    return { checks, diagnostics: { sideLat: sideProjection?.lat ?? null, half } };
+  });
+
   await scenario('forest-checkpoint', () => {
     const F = window.__FETCH;
     const g = window.__game;
@@ -386,6 +524,24 @@ try {
     const rope = g.world.fetchTargets.find((target) => target.id === 'ravineRope');
     let directive = null;
     if (rope) {
+      // A short, failed grab must leave the anchor available. A one-shot rope
+      // made an ordinary early release an unrecoverable traversal failure.
+      F.setSkull(rope.pos.x, rope.pos.y, rope.pos.z, 0, 0, 0, 'outbound');
+      const firstDirective = rope.onHit.call(rope, g.skull);
+      F.stepWith(0.12, { throwHeld: false }, false);
+      check(
+        'failed rope attempt stays retryable until the crossing is real',
+        firstDirective === 'anchor' && rope.enabled === true && !g.player.swing,
+        { firstDirective, ropeEnabled: rope.enabled, swingActive: !!g.player.swing },
+      );
+      g.player.abortSwing && g.player.abortSwing();
+      g.skull.holdNow();
+      g.player.pos.set(launchFrom.x, launchY, launchFrom.z);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player.grounded = true;
+      g.player._sync(0);
+
       F.setSkull(rope.pos.x, rope.pos.y, rope.pos.z, 0, 0, 0, 'outbound');
       directive = rope.onHit.call(rope, g.skull);
       let elapsed = 0;
@@ -403,7 +559,7 @@ try {
       ? forest.project(checkpoint.x, checkpoint.z)
       : null;
     check(
-      'one-use rope launch creates a spatial checkpoint on the far side',
+      'successful rope crossing spends the anchor and creates a far-side checkpoint',
       !!rope
         && directive === 'anchor'
         && rope.enabled === false
@@ -567,6 +723,118 @@ try {
         skull: g.skull.getState(),
       },
     };
+  });
+
+  await scenario('finale-contact', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    g.skull.vanish();
+    const audioCalls = [];
+    for (const name of ['skullMoanStart', 'skullMoanUpdate', 'skullMoanStop', 'catchThud', 'gasp']) {
+      const original = g.audio[name].bind(g.audio);
+      g.audio[name] = (...args) => {
+        if (!audioCalls.includes(name)) audioCalls.push(name);
+        return original(...args);
+      };
+    }
+    F.teleport('mirror');
+    F.stepWith(0.2, {}, false);
+    const mirrorSpawn = g.player.pos.clone();
+    const spawnCamera = g.camera.position.clone();
+
+    // The absent skull stays absent. Old verbs remain available to press but
+    // do not resurrect it or skip the physical struggle.
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true, callTap: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true }, false);
+    check(
+      'mirror-room throw and call inputs stay silent without resurrecting the skull',
+      g.skull.mode === 'gone' && g.finale.phase === 'still' && !g.flags.has('ended'),
+      { skullMode: g.skull.mode, phase: g.finale.phase, ended: g.flags.has('ended') },
+    );
+
+    const beforeMove = g.player.pos.clone();
+    const beforeYaw = g.player.yaw;
+    F.stepWith(0.35, { moveZ: 1, run: true }, false);
+    F.stepWith(1 / 120, { lookX: 12 }, false);
+    check(
+      'player retains real movement and look control before the walls arrive',
+      g.player.pos.distanceTo(beforeMove) > 0.1
+        && Math.abs(g.player.yaw - beforeYaw) > 0.001
+        && !g.player.frozen,
+      {
+        moved: g.player.pos.distanceTo(beforeMove),
+        yawDelta: g.player.yaw - beforeYaw,
+        frozen: g.player.frozen,
+      },
+    );
+
+    let previousHalf = g.finale.half;
+    let monotonic = true;
+    let guard = 0;
+    while (g.finale.phase !== 'contact' && guard < 300) {
+      F.stepWith(0.15, {}, false);
+      if (g.finale.half > previousHalf + 1e-7) monotonic = false;
+      previousHalf = g.finale.half;
+      guard++;
+    }
+    F.stepWith(1.05, {}, false);
+    const jaw = g.finale.figure?.userData?.exactJaw;
+    const contactYaw = g.player.yaw;
+    F.stepWith(1 / 120, { lookX: -9 }, false);
+    check(
+      'closing is monotonic and reaches a visible, controllable contact phase',
+      monotonic
+        && g.finale.phase === 'contact'
+        && g.finale.half <= 0.371
+        && !g.player.frozen
+        && Math.abs(g.player.yaw - contactYaw) > 0.001
+        && jaw?.rotation.x > 0.3,
+      {
+        monotonic,
+        phase: g.finale.phase,
+        half: g.finale.half,
+        frozen: g.player.frozen,
+        jaw: jaw?.rotation.x ?? null,
+        lookDelta: g.player.yaw - contactYaw,
+        guard,
+      },
+    );
+
+    F.stepWith(3.6, {}, false);
+    g.render();
+    const expectedAudio = ['skullMoanStart', 'skullMoanUpdate', 'skullMoanStop', 'catchThud', 'gasp'];
+    check(
+      'impossible recall, hard black, catch, and localized human gasp occur in order',
+      g.finale.phase === 'end'
+        && g.flags.has('ended')
+        && g.player.frozen
+        && expectedAudio.every((name, i) => audioCalls.indexOf(name) === i)
+        && g.lastRender.drawCalls < 700,
+      {
+        phase: g.finale.phase,
+        ended: g.flags.has('ended'),
+        frozen: g.player.frozen,
+        audioCalls,
+        drawCalls: g.lastRender.drawCalls,
+      },
+    );
+    check(
+      'mirror player and camera remain co-located far outside forest jurisdiction',
+      mirrorSpawn.x > 490 && mirrorSpawn.z > 490
+        && spawnCamera.distanceTo(mirrorSpawn.clone().setY(spawnCamera.y)) < 0.2
+        && g.player.pos.x > 490 && g.player.pos.z > 490,
+      {
+        mirrorSpawn: [mirrorSpawn.x, mirrorSpawn.y, mirrorSpawn.z],
+        spawnCamera: [spawnCamera.x, spawnCamera.y, spawnCamera.z],
+        finalPlayer: [g.player.pos.x, g.player.pos.y, g.player.pos.z],
+      },
+    );
+
+    return { checks, diagnostics: { audioCalls, guard, half: g.finale.half } };
   });
 } finally {
   await browser.close().catch(() => {});

@@ -70,8 +70,16 @@ export const HOUSE_TABLES = {
     ['first', 5, 9, 'S', {}],
   ],
   ramps: [
-    { x0: 6, x1: 7, z0: 2, z1: 5, axis: 'z', y0: 0, y1: 3.6, mat: 'woodDark' },   // main stairs (up toward the back)
-    { x0: 10, x1: 11, z0: 8, z1: 9, axis: 'z', y0: 0, y1: -3.0, mat: 'stone' },   // cellar stairs
+    { id: 'mainStairs', x0: 6, x1: 7, z0: 2, z1: 5, axis: 'z', y0: 0, y1: 3.6, mat: 'woodDark' },   // main stairs (up toward the back)
+    {
+      id: 'cellarStairs', x0: 10, x1: 11, z0: 8, z1: 8.25,
+      axis: 'z', y0: 0, y1: -2.0, mat: 'stone', guardMat: 'metal',
+      openUnder: true, edgeGuards: true, guardHeight: 0.78, edgeOpenAtEnd: 2,
+    },   // thin hanging flight to an honest side landing
+    {
+      id: 'cellarReturn', x0: 8, x1: 9, z0: 9, z1: 9,
+      axis: 'x', y0: -3.0, y1: -2.0, mat: 'stone',
+    },   // westbound return flight reaches basement floor instead of a side-drop exploit
   ],
   floorHoles: [
     ['first', 6, 2, 7, 5],       // main stair shaft through first floor
@@ -80,6 +88,7 @@ export const HOUSE_TABLES = {
   ceilHoles: [
     ['ground', 6, 2, 7, 5],      // stairbay looks up the shaft
     ['basement', 10, 8, 11, 9],  // bcorr east end looks up the cellar shaft
+    ['basement', 8, 9, 9, 9],    // headroom above the lower return flight
   ],
 };
 
@@ -563,19 +572,6 @@ export function buildHouse(game) {
       if (!gcells.has((cx + 1) + ',' + cz)) world.box(M.brick, -12 + (cx + 1) * 2, -0.38, -14 + cz * 2 + 1, 0.5, 0.8, 2.04);
     }
   }
-
-  // the cellar stairs are solid now (playtest 3b: you could stroll into the
-  // empty volume UNDER the descending ramp from the basement corridor, and
-  // step off its west edge through the scullery floor slab). Fill the
-  // under-stair wedge with stepped colliders (tops held under the walking
-  // surface) and seal the west face where the slab band was exposed.
-  // NOTE: the corridor UNDER the hanging flight is real walkway (the basement
-  // spawn is there) — so the fix is a boxed-in stair skirt you can't see
-  // through, plus one collider only where headroom truly runs out.
-  for (let i = 0; i < 4; i++) {
-    world.box(M.woodDark, 10, -(0.75 * i + 0.42), 2.5 + i, 4.04, 0.9, 1.04);
-  }
-  world.addCollider(8, -3.3, 4.7, 12, -2.2, 6);      // the crawl-height dead end under the low steps
 
   // roof slabs: over ground cells with no first-floor room, and over first
   const firstCells = new Set();
@@ -1122,6 +1118,8 @@ function basementAct(game) {
   const { world, scene, mats: M } = game;
   const B = HOUSE_TABLES.levels.basement.floor;
 
+  buildCrawlCounterweightSecret(game, B);
+
   // ---- the incinerator (Alex, playtest 3: "the player should try to burn
   // the skull down there but it doesn't work") -------------------------------
   // The one warm thing in the basement: a squat iron furnace against the
@@ -1381,6 +1379,276 @@ function basementAct(game) {
       game.flag('hatchOpen');
       game.exitBasement();   // fade + climb out to the graveyard
     }
+  });
+}
+
+// The crawl wing used to be twelve metres of dirt with nothing to learn in it.
+// This optional kennel is a miniature statement of FETCH's real grammar: the
+// player cannot fit through the bars, but the skull can; a tap makes the weight
+// twitch, while holding the throw keeps the skull in the cradle long enough to
+// lift and latch the shutter. No key, prompt, meter or mandatory route gate.
+function buildCrawlCounterweightSecret(game, B) {
+  const { world, scene, mats: M } = game;
+  const iron = M.metal;
+  const cageIron = new THREE.MeshStandardMaterial({
+    color: 0x242829, roughness: 0.72, metalness: 0.52,
+  });
+  const wornIron = new THREE.MeshStandardMaterial({
+    color: 0x747774, roughness: 0.48, metalness: 0.72,
+    emissive: 0x151817, emissiveIntensity: 0.65,
+  });
+  const collarMat = new THREE.MeshStandardMaterial({
+    color: 0x9a895e, roughness: 0.5, metalness: 0.72,
+  });
+  const ballMat = new THREE.MeshStandardMaterial({
+    color: 0x292b2b, roughness: 0.94, metalness: 0,
+  });
+  const coreMat = new THREE.MeshBasicMaterial({
+    color: 0xe2e7e2, transparent: true, opacity: 0.035,
+  });
+
+  const cage = new THREE.Group();
+  cage.name = 'crawl-secret-kennel';
+  cage.userData.stableId = 'crawlCounterweight';
+  scene.add(cage);
+
+  // A corner cage: the room's west/south stone walls close two sides, these
+  // bars close the east and north. The broad player colliders deliberately let
+  // the skull pass; the rendered gaps are the affordance, not fake collision.
+  const frontX = -8.25;
+  const zSouth = -9.7, zNorth = -6.25;
+  const xWest = -11.72;
+  const barY = B + 1.16;
+  const barH = 2.32;
+  const barPoints = [];
+  for (let z = zSouth + 0.18; z <= zNorth - 0.08; z += 0.34) barPoints.push([frontX, z]);
+  for (let x = xWest + 0.22; x <= frontX - 0.18; x += 0.34) barPoints.push([x, zNorth]);
+  const barGeo = new THREE.CylinderGeometry(0.027, 0.034, barH, 7);
+  const bars = new THREE.InstancedMesh(barGeo, cageIron, barPoints.length);
+  bars.name = 'crawl-secret-bars';
+  const barMatrix = new THREE.Matrix4();
+  barPoints.forEach(([x, z], i) => {
+    barMatrix.makeTranslation(x, barY, z);
+    bars.setMatrixAt(i, barMatrix);
+  });
+  bars.instanceMatrix.needsUpdate = true;
+  bars.castShadow = true;
+  bars.receiveShadow = true;
+  cage.add(bars);
+  for (const y of [B + 0.12, B + 1.14, B + 2.25]) {
+    world.box(cageIron, frontX, y, (zSouth + zNorth) / 2, 0.09, 0.09, zNorth - zSouth + 0.12);
+    world.box(cageIron, (xWest + frontX) / 2, y, zNorth, frontX - xWest + 0.12, 0.09, 0.09);
+  }
+  const frontCollider = world.addCollider(
+    frontX - 0.07, B - 0.05, zSouth,
+    frontX + 0.07, B + 2.42, zNorth,
+    { id: 'crawlCageFront', skullPass: true, secretId: 'crawlCounterweight' });
+  const sideCollider = world.addCollider(
+    xWest, B - 0.05, zNorth - 0.07,
+    frontX, B + 2.42, zNorth + 0.07,
+    { id: 'crawlCageSide', skullPass: true, secretId: 'crawlCounterweight' });
+
+  // The cable makes the causal chain readable in one glance: skull-sized
+  // cradle -> two pulleys -> shutter. Everything the player needs is a shape.
+  const cradleBase = new THREE.Vector3(-9.48, B + 1.05, -7.78);
+  const cradle = new THREE.Group();
+  cradle.name = 'crawl-counterweight-cradle';
+  cradle.position.copy(cradleBase);
+  scene.add(cradle);
+  const cradleRing = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.045, 7, 22), wornIron);
+  cradleRing.rotation.x = Math.PI / 2;
+  cradle.add(cradleRing);
+  const cradleDish = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.32, 0.07, 12), iron);
+  cradleDish.position.y = -0.09;
+  cradle.add(cradleDish);
+  for (let i = 0; i < 3; i++) {
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.032, 0.48, 6), wornIron);
+    const a = i / 3 * TAU;
+    arm.position.set(Math.cos(a) * 0.27, 0.2, Math.sin(a) * 0.27);
+    arm.rotation.z = Math.cos(a) * 0.22;
+    arm.rotation.x = Math.sin(a) * 0.22;
+    cradle.add(arm);
+  }
+  const targetGlow = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.012, 5, 20), coreMat);
+  targetGlow.rotation.x = Math.PI / 2;
+  targetGlow.position.y = 0.015;
+  cradle.add(targetGlow);
+
+  const shutterBaseY = B + 1.06;
+  const shutter = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.62, 1.76), cageIron);
+  shutter.name = 'crawl-secret-shutter';
+  shutter.position.set(-11.15, shutterBaseY, -7.78);
+  shutter.castShadow = true;
+  shutter.receiveShadow = true;
+  scene.add(shutter);
+  world.box(M.stone, -11.55, B + 0.25, -7.78, 0.55, 0.5, 2.18);
+  world.box(cageIron, -11.14, B + 1.08, -8.72, 0.16, 2.18, 0.12);
+  world.box(cageIron, -11.14, B + 1.08, -6.84, 0.16, 2.18, 0.12);
+  world.box(cageIron, -11.14, B + 2.18, -7.78, 0.16, 0.12, 2.0);
+
+  const pulleyGeo = new THREE.TorusGeometry(0.17, 0.035, 7, 18);
+  for (const x of [cradleBase.x, -11.12]) {
+    const pulley = new THREE.Mesh(pulleyGeo, wornIron);
+    pulley.position.set(x, B + 2.23, cradleBase.z);
+    scene.add(pulley);
+  }
+  const cableGeo = new THREE.CylinderGeometry(0.014, 0.014, 1, 5);
+  const cradleCable = new THREE.Mesh(cableGeo, wornIron);
+  cradleCable.name = 'crawl-counterweight-cable';
+  scene.add(cradleCable);
+  const topCable = new THREE.Mesh(cableGeo, wornIron);
+  topCable.rotation.z = Math.PI / 2;
+  topCable.scale.y = Math.abs(-11.12 - cradleBase.x);
+  topCable.position.set((cradleBase.x - 11.12) / 2, B + 2.23, cradleBase.z);
+  scene.add(topCable);
+  const shutterCable = new THREE.Mesh(cableGeo, wornIron);
+  scene.add(shutterCable);
+
+  // Behind the shutter: not a reward icon, but an authored reason to have
+  // looked. A small dog died curled around the ball it was never allowed to
+  // fetch. Bone/value contrast and silhouette carry it in Alex's color vision.
+  const remains = new THREE.Group();
+  remains.name = 'crawl-secret-remains';
+  remains.position.set(-11.38, B + 0.5, -7.74);    // west of the opaque shutter, on the hidden stone shelf
+  scene.add(remains);
+  const boneBetween = (a, b, radius = 0.025) => {
+    const d = b.clone().sub(a);
+    const bone = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 0.86, d.length(), 6), M.bone);
+    bone.position.copy(a).add(b).multiplyScalar(0.5);
+    bone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+    remains.add(bone);
+    return bone;
+  };
+  boneBetween(new THREE.Vector3(0, 0.34, -0.42), new THREE.Vector3(0, 0.42, 0.28), 0.034);
+  for (let i = 0; i < 5; i++) {
+    const rib = new THREE.Mesh(new THREE.TorusGeometry(0.18 + i * 0.012, 0.018, 5, 13, Math.PI * 1.55), M.bone);
+    rib.position.set(0, 0.34 + i * 0.018, -0.27 + i * 0.13);
+    rib.rotation.y = Math.PI / 2;
+    rib.rotation.z = -0.78;
+    remains.add(rib);
+  }
+  const dogSkull = new THREE.Mesh(new THREE.IcosahedronGeometry(0.16, 1), M.bone);
+  dogSkull.name = 'crawl-secret-dog-skull';
+  dogSkull.position.set(0.01, 0.39, 0.47);
+  dogSkull.scale.set(0.78, 0.72, 1.05);
+  remains.add(dogSkull);
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.09, 0.2), M.bone);
+  muzzle.position.set(0.01, 0.34, 0.62);
+  remains.add(muzzle);
+  for (const side of [-1, 1]) {
+    boneBetween(new THREE.Vector3(0, 0.3, -0.2), new THREE.Vector3(side * 0.03, 0.1, 0.12), 0.022);
+    boneBetween(new THREE.Vector3(side * 0.03, 0.1, 0.12), new THREE.Vector3(side * 0.02, 0.08, 0.48), 0.018);
+    boneBetween(new THREE.Vector3(0, 0.3, -0.34), new THREE.Vector3(side * 0.04, 0.09, -0.54), 0.022);
+    boneBetween(new THREE.Vector3(side * 0.04, 0.09, -0.54), new THREE.Vector3(side * 0.02, 0.07, -0.22), 0.018);
+  }
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.021, 6, 14), collarMat);
+  collar.position.set(0, 0.39, 0.34);
+  remains.add(collar);
+  const tag = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.014, 10), collarMat);
+  tag.position.set(0.01, 0.24, 0.36);
+  tag.rotation.z = Math.PI / 2;
+  remains.add(tag);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 9), ballMat);
+  ball.name = 'crawl-secret-ball';
+  ball.position.set(0.02, 0.14, 0.82);
+  remains.add(ball);
+  for (const a of [0, Math.PI / 2]) {
+    const seam = new THREE.Mesh(new THREE.TorusGeometry(0.141, 0.008, 5, 18), wornIron);
+    seam.position.copy(ball.position);
+    seam.rotation.set(a, 0, a ? 0 : Math.PI / 2);
+    remains.add(seam);
+  }
+
+  const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), coreMat.clone());
+  lampCore.name = 'crawl-secret-lamp';
+  lampCore.position.set(-10.86, B + 1.82, -7.1);
+  scene.add(lampCore);
+  const lamp = new THREE.PointLight(0xd9e2de, 0, 5.5, 1.8);
+  lamp.position.copy(lampCore.position);
+  scene.add(lamp);
+
+  const puzzle = {
+    id: 'crawlCounterweight', state: 'idle', solved: false,
+    holdTime: 0, progress: 0, requiredHold: 1.25,
+    cage, cradle, shutter, remains, lamp,
+    colliders: [frontCollider, sideCollider], target: null,
+  };
+  game.crawlSecret = puzzle;       // deterministic white-box/debug observability
+
+  const anchorPos = new THREE.Vector3();
+  const target = world.addFetchTarget({
+    id: 'crawlCounterweightCradle', object: cradle, radius: 0.56,
+    onHit(skull) {
+      if (puzzle.solved) return 'return';
+      puzzle.state = 'weighing';
+      game.flag('crawlCounterweightTouched');
+      cradle.getWorldPosition(anchorPos);
+      skull.anchorAt(anchorPos, {
+        swing: true, maxHold: 4.5,
+        puzzleId: puzzle.id,
+      });
+      game.impact('locked', anchorPos);
+      game.audio.creak({ pos: anchorPos, gain: 0.55, rate: 0.72 });
+      return 'anchor';
+    },
+  });
+  puzzle.target = target;
+
+  const solvePos = new THREE.Vector3(-11.12, B + 1.15, -7.78);
+  game.tickers.push((dt, time) => {
+    const skull = game.skull;
+    const weighing = skull && skull.mode === 'anchored'
+      && skull.anchor && skull.anchor.puzzleId === puzzle.id;
+
+    if (!puzzle.solved) {
+      if (weighing) {
+        puzzle.state = 'weighing';
+        puzzle.holdTime = Math.min(puzzle.requiredHold, puzzle.holdTime + dt);
+      } else {
+        puzzle.holdTime = Math.max(0, puzzle.holdTime - dt * 1.8);
+        puzzle.state = puzzle.holdTime > 0 ? 'resetting' : 'idle';
+      }
+      puzzle.progress = clamp(puzzle.holdTime / puzzle.requiredHold, 0, 1);
+      if (puzzle.progress >= 1) {
+        puzzle.solved = true;
+        puzzle.state = 'latched';
+        target.enabled = false;
+        game.flag('crawlSecretSolved');
+        game.audio.unlock({ pos: solvePos, gain: 0.85, rate: 0.72 });
+        game.audio.metalDrop({ pos: solvePos, gain: 0.7, rate: 0.62 });
+        game.after(0.62, () => game.audio.knock({ pos: remains.position, gain: 0.34, rate: 0.76 }));
+        game.after(1.15, () => game.audio.whisper({ pos: remains.position, gain: 0.28, rate: 0.7, verb: 0.85 }));
+      }
+    } else {
+      puzzle.progress = 1;
+    }
+
+    const p = puzzle.progress;
+    const eased = p * p * (3 - 2 * p);
+    cradle.position.y = cradleBase.y - eased * 0.58;
+    shutter.position.y = shutterBaseY + eased * 2.0;    // fully swallowed by the ceiling pocket when latched
+
+    if (weighing) {
+      cradle.getWorldPosition(anchorPos);
+      skull.pos.copy(anchorPos);
+      skull.root.position.copy(anchorPos);
+      skull.anchor.point.copy(anchorPos);
+    }
+
+    const cableTop = B + 2.23;
+    const cradleCableBottom = cradle.position.y + 0.36;
+    cradleCable.scale.y = Math.max(0.03, cableTop - cradleCableBottom);
+    cradleCable.position.set(cradleBase.x, (cableTop + cradleCableBottom) / 2, cradleBase.z);
+    const shutterCableBottom = shutter.position.y + 0.72;
+    const shutterCableLength = cableTop - shutterCableBottom;
+    shutterCable.visible = shutterCableLength > 0.04;
+    shutterCable.scale.y = Math.max(0.03, shutterCableLength);
+    shutterCable.position.set(-11.12, (cableTop + shutterCableBottom) / 2, cradleBase.z);
+
+    const lit = puzzle.solved ? 1 : 0;
+    lamp.intensity += ((lit ? 18 + Math.sin(time * 13) * 1.3 : 0) - lamp.intensity) * Math.min(1, dt * 2.5);
+    lampCore.material.opacity += ((lit ? 0.92 : 0.035) - lampCore.material.opacity) * Math.min(1, dt * 3.5);
+    coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0);
   });
 }
 const _vDread = new THREE.Vector3();

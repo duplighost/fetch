@@ -415,8 +415,15 @@ class Game {
   showEnd() {
     this.flag('ended');
     // in the dark: the catch you know — and someone else's gasp
-    this.audio.catchThud({ gain: 0.7 });
-    this.after(1.1, () => this.audio.whisper({ gain: 0.55, rate: 1.5 }));
+    // The catch lands at the hands; the wordless human inhale occupies a point
+    // just behind one ear. Nothing on screen explains whose breath it is.
+    const listener = this.camera.getWorldPosition(new THREE.Vector3());
+    const forward = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+    const catchPos = listener.clone().addScaledVector(forward, 0.09);
+    const gaspPos = listener.clone().addScaledVector(forward, -0.42).addScaledVector(right, 0.22);
+    this.audio.catchThud({ pos: catchPos, gain: 0.7 });
+    this.after(1.1, () => this.audio.gasp({ pos: gaspPos, gain: 0.72, verb: 0.78 }));
     const t = this.el.title;
     t.querySelector('.keys').style.display = 'none';
     t.querySelector('.tag').textContent = 'It kept you.';

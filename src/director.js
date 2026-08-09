@@ -62,6 +62,7 @@ export class Director {
     this.resident = null;
     this.residentPressure = 0;
     this.arena = null;
+    this.graveArena = null;
     this.kneeler = null;
     this.stageGrown = 0;
     this._boxTh = null;
@@ -96,7 +97,7 @@ export class Director {
     this.approach = APPROACH_BY_ACT[act] ?? this.approach;
     // The skull may look afraid; the player's calibrated throw never changes.
     g.skull.graveFear = act === 'graveyard';   // expression: the hands tremble
-    g.skull.fearHome = act === 'graveyard';    // mechanics: it refuses long throws (hardAway * 0.6)
+    g.skull.fearHome = false;                   // compatibility field; expression only
 
     // the skull grows between acts — never while you watch it happen
     const stage = STAGE_BY_ACT[act] ?? this.stageGrown;
@@ -150,19 +151,33 @@ export class Director {
     g.checkpoint('graveyard');
     g.baseTension = 0.12;
     this.dread = 0.4;
+    if (g.flags.has('graveyardCleared')) {
+      if (g.graveyardGate) g.graveyardGate.openGate();
+      return;
+    }
     if (!this._graveSpawned) {
       this._graveSpawned = true;
-      g.enemies.spawn('walker', -14, 24, 'dormant');
+      const dormant = g.enemies.spawn('walker', -14, 24, 'dormant');
+      dormant.graveArena = true;
       // the Standing Kind: they cross the graveyard only while you aren't looking
       for (const [x, z] of [[8, 30], [16, 16]]) {
         const e = g.enemies.spawn('walker', x, z, 'standing');
         e.standing = true;
+        e.gravePressure = true;
+        // The Standing Kind are stalking landmarks, not wave bookkeeping.
+        // Requiring their deaths could deadlock the gate precisely because
+        // staring at them is what stops them. They remain present pressure
+        // throughout the fight while ordinary risen bodies own progression.
       }
     }
   }
 
   _enterForest() {
     const g = this.game;
+    // The two Standing figures are graveyard pressure, not migrating forest
+    // enemies. They keep circling the open gate until the player crosses it,
+    // then remain behind instead of haunting unrelated acts.
+    g.enemies.clear((e) => e.gravePressure);
     g.checkpoint('forest');
     g.baseTension = 0.2;
     this.dread = 0.55;
@@ -211,6 +226,7 @@ export class Director {
     this._updateMusicBox(dt);
     this._updateResident(dt);
     this._updateStoreroom(dt);
+    this._updateGraveyardArena(dt);
     this._updateForestBeats(dt);
     this._updateArena(dt);
     this._updateKneeler(dt);
@@ -416,6 +432,68 @@ export class Director {
     }
   }
 
+  // ----------------------------------------------------------- graveyard
+  _updateGraveyardArena(dt) {
+    const g = this.game;
+    if (g.act !== 'graveyard' || g.flags.has('graveyardCleared')) return;
+
+    // The first half of the yard is readable dread: wreck, bodies, graves, and
+    // the optional locket line. Crossing the central row commits the player to
+    // the combat ground; the iron forest gate is visibly shut from frame one.
+    if (!this.graveArena) {
+      if (g.player.pos.z < 18) return;
+      this.graveArena = { wave: 0, pending: 0, t: 1.35, done: false };
+      g.baseTension = 0.42;
+      g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 60);
+      g.audio.skullScream(g.camera.getWorldPosition(new THREE.Vector3()));
+      g.audio.sting(0.72);
+      g.shake(0.22);
+    }
+
+    const a = this.graveArena;
+    if (a.done) return;
+    const alive = g.enemies.list.filter((e) => e.graveArena && e.state !== 'dying').length;
+    a.t -= dt;
+    if (alive > 0 || a.pending > 0 || a.t > 0) return;
+
+    if (a.wave < 3) {
+      a.wave++;
+      const sites = [
+        [-17, 13], [20, 13], [-17, 38], [20, 37],
+        [-8, 34], [13, 29], [-2, 21], [10, 18],
+      ];
+      const count = a.wave === 1 ? 4 : a.wave === 2 ? 5 : 6;
+      a.pending = count;
+      for (let i = 0; i < count; i++) {
+        const site = sites[(i + a.wave * 2) % sites.length];
+        this.after(i * (0.58 + a.wave * 0.09), () => {
+          if (!this.graveArena || this.graveArena.done || g.act !== 'graveyard') {
+            if (this.graveArena) this.graveArena.pending = Math.max(0, this.graveArena.pending - 1);
+            return;
+          }
+          const x = site[0] + Math.sin(i * 5.7 + a.wave) * 0.7;
+          const z = site[1] + Math.cos(i * 4.3 + a.wave) * 0.7;
+          const e = g.enemies.spawn('walker', x, z, 'wind');
+          e.graveArena = true;
+          e.windT = -i * 0.13;
+          a.pending--;
+          g.audio.stoneGrind({ pos: e.pos, gain: 0.28 + a.wave * 0.06, rate: 1.35 - a.wave * 0.1, verb: 0.55 });
+        });
+      }
+      a.t = 2.2;
+      g.audio.sting(0.4 + a.wave * 0.14);
+      return;
+    }
+
+    a.done = true;
+    g.flag('graveyardCleared');
+    g.baseTension = 0.1;
+    if (g.graveyardGate) g.graveyardGate.openGate();
+    g.audio.metalDrop({ pos: new THREE.Vector3(FOREST_GATE.x, 1.1, 42), gain: 0.9, rate: 0.72, verb: 0.7 });
+    g.audio.duck(0.2, 2.6);
+    g.checkpoint('graveyard');
+  }
+
   // ---------------------------------------------------------------- forest
   _updateForestBeats(dt) {
     const g = this.game;
@@ -432,6 +510,7 @@ export class Director {
       const pr = f.project(g.player.pos.x, g.player.pos.z);
       if (pr && pr.s >= f.ravineS() + 1 && g.player.grounded) {
         this._ravineCrossed = true;
+        if (g.ravineRopeTarget) g.ravineRopeTarget.enabled = false;
         g.checkpoint('forest');
       }
     }
@@ -605,6 +684,11 @@ export class Director {
     g.enemies.clear((e) => e !== this.kneeler);
     this.resident = null;
     if (this.arena && !this.arena.done) this.arena = null;
+    if (this.graveArena && !this.graveArena.done) {
+      this.graveArena = null;
+      this._graveSpawned = false;
+      if (g.graveyardGate) g.graveyardGate.reset();
+    }
     g.teleport(cp);
     if (saved && saved.act === cp) {
       g.player.pos.set(saved.x, saved.y, saved.z);

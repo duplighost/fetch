@@ -259,6 +259,8 @@ export class Enemies {
   constructor(game) {
     this.game = game;
     this.list = [];
+    this._spawnSerial = 0;
+    this._graveClaimRecovery = 0;
   }
 
   spawn(kind, x, z, state = 'stalk', yHint = 3) {
@@ -273,6 +275,8 @@ export class Enemies {
       stunT: 0, windT: 0, stepT: 0,
       loop: this.game.audio.ready ? this.game.audio.enemyLoop(kind) : null,
       hits: 0,
+      orbitAngle: (this._spawnSerial * 2.399963) % TAU,
+      orbitSign: this._spawnSerial++ % 2 ? 1 : -1,
     };
     mesh.position.copy(e.pos);
     this.game.scene.add(mesh);
@@ -303,6 +307,34 @@ export class Enemies {
     }
   }
 
+  _releaseGraveClaim(e, recovery = 0.55) {
+    if (!e.graveClaimed) return;
+    e.graveClaimed = false;
+    this._graveClaimRecovery = Math.max(this._graveClaimRecovery, recovery);
+  }
+
+  // The carved graves are crowd-control instruments, not damage buttons. A
+  // pulse creates breathing room, keeps a solid environmental hit meaningful,
+  // and leaves the quiet-stun / loud-pop kill decision in the player's hands.
+  resonancePulse(pos, radius = 8, stun = 1.5) {
+    let caught = 0;
+    for (const e of this.list) {
+      if (e.state === 'dying') continue;
+      const dx = e.pos.x - pos.x, dz = e.pos.z - pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d > radius) continue;
+      this._releaseGraveClaim(e, 0.65);
+      e.state = 'stunned';
+      e.stunT = Math.max(e.stunT || 0, stun * (1 - d / radius * 0.35));
+      e.recoilT = Math.max(e.recoilT || 0, 0.12);
+      e.iframes = Math.max(e.iframes || 0, 0.45);
+      if (!e.knockV) e.knockV = new THREE.Vector3();
+      if (d > 0.05) e.knockV.set(dx / d, 0, dz / d).multiplyScalar(0.9 * (1 - d / radius * 0.5));
+      caught++;
+    }
+    return caught;
+  }
+
   update(dt, ctx) {
     const game = this.game;
     const player = game.player;
@@ -310,6 +342,44 @@ export class Enemies {
     const camPos = game.camera.getWorldPosition(V.a);
     const camFwd = game.camera.getWorldDirection(V.b);
     camFwd.y = 0; camFwd.normalize();
+
+    // CINDERBLOOM's useful crowd law, reduced to FETCH scale: an attack token
+    // persists through approach and strike. A stun, pop, or missed commitment
+    // releases it and creates a brief recovery before the crowd can reassign
+    // the slot. The Standing Kind remain orbiting pressure and never steal
+    // wave tokens. Early waves commit one attacker; later waves earn two.
+    const graveArena = game.director?.graveArena;
+    const graveWave = graveArena?.wave ?? 0;
+    const graveClaimBudget = graveWave >= 2 ? 2 : 1;
+    const claimableState = (e) => e.state === 'standing' || e.state === 'wind' ||
+      e.state === 'chase' || e.state === 'strike';
+    const graveCandidates = graveArena && !graveArena.done
+      ? this.list.filter((e) => e.graveArena && e.kind === 'walker' && claimableState(e))
+      : [];
+    const candidateSet = new Set(graveCandidates);
+    this._graveClaimRecovery = Math.max(0, this._graveClaimRecovery - dt);
+    for (const e of this.list) {
+      if (!e.graveClaimed || candidateSet.has(e)) continue;
+      e.graveClaimed = false;
+      if (graveArena && !graveArena.done) {
+        this._graveClaimRecovery = Math.max(this._graveClaimRecovery, 0.55);
+      }
+    }
+    const claimed = graveCandidates
+      .filter((e) => e.graveClaimed)
+      .sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+    while (claimed.length > graveClaimBudget) claimed.pop().graveClaimed = false;
+    if (this._graveClaimRecovery <= 0 && claimed.length < graveClaimBudget) {
+      const unclaimed = graveCandidates
+        .filter((e) => !e.graveClaimed)
+        .sort((a, b) => a.pos.distanceToSquared(player.pos) - b.pos.distanceToSquared(player.pos));
+      while (claimed.length < graveClaimBudget && unclaimed.length) {
+        const e = unclaimed.shift();
+        e.graveClaimed = true;
+        claimed.push(e);
+      }
+    }
+    const graveClaims = new Set(claimed);
 
     let maxThreat = 0;
     let threatDir = null;
@@ -328,6 +398,20 @@ export class Enemies {
           break;
         case 'standing': {
           if (!sameLevel) break;
+          if (e.gravePressure && game.director?.graveArena && !graveClaims.has(e)) {
+            // In the horde, the Standing Kind obeys the same readable attack
+            // budget as risen walkers instead of bypassing it with a silent
+            // touch kill. Unclaimed figures occupy slow outer slots.
+            const angle = e.orbitAngle + game.time * e.orbitSign * 0.16;
+            const ring = 4.1 + (e.orbitAngle % 1.2);
+            const tx = player.pos.x + Math.cos(angle) * ring;
+            const tz = player.pos.z + Math.sin(angle) * ring;
+            const dx = tx - e.pos.x, dz = tz - e.pos.z;
+            const d = Math.hypot(dx, dz) || 1;
+            this._moveWithPush(e, dx / d * 0.72 * dt, dz / d * 0.72 * dt);
+            e.phase += dt * 1.8;
+            break;
+          }
           // the Standing Kind: moves ONLY while unobserved — and only inside its
           // territory. Without the leash they trail the player's bubble across
           // the whole game and arrive three acts later as phantom stragglers.
@@ -358,7 +442,15 @@ export class Enemies {
             this._moveWithPush(e, toP.x * 0.85 * dt, toP.z * 0.85 * dt);
             e.phase += dt * 2.2;                 // silent gait — no footsteps. worse.
           } else if (dist <= 0.9 && !game.dead) {
-            game.director.death(e);
+            if (e.gravePressure && game.director?.graveArena) {
+              // In a crowd, even the Standing Kind has to commit. Its silence
+              // gets it close; lifted arms and breath give the player one last
+              // physical answer instead of converting overlap into death.
+              e.state = 'strike';
+              e.strikeT = 0;
+            } else {
+              game.director.death(e);
+            }
           }
           break;
         }
@@ -380,8 +472,29 @@ export class Enemies {
         }
         case 'chase': {
           if (!sameLevel) { e.windT += dt; break; }   // it waits below. it hears you.
+          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
+            const angle = e.orbitAngle + game.time * e.orbitSign * 0.22;
+            const ring = 3.3 + (e.orbitAngle % 1.4);
+            const tx = player.pos.x + Math.cos(angle) * ring;
+            const tz = player.pos.z + Math.sin(angle) * ring;
+            const dx = tx - e.pos.x, dz = tz - e.pos.z;
+            const d = Math.hypot(dx, dz) || 1;
+            this._moveWithPush(e, dx / d * e.spec.chase * 0.62 * dt, dz / d * e.spec.chase * 0.62 * dt);
+            e.phase += dt * 7;
+            e.stepT -= dt;
+            if (e.stepT <= 0) {
+              e.stepT = 0.34 + Math.random() * 0.08;
+              game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.58, rate: 0.92 });
+            }
+            break;
+          }
           if (dist > 0.85) {
-            const sp = e.spec.chase * Math.min(1, 0.35 + e.windT * 0.4);
+            // The graveyard is a sustained crowd fight, not the isolated
+            // one-touch house chase. Claimed attackers remain faster than a
+            // walking player but just slower than a committed run, so spatial
+            // mastery and a clean throw can actually create breathing room.
+            const arenaPace = (e.graveArena || e.gravePressure) ? 0.8 : 1;
+            const sp = e.spec.chase * arenaPace * Math.min(1, 0.35 + e.windT * 0.4);
             e.windT += dt;
             // door-node steering: straight lines end at shut doors. When
             // progress stalls, route through the doorway that best closes on
@@ -399,7 +512,29 @@ export class Enemies {
             const moved = Math.hypot(e.pos.x - preX, e.pos.z - preZ);
             if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
             else e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
-            if (e._stallT > 0.8) { e._via = this._bestDoorNode(e); e._stallT = 0; }
+            if (e._stallT > 0.8) {
+              if (e.graveArena || e.gravePressure) {
+                // House doorway nodes are poison for outdoor enemies: a risen
+                // body stalled against the rear wall used to route south into
+                // the house and leave the arena forever. Give graveyard bodies
+                // a short in-yard avoidance leg, including explicit side
+                // aisles around the house's back corners.
+                if (e.pos.z < 10 && Math.abs(e.pos.x) < 13) {
+                  e._via = { x: e.pos.x <= 0 ? -14 : 14, z: 11 };
+                } else {
+                  const px = player.pos.x - e.pos.x, pz = player.pos.z - e.pos.z;
+                  const pl = Math.hypot(px, pz) || 1;
+                  e._avoidSign = -(e._avoidSign || e.orbitSign || 1);
+                  e._via = {
+                    x: clamp(e.pos.x - pz / pl * e._avoidSign * 3.5, -18.2, 22.2),
+                    z: clamp(e.pos.z + px / pl * e._avoidSign * 3.5, 8.2, 40.2),
+                  };
+                }
+              } else {
+                e._via = this._bestDoorNode(e);
+              }
+              e._stallT = 0;
+            }
             if (e.kind === 'resident') this._tryOpenDoor(e, dt);
             e.stepT -= dt;
             if (e.stepT <= 0) {
@@ -407,7 +542,40 @@ export class Enemies {
               game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
             }
           } else if (!game.dead) {
-            game.director.death(e);
+            if (e.graveArena || e.gravePressure) {
+              // Arena contact begins a committed attack, not an invisible
+              // one-frame kill. Running clears it; freezing in reach does not.
+              e.state = 'strike';
+              e.strikeT = 0;
+            } else {
+              game.director.death(e);
+            }
+          }
+          break;
+        }
+        case 'strike': {
+          // The horde keeps the one-hit consequence, but earns it with a short
+          // readable commitment. Attack tokens continue to count this body, so
+          // a second walker cannot steal the warning window in early waves.
+          if (!sameLevel) {
+            e.state = e.standing ? 'standing' : 'wind';
+            e.windT = 0;
+            break;
+          }
+          e.strikeT = (e.strikeT || 0) + dt;
+          if (e.strikeT === dt) {
+            game.audio.whisper({ pos: e.pos, gain: 0.72, rate: 0.58, verb: 0.32 });
+          }
+          const lift = Math.min(1, e.strikeT / 0.18);
+          e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -2.35 * lift; });
+          if (e.strikeT >= 0.48) {
+            if (dist <= 0.95 && !game.dead) {
+              game.director.death(e);
+            } else {
+              this._releaseGraveClaim(e, 0.42);
+              e.state = e.standing ? 'standing' : 'wind';
+              e.windT = 0;
+            }
           }
           break;
         }
@@ -499,6 +667,7 @@ export class Enemies {
             skull.beginReturn('hit');
           } else if (e.state !== 'stunned') {
             // QUIET tier: it staggers, gives ground, and its voice gasps
+            this._releaseGraveClaim(e, 0.65);
             e.state = 'stunned';
             e.stunT = e.spec.stun;
             e.recoilT = 0.12;
@@ -531,13 +700,15 @@ export class Enemies {
         const near = smoothstep(0, 1, 1 - clamp((dist - 1) / 9, 0, 1));
         const toE = V.c.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z).normalize();
         const rear = clamp(-camFwd.dot(toE), 0, 1) * near;
-        const active = e.state === 'chase' || e.state === 'wind' ? 1 : e.state === 'dormant' ? 0.25 : 0.6;
+        const active = e.state === 'chase' || e.state === 'wind' || e.state === 'strike'
+          ? 1 : e.state === 'dormant' ? 0.25 : 0.6;
         e.loop.setThreat(threat * active, near * active, rear * active);
       }
 
       // ---- skull radar ----
       if (e.state !== 'dormant' && Math.abs(player.pos.y - e.pos.y) < 2.5) {
-        const level = clamp(1 - dist / 26, 0, 1) * (e.state === 'chase' ? 1 : 0.55);
+        const level = clamp(1 - dist / 26, 0, 1) *
+          (e.state === 'chase' || e.state === 'strike' ? 1 : 0.55);
         if (level > maxThreat) {
           maxThreat = level;
           threatDir = V.c.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z).normalize().clone();
@@ -552,6 +723,7 @@ export class Enemies {
 
   _pop(e, dirX = 0, dirZ = 0, speed = 20) {
     const game = this.game;
+    this._releaseGraveClaim(e, 0.72);
     // the LOUD tier owns the longest stop in the game — the load-bearing
     // distinction is time: if the game stutters, you ended something.
     game.impact('pop', e.pos);

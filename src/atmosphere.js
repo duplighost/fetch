@@ -7,6 +7,7 @@
 // oasis accent remain distinct under common red/green colour deficiencies.
 import * as THREE from 'three';
 import { RNG, TAU } from './util.js';
+import { CLEARING_BASIN } from './outside.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -577,7 +578,7 @@ function buildClearingDress(game, track, own, tickers) {
     const a = rng.range(Math.PI * 0.10, Math.PI * 0.90);
     const r = rng.range(7.0, 9.5);
     const x = Math.cos(a) * r;
-    const z = 15.2 - Math.sin(a) * r;
+    const z = CLEARING_BASIN.centerZ - Math.sin(a) * r;
     if (Math.abs(x) < 3.0) continue; // never counterfeit the bridge's collision language
     const scale = rng.range(0.45, 1.15);
     matrices.push(compose(C.x + x, rng.range(-0.1, 0.3), C.z + z,
@@ -635,7 +636,7 @@ function buildClearingDress(game, track, own, tickers) {
   const kind = [];
   for (let i = 0; i < 150; i++) {
     const a = rng.range(0, TAU), r = Math.sqrt(rng.float()) * 5.9;
-    p.push(C.x + Math.cos(a) * r, 0.12 + rng.range(0, 0.18), C.z + 15.2 + Math.sin(a) * r * 0.55);
+    p.push(C.x + Math.cos(a) * r, 0.12 + rng.range(0, 0.18), C.z + CLEARING_BASIN.centerZ + Math.sin(a) * r * 0.55);
     phase.push(rng.range(0, TAU)); kind.push(0);
   }
   for (let i = 0; i < 105; i++) {

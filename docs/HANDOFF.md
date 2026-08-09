@@ -1,3 +1,90 @@
+# HANDOFF — 2026-08-09, expansion foundations (Codex)
+
+Read `AGENTS.md`, then this section, then the older diary below. Alex asked for
+creative expansion across the whole game and explicitly wants his other games
+treated as a feature-and-feel library. The canonical checkout is
+`C:\Users\Alex\Projects\fetch-claude`; `C:\Users\Alex\Desktop\Fetch` is only a
+timestamped handoff snapshot. Current work is on
+`codex/fetch-expansion-foundations`, based on `1834c32`.
+
+## What this tranche actually changed
+
+- **Basement route and optional secret.** The false solid stair wedge is now a
+  real open-under L stair: hanging flight, side landing, westbound return, thin
+  tread collision, honest headroom, and open rails. The empty crawl wing is a
+  non-key skull counterweight puzzle. Hold the skull in a barred cradle to lift
+  and latch a shutter; release early and it resets. Behind it: a pale dog
+  skeleton curled around the ball it never fetched. State hooks are
+  `crawlCounterweightCradle`, `game.crawlSecret`, and `crawlSecretSolved`.
+- **Graveyard rebuilt as combat ground.** The duplicated slab field is gone.
+  The yard now has a closed/opening iron gate, two mausoleums, safe but visibly
+  open graves, three resonant grave crowd-control instruments, a recognizable
+  derelict station wagon, and four articulated bodies crawling away from the
+  forest. The arena runs three waves (4/5/6 risen bodies plus the initial one).
+- **Combat cadence is real now.** Grave attackers own persistent tokens: one in
+  the early waves, two later. A token survives approach and the new 0.48-second
+  visible/spatial strike commitment. Stun, pop, or a missed strike releases it
+  and creates a short group recovery before reassignment. The Standing Kind
+  orbit as pressure landmarks but never steal a wave token. Stalled outdoor
+  bodies use in-yard avoidance rather than routing through house doors.
+- **Forest safety.** The lateral clamp no longer gives up after a large escape;
+  the clearing mouth releases only through its narrow forward opening; forest
+  post-clamp owns only the forest act; and the failed ravine latch stays
+  retryable until the player lands across it. The spent rope and exact far-side
+  checkpoint survive death.
+- **Waterfall integrity.** Rendered water, spray, rocks, and the mathematical
+  plunge basin share `CLEARING_BASIN`; the visible water now covers the old
+  invisible pit before the falls. The layered curtain itself remains the strong
+  visual anchor, but the clearing sides and deep post-waterfall route still need
+  a larger authored expansion.
+- **Finale replaced, not faded.** The walls consume and squeeze the room's props;
+  glass pressure raises empty hands; each pane owns localized grinding, flare,
+  and deterministic fractures. At contact, the exact reflected skull clone
+  opens its jaw while an impossible moan accelerates from 78m behind the viewed
+  pane. Controls stay live through contact. Then: 0.06s hard black, catch at the
+  hands, and a wordless HRTF human gasp just behind one ear. Freeze begins only
+  after black. A forest ownership bug that teleported the mirror camera back to
+  the outdoor spline is fixed.
+- **Feel-core repairs.** Bounce audio uses a monotonic SFX clock; graveyard fear
+  no longer shortens throw range; launch/catch/final sounds now originate from
+  their physical positions. LMB hold/release grammar and `FEEL_PROFILE` values
+  were not changed.
+
+## Verification on the final source
+
+- `node tests/autotest.mjs` — **24/24**, zero browser errors.
+- `node tests/smoke.mjs` — all eight acts, zero errors, 74 draw calls / 1010
+  geometries in the smoke sample, under budget.
+- `node tests/playthrough.mjs` — **30/30 real-input beats**, bedroom through end.
+- `node tests/regressions.mjs` — **41/41**, including persistent attack-token,
+  rope retry/checkpoint, forest/mirror ownership, waterfall permanence, and
+  finale contact/audio order.
+- `node tests/basement-foundations.mjs` — **8/8**.
+- Five consecutive randomized focused graveyard clears; focused finale contact
+  reaches hard black with controls live and zero page errors.
+
+## Do next — no bullshit completion claim
+
+1. **Waterfall undercroft.** Build an explorable side-cataract ring and a larger
+   skull-less under-falls district: drowned pump chapel, vertical sluice route,
+   echo-based locket puzzle, and a wet enemy whose position is first legible as
+   displaced spray. DUSKFALL's shared cave SDF is the structural donor.
+2. **Forest authored chase chain.** Safety is fixed; composition is not done.
+   Add EATEN PATH-style landmark pockets, hard silhouette closure behind dense
+   vegetation, and two more held-skull traversal anchors used during pursuit.
+3. **House puzzle density.** Preserve the already-polished house, then add the
+   window-aim and lag-mirror beats from the playtest queue plus at least one
+   non-key vertical route. Do not turn every locked beat into another fetch key.
+4. **Basement second district.** The crawl secret is one strong room, not the
+   promised dramatic expansion. Next: flooded storage where movement makes a
+   wake, a blind archive that punishes loud pops, and a boiler/winch route using
+   hold-to-anchor rather than key collection.
+5. **Models.** The default courier skull is still deliberately not auto-replaced;
+   Alex must crown a realistic variant in-game. Enemy silhouette and material
+   work also remain a full pass, despite the improved arena behavior.
+
+---
+
 # HANDOFF — 2026-08-08, Fable 5 → Opus 5 (same thread)
 
 Read AGENTS.md first (playbook + the laws + the four gates). This file is

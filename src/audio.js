@@ -813,6 +813,39 @@ export class GameAudio {
     });
   }
 
+  // A wordless human inhale for the final black. The noise breath rises toward
+  // a tight, involuntary glottal catch; both layers share the HRTF bus so the
+  // stranger occupies a precise point just behind the listener instead of
+  // reading as another generic centered whisper.
+  gasp(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.25, 0.72, 0.7);
+    const breath = ctx.createBufferSource();
+    breath.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 0.72;
+    bp.frequency.setValueAtTime(520, t);
+    bp.frequency.exponentialRampToValueAtTime(2100, t + 0.62);
+    const breathGain = ctx.createGain();
+    breathGain.gain.setValueAtTime(0.0001, t);
+    breathGain.gain.exponentialRampToValueAtTime(0.58, t + 0.5);
+    breathGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.78);
+    breath.connect(bp).connect(breathGain).connect(out);
+    breath.start(t); breath.stop(t + 0.86);
+
+    const throat = ctx.createOscillator();
+    throat.type = 'triangle';
+    throat.frequency.setValueAtTime(92, t + 0.38);
+    throat.frequency.exponentialRampToValueAtTime(154, t + 0.66);
+    const throatGain = ctx.createGain();
+    throatGain.gain.setValueAtTime(0.0001, t + 0.36);
+    throatGain.gain.exponentialRampToValueAtTime(0.14, t + 0.57);
+    throatGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.73);
+    throat.connect(throatGain).connect(out);
+    throat.start(t + 0.36); throat.stop(t + 0.78);
+  }
+
   glassTink(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
@@ -933,10 +966,12 @@ export class GameAudio {
 
   // ---------------- the skull's voice ----------------
 
-  skullMoanStart() {
+  skullMoanStart(pos = null) {
     if (!this._ready || this._moan) return;
     const ctx = this.ctx;
-    const p = this._panner({ x: 0, y: 1.4, z: 0 }, 3.2, 1.2);
+    // Start at the actual launch point instead of jumping from world origin on
+    // the first audio quantum before skullMoanUpdate has run.
+    const p = this._panner(pos || { x: 0, y: 1.4, z: 0 }, 3.2, 1.2);
     const out = ctx.createGain(); out.gain.value = 0.0001;
     out.connect(p); p.connect(this.master);
     const vs = ctx.createGain(); vs.gain.value = 0.5;
