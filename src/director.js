@@ -34,8 +34,11 @@ const FOG_COLOR_BY_ACT = {
 // house was never the problem and keeps exactly what it had; outdoors, ambient
 // and hemisphere were drowning the one light the player actually carries.
 const AMBIENT_BY_ACT = {
-  bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.42,
-  forest: 0.40, clearing: 0.5, cave: 0.26, mirror: 0.6,
+  // Alex, live, after the first darkness pass: "the woods is a little dark to
+  // see now". A little — so the forest comes back up, and the carried light
+  // comes up with it rather than instead of it.
+  bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.46,
+  forest: 0.54, clearing: 0.5, cave: 0.30, mirror: 0.6,
 };
 const BACKGROUND_BY_ACT = {
   bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,

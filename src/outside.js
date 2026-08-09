@@ -720,25 +720,63 @@ export class Forest {
     // fallen tree blocking the path — the skull clears it (3 hits)
     const fs = this.fallenS();
     const fsm = this.samples[fs];
-    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 7, 8), M.bark);
-    log.position.set(fsm.x, 0.55, fsm.z);
-    log.rotation.set(0.1, Math.atan2(fsm.tx, -fsm.tz), Math.PI / 2 * 0.94);
+    // A trunk you cannot climb over has to LOOK like one. This was a bare
+    // 1.1m-wide cylinder with a 1.6m-tall invisible wall standing in front of
+    // it — so it stopped you at chest height for no visible reason — and its
+    // three hits were instant 5-degree snaps with no motion at all.
+    const log = new THREE.Group();
+    const LOG_R = 0.78;
+    const bole = new THREE.Mesh(new THREE.CylinderGeometry(LOG_R * 0.82, LOG_R, 7.4, 10), M.bark);
+    bole.rotation.z = Math.PI / 2;
+    log.add(bole);
+    // root plate at the torn end: the reason it is lying here
+    const roots = new THREE.Mesh(new THREE.IcosahedronGeometry(1.25, 0), M.bark);
+    roots.position.set(-3.7, 0.1, 0);
+    roots.scale.set(0.55, 1, 1);
+    log.add(roots);
+    // snapped limbs — they read as "you are not stepping over this"
+    for (let i = 0; i < 5; i++) {
+      const a = i * 1.7;
+      const lim = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.15, 1.5 + (i % 3) * 0.6, 5), M.bark);
+      lim.position.set(-2.4 + i * 1.35, LOG_R * 0.5, 0);
+      lim.rotation.set(Math.sin(a) * 0.7, a, 0.5 + Math.cos(a) * 0.8);
+      log.add(lim);
+    }
+    log.position.set(fsm.x, LOG_R, fsm.z);
+    log.rotation.set(0, Math.atan2(fsm.tx, -fsm.tz), 0.06);
     scene.add(log);
-    const logCol = world.addCollider(fsm.x - 3.4, 0, fsm.z - 0.8, fsm.x + 3.4, 1.6, fsm.z + 0.8);
+    // the wall is now the log's actual silhouette, not a head-height mystery
+    const logCol = world.addCollider(fsm.x - 3.7, 0, fsm.z - 0.95, fsm.x + 3.7, LOG_R * 1.75, fsm.z + 0.95);
     let logHits = 0;
+    // dt-driven roll (chamber law: no setTimeout anywhere in a beat)
+    const roll = { t: 1, from: 0, to: 0, dropFrom: 0, dropTo: 0, shove: 0 };
+    game.tickers.push((dt) => {
+      if (roll.t >= 1) return;
+      roll.t = Math.min(1, roll.t + dt * 2.6);
+      const e = 1 - (1 - roll.t) * (1 - roll.t) * (1 - roll.t);       // it settles, it doesn't snap
+      log.rotation.x = lerp(roll.from, roll.to, e);
+      log.position.y = lerp(roll.dropFrom, roll.dropTo, e);
+      log.position.x = fsm.x + -fsm.tz * Math.sin(roll.t * Math.PI) * roll.shove;
+      log.position.z = fsm.z + fsm.tx * Math.sin(roll.t * Math.PI) * roll.shove;
+    });
     world.addFetchTarget({
-      id: 'fallenTree', object: log, radius: 1.4,
+      id: 'fallenTree', object: log, radius: 1.6,
       onHit(skull, at) {
         logHits++;
         game.impact('hurt', at);
         audio.pop({ pos: log.position, gain: 0.32, rate: 0.7 });
-        log.rotation.x += 0.09;
-        log.position.y -= 0.1;
+        audio.creak({ pos: log.position, gain: 0.45, rate: 0.8 });   // wood complaining
+        roll.from = log.rotation.x;
+        roll.to = log.rotation.x + 0.55;                             // it ROLLS, visibly
+        roll.dropFrom = log.position.y;
+        roll.dropTo = Math.max(0.3, log.position.y - 0.14);
+        roll.shove = 0.16;
+        roll.t = 0;
         if (logHits >= 3) {
           this.enabled = false;
           logCol.max.y = logCol.min.y;
-          log.position.y = 0.18;
-          log.rotation.z = Math.PI / 2 * 0.99;
+          roll.dropTo = 0.34;
+          roll.to = log.rotation.x + 1.35;                           // the last one rolls it clear
           game.flag('treeCleared');
           audio.brushCrash({ pos: log.position, gain: 0.7 });
         }

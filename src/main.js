@@ -121,7 +121,7 @@ class Game {
     // dark. The fix for "I can't see" out here is to make the thing in your
     // hands matter more, never to put the free light back — the free light was
     // what made throwing it cost nothing.
-    this.skullLight = new THREE.PointLight(0xb6cfdd, 50, 10.5, 1.6);
+    this.skullLight = new THREE.PointLight(0xb6cfdd, 58, 11.5, 1.6);
     // the lantern lights the WORLD only: at point-blank range it was clipping
     // the whole viewmodel to white (the hands and skull never showed a single
     // form in hand). The viewmodel gets its own calibrated lamp instead.
