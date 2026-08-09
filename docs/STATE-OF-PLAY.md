@@ -502,32 +502,33 @@ first.** If two of them already do it, port the better one.
 
 ---
 
-## 12b. NOTHING SINCE THE DARKNESS PASS HAS BEEN DEPLOYED
+## 12b. Who else is in this repo, and what is actually shipped
 
-Read this before assuming a bug is real. `origin/main` and the live site are at
-**faef4e3**. Five commits sit unmerged on branch `rope-as-a-verb`:
+**Everything described in this document is merged and LIVE.** Verified against
+production, not assumed: qualiacology.com/fetch/ serves `beginSwing` (the rope
+verb), the stepped log collider, and forest ambient 0.54. `origin/main` carries
+every fix in section 10 plus a Codex expansion on top of them.
 
-    06424fe  the log collider was a 6x7m box — the forest "stuck" bug
-    3ab8fa4  backlog: flashing textures, the basement room
-    7376ed3  the forest log, brightness, and the mined backlog
-    e0503a8  the stale-projection bug behind "respawn walking through trees"
-    6920933  Rope: make the latch a verb instead of a cutscene
+### You are not alone in this checkout
 
-**Alex has never played the rope swing.** He has also been re-reporting bugs
-that are already fixed on that branch — the forest pin, respawn in the trees,
-the log, the too-dark woods. Four gates are green on it. Deploying needs his
-explicit approval (site `AGENTS.md`), and until it lands, every live report he
-gives describes a build that is several fixes behind.
+`C:UsersAlexProjectsetch-claude` is shared. At the time of writing the
+working tree sits on a Codex branch (`codex/fetch-underfalls-horror`) with ten
+modified `src/` files uncommitted, plus several multi-megabyte `scratch-*`
+directories and a `_shots/` folder that are not part of the game.
 
-### One thing to raise with him rather than fix quietly
+**Consequences, and they matter:**
 
-`src/main.js:422` sets the end card's tagline to **`'It kept you.'`** — words on
-screen, written by a model. That breaks two laws at once: no HUD and no
-on-screen words, and copy is Alex's voice and is never invented. It is the last
-thing a player sees before the game ends. Ask him what it should say, or whether
-it should say anything at all.
-
----
+- **Do not assume the working tree is canonical.** It may be mid-experiment and
+  broken. `origin/main` is the truth. This bundle was built with
+  `git archive origin/main` precisely so it could not pick up somebody else's
+  half-finished work.
+- **Do not `git checkout` in that folder** without looking first — you will
+  stomp uncommitted work that is not yours. If you need a clean tree, use
+  `git worktree add` somewhere else.
+- **Run the four gates before believing anything is broken.** A failure may be
+  the other agent's work in progress rather than a real regression.
+- Coordinate through branches and PRs. Both agents land on `main` via PR, and
+  the site is synced from `main` — never from a working tree.
 
 ## 13. The full mined backlog — 44 candidates, verified against the source
 
