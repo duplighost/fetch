@@ -241,6 +241,27 @@ export class Forest {
 
   arenaS() { return Math.floor(this.length * 0.72); }
   ravineS() { return Math.floor(this.length * 0.5); }
+
+  // Re-seat every piece of forest state on a position the player has just been
+  // PUT at rather than walked to. Without this, a death in the forest respawns
+  // you at the gate while the spline still believes you are 90m in and the seal
+  // frontier is still parked where you died — so the corridor clamp and the
+  // wall of trees are both computed for somewhere you are not, and you walk
+  // through trees into a hole.
+  reseat(x, z) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < this.length; i++) {
+      const s = this.samples[i];
+      const d = (s.x - x) ** 2 + (s.z - z) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    this._lastIdx = best;
+    const pr = this.project(x, z);
+    const s = pr ? pr.s : best;
+    this.sealS = Math.max(-SEAL_TRAIL, s - SEAL_TRAIL);
+    this.entered = s > 2;
+    return s;
+  }
   fallenS() { return Math.floor(this.length * 0.22); }
 
   contains(x, z) {
@@ -267,7 +288,13 @@ export class Forest {
       if (d < bestD) { bestD = d; best = i; }
     }
     if (best < 0) return null;
-    if (bestD > 40 * 40 && (this._lastIdx === 0 || this._lastIdx === this.length - 1)) {
+    // Cold-scan whenever the warm window's answer is implausible — NOT only when
+    // the warm index happens to sit at an end. That guard meant any stale index
+    // in the middle of the spline (a death respawn, a teleport, a checkpoint
+    // restore) returned a projection tens of metres off the trail, and every
+    // system downstream — ground height, the corridor clamp, the seal frontier —
+    // then agreed with each other about a place the player was not.
+    if (bestD > 40 * 40) {
       // cold start: full scan once
       for (let i = 0; i < this.length; i++) {
         const s = this.samples[i];
