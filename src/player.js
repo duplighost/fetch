@@ -33,7 +33,8 @@ export class Player {
     this.landKick = 0;
     this.frozen = false;                      // cutscenes / overlays
     this.movementLocked = false;               // death may stop feet while preserving look
-    this.reel = null;                         // { point, t, onArrive } rope launch
+    this.reel = null;                         // retired; kept falsy for old checks
+    this.swing = null;                        // { point, t, onLand, maxT } while on a rope
     this.running = false;
     this.speedRatio = 0;
     this.noise = 0;                           // how loud you are (walkers listen)
@@ -45,9 +46,46 @@ export class Player {
     this.pitch = clamp(this.pitch - dy * SENS, -1.35, 1.35);
   }
 
-  launchTo(point, onArrive) {
-    this.reel = { point: point.clone(), t: 0, onArrive };
-    this.fallV = 0;
+  // THE LOSSLESS GRAB. This used to be launchTo(): it zeroed your fall, took
+  // your input for three seconds and walked your position along a straight line
+  // to a fixed landing pad. The rope was the best-feeling thing in the game and
+  // it was a cutscene — and it broke the house rule that control is never taken.
+  //
+  // Now the bite CONVERTS your approach instead of discarding it. Whatever speed
+  // you arrived with is rotated onto the tangent of the sphere around the anchor
+  // and handed straight back. Nothing is subtracted. Run at it and it whips you
+  // around it; fly past it and it swings you back; there is no such thing as a
+  // grab you regret taking.
+  beginSwing(point, opts = {}) {
+    const a = point.clone();
+    const eye = this.pos.y + EYE;
+    const radial = new THREE.Vector3(a.x - this.pos.x, a.y - eye, a.z - this.pos.z);
+    const d = Math.max(0.4, radial.length());
+    radial.divideScalar(d);
+
+    const v = new THREE.Vector3(this.vel.x, this.fallV, this.vel.z);
+    const sp = v.length();
+    const tan = v.clone().addScaledVector(radial, -v.dot(radial));
+    if (tan.lengthSq() > 1e-5 && sp > 0.2) {
+      tan.normalize().multiplyScalar(sp);
+      this.vel.x = tan.x; this.vel.z = tan.z; this.fallV = tan.y;
+    }
+    this.swing = { point: a, t: 0, onLand: opts.onLand || null, maxT: opts.maxT || 6 };
+    this.grounded = false;
+    this.reel = null;
+  }
+
+  endSwing() {
+    const s = this.swing;
+    this.swing = null;
+    if (!s) return;
+    // you leave with the arc you built. No arrival pop, no reset to zero.
+    if (s.onLand) s.onLand();
+  }
+
+  // death, respawn and teleports drop the rope without paying out its reward
+  abortSwing() {
+    this.swing = null;
   }
 
   update(dt, frame) {
@@ -57,8 +95,6 @@ export class Player {
     }
     this.yawVel = (this.yaw - prevYaw) / Math.max(dt, 1e-4);
     this.pitchVel = (this.pitch - prevPitch) / Math.max(dt, 1e-4);
-
-    if (this.reel) { this._updateReel(dt); this._sync(dt); return; }
 
     const motionLocked = this.frozen || this.movementLocked;
     const mX = motionLocked ? 0 : (frame ? frame.moveX || 0 : 0);
@@ -73,8 +109,33 @@ export class Player {
     const wl = Math.hypot(wx, wz);
     if (wl > 1) { wx /= wl; wz /= wl; }
 
-    this.vel.x = lerp(this.vel.x, wx * speed, Math.min(1, dt * 10));
-    this.vel.z = lerp(this.vel.z, wz * speed, Math.min(1, dt * 10));
+    if (this.swing) {
+      // The rope pulls, gravity still argues with it, and the ordinary
+      // integration and collision below still run — so you are never inside
+      // geometry and never out of control. Air-steer stays live at a fraction
+      // of ground authority: you can shape the arc, you cannot cancel it.
+      const s = this.swing;
+      s.t += dt;
+      const eye = this.pos.y + EYE;
+      const to = new THREE.Vector3(s.point.x - this.pos.x, s.point.y - eye, s.point.z - this.pos.z);
+      const d = to.length();
+      const held = !!(frame && frame.throwHeld) && !motionLocked;
+      if (!held || d < 1.15 || s.t > s.maxT) {
+        this.endSwing();
+      } else {
+        to.divideScalar(d);
+        const PULL = 30;                       // vs GRAV 14 — it can lift you
+        this.vel.x += to.x * PULL * dt + wx * speed * dt * 1.6;
+        this.vel.z += to.z * PULL * dt + wz * speed * dt * 1.6;
+        this.fallV += to.y * PULL * dt;
+        const h = Math.hypot(this.vel.x, this.vel.z);
+        if (h > 21) { this.vel.x *= 21 / h; this.vel.z *= 21 / h; }
+        this.grounded = false;
+      }
+    } else {
+      this.vel.x = lerp(this.vel.x, wx * speed, Math.min(1, dt * 10));
+      this.vel.z = lerp(this.vel.z, wz * speed, Math.min(1, dt * 10));
+    }
 
     // axis-separated integration against AABBs
     this._moveAxis(this.vel.x * dt, 0);
@@ -126,30 +187,6 @@ export class Player {
     }
     this.noise = Math.max(0, this.noise - dt * 1.6);
     this._sync(dt);
-  }
-
-  _updateReel(dt) {
-    const r = this.reel;
-    r.t += dt;
-    const eye = this.pos.y + EYE;
-    const to = new THREE.Vector3(r.point.x - this.pos.x, r.point.y - eye, r.point.z - this.pos.z);
-    const d = to.length();
-    const arrive = d < 1.6 || r.t > 3;
-    if (arrive) {
-      this.fallV = 4.5;                       // small pop at the top
-      this.grounded = false;
-      const cb = r.onArrive;
-      this.reel = null;
-      if (cb) cb();
-      return;
-    }
-    const speed = Math.min(19, 10 + d * 0.5) * Math.min(1, r.t * 5);
-    to.normalize();
-    this.pos.x += to.x * speed * dt;
-    this.pos.y += to.y * speed * dt;
-    this.pos.z += to.z * speed * dt;
-    // keep wall collision honest even mid-flight
-    this._moveAxis(0, 0);
   }
 
   _moveAxis(dx, dz) {

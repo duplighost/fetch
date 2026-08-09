@@ -24,6 +24,7 @@ export class World {
     this.interactables = [];         // meshes with userData.inter
     this.zones = [];                 // {name, min, max}
     this.ramps = [];
+    this.rampById = {};              // stable authored stair lookup for debug/regressions
     this.rooms = [];                 // {id, level, x0,z0,x1,z1 (world), floorY}
     this.floorHoles = [];            // {level, x0,z0,x1,z1 (world)}
     this.candles = [];               // {x,y,z,intensity,r}
@@ -238,11 +239,17 @@ export class World {
     // stairs
     for (const r of (T.ramps || [])) {
       const ramp = {
+        ...r,
         x0: wx(r.x0), x1: wx(r.x1 + 1), z0: wz(r.z0), z1: wz(r.z1 + 1),
         axis: r.axis, y0: r.y0, y1: r.y1,
       };
       this.ramps.push(ramp);
-      this._buildStairs(ramp, M[r.mat || 'woodDark'] || M.woodDark);
+      if (ramp.id) this.rampById[ramp.id] = ramp;
+      this._buildStairs(
+        ramp,
+        M[r.mat || 'woodDark'] || M.woodDark,
+        M[r.guardMat || r.mat || 'woodDark'] || M.woodDark,
+      );
     }
   }
 
@@ -362,17 +369,99 @@ export class World {
     }
   }
 
-  _buildStairs(ramp, mat) {
+  _buildStairs(ramp, mat, guardMat = mat) {
     const rise = 0.185;
     const drop = ramp.y1 - ramp.y0;
     const steps = Math.max(2, Math.round(Math.abs(drop) / rise));
     const along = ramp.axis === 'z' ? ramp.z1 - ramp.z0 : ramp.x1 - ramp.x0;
     const stepLen = along / steps;
+    ramp.treadCount = steps;
+    ramp.treadColliders = [];
+    ramp.edgeColliders = [];
+
+    // Cellar flights need to remain a real piece of architecture from both
+    // sides: you walk on top of them, but the high end hangs above a usable
+    // basement corridor. The old descending-step formula filled every tread
+    // down to basement floor, producing a fake solid wedge; house.js then hid
+    // that mistake behind a second stack of boxes. `openUnder` authors actual
+    // thin treads instead. Their AABBs are simultaneously walkable from above
+    // (Player's STEP_UP rule) and a natural headroom stop from below (HEAD), so
+    // there is no broad invisible blocker and no place to walk through wood.
+    if (ramp.openUnder) {
+      const treadThickness = ramp.treadThickness ?? 0.12;
+      const edgeGuards = ramp.edgeGuards !== false;
+      const guardThickness = ramp.guardThickness ?? 0.11;
+      const guardHeight = ramp.guardHeight ?? 0.72;
+      const edgeOpenAtEnd = Math.max(0, ramp.edgeOpenAtEnd || 0);
+      const stairId = ramp.id || 'stairs';
+
+      for (let i = 0; i < steps; i++) {
+        const y = lerp(ramp.y0, ramp.y1, (i + 1) / steps);
+        const flags = { stairId, stairPart: 'tread', stairStep: i };
+        if (ramp.axis === 'z') {
+          const z0 = ramp.z0 + stepLen * i;
+          const z1 = z0 + stepLen + 0.01;
+          const z = (z0 + z1) / 2;
+          this.box(mat, (ramp.x0 + ramp.x1) / 2, y - treadThickness / 2,
+            z, ramp.x1 - ramp.x0, treadThickness, z1 - z0);
+          ramp.treadColliders.push(this.addCollider(
+            ramp.x0, y - treadThickness, z0,
+            ramp.x1, y, z1, flags));
+
+          if (edgeGuards && i < steps - edgeOpenAtEnd) {
+            const bottom = y - treadThickness;
+            const top = y + guardHeight;
+            const h = top - bottom;
+            for (const [side, x0, x1] of [
+              ['left', ramp.x0, ramp.x0 + guardThickness],
+              ['right', ramp.x1 - guardThickness, ramp.x1],
+            ]) {
+              // Render a real open rail (post + stepped handrail), while its
+              // continuous AABB below keeps fast diagonal movement from ever
+              // slipping through the narrow gaps between posts.
+              this.box(guardMat, (x0 + x1) / 2, top - 0.045,
+                z, x1 - x0, 0.09, z1 - z0);
+              this.box(guardMat, (x0 + x1) / 2, (bottom + top) / 2,
+                z1 - 0.045, x1 - x0, h, 0.075);
+              ramp.edgeColliders.push(this.addCollider(
+                x0, bottom, z0, x1, top, z1,
+                { stairId, stairPart: 'edge', stairSide: side, stairStep: i }));
+            }
+          }
+        } else {
+          const x0 = ramp.x0 + stepLen * i;
+          const x1 = x0 + stepLen + 0.01;
+          const x = (x0 + x1) / 2;
+          this.box(mat, x, y - treadThickness / 2,
+            (ramp.z0 + ramp.z1) / 2, x1 - x0, treadThickness, ramp.z1 - ramp.z0);
+          ramp.treadColliders.push(this.addCollider(
+            x0, y - treadThickness, ramp.z0,
+            x1, y, ramp.z1, flags));
+
+          if (edgeGuards && i < steps - edgeOpenAtEnd) {
+            const bottom = y - treadThickness;
+            const top = y + guardHeight;
+            const h = top - bottom;
+            for (const [side, z0, z1] of [
+              ['left', ramp.z0, ramp.z0 + guardThickness],
+              ['right', ramp.z1 - guardThickness, ramp.z1],
+            ]) {
+              this.box(guardMat, x, top - 0.045,
+                (z0 + z1) / 2, x1 - x0, 0.09, z1 - z0);
+              this.box(guardMat, x1 - 0.045, (bottom + top) / 2,
+                (z0 + z1) / 2, 0.075, h, z1 - z0);
+              ramp.edgeColliders.push(this.addCollider(
+                x0, bottom, z0, x1, top, z1,
+                { stairId, stairPart: 'edge', stairSide: side, stairStep: i }));
+            }
+          }
+        }
+      }
+      return;
+    }
+
     for (let i = 0; i < steps; i++) {
-      const t0 = i / steps;
       const y = lerp(ramp.y0, ramp.y1, (i + 1) / steps);
-      const h = Math.abs(y - ramp.y0) + 0.12;
-      const cy = Math.min(y, ramp.y0) + (ramp.y1 > ramp.y0 ? h / 2 : -h / 2 + (y - Math.min(y, ramp.y0)) + h / 2);
       const yCenter = (Math.min(ramp.y0, ramp.y1) - 0.12 + y) / 2;
       const yH = y - (Math.min(ramp.y0, ramp.y1) - 0.12);
       if (ramp.axis === 'z') {

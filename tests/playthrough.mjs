@@ -222,7 +222,74 @@ try {
     beat('the-locket-answered', g.flags.has('keepsake'), g.skull.getState());
 
     // ---- ACT 3: graveyard ----------------------------------------------
-    walkTo(-4, 14, 20); walkTo(2, 26, 25); walkTo(2, 41, 25);
+    walkTo(-4, 14, 20); walkTo(2, 21, 25);          // cross the central row; the graves wake
+    let graveStrafe = 1;
+    const graveThrowPoint = (x, y, z) => {
+      aimAt(x, y, z);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+      const dist = Math.hypot(x - g.player.pos.x, z - g.player.pos.z);
+      F.stepWith(Math.min(2.6, dist / 20 + 0.22), {
+        throwHeld: true, moveX: graveStrafe, moveZ: 0.05, run: true,
+      });
+      F.stepWith(1 / 120, {
+        throwReleased: true, moveX: graveStrafe, moveZ: 0.05, run: true,
+      });
+      let returnT = 0;
+      while (g.skull.mode !== 'held' && returnT < 3.5 && !g.dead) {
+        const nearest = g.enemies.list
+          .filter((en) => en.graveArena && en.state !== 'dying')
+          .sort((a, b) => a.pos.distanceToSquared(g.player.pos) - b.pos.distanceToSquared(g.player.pos))[0];
+        if (nearest) {
+          let awayX = g.player.pos.x - nearest.pos.x;
+          let awayZ = g.player.pos.z - nearest.pos.z;
+          // Flee through the yard, not into its iron perimeter. The inward
+          // terms become authoritative only near an edge; through the middle
+          // this remains a plain run away from the nearest committed body.
+          if (g.player.pos.x < -16) awayX += (-16 - g.player.pos.x) * 4;
+          if (g.player.pos.x > 20) awayX -= (g.player.pos.x - 20) * 4;
+          if (g.player.pos.z < 10) awayZ += (10 - g.player.pos.z) * 4;
+          if (g.player.pos.z > 39) awayZ -= (g.player.pos.z - 39) * 4;
+          g.player.yaw = Math.atan2(-awayX, -awayZ);
+          g.player._sync(0);
+        }
+        F.stepWith(0.1, { moveZ: 1, run: true });
+        returnT += 0.1;
+      }
+      graveStrafe *= -1;
+    };
+    let graveGuard = 0;
+    while (!g.flags.has('graveyardCleared') && !g.dead && graveGuard < 240) {
+      graveGuard++;
+      const es = g.enemies.list.filter((en) => en.graveArena
+        && en.kind === 'walker' && en.state !== 'dying');
+      if (!es.length) { F.stepWith(0.35); continue; }
+      const d = (en) => Math.hypot(en.pos.x - g.player.pos.x, en.pos.z - g.player.pos.z);
+      const downed = es.filter((en) => en.state === 'stunned' && (en.iframes || 0) <= 0).sort((a, b) => d(a) - d(b));
+      const threats = es.filter((en) => en.state !== 'stunned').sort((a, b) => d(a) - d(b));
+      const readyGraves = (g.resonantGraves || []).filter((grave) => grave.cooldown <= 0.01)
+        .map((grave) => {
+          const p = grave.group.position;
+          const caught = threats.filter((en) => Math.hypot(en.pos.x - p.x, en.pos.z - p.z) <= 8.2).length;
+          return { grave, caught };
+        })
+        .sort((a, b) => b.caught - a.caught);
+      if (!downed.length && readyGraves[0]?.caught >= 2) {
+        const p = readyGraves[0].grave.shaft.getWorldPosition(g.player.pos.clone());
+        graveThrowPoint(p.x, p.y, p.z);
+        continue;
+      }
+      // An imminent claimant is stunned first; with breathing room, finish the
+      // quiet body before its 2.8-second window closes. This is the actual
+      // combat economy, not a white-box enemy deletion loop.
+      const target = threats[0] && d(threats[0]) < 5.5
+        ? threats[0]
+        : downed[0] || threats[0];
+      if (!target) { F.stepWith(0.25); continue; }
+      graveThrowPoint(target.pos.x, target.pos.y + 1.2, target.pos.z);
+    }
+    beat('graveyard-horde-survived', g.flags.has('graveyardCleared') && !g.dead,
+      { dead: g.dead, waves: g.director.graveArena && g.director.graveArena.wave, guard: graveGuard });
+    walkTo(2, 41, 25);
     walkTo(2, 45, 10);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later

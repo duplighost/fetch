@@ -121,7 +121,7 @@ class Game {
     // dark. The fix for "I can't see" out here is to make the thing in your
     // hands matter more, never to put the free light back — the free light was
     // what made throwing it cost nothing.
-    this.skullLight = new THREE.PointLight(0xb6cfdd, 50, 10.5, 1.6);
+    this.skullLight = new THREE.PointLight(0xb6cfdd, 58, 11.5, 1.6);
     // the lantern lights the WORLD only: at point-blank range it was clipping
     // the whole viewmodel to white (the hands and skull never showed a single
     // form in hand). The viewmodel gets its own calibrated lamp instead.
@@ -415,8 +415,15 @@ class Game {
   showEnd() {
     this.flag('ended');
     // in the dark: the catch you know — and someone else's gasp
-    this.audio.catchThud({ gain: 0.7 });
-    this.after(1.1, () => this.audio.whisper({ gain: 0.55, rate: 1.5 }));
+    // The catch lands at the hands; the wordless human inhale occupies a point
+    // just behind one ear. Nothing on screen explains whose breath it is.
+    const listener = this.camera.getWorldPosition(new THREE.Vector3());
+    const forward = this.camera.getWorldDirection(new THREE.Vector3()).normalize();
+    const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+    const catchPos = listener.clone().addScaledVector(forward, 0.09);
+    const gaspPos = listener.clone().addScaledVector(forward, -0.42).addScaledVector(right, 0.22);
+    this.audio.catchThud({ pos: catchPos, gain: 0.7 });
+    this.after(1.1, () => this.audio.gasp({ pos: gaspPos, gain: 0.72, verb: 0.78 }));
     const t = this.el.title;
     t.querySelector('.keys').style.display = 'none';
     t.querySelector('.tag').textContent = 'It kept you.';
@@ -442,12 +449,16 @@ class Game {
     this.player.yaw = s.yaw || 0;
     this.player.pitch = 0;
     this.player.fallV = 0;
+    this.player.abortSwing();     // never wake up still holding a rope
+    this.player.vel.set(0, 0, 0);
     this.player._sync(0);
     if (this.forest && act !== 'forest' && act !== 'clearing' && act !== 'cave') {
       this.forest._lastIdx = 0;
       this.forest.sealS = -10;
       this.forest.entered = false;
     }
+    // and arriving IN the forest re-seats it on where we actually landed
+    if (this.forest && act === 'forest') this.forest.recentre(this.player.pos);
     if (this.forest && act === 'clearing') this.forest._lastIdx = this.forest.length - 1;
     if (this.forest && act === 'cave') this.forest._lastIdx = this.forest.length - 1;
     this.director.setAct(act, true);
@@ -466,6 +477,9 @@ class Game {
     // input → skull verbs. Alex's grammar: press throws, hold keeps it out,
     // release brings it home. The button is the tether.
     if (frame.throwPressed && this.skull.mode === 'held') this.skull.tryThrow(ctx);
+    // release ends an outbound throw AND lets go of a rope — one grammar, and
+    // the anchored case is handled inside _updateAnchored so the swing and the
+    // skull let go on the same frame
     if (frame.throwReleased && this.skull.mode === 'outbound') this.skull.beginReturn('snap');
     if (frame.callTap) {
       if (this.skull.mode === 'gone') this.director.onVoidCall();

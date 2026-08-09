@@ -7,6 +7,8 @@ import { Mirror, Mirrors, LAYER_DOUBLE } from './mirrors.js';
 
 const CX = 500, CZ = 500;
 const ROOM_H = 2.7;
+const CONTACT_HALF = 0.37;
+const CONTACT_TIME = 2.35;
 
 // Four mirror renders make every draw matter. The finale therefore uses a
 // bounded authored kit: shared materials, compact furniture groups, and an
@@ -44,13 +46,59 @@ function makeDrapeGeometry(width, height, side) {
   return geo;
 }
 
+// One deterministic fracture shared by all four panes. Four LineSegments are
+// still only four cheap draws, including in the mirror pass, and the branching
+// silhouette reads by brightness rather than hue. It stays invisible until a
+// hand presses the glass or the returning sound reaches the room.
+function makeFractureGeometry() {
+  const verts = [];
+  const branch = (x0, y0, angle, length, bends, seed) => {
+    let x = x0, y = y0, a = angle;
+    for (let i = 0; i < bends; i++) {
+      const nx = x + Math.cos(a) * length;
+      const ny = y + Math.sin(a) * length;
+      verts.push(x, y, 0, nx, ny, 0);
+      if (i === 1 || i === 3) {
+        const ba = a + (i % 2 ? 0.72 : -0.65) + seed * 0.03;
+        const bx = nx + Math.cos(ba) * length * 0.62;
+        const by = ny + Math.sin(ba) * length * 0.62;
+        verts.push(nx, ny, 0, bx, by, 0);
+      }
+      x = nx; y = ny;
+      a += Math.sin(seed * 1.7 + i * 2.13) * 0.24;
+      length *= 0.84;
+    }
+  };
+  for (let i = 0; i < 11; i++) {
+    branch(0, 0.02, (i / 11) * Math.PI * 2 + 0.13, 0.18 + (i % 3) * 0.025, 5, i + 1);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 export class Finale {
   constructor(game) {
     this.game = game;
     this.active = false;
     this.t = 0;
-    this.half = 3.0;                  // wall half-extent, shrinks to 0.36
+    this.half = 3.0;                  // wall half-extent, shrinks to contact at 0.37
     this.phase = 'idle';
+    this.contactT = 0;
+    this._contactPane = 0;
+    this._recallActive = false;
+    this._blackStarted = false;
+    this._pressSoundT = 0;
+    this._handPressure = 0;
+    this._wallPressure = [0, 0, 0, 0];
+    this._paneBaseTint = new THREE.Color(0xc1ccd1);
+    this._paneHotTint = new THREE.Color(0xf4fbff);
+    this._v0 = new THREE.Vector3();
+    this._v1 = new THREE.Vector3();
+    this._v2 = new THREE.Vector3();
+    this._recallFar = new THREE.Vector3();
+    this._recallPos = new THREE.Vector3();
     this._build();
   }
 
@@ -260,6 +308,20 @@ export class Finale {
       this.wallVeils.push(veil);
     }
 
+    const fractureGeo = makeFractureGeometry();
+    this.fractures = [];
+    for (let i = 0; i < 4; i++) {
+      const mat = new THREE.LineBasicMaterial({
+        color: 0xe8f2f5, transparent: true, opacity: 0,
+        depthWrite: false, toneMapped: false,
+      });
+      const cracks = new THREE.LineSegments(fractureGeo, mat);
+      cracks.visible = false;
+      cracks.renderOrder = 5;
+      scene.add(cracks);
+      this.fractures.push(cracks);
+    }
+
     this.walls = [];
     for (let i = 0; i < 4; i++) {
       this.walls.push(g.world.addCollider(0, 0, 0, 0, 0, 0));
@@ -274,6 +336,8 @@ export class Finale {
     for (const o of this.resetProps) {
       o.userData.homePosition = o.position.clone();
       o.userData.homeRotation = o.rotation.clone();
+      o.userData.homeScale = o.scale.clone();
+      o.userData.homeVisible = o.visible;
     }
   }
 
@@ -281,12 +345,12 @@ export class Finale {
     const figure = new THREE.Group();
     figure.name = 'the-reflection';
     const cloth = new THREE.MeshStandardMaterial({
-      color: 0x242b34, emissive: 0x05080c, emissiveIntensity: 0.22,
+      color: 0x030405, emissive: 0x000000, emissiveIntensity: 0,
       roughness: 0.94,
     });
-    const clothDark = new THREE.MeshStandardMaterial({ color: 0x101419, roughness: 0.98 });
+    const clothDark = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.98 });
     const seam = new THREE.MeshStandardMaterial({
-      color: 0x73808a, emissive: 0x182129, emissiveIntensity: 0.18, roughness: 0.82,
+      color: 0x11161a, emissive: 0x010202, emissiveIntensity: 0.04, roughness: 0.82,
     });
     const handMat = new THREE.MeshStandardMaterial({ color: 0x91867d, roughness: 0.83 });
 
@@ -409,8 +473,12 @@ export class Finale {
     // remain shared, so even a selected variant adds no duplicate asset cost.
     const oldStage = live.stage;
     live.setStage(0);
+    const sourceNodes = [];
+    live.root.traverse((o) => sourceNodes.push(o));
     const exact = live.root.clone(true);
     live.setStage(oldStage);
+    const exactNodes = [];
+    exact.traverse((o) => exactNodes.push(o));
     exact.name = 'the-exact-beginning-skull';
     exact.position.set(0, 0, 0);
     exact.rotation.set(0, 0, 0);
@@ -425,6 +493,14 @@ export class Finale {
     data.headMount.remove(data.fallback);
     data.headMount.add(exact);
     data.exactHead = exact;
+    const jawIndex = sourceNodes.indexOf(live.jaw);
+    data.exactJaw = jawIndex >= 0 ? exactNodes[jawIndex] : null;
+    if (data.exactJaw) {
+      // The waterfall throw may have left the live jaw open. The thing in the
+      // glass begins composed, then opens deliberately at contact.
+      data.exactJaw.rotation.x = 0;
+      data.exactJawHomeX = 0;
+    }
   }
 
   _placeWalls() {
@@ -443,6 +519,12 @@ export class Finale {
         const nx = defs[i][3], nz = defs[i][4];
         veil.position.set(x + nx * 0.014, ROOM_H / 2, z + nz * 0.014);
         veil.rotation.set(0, ry, 0);
+      }
+      const cracks = this.fractures && this.fractures[i];
+      if (cracks) {
+        const nx = defs[i][3], nz = defs[i][4];
+        cracks.position.set(x + nx * 0.018, ROOM_H * 0.58, z + nz * 0.018);
+        cracks.rotation.set(0, ry, 0);
       }
     });
     const T = 0.3;
@@ -465,6 +547,13 @@ export class Finale {
     this.t = 0;
     this.phase = 'still';
     this.half = 3.0;
+    this.contactT = 0;
+    this._contactPane = 0;
+    this._recallActive = false;
+    this._blackStarted = false;
+    this._pressSoundT = 0;
+    this._handPressure = 0;
+    this._wallPressure.fill(0);
     this._rattled = false;
     this._grind = 0;
     this.poses = [];
@@ -473,13 +562,31 @@ export class Finale {
     for (const o of this.resetProps) {
       o.position.copy(o.userData.homePosition);
       o.rotation.copy(o.userData.homeRotation);
+      o.scale.copy(o.userData.homeScale);
+      o.visible = o.userData.homeVisible;
     }
+    const fd = this.figure.userData;
+    fd.headMount.position.set(0, fd.headMount.userData.baseY, 0);
+    fd.headMount.rotation.set(0, 0, 0);
+    fd.headMount.scale.setScalar(1);
+    fd.torso.rotation.x = 0;
+    if (fd.exactJaw) fd.exactJaw.rotation.x = fd.exactJawHomeX || 0;
     this.veilMat.opacity = 1;
     for (const veil of this.wallVeils) veil.visible = true;
+    for (let i = 0; i < this.panes.length; i++) {
+      this.panes[i].setFlare(0);
+      this.panes[i].material.uniforms.uTint.value.copy(this._paneBaseTint);
+      this.fractures[i].visible = false;
+      this.fractures[i].material.opacity = 0;
+    }
     this.lamp.intensity = 54;
     this.dresserGlow.intensity = 4.5;
-    this.figure.userData.headLight.intensity = 7;
+    fd.headLight.intensity = 7;
+    fd.headLight.distance = 2.5;
     this._placeWalls();
+
+    this._captureEmptyHands();
+    this._restoreEmptyHands(1);
 
     // enterMirrorRoom invokes begin at full black. Reorient only during that
     // hidden transition; a visible debug entry preserves the current look.
@@ -487,12 +594,290 @@ export class Finale {
     const frameHidden = !g.el || !g.el.fade ||
       Number.parseFloat(g.el.fade.style.opacity || '1') >= 0.99;
     if (frameHidden) g.player.yaw = 0;
+    g.player.frozen = false;
+    g.player._sync(0);
     // Route the transition through the Director so old cave beats are scoped
     // out and the mirror's fog, growth, tension, and audio state stay coherent.
     g.director.setAct('mirror', true);
     g.checkpoint('mirror');
     for (const m of this.panes) m.setActive(true);
     this.figure.visible = true;
+  }
+
+  _captureEmptyHands() {
+    if (this.emptyHands) return;
+    const hold = this.game.skull && this.game.skull.hold;
+    if (!hold || hold.children.length < 2) return;
+    const left = hold.children[0], right = hold.children[1];
+    this.emptyHands = {
+      hold, left, right,
+      holdPos: hold.position.clone(),
+      holdRot: hold.rotation.clone(),
+      holdScale: hold.scale.clone(),
+      leftRot: left.rotation.clone(),
+      rightRot: right.rotation.clone(),
+    };
+  }
+
+  _restoreEmptyHands(immediate = 0) {
+    const h = this.emptyHands;
+    if (!h) return;
+    if (immediate) {
+      h.hold.position.copy(h.holdPos);
+      h.hold.rotation.copy(h.holdRot);
+      h.hold.scale.copy(h.holdScale);
+      h.left.rotation.copy(h.leftRot);
+      h.right.rotation.copy(h.rightRot);
+    }
+  }
+
+  _updatePressure(dt, enabled) {
+    const g = this.game;
+    const p = g.player.pos;
+    const v = g.player.vel;
+    const inset = Math.max(0.01, this.half - 0.34);
+    const gaps = [
+      p.z - (CZ - inset), (CZ + inset) - p.z,
+      p.x - (CX - inset), (CX + inset) - p.x,
+    ];
+    const outward = [-v.z, v.z, -v.x, v.x];
+    let strongest = 0, strongestI = 0;
+    for (let i = 0; i < 4; i++) {
+      const touching = enabled ? 1 - clamp(gaps[i] / 0.18, 0, 1) : 0;
+      const pressure = touching * clamp(outward[i] / 3.8, 0, 1);
+      this._wallPressure[i] = pressure;
+      if (pressure > strongest) { strongest = pressure; strongestI = i; }
+    }
+
+    // Hands only rise when the player is both pushing and looking into that
+    // wall. Pushing backward still makes the glass complain, but it does not
+    // paste a pair of palms over a view that is facing elsewhere.
+    g.camera.getWorldDirection(this._v0);
+    this._v0.y = 0;
+    if (this._v0.lengthSq() > 1e-6) this._v0.normalize();
+    const facing = strongestI === 0 ? -this._v0.z
+      : strongestI === 1 ? this._v0.z
+        : strongestI === 2 ? -this._v0.x : this._v0.x;
+    const handTarget = strongest * smoothstep(0.18, 0.72, facing);
+    const handRate = handTarget > this._handPressure ? 12 : 7;
+    this._handPressure = lerp(
+      this._handPressure, handTarget, 1 - Math.exp(-dt * handRate));
+
+    const h = this.emptyHands;
+    if (h) {
+      const k = smoothstep(0, 1, this._handPressure);
+      this._v1.set(0, -0.11, -0.43);
+      h.hold.position.lerpVectors(h.holdPos, this._v1, k);
+      h.hold.rotation.x = lerp(h.holdRot.x, -0.08, k);
+      h.hold.rotation.y = lerp(h.holdRot.y, 0, k);
+      h.hold.rotation.z = lerp(h.holdRot.z, 0, k);
+      h.hold.scale.copy(h.holdScale).multiplyScalar(1 + k * 0.09);
+      h.left.rotation.set(
+        lerp(h.leftRot.x, -1.28, k),
+        lerp(h.leftRot.y, 0.22, k),
+        lerp(h.leftRot.z, 0.05, k));
+      h.right.rotation.set(
+        lerp(h.rightRot.x, -1.28, k),
+        lerp(h.rightRot.y, -0.22, k),
+        lerp(h.rightRot.z, -0.05, k));
+    }
+
+    this._pressSoundT = Math.max(0, this._pressSoundT - dt);
+    if (strongest > 0.38 && this._pressSoundT <= 0) {
+      const at = this.panes[strongestI].mesh.position;
+      g.audio.glassTink({ pos: at, gain: 0.12 + strongest * 0.12,
+        rate: 0.48 + strongest * 0.2, verb: 0.72 });
+      g.shake(0.025 + strongest * 0.035);
+      this._pressSoundT = 0.42 + (1 - strongest) * 0.32;
+    }
+  }
+
+  _updatePaneEffects(closeness, contactU = 0) {
+    const pressureGlow = smoothstep(0.48, 1, closeness) * 0.022;
+    const pulse = contactU > 0
+      ? 0.82 + Math.sin(this.contactT * (6 + contactU * 8)) * 0.18
+      : 1;
+    for (let i = 0; i < this.panes.length; i++) {
+      const local = this._wallPressure[i] || 0;
+      const chosen = i === this._contactPane ? contactU : 0;
+      const flare = clamp(
+        pressureGlow + local * 0.11 + contactU * 0.07 + chosen * 0.07,
+        0, 0.22) * pulse;
+      this.panes[i].setFlare(flare);
+      const tint = clamp(contactU * 0.52 + chosen * 0.22 + local * 0.14, 0, 0.82);
+      this.panes[i].material.uniforms.uTint.value
+        .copy(this._paneBaseTint).lerp(this._paneHotTint, tint * pulse);
+
+      const cracks = this.fractures[i];
+      const crackOpacity = clamp(local * 0.28 + contactU * 0.38 + chosen * 0.34, 0, 0.82) * pulse;
+      cracks.material.opacity = crackOpacity;
+      cracks.visible = crackOpacity > 0.006;
+    }
+  }
+
+  _updateCrushedProps(elapsed, closeness) {
+    const h = this.half;
+    const bedHome = this.bed.userData.homePosition;
+    const bedScale = this.bed.userData.homeScale;
+    const bedEat = 1 - smoothstep(1.12, 2.74, h);
+    const bedMove = Math.sqrt(clamp(bedEat, 0, 1));
+    this.bed.position.x = lerp(bedHome.x, CX + h + 0.9, bedMove);
+    this.bed.position.z = lerp(bedHome.z, CZ + 0.25, bedEat * 0.38);
+    this.bed.rotation.x = this.bed.userData.homeRotation.x - bedEat * 0.16;
+    this.bed.rotation.z = this.bed.userData.homeRotation.z + bedEat * 1.18;
+    this.bed.scale.set(
+      bedScale.x * (1 - bedEat * 0.3),
+      bedScale.y * (1 - bedEat * 0.42),
+      bedScale.z);
+    this.bed.visible = bedEat < 0.94;
+
+    const dresserHome = this.dresser.userData.homePosition;
+    const dresserScale = this.dresser.userData.homeScale;
+    const dresserEat = 1 - smoothstep(1.08, 2.68, h);
+    const dresserMove = Math.sqrt(clamp(dresserEat, 0, 1));
+    this.dresser.position.x = lerp(dresserHome.x, CX - 0.35, dresserEat * 0.25);
+    this.dresser.position.z = lerp(dresserHome.z, CZ + h + 0.38, dresserMove);
+    this.dresser.rotation.x = this.dresser.userData.homeRotation.x - dresserEat * 0.72;
+    this.dresser.rotation.z = this.dresser.userData.homeRotation.z - dresserEat * 0.16;
+    this.dresser.scale.set(
+      dresserScale.x * (1 - dresserEat * 0.22),
+      dresserScale.y * (1 - dresserEat * 0.38),
+      dresserScale.z * (1 - dresserEat * 0.42));
+    this.dresser.visible = dresserEat < 0.94;
+
+    // The door and window belong to their walls. They stay usable/readable as
+    // long as possible, but their frames squeeze to the remaining span instead
+    // of projecting through the opposite glass at the last meter.
+    const innerSpan = Math.max(0.18, h * 2 - 0.12);
+    const doorHome = this.doorPanel.userData.homePosition;
+    const doorScale = this.doorPanel.userData.homeScale;
+    this.doorPanel.position.x = Math.max(doorHome.x, CX - h + 0.05);
+    this.doorPanel.scale.set(
+      doorScale.x * clamp(innerSpan / 1.48, 0.16, 1),
+      doorScale.y, doorScale.z);
+    this.doorPanel.rotation.z = this.doorPanel.userData.homeRotation.z +
+      smoothstep(0.18, 1, closeness) * 0.14;
+
+    const winHome = this.winFrame.userData.homePosition;
+    const winScale = this.winFrame.userData.homeScale;
+    this.winFrame.position.z = Math.min(winHome.z, CZ + h - 0.07);
+    this.winFrame.scale.set(
+      winScale.x * clamp(innerSpan / 1.74, 0.14, 1),
+      winScale.y, winScale.z);
+    this.winFrame.rotation.z = this.winFrame.userData.homeRotation.z -
+      smoothstep(0.18, 1, closeness) * 0.12;
+  }
+
+  _beginContact() {
+    if (this.phase === 'contact' || this.phase === 'black' || this.phase === 'end') return;
+    const g = this.game;
+    this.phase = 'contact';
+    this.contactT = 0;
+    this.half = CONTACT_HALF;
+    this._contactCrack = false;
+    this._contactSurge = false;
+    this._placeWalls();
+
+    g.camera.updateMatrixWorld(true);
+    g.camera.getWorldDirection(this._v0);
+    this._v0.y = 0;
+    if (this._v0.lengthSq() < 1e-6) this._v0.set(0, 0, -1);
+    else this._v0.normalize();
+    let best = -Infinity;
+    for (let i = 0; i < this.panes.length; i++) {
+      this._v1.copy(this.panes[i].mesh.position).sub(g.camera.position);
+      this._v1.y = 0;
+      if (this._v1.lengthSq() < 1e-6) continue;
+      this._v1.normalize();
+      const score = this._v0.dot(this._v1);
+      if (score > best) { best = score; this._contactPane = i; }
+    }
+
+    this._v1.copy(this.panes[this._contactPane].mesh.position)
+      .sub(g.camera.position);
+    this._v1.y = 0;
+    if (this._v1.lengthSq() < 1e-6) this._v1.copy(this._v0);
+    else this._v1.normalize();
+    this._recallFar.copy(g.camera.position).addScaledVector(this._v1, 78);
+    this._recallFar.y = g.camera.position.y + 0.35;
+    this._recallPos.copy(this._recallFar);
+    g.audio.skullMoanStart(this._recallFar);
+    this._recallActive = true;
+    g.audio.duck(0.12, 3.5);
+    g.audio.glassTink({ pos: this.panes[this._contactPane].mesh.position,
+      gain: 0.42, rate: 0.72, verb: 0.9 });
+    g.shake(0.13);
+  }
+
+  _updateContact(dt) {
+    const g = this.game;
+    const fd = this.figure.userData;
+    this.contactT += dt;
+    const u = clamp(this.contactT / CONTACT_TIME, 0, 1);
+    const open = smoothstep(0.03, 0.56, u);
+    const lunge = smoothstep(0.48, 1, u);
+
+    if (fd.exactJaw) {
+      fd.exactJaw.rotation.x = (fd.exactJawHomeX || 0) + open * 0.98;
+    }
+    fd.headMount.position.y = fd.headMount.userData.baseY +
+      0.015 * open + 0.065 * lunge;
+    fd.headMount.position.z = 0.2 * lunge;
+    fd.headMount.rotation.x = -0.08 * open - 0.16 * lunge;
+    fd.headMount.scale.setScalar(1 + lunge * 0.38);
+    fd.torso.rotation.x = -0.065 * lunge;
+    const pulse = 0.84 + Math.sin(this.contactT * (8 + u * 12)) * 0.16;
+    // Pull the rim inward as it brightens. A huge-range point light turned the
+    // whole torso into a flat white cutout; a tight bone light keeps the jaw and
+    // sockets legible while the body remains a silhouette.
+    fd.headLight.intensity = lerp(18, 38, u) * pulse;
+    fd.headLight.distance = lerp(2.5, 1.35, u);
+    this.lamp.intensity = lerp(68, 84, u) * (0.9 + pulse * 0.1);
+    g.baseTension = 1;
+    g.audio.setTension(1);
+
+    // Cubic travel makes the old voice spend long enough impossibly far away
+    // to be recognized, then cross the whole soundstage in the final breath.
+    const travel = u * u * u;
+    this._recallPos.lerpVectors(this._recallFar, g.camera.position, travel);
+    this._recallPos.y = lerp(this._recallFar.y, g.camera.position.y - 0.08, travel);
+    if (this._recallActive) {
+      g.audio.skullMoanUpdate(this._recallPos, lerp(7, 72, u * u), u);
+    }
+
+    if (!this._contactCrack && u >= 0.3) {
+      this._contactCrack = true;
+      g.audio.glassTink({ pos: this.panes[this._contactPane].mesh.position,
+        gain: 0.72, rate: 0.9, verb: 0.95 });
+      g.shake(0.22);
+    }
+    if (!this._contactSurge && u >= 0.68) {
+      this._contactSurge = true;
+      g.audio.stoneGrind({ pos: this.panes[this._contactPane].mesh.position,
+        gain: 0.52, rate: 1.1, verb: 0.85 });
+      g.shake(0.3);
+    }
+    if (u >= 1) this._hardBlack();
+    return u;
+  }
+
+  _hardBlack() {
+    if (this._blackStarted) return;
+    this._blackStarted = true;
+    const g = this.game;
+    this.phase = 'black';
+    if (this._recallActive) {
+      g.audio.skullMoanStop();
+      this._recallActive = false;
+    }
+    g.audio.duck(0, 12);
+    // The image now earns its cut. This is intentionally almost instantaneous,
+    // not the old five seconds of watching a CSS layer become opaque.
+    g.fadeOut(0.06, () => {
+      g.player.frozen = true;
+      this.phase = 'end';
+      g.showEnd();
+    });
   }
 
   update(dt) {
@@ -533,7 +918,15 @@ export class Finale {
 
     const f = this.figure;
     const fd = f.userData;
-    f.position.set(pose.x, g.player.pos.y, pose.z);
+    // The predictive double may lead the player into a wall they are actively
+    // pushing. Keep its body just inside the mirrored volume: without this the
+    // head crossed the oblique mirror clip plane and vanished precisely when
+    // the player struggled hardest.
+    const figureRoom = Math.max(0.03, this.half - 0.3);
+    f.position.set(
+      clamp(pose.x, CX - figureRoom, CX + figureRoom),
+      g.player.pos.y,
+      clamp(pose.z, CZ - figureRoom, CZ + figureRoom));
     f.rotation.y = pose.yaw + Math.PI;
     const stride = Math.sin(pose.ph) * 0.46 * pose.sr;
     fd.legs[0].hip.rotation.x = stride;
@@ -555,6 +948,7 @@ export class Finale {
     this.dresserGlow.intensity = 4.5 * practicalLife *
       (0.93 + Math.sin(this.t * 17.3) * 0.05 + Math.sin(this.t * 7.1) * 0.02);
 
+    let contactU = this.phase === 'black' || this.phase === 'end' ? 1 : 0;
     switch (this.phase) {
       case 'still':
         this.veilMat.opacity = 1;
@@ -565,7 +959,8 @@ export class Finale {
         }
         if (this.t > 7) {
           this.phase = 'closing';
-          g.audio.stoneGrind({ gain: 0.4, rate: 0.5 });
+          g.audio.stoneGrind({ pos: this.panes[0].mesh.position,
+            gain: 0.4, rate: 0.5, verb: 0.68 });
         }
         break;
       case 'closing': {
@@ -576,37 +971,23 @@ export class Finale {
         }
 
         const speed = 0.05 * (1 + elapsed * 0.06);
-        this.half = Math.max(0.36, this.half - speed * dt);
+        this.half = Math.max(CONTACT_HALF, this.half - speed * dt);
         this._placeWalls();
 
-        // Furniture obeys the room: it scrapes and leans ahead of the glass.
-        const clampIn = (m, r) => {
-          m.position.x = clamp(m.position.x, CX - this.half + r, CX + this.half - r);
-          m.position.z = clamp(m.position.z, CZ - this.half + r, CZ + this.half - r);
-        };
-        clampIn(this.bed, 0.9);
-        clampIn(this.dresser, 0.5);
-        this.doorPanel.position.x = Math.max(
-          this.doorPanel.position.x, CX - this.half + 0.05);
-        this.winFrame.position.z = Math.min(
-          this.winFrame.position.z, CZ + this.half - 0.07);
-        const crush = smoothstep(0.25, 1, closeness);
-        this.bed.rotation.z = this.bed.userData.homeRotation.z +
-          Math.sin(elapsed * 0.61) * 0.018 * crush;
-        this.dresser.rotation.x = this.dresser.userData.homeRotation.x -
-          0.035 * crush;
-        this.doorPanel.rotation.z = this.doorPanel.userData.homeRotation.z +
-          0.025 * crush;
-        this.winFrame.rotation.z = this.winFrame.userData.homeRotation.z -
-          0.02 * crush;
+        const closeNow = 1 - clamp(
+          (this.half - 0.36) / (3.0 - 0.36), 0, 1);
+        this._updateCrushedProps(elapsed, closeNow);
 
         g.baseTension = clamp(1 - (this.half - 0.36) / 2.6, 0, 1) * 0.9;
         g.audio.setTension(g.baseTension);
         if (!this._grind || this.t > this._grind) {
           this._grind = this.t + 2.6;
+          const wall = Math.floor(elapsed / 2.6) % this.panes.length;
           g.audio.stoneGrind({
+            pos: this.panes[wall].mesh.position,
             gain: 0.3 + (1 - this.half / 3) * 0.4,
             rate: 0.5 + (1 - this.half / 3) * 0.3,
+            verb: 0.72,
           });
           g.shake(0.05 + (1 - this.half / 3) * 0.1);
         }
@@ -616,21 +997,30 @@ export class Finale {
           g.player.pos.x, CX - this.half + 0.34, CX + this.half - 0.34);
         g.player.pos.z = clamp(
           g.player.pos.z, CZ - this.half + 0.34, CZ + this.half - 0.34);
-        if (this.half <= 0.37) {
-          this.phase = 'end';
-          // Look input remains live through the visible fade. Freeze only once
-          // the screen is fully black and control no longer has visible meaning.
-          g.fadeOut(5, () => {
-            g.player.frozen = true;
-            g.showEnd();
-          }, true);
-          g.audio.duck(0.0, 12);
-        }
+        if (this.half <= CONTACT_HALF) this._beginContact();
         break;
       }
+      case 'contact':
+        this._updateCrushedProps(this.t - 7, 1);
+        g.player.pos.x = clamp(
+          g.player.pos.x, CX - this.half + 0.34, CX + this.half - 0.34);
+        g.player.pos.z = clamp(
+          g.player.pos.z, CZ - this.half + 0.34, CZ + this.half - 0.34);
+        contactU = this._updateContact(dt);
+        break;
+      case 'black':
       case 'end':
         break;
     }
+
+    const currentClose = 1 - clamp(
+      (this.half - 0.36) / (3.0 - 0.36), 0, 1);
+    this._updatePressure(dt, this.phase === 'closing' || this.phase === 'contact');
+    this._updatePaneEffects(currentClose, contactU);
+    // Wall pressure is resolved after Player.update. Keep the camera on the
+    // resolved capsule for this same rendered frame instead of letting it lag
+    // one wall-step outside the glass.
+    if (this.phase === 'closing' || this.phase === 'contact') g.player._sync(0);
   }
 
   render(scene, camera) {

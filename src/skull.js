@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+
+const _anchorLook = new THREE.Vector3();
 import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
 import { buildSkullMesh as buildVariantB } from './skull-variant-b.js';
 import { buildSkullMesh as buildVariantC } from './skull-variant-c.js';
@@ -92,6 +94,9 @@ export class Skull {
     this.returnSide = 1;
     this.snapReturn = false;
     this.anchor = null;         // { point, onArrive } while latched
+    // Phase-local clocks reset at launch/recall, so their sum is not a valid
+    // chronology for contact audio. This clock only advances.
+    this._sfxClock = 0;
 
     // threat radar (set each frame by enemies/director)
     this.threat = 0;
@@ -506,14 +511,14 @@ export class Skull {
     this._lastBounceSfx = undefined;
     this._poiseT = 0;
     this.outboundDuration = P.outboundBase;      // failsafe window for UNHELD flights
-    this.hardAway = this.fearHome ? P.hardAwayBase * 0.6 : P.hardAwayBase;
+    this.hardAway = P.hardAwayBase;
     this.maxRange = P.maxRangeBase + P.maxRangeCharge;
     this.lastFlightSpeed = speed;
     this.returnSide = Math.random() < 0.5 ? -1 : 1;
     this.snapReturn = false;
     this._spin = 0;
     this.jaw.rotation.x = this.carry ? 0.3 : 0.55;   // it opens wide as it flies
-    this.audio.skullMoanStart();
+    this.audio.skullMoanStart(this.pos);
     return true;
   }
 
@@ -562,6 +567,7 @@ export class Skull {
 
   // ---------------------------------------------------------------- update
   update(dt, ctx) {
+    this._sfxClock += dt;
     this._applyPendingStageIfUnseen();
     this._updateHands(dt);
     switch (this.mode) {
@@ -818,9 +824,10 @@ export class Skull {
   _completeCatch(ctx, hard) {
     // hard = failsafe fired: it is simply in your hands again. don't explain.
     const impact = clamp((this.vel.length() - 14) / 30, 0, 1);
+    const catchPos = this.camera.getWorldPosition(V.a).clone();
     this.holdNow();
     this._lastD = undefined;
-    this.audio.catchThud({ gain: 0.5 + impact * 0.5, rate: hard ? 0.8 : 1 });
+    this.audio.catchThud({ pos: catchPos, gain: 0.5 + impact * 0.5, rate: hard ? 0.8 : 1 });
     if (ctx && ctx.onCatch) ctx.onCatch(impact, hard);
   }
 
@@ -829,7 +836,19 @@ export class Skull {
     if (!a) { this.beginReturn('auto'); return; }
     a.t += dt;
     this.root.position.copy(this.pos);
-    this.root.rotation.y += dt * 0.4;
+    if (a.swing) {
+      // A swing anchor lives exactly as long as you hold the button — the same
+      // grammar as every other throw. It also keeps facing you while it holds,
+      // because it is still your light and you are still going to need it.
+      this.root.lookAt(this.camera.getWorldPosition(_anchorLook));
+      if (!ctx.throwHeld && a.t > 0.06) {
+        this.anchor = null;
+        this.beginReturn('snap');
+        return;
+      }
+    } else {
+      this.root.rotation.y += dt * 0.4;
+    }
     // failsafe: never hang forever
     if (a.t > (a.maxHold || 3.5)) {
       this.anchor = null;
@@ -884,7 +903,7 @@ export class Skull {
 
   _bounceFx(speed) {
     this.bounced = true;
-    const now = this.flightTime + this.returnTime;
+    const now = this._sfxClock;
     // pinball guard: ricochet storms wreck the mix and feel broken — three
     // bounces inside 0.4s means it's wedged in geometry; it comes home.
     this._bounceTimes = (this._bounceTimes || []).filter((t) => now - t < 0.4);
