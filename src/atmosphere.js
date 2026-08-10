@@ -52,7 +52,42 @@ export function buildAtmosphere(game) {
   buildClearingDress(game, track, own, tickers);
   buildCaveDress(game, track, own, tickers);
 
+  // Cave dressing shares the decorative root with the exterior for batching,
+  // but it must not leak draw calls (or stars through a shell gap) into the
+  // house, graveyard, forest or clearing. Underfalls' visibility law performs
+  // the inverse operation while inside: these six batches wake, exterior
+  // siblings sleep.
+  const caveNames = new Set([
+    'cave broken wall skin',
+    'underfalls chamber ceiling vaults',
+    'cave stalactites',
+    'cave mica trail (grows toward the way out)',
+    'underfalls interior cataracts',
+    'underfalls displaced spray',
+  ]);
+  const caveDress = root.children.filter((child) => caveNames.has(child.name));
+  for (const child of caveDress) child.visible = false;
+  let caveDressVisible = false;
+  // From the oasis, the forest should remain a black wooded history behind the
+  // player, not resolve into a luminous ruler of hundreds of distant ferns and
+  // cyan guidance points. Keep its trunks/canopy silhouette; retire the two
+  // close-reading layers once the forest chapter has actually been escaped.
+  const forestCloseDress = root.children.filter((child) =>
+    child.name === 'forest understory' || child.name === 'pathside foxfire');
+  let forestCloseVisible = true;
+
   const ticker = (dt, t) => {
+    const nextCaveVisible = game.act === 'cave';
+    if (nextCaveVisible !== caveDressVisible) {
+      caveDressVisible = nextCaveVisible;
+      for (const child of caveDress) child.visible = nextCaveVisible;
+    }
+    const nextForestCloseVisible = game.act !== 'clearing'
+      && game.act !== 'cave' && game.act !== 'mirror';
+    if (nextForestCloseVisible !== forestCloseVisible) {
+      forestCloseVisible = nextForestCloseVisible;
+      for (const child of forestCloseDress) child.visible = nextForestCloseVisible;
+    }
     for (const fn of tickers) fn(dt, t);
   };
   if (Array.isArray(game.tickers)) game.tickers.push(ticker);
@@ -800,14 +835,38 @@ function buildForestDress(game, track, own, tickers) {
 
 function makeFernGeometry() {
   const pos = [];
-  const tri = (ax, ay, bx, by, cx, cy) => pos.push(ax, ay, 0, bx, by, 0, cx, cy, 0);
-  tri(-0.025, 0, 0.025, 0, 0.018, 1.14);
-  for (let i = 0; i < 6; i++) {
-    const y = 0.18 + i * 0.14;
-    const w = 0.43 * (1 - i * 0.105);
-    const rise = 0.12 + i * 0.008;
-    tri(0, y, -w, y + rise * 0.35, -w * 0.18, y + rise);
-    tri(0, y + 0.025, w, y + rise * 0.48, w * 0.18, y + rise * 1.08);
+  const tri = (a, b, c) => pos.push(...a, ...b, ...c);
+  const quad = (a, b, c, d) => { tri(a, b, c); tri(a, c, d); };
+  const fronds = [
+    { lean: 0.02, height: 1.14, width: 0.3, curve: 0.03, leaves: 7 },
+    { lean: -0.34, height: 0.88, width: 0.23, curve: 0.11, leaves: 5 },
+    { lean: 0.32, height: 0.92, width: 0.24, curve: -0.1, leaves: 5 },
+  ];
+  for (const [frondIndex, frond] of fronds.entries()) {
+    const zBase = (frondIndex - 1) * 0.024;
+    const endX = frond.lean;
+    const endZ = zBase + frond.curve;
+    const stem = 0.014;
+    quad([-stem, 0, zBase], [stem, 0, zBase],
+      [endX + stem, frond.height, endZ], [endX - stem, frond.height, endZ]);
+    for (let i = 0; i < frond.leaves; i++) {
+      const t = (i + 1) / (frond.leaves + 1);
+      const cx = frond.lean * t;
+      const cy = 0.08 + frond.height * t * 0.88;
+      const cz = zBase + Math.sin(t * Math.PI) * frond.curve;
+      const width = frond.width * (1 - t * 0.58);
+      const rise = 0.07 + t * 0.065;
+      for (const side of [-1, 1]) {
+        const root = [cx + side * 0.012, cy, cz];
+        const shoulder = [cx + side * width * 0.5, cy + rise * 0.32,
+          cz + side * (0.018 + t * 0.018)];
+        const tip = [cx + side * width, cy + rise,
+          cz + side * (0.045 + t * 0.028)];
+        const back = [cx + side * width * 0.36, cy + rise * 0.9,
+          cz - side * 0.012];
+        quad(root, shoulder, tip, back);
+      }
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -832,6 +891,11 @@ function buildClearingDress(game, track, own, tickers) {
   const sideFalls = [
     [-14.4, 3.3, 10.8, -0.08], [-9.5, 2.5, 14.4, 0.05], [-5.3, 1.45, 8.4, -0.04],
     [5.4, 1.55, 9.5, 0.05], [9.7, 2.45, 15.8, -0.04], [14.7, 3.15, 12.1, 0.07],
+  ];
+  const feederPools = [
+    { x: -13.4, z: -2.8, rx: 3.0, rz: 1.65 },
+    { x: 12.8, z: -0.4, rx: 2.7, rz: 1.5 },
+    { x: -7.2, z: 5.7, rx: 2.15, rz: 1.12 },
   ];
 
   // A low-poly talus facade dissolves the original monolithic cliff box.
@@ -1053,6 +1117,15 @@ function buildClearingDress(game, track, own, tickers) {
     p.push(C.x + rng.range(-17, 17), rng.range(0.35, 2.8), C.z + rng.range(-9, 10));
     phase.push(rng.range(0, TAU)); kind.push(2);
   }
+  for (const pool of feederPools) {
+    for (let i = 0; i < 12; i++) {
+      const a = rng.range(0, TAU);
+      p.push(C.x + pool.x + Math.cos(a) * rng.range(pool.rx * 0.65, pool.rx * 1.12),
+        rng.range(0.22, 1.18),
+        C.z + pool.z + Math.sin(a) * rng.range(pool.rz * 0.7, pool.rz * 1.18));
+      phase.push(rng.range(0, TAU)); kind.push(2);
+    }
+  }
   const spray = makeGlowPoints(p, phase, kind, own, {
     cyan: new THREE.Color(0xa8edf4), amber: new THREE.Color(0xffc968), size: 17.0, opacity: 0.62,
   });
@@ -1081,6 +1154,180 @@ function buildClearingDress(game, track, own, tickers) {
   finishInstances(ferns, false, false);
   ferns.name = 'clearing fern ring';
   track(ferns, fernMatrices.length);
+
+  // The waterfall used to own the only composed view in the oasis. Turning
+  // sideways revealed empty black terrain and a distant row of flat trees,
+  // which made the sincere clearing feel like a set facing rather than a
+  // place. Two shallow feeder waters and a pale-barked side grove now give the
+  // player a watershed to stand inside. They are deliberately decorative:
+  // the central plunge basin and its stone bridge remain the only progression
+  // collision language.
+  // A horizontal pool cannot reuse the waterfall's vertical ribbon shader:
+  // its UV edge mask turns a grazing-angle pond into a luminous ruler. These
+  // surfaces are dark, broad reflections with just enough self-value to read
+  // their shape when the skull-light is elsewhere.
+  const feederWaterMat = own(new THREE.MeshStandardMaterial({
+    color: 0x21424a,
+    roughness: 0.24,
+    metalness: 0.2,
+    emissive: 0x0b1c20,
+    emissiveIntensity: 0.22,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  }));
+  const feederMatrices = [];
+  for (const pool of feederPools) {
+    const y = game.world.groundHeightAt(C.x + pool.x, C.z + pool.z, 2) + 0.055;
+    feederMatrices.push(compose(C.x + pool.x, y, C.z + pool.z,
+      -Math.PI / 2, 0, 0, pool.rx, pool.rz, 1));
+  }
+  const feederPoolMesh = new THREE.InstancedMesh(
+    new THREE.CircleGeometry(1, 24), feederWaterMat, feederMatrices.length,
+  );
+  feederMatrices.forEach((matrix, i) => feederPoolMesh.setMatrixAt(i, matrix));
+  finishInstances(feederPoolMesh, false, false);
+  feederPoolMesh.name = 'three clearing feeder pools';
+  track(feederPoolMesh, feederMatrices.length);
+
+  const feederPos = [];
+  const feederUv = [];
+  const feederIdx = [];
+  const addFeeder = (points, widths) => {
+    const base = feederPos.length / 3;
+    let travelled = 0;
+    for (let i = 0; i < points.length; i++) {
+      const prev = points[Math.max(0, i - 1)];
+      const next = points[Math.min(points.length - 1, i + 1)];
+      const tx = next[0] - prev[0], tz = next[1] - prev[1];
+      const length = Math.hypot(tx, tz) || 1;
+      const nx = -tz / length, nz = tx / length;
+      if (i > 0) travelled += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+      const half = widths[i] * 0.5;
+      const x = C.x + points[i][0], z = C.z + points[i][1];
+      const y = game.world.groundHeightAt(x, z, 2) + 0.06;
+      feederPos.push(x - nx * half, y, z - nz * half, x + nx * half, y, z + nz * half);
+      feederUv.push(0, travelled * 0.18, 1, travelled * 0.18);
+      if (i > 0) {
+        const a = base + (i - 1) * 2, b = base + i * 2;
+        feederIdx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  };
+  addFeeder([[-13.4, -1.3], [-11.8, 0.2], [-10.2, 2.0], [-8.7, 4.4], [-6.6, 7.0]],
+    [1.05, 0.92, 0.82, 0.74, 0.68]);
+  addFeeder([[12.8, 0.9], [11.5, 2.4], [10.1, 4.2], [8.2, 5.7], [6.4, 7.5]],
+    [0.98, 0.9, 0.78, 0.72, 0.66]);
+  const feederGeo = new THREE.BufferGeometry();
+  feederGeo.setAttribute('position', new THREE.Float32BufferAttribute(feederPos, 3));
+  feederGeo.setAttribute('uv', new THREE.Float32BufferAttribute(feederUv, 2));
+  feederGeo.setIndex(feederIdx);
+  feederGeo.computeVertexNormals();
+  const feederStreams = new THREE.Mesh(feederGeo, feederWaterMat);
+  feederStreams.name = 'paired oasis feeder streams';
+  feederStreams.receiveShadow = true;
+  track(feederStreams, 1);
+
+  const terraceMatrices = [];
+  for (const pool of feederPools) {
+    for (let i = 0; i < 13; i++) {
+      const a = i / 13 * TAU;
+      const x = C.x + pool.x + Math.cos(a) * pool.rx * 1.04;
+      const z = C.z + pool.z + Math.sin(a) * pool.rz * 1.04;
+      const y = game.world.groundHeightAt(x, z, 2) + rng.range(0.02, 0.14);
+      const s = rng.range(0.28, 0.56);
+      terraceMatrices.push(compose(x, y, z, rng.range(-0.3, 0.3), a,
+        rng.range(-0.3, 0.3), s * 1.35, s * 0.72, s));
+    }
+  }
+  const terraceRocks = new THREE.InstancedMesh(rockGeo, rockMat, terraceMatrices.length);
+  terraceMatrices.forEach((matrix, i) => terraceRocks.setMatrixAt(i, matrix));
+  finishInstances(terraceRocks, true, true);
+  terraceRocks.name = 'feeder pool stone terraces';
+  track(terraceRocks, terraceMatrices.length);
+
+  const groveBark = own(new THREE.MeshStandardMaterial({
+    color: 0x71807a, roughness: 0.96, metalness: 0,
+    emissive: 0x111b18, emissiveIntensity: 0.14,
+  }));
+  const groveLeaf = own(new THREE.MeshLambertMaterial({
+    color: 0x314a3d, emissive: 0x0b1710, emissiveIntensity: 0.15,
+  }));
+  const groveTrunkGeo = new THREE.CylinderGeometry(0.13, 0.25, 1, 7);
+  const groveBranchGeo = new THREE.CylinderGeometry(0.055, 0.105, 1, 6);
+  const groveCrownGeo = new THREE.SphereGeometry(1, 10, 7);
+  const trunkMatrices = [];
+  const branchMatrices = [];
+  const crownMatrices = [];
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 18; i++) {
+      const x = side * (15.2 + (i % 5) * 1.7 + rng.range(-0.55, 0.55));
+      const z = -14.4 + i * 1.72 + rng.range(-0.75, 0.75);
+      if (z > 12.8) continue;
+      const y = game.world.groundHeightAt(C.x + x, C.z + z, 3);
+      const h = rng.range(5.4, 8.4);
+      const lean = side * rng.range(-0.09, 0.05);
+      trunkMatrices.push(compose(C.x + x, y + h * 0.5, C.z + z,
+        lean, rng.range(0, TAU), rng.range(-0.06, 0.06), 1, h, 1));
+      const top = new THREE.Vector3(C.x + x + lean * h * 0.7,
+        y + h * 0.78, C.z + z);
+      const forkA = top.clone().add(new THREE.Vector3(side * rng.range(0.7, 1.2),
+        rng.range(0.9, 1.45), rng.range(-0.8, 0.8)));
+      const forkB = top.clone().add(new THREE.Vector3(-side * rng.range(0.45, 0.9),
+        rng.range(0.7, 1.25), rng.range(-0.75, 0.75)));
+      branchMatrices.push(segmentMatrix(top, forkA, rng.range(0.72, 1.0)));
+      branchMatrices.push(segmentMatrix(top, forkB, rng.range(0.62, 0.9)));
+      const crownSites = [
+        forkA.clone().add(new THREE.Vector3(0, rng.range(0.35, 0.7), 0)),
+        forkB.clone().add(new THREE.Vector3(0, rng.range(0.25, 0.62), 0)),
+        top.clone().add(new THREE.Vector3(rng.range(-0.35, 0.35), rng.range(1.3, 1.85), rng.range(-0.3, 0.3))),
+      ];
+      for (let lobe = 0; lobe < crownSites.length; lobe++) {
+        const crownSize = rng.range(0.92, 1.48) * (lobe === 2 ? 1.12 : 1);
+        crownMatrices.push(compose(crownSites[lobe].x, crownSites[lobe].y, crownSites[lobe].z,
+          rng.range(-0.28, 0.28), rng.range(0, TAU), rng.range(-0.28, 0.28),
+          crownSize * rng.range(1.15, 1.55), crownSize * rng.range(0.62, 0.88),
+          crownSize * rng.range(0.9, 1.25)));
+      }
+    }
+  }
+  // A few storm-thrown trunks make the pools feel found rather than placed.
+  // They share the branch draw and sit on the outer bank, never across the
+  // central route or the progression basin.
+  for (const pool of feederPools) {
+    const bankZ = C.z + pool.z + pool.rz * 1.16;
+    const bankY = game.world.groundHeightAt(C.x + pool.x, bankZ, 3) + 0.18;
+    const a = new THREE.Vector3(C.x + pool.x - pool.rx * 0.72, bankY, bankZ);
+    const b = new THREE.Vector3(C.x + pool.x + pool.rx * 0.72, bankY + 0.12, bankZ + 0.14);
+    branchMatrices.push(segmentMatrix(a, b, 2.2));
+    const fork = b.clone().add(new THREE.Vector3(pool.x < 0 ? -0.7 : 0.7, 0.45, 0.52));
+    branchMatrices.push(segmentMatrix(b.clone().lerp(a, 0.22), fork, 1.25));
+  }
+  const groveTrunks = new THREE.InstancedMesh(groveTrunkGeo, groveBark, trunkMatrices.length);
+  trunkMatrices.forEach((matrix, i) => groveTrunks.setMatrixAt(i, matrix));
+  finishInstances(groveTrunks, true, true);
+  groveTrunks.name = 'moon-pale clearing side grove';
+  track(groveTrunks, trunkMatrices.length);
+  const groveBranches = new THREE.InstancedMesh(groveBranchGeo, groveBark, branchMatrices.length);
+  branchMatrices.forEach((matrix, i) => groveBranches.setMatrixAt(i, matrix));
+  finishInstances(groveBranches, true, true);
+  groveBranches.name = 'forked clearing grove branches';
+  track(groveBranches, branchMatrices.length);
+  const groveCrowns = new THREE.InstancedMesh(groveCrownGeo, groveLeaf, crownMatrices.length);
+  crownMatrices.forEach((matrix, i) => groveCrowns.setMatrixAt(i, matrix));
+  finishInstances(groveCrowns, false, false);
+  groveCrowns.name = 'clearing side grove crowns';
+  track(groveCrowns, crownMatrices.length);
+
+  game.clearingPlacehood = {
+    feederPools: feederPools.length,
+    feederStreams: 2,
+    terraceStones: terraceMatrices.length,
+    groveTrees: trunkMatrices.length,
+    groveBranches: branchMatrices.length,
+    groveCrownLobes: crownMatrices.length,
+  };
 }
 
 // -------------------------------------------------------------------- cave

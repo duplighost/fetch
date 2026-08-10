@@ -118,15 +118,41 @@ try {
     // throw, then steal the flame waiting in its light
     walkTo(1, -6.8, 10);
     throwAt(4, 4.75, -7, 0.35);
-    for (let t = 0; t < 3 && !g.flags.has('voidDoorOpen'); t += 0.1) F.stepWith(0.1);
+    F.stepWith(0.8);
     waitHeld();
-    F.stepWith(1.0);                               // the door swings wide
-    beat('void-door-knocked-open', g.flags.has('voidDoorOpen'));
+    beat('void-door-points-to-window-relay',
+      g.flags.has('voidDoorTried') && !g.flags.has('voidDoorOpen'));
+
+    walkTo(1, -9.3, 12);                           // down the flight to ground
+    walkTo(1, -11, 6); walkTo(-1, -11, 7); walkTo(-1, -9, 6); // entry -> foyer
+    walkTo(-4.8, -9, 8); walkTo(-10.3, -9, 12);    // living-room aperture
+    g.player.yaw = Math.PI / 2;
+    g.player.pitch = -0.015;
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    beat('window-relay-mooring-catches-real-throw',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'windowRelay', {
+        player: g.player.pos.toArray(), skull: g.skull.pos.toArray(),
+        mode: g.skull.mode, relay: g.windowRelay.state,
+      });
+    F.stepWith(3.48, { moveZ: -1, throwHeld: true });
+    F.stepWith(3.72, { moveX: -1, throwHeld: true });
+    F.stepWith(1.82, { moveZ: 1, run: true, throwHeld: true });
+    F.stepWith(1.15, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 4 && !g.flags.has('windowRelaySolved'); t += 0.05) F.stepWith(0.05);
+    waitHeld();
+    beat('window-return-bell-opens-void-door',
+      g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpenedByRelay')
+      && g.flags.has('voidDoorOpen'));
+
+    walkTo(-4.8, 1, 10); walkTo(-3.2, 1, 6); walkTo(-1, 1, 7);
+    walkTo(-1, -3, 8); walkTo(-1, -11, 12); walkTo(1, -11, 7); walkTo(1, -8.8, 7);
     throwAt(5.3, 4.95, -7, 0.6);
     for (let t = 0; t < 4 && !g.flags.has('ateFlame'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('the-skull-ate-a-flame', g.flags.has('ateFlame'), g.skull.getState());
-    walkTo(1, -9.3, 12);                           // down the flight
     walkTo(1, -10.8, 6); walkTo(2.5, -11.5, 8);    // entry
     walkTo(3.4, -11, 6); walkTo(4.8, -11, 6);      // dining door
     walkTo(7, -10, 8); walkTo(7, -6.7, 8); walkTo(7, -5.2, 6);   // kitchen door
@@ -176,6 +202,34 @@ try {
     walkTo(-1.5, -1.5, 10);                          // storeroom
     F.stepWith(1);
     fightNearbyWalkers(7);                           // one of the sheets is real
+
+    // The stolen guest-room flame has no furnace draft yet. Follow the dead
+    // pressure line into the western works, pay out the bridge under a held
+    // skull, cross under player control, and drop the far pawl.
+    walkTo(-4.8, -3, 8); walkTo(-9.8, -3, 10);       // crawl-room pump doorway
+    walkTo(-12.62, -6.8, 12);
+    const pumpAim = g.pumpGallery.cradle.getWorldPosition(g.player.pos.clone());
+    aimAt(pumpAim.x, pumpAim.y, pumpAim.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.55, { throwHeld: true });
+    const pumpAnchored = g.skull.mode === 'anchored'
+      && g.skull.anchor?.puzzleId === 'pumpGallery';
+    F.stepWith(2.45, { throwHeld: true });
+    g.player.yaw = Math.PI / 2;
+    g.player.pitch = 0;
+    g.player._sync(0);
+    F.stepWith(1.12, { moveX: -1, throwHeld: true });
+    F.stepWith(1.55, { moveZ: 1, run: true, throwHeld: true });
+    F.stepWith(0.35, { moveZ: 1, run: true, throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false });
+    waitHeld(3);
+    beat('pump-restores-the-furnace-draft', pumpAnchored
+      && g.flags.has('pumpGalleryLatched') && g.pumpGallery.gateOpen,
+    { anchored: pumpAnchored, progress: g.pumpGallery.progress,
+      latched: g.pumpGallery.latched, player: g.player.pos.toArray() });
+    walkTo(-12.6, -3, 14, true); walkTo(-9.2, -3, 8, true);
+    walkTo(-4.8, -3, 8, true); walkTo(-1.5, -1.5, 10, true);
+
     walkTo(3.2, -3, 10);                             // the boiler door is shut
     useAt(4, -1.9, -3);
     F.stepWith(1.4);
@@ -258,7 +312,7 @@ try {
       graveStrafe *= -1;
     };
     let graveGuard = 0;
-    while (!g.flags.has('graveyardCleared') && !g.dead && graveGuard < 240) {
+    while (!g.flags.has('graveyardResolved') && !g.dead && graveGuard < 240) {
       graveGuard++;
       const es = g.enemies.list.filter((en) => en.graveArena
         && en.kind === 'walker' && en.state !== 'dying');
@@ -313,7 +367,7 @@ try {
       if (!target) { F.stepWith(0.25); continue; }
       graveThrowPoint(target.pos.x, target.pos.y + 1.2, target.pos.z);
     }
-    beat('graveyard-horde-survived', g.flags.has('graveyardCleared') && !g.dead,
+    beat('graveyard-funeral-resolved', g.flags.has('graveyardResolved') && !g.dead,
       { dead: g.dead, waves: g.director.graveArena && g.director.graveArena.wave, guard: graveGuard });
     // Combat can legitimately finish inside either open mausoleum. Leave it
     // through its visible front doorway before bearing for the forest gate;
@@ -327,9 +381,37 @@ try {
         walkTo(mx, mz - 2.35, 8);
       }
     }
-    walkTo(2, 30, 30);
-    walkTo(2, 38, 18);
-    walkTo(2, 41, 10);
+    // All grave solutions now open the same required under-yard route. Enter
+    // the left mausoleum, follow its three readable alternating baffles, and
+    // use the same held-skull grammar to pay out the gate counterweight.
+    walkTo(-14.6, 31.6, 35);
+    walkTo(-14.6, 34.45, 12);
+    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
+    beat('mausoleum-opens-required-ossuary',
+      g.flags.has('ossuaryEntered') && g.ossuary.inOssuary, g.player.pos.toArray());
+    walkTo(-68.0, -3.4, 18);
+    walkTo(-68.0, -1.2, 8);
+    walkTo(-72.0, 3.4, 18);
+    walkTo(-72.0, 5.6, 8);
+    walkTo(-68.0, 10.8, 18);
+    walkTo(-68.0, 12.9, 8);
+    walkTo(-70.0, 15.0, 10);
+    aimAt(-70, -2.85, 16.25);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.35, { throwHeld: true });
+    beat('ossuary-counterweight-catches-the-skull',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryCounterweight');
+    F.stepWith(1.9, { throwHeld: true });
+    beat('held-counterweight-opens-gate-and-exit',
+      g.flags.has('graveyardCleared') && g.flags.has('ossuaryCleared')
+      && g.graveyardGate.opening && g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
+    walkTo(-70, 19.0, 12);
+    for (let t = 0; t < 3 && !g.flags.has('ossuaryExited'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
+    beat('ossuary-exits-outside-the-surface-gate',
+      g.flags.has('ossuaryExited') && !g.ossuary.inOssuary,
+      { player: g.player.pos.toArray(), gateOpening: g.graveyardGate.opening });
     walkTo(2, 45, 10);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later

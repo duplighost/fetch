@@ -52,6 +52,10 @@ export class GameAudio {
     this._chatAcc = 0.9; // head start: first jaw tick lands almost immediately
     this._moan = null;
     this._loops = new Set();
+    // Forest story props are ordinary owned loop handles, but their separate
+    // set makes the two-voice budget an invariant of the audio engine rather
+    // than a promise every caller has to remember.
+    this._forestStoryLoops = new Set();
     // tiny vec shim so camera.getWorldDirection works without importing three
     this._fv = {
       x: 0, y: 0, z: 0,
@@ -69,7 +73,17 @@ export class GameAudio {
   init() {
     if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
-    const ctx = (this.ctx = new AC());
+    // FETCH's synthesized palette tops out well below 12 kHz (the master
+    // low-pass is 7.5 kHz), so generating every procedural buffer at a 48 kHz
+    // hardware rate burned roughly twice the CPU and memory for frequencies the
+    // mix intentionally removes. Request a 24 kHz interactive context; Chrome
+    // resamples once at output and every authored oscillator/filter remains
+    // comfortably under Nyquist. Keep a constructor fallback for older WebAudio
+    // implementations that do not accept options.
+    let ctx;
+    try { ctx = new AC({ latencyHint: 'interactive', sampleRate: 24000 }); }
+    catch { ctx = new AC(); }
+    this.ctx = ctx;
     if (ctx.state === 'suspended') ctx.resume();
 
     // master bus
@@ -82,18 +96,27 @@ export class GameAudio {
     // three reverb characters share one send bus; setZone crossfades the wets
     this.verbBus = ctx.createGain(); this.verbBus.gain.value = 1;
     this._wet = {};
-    const impulses = { interior: [0.6, 4.5], outdoor: [1.4, 2.8], cave: [2.4, 2.2] };
-    for (const k of Object.keys(impulses)) {
+    this._impulseSpecs = { interior: [0.6, 4.5], outdoor: [1.4, 2.8], cave: [2.4, 2.2] };
+    this._convolvers = {};
+    for (const k of Object.keys(this._impulseSpecs)) {
       const conv = ctx.createConvolver();
-      conv.buffer = this._impulse(impulses[k][0], impulses[k][1]);
+      // Bedroom/house need the interior tail on the first frame. Later-act
+      // spaces prepare their own impulse only when setZone first reaches them;
+      // generating 3.8 seconds of unused stereo noise inside Start was a large
+      // part of the reported cold-input hitch.
+      if (k === 'interior') {
+        const spec = this._impulseSpecs[k];
+        conv.buffer = this._impulse(spec[0], spec[1]);
+      }
       const wet = ctx.createGain();
       wet.gain.value = 0.0001;
       this.verbBus.connect(conv); conv.connect(wet).connect(this.master);
       this._wet[k] = wet;
+      this._convolvers[k] = conv;
     }
 
     // shared pinkish noise for beds and breaths
-    this._noiseBuf = this._makeNoiseBuf(2);
+    this._noiseBuf = this._makeNoiseBuf(1.5);
 
     // beds — all through bedGain so duck() sidechains everything at once
     this.bedGain = ctx.createGain(); this.bedGain.gain.value = 1;
@@ -147,6 +170,7 @@ export class GameAudio {
 
     this._ready = true;
     this.setZone(this._zone);
+    this._queueForestStoryPrewarm?.();
   }
 
   // ---------------- synthesis helpers ----------------
@@ -265,11 +289,11 @@ export class GameAudio {
       }));
     }
     // ---- whisper: sibilant, wordless, close ----
-    this._whisperBuf = this._mono(1.4, (d, sr, n) => {
+    this._whisperBuf = this._mono(1.0, (d, sr, n) => {
       let bp = 0, bp2 = 0;
       for (let i = 0; i < n; i++) {
         const t = i / sr;
-        const env = Math.sin(Math.PI * Math.min(1, t / 1.4)) ** 1.5;
+        const env = Math.sin(Math.PI * Math.min(1, t / 1.0)) ** 1.5;
         const gate = 0.5 + 0.5 * Math.sin(TAU * 3.5 * t + Math.sin(t * 11));
         const w = R() * 2 - 1;
         bp = bp + 0.5 * (w - bp); bp2 = bp2 + 0.5 * (bp - bp2);
@@ -406,9 +430,9 @@ export class GameAudio {
       }));
     }
     // ---- crickets chorus loop (4s, edge-faded) ----
-    this._crickLoop = this._loopBuf(4, (d, sr, n) => {
+    this._crickLoop = this._loopBuf(1.5, (d, sr, n) => {
       const chirps = [];
-      for (let k = 0; k < 7; k++) chirps.push({ at: R() * 3.4, f: 3900 + R() * 700, dur: 0.32 + R() * 0.2 });
+      for (let k = 0; k < 3; k++) chirps.push({ at: R() * 1.15, f: 3900 + R() * 700, dur: 0.26 + R() * 0.18 });
       for (let i = 0; i < n; i++) {
         const t = i / sr; let v = 0;
         for (const c of chirps) {
@@ -420,7 +444,144 @@ export class GameAudio {
         d[i] = v;
       }
     });
+    // ---- found machines in the forest -----------------------------------
+    // Eight identities, one deterministic recipe each. The world owns where
+    // they are and which two deserve voices; these buffers only make a phone
+    // impossible to confuse with a washer or a tree squeal in darkness.
+    // This late-act bank is prepared one identity per idle slice. Baking all
+    // eight inside Start added a measured ~162ms long task; baking them on first
+    // contact merely moved the hitch into the forest. Chunked prewarm keeps both
+    // moments clean and still guarantees a synchronous fallback for unusual
+    // test/debug teleports that outrun the queue.
+    this._forestStoryBufs = {};
+    const fixedNoise = (i, seed) => fract(Math.sin((i + seed * 131) * 12.9898) * 43758.5453) * 2 - 1;
+    this._forestStoryRecipes = {
+      radio: () => this._loopBuf(2.0, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr;
+          const bar = Math.floor((t / 0.4) % 6);
+          const chord = [196, 247, 294, 220, 262, 330][bar];
+          const wow = 1 + Math.sin(TAU * 0.53 * t) * 0.012;
+          const music = Math.sin(TAU * chord * wow * t) * 0.23
+            + Math.sin(TAU * chord * 1.5 * wow * t + 0.7) * 0.11;
+          const staticV = fixedNoise(i, 1) * (0.08 + Math.max(0, Math.sin(TAU * 2.5 * t)) * 0.06);
+          d[i] = music * (0.62 + Math.sin(TAU * 1.25 * t) * 0.22) + staticV;
+        }
+      }),
+      phone: () => this._loopBuf(2.4, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr, phase = t % 1.4;
+          const gate = phase < 0.48 ? Math.sin(Math.PI * phase / 0.48) ** 0.5 : 0;
+          d[i] = (Math.sin(TAU * 440 * t) * 0.31 + Math.sin(TAU * 480 * t) * 0.27) * gate;
+        }
+      }),
+      swing: () => this._loopBuf(1.65, (d, sr, n) => {
+        let ph = 0;
+        for (let i = 0; i < n; i++) {
+          const t = i / sr;
+          const arc = Math.sin(Math.PI * t / 1.65);
+          const f = 118 - arc * 52;
+          ph += TAU * f / sr;
+          const stick = fract(t * (17 - arc * 8)) < 0.42 ? 1 : 0.18;
+          d[i] = (Math.sin(ph) * 0.33 + fixedNoise(i, 2) * 0.06) * stick * arc;
+        }
+      }),
+      washer: () => this._loopBuf(1.2, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr, cyc = fract(t / 0.4);
+          const thump = Math.exp(-cyc * 20);
+          d[i] = Math.sin(TAU * 54 * t) * 0.16
+            + Math.sin(TAU * 33 * t) * thump * 0.55
+            + fixedNoise(i, 3) * thump * 0.08;
+        }
+      }),
+      fridge: () => this._loopBuf(2.0, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr;
+          const compressor = 0.75 + Math.sin(TAU * 0.5 * t) * 0.08;
+          const tick = t > 1.72 && t < 1.76 ? Math.exp(-(t - 1.72) * 120) : 0;
+          d[i] = (Math.sin(TAU * 60 * t) * 0.28 + Math.sin(TAU * 120 * t) * 0.08) * compressor
+            + fixedNoise(i, 4) * tick * 0.26;
+        }
+      }),
+      crt: () => this._loopBuf(1.5, (d, sr, n) => {
+        let hiss = 0;
+        for (let i = 0; i < n; i++) {
+          const t = i / sr, w = fixedNoise(i, 5);
+          hiss += 0.38 * (w - hiss);
+          const scan = Math.max(0, Math.sin(TAU * 11.8 * t)) ** 8;
+          d[i] = Math.sin(TAU * 3920 * t) * 0.07 + hiss * 0.24 + w * scan * 0.13;
+        }
+      }),
+      bell: () => this._loopBuf(2.6, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr, env = Math.exp(-t * 1.36);
+          d[i] = (Math.sin(TAU * 146 * t) * 0.42
+            + Math.sin(TAU * 231.4 * t + 0.3) * 0.22
+            + Math.sin(TAU * 376 * t + 1.1) * 0.11) * env;
+        }
+      }),
+      generator: () => this._loopBuf(0.72, (d, sr, n) => {
+        for (let i = 0; i < n; i++) {
+          const t = i / sr, cyc = fract(t * 5.555);
+          const fire = Math.exp(-cyc * 15);
+          d[i] = Math.sin(TAU * 47 * t) * 0.22
+            + Math.sin(TAU * 94 * t) * 0.09
+            + fixedNoise(i, 6) * fire * 0.24;
+        }
+      }),
+    };
+    this._storyBakeMs = 0;
+    this._storyPrewarmMaxChunkMs = 0;
+    this._storyPrewarmReady = false;
+    this._storyPrewarmCancelled = false;
+    this._bakeForestStoryKind = (kind) => {
+      if (this._forestStoryBufs[kind]) return this._forestStoryBufs[kind];
+      const recipe = this._forestStoryRecipes[kind];
+      if (!recipe) return null;
+      const at = typeof performance !== 'undefined' ? performance.now() : 0;
+      const buffer = recipe();
+      const elapsed = typeof performance !== 'undefined' ? performance.now() - at : 0;
+      this._storyBakeMs += elapsed;
+      this._storyPrewarmMaxChunkMs = Math.max(this._storyPrewarmMaxChunkMs, elapsed);
+      this._forestStoryBufs[kind] = buffer;
+      return buffer;
+    };
+    this._queueForestStoryPrewarm = () => {
+      if (this._storyPrewarmReady || this._storyPrewarmHandle) return;
+      this._storyPrewarmCancelled = false;
+      const remaining = Object.keys(this._forestStoryRecipes)
+        .filter((kind) => !this._forestStoryBufs[kind]);
+      const schedule = (fn) => {
+        if (typeof requestIdleCallback === 'function') {
+          this._storyPrewarmHandle = requestIdleCallback(fn, { timeout: 180 });
+        } else {
+          this._storyPrewarmHandle = setTimeout(fn, 24);
+        }
+      };
+      const pump = () => {
+        this._storyPrewarmHandle = null;
+        if (this._storyPrewarmCancelled || !this._ready) return;
+        const kind = remaining.shift();
+        if (kind) this._bakeForestStoryKind(kind);
+        if (remaining.length) schedule(pump);
+        else this._storyPrewarmReady = true;
+      };
+      if (remaining.length) schedule(pump);
+      else this._storyPrewarmReady = true;
+    };
+    this._cancelForestStoryPrewarm = () => {
+      this._storyPrewarmCancelled = true;
+      if (this._storyPrewarmHandle != null) {
+        if (typeof cancelIdleCallback === 'function') cancelIdleCallback(this._storyPrewarmHandle);
+        else clearTimeout(this._storyPrewarmHandle);
+        this._storyPrewarmHandle = null;
+      }
+    };
     // ---- enemy presence loops: two layers each, distinct recipes ----
+    this._enemyBufs = {};
+    this._bakeEnemyBuffers = () => {
+      if (this._enemyBufs.walker) return;
     this._enemyBufs = {
       walker: {
         // far: dry skeletal clicks + a dark ragged breath
@@ -502,11 +663,15 @@ export class GameAudio {
         }),
       },
     };
+    };
 
     // The Drowned Choir is not in the walker palette. Its far layer is three
     // almost-human fundamentals sharing one lung; the close layer is pressure
     // hiss and displaced droplets. Both are routed through moving HRTF panners
     // by drownedChoirLoop() below.
+    this._choirBufs = {};
+    this._bakeChoirBuffers = () => {
+      if (this._choirBufs.far) return;
     this._choirBufs = {
       far: this._loopBuf(2.4, (d, sr, n) => {
         let wet = 0;
@@ -536,6 +701,7 @@ export class GameAudio {
           d[i] = (lpv * 1.9 * swell + spray * 0.1 + throat * swell + bead) * 0.5;
         }
       }),
+    };
     };
   }
 
@@ -675,6 +841,11 @@ export class GameAudio {
     if (!this._ready) return; // init() applies the stored zone
     const z = ZONES[zone] || ZONES.forest;
     const t = this.ctx.currentTime;
+    const convolver = this._convolvers?.[z.verb];
+    if (convolver && !convolver.buffer) {
+      const spec = this._impulseSpecs[z.verb];
+      convolver.buffer = this._impulse(spec[0], spec[1]);
+    }
     this._windBase = z.wind;
     this.windGain.gain.setTargetAtTime(Math.max(0.0001, z.wind * this._windMul), t, 1.5);
     this.droneGain.gain.setTargetAtTime(Math.max(0.0001, z.drone), t, 1.5);
@@ -746,6 +917,42 @@ export class GameAudio {
     this._env(g2, t, 0.3, 0.12, 0.45);
     src.connect(lp).connect(g2).connect(out);
     src.start(t); src.stop(t + 0.7);
+  }
+
+  ironGateCreak(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 2.5, 1, 0.55);
+    // A broad iron hinge complains continuously as the leaves move. The old
+    // three-note metal-drop read as a latch falling, not a cemetery gate.
+    const scrape = ctx.createBufferSource();
+    scrape.buffer = this._noiseBuf;
+    scrape.loop = true;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 8;
+    bp.frequency.setValueAtTime(720 * (opts.rate ?? 1), t);
+    bp.frequency.exponentialRampToValueAtTime(170 * (opts.rate ?? 1), t + 1.85);
+    const scrapeGain = ctx.createGain();
+    scrapeGain.gain.setValueAtTime(0.0001, t);
+    scrapeGain.gain.exponentialRampToValueAtTime(0.34 * (opts.gain ?? 1), t + 0.12);
+    scrapeGain.gain.setTargetAtTime(0.16 * (opts.gain ?? 1), t + 0.65, 0.5);
+    scrapeGain.gain.exponentialRampToValueAtTime(0.0001, t + 2.1);
+    scrape.connect(bp).connect(scrapeGain).connect(out);
+    scrape.start(t); scrape.stop(t + 2.15);
+    for (const [i, base] of [82, 119, 173].entries()) {
+      const o = ctx.createOscillator();
+      o.type = i === 0 ? 'sine' : 'triangle';
+      o.frequency.setValueAtTime(base * (opts.rate ?? 1), t);
+      o.frequency.linearRampToValueAtTime((base * 0.62 + i * 5) * (opts.rate ?? 1), t + 1.9);
+      const wobble = ctx.createOscillator(); wobble.frequency.value = 5.4 + i * 2.1;
+      const wobbleGain = ctx.createGain(); wobbleGain.gain.value = 4.5 + i * 2;
+      wobble.connect(wobbleGain).connect(o.frequency);
+      const g = ctx.createGain();
+      this._env(g, t, (0.18 - i * 0.035) * (opts.gain ?? 1), 0.08 + i * 0.04, 1.9);
+      o.connect(g).connect(out);
+      o.start(t); o.stop(t + 2.05);
+      wobble.start(t); wobble.stop(t + 2.05);
+    }
   }
 
   doorClose(opts = {}) {
@@ -1360,6 +1567,7 @@ export class GameAudio {
     if (!this._ready) {
       return { panningModel: 'HRTF', setPos() {}, setState() {}, douse() {}, stop() {} };
     }
+    if (!this._choirBufs?.far) this._bakeChoirBuffers?.();
     const ctx = this.ctx;
     const farP = this._panner(pos, 12, 1.18);
     const pressureP = this._panner(pos, 5.5, 0.92);
@@ -1427,6 +1635,94 @@ export class GameAudio {
     return h;
   }
 
+  // A found object may begin calling before the player can see it, but the
+  // forest never gets to become an eight-channel jukebox. At most two of these
+  // handles can exist; outside.js continuously awards them to the nearest two
+  // audible, unsealed props and releases them as ownership changes.
+  forestStoryLoop(kind, pos = { x: 0, y: 1.2, z: 0 }, opts = {}) {
+    if (!this._ready) return null;
+    if (!this._forestStoryBufs?.[kind]) this._bakeForestStoryKind?.(kind);
+    if (!this._forestStoryBufs?.[kind]) return null;
+    if (this._forestStoryLoops.size >= 2) return null;
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._forestStoryBufs[kind];
+    src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.0001;
+    const panner = this._panner(pos, opts.ref ?? 8.5, opts.roll ?? 1.12);
+    const wet = ctx.createGain();
+    wet.gain.value = opts.verb ?? 0.36;
+    src.connect(gain).connect(panner);
+    panner.connect(this.master);
+    panner.connect(wet).connect(this.verbBus);
+    src.start();
+
+    const self = this;
+    const h = {
+      kind,
+      storyProp: true,
+      panningModel: panner.panningModel,
+      worldPos: { x: pos.x, y: pos.y ?? 1.2, z: pos.z },
+      _dead: false,
+      setGain(value, tau = 0.16) {
+        if (this._dead) return;
+        gain.gain.setTargetAtTime(Math.max(0.0001, clamp01(value)), ctx.currentTime, tau);
+      },
+      setPos(x, y, z) {
+        if (this._dead) return;
+        this.worldPos.x = x; this.worldPos.y = y; this.worldPos.z = z;
+        self._setPos(panner, x, y, z, 0.045);
+      },
+      stop() {
+        if (this._dead) return;
+        this._dead = true;
+        const t = ctx.currentTime;
+        gain.gain.cancelScheduledValues(t);
+        gain.gain.setTargetAtTime(0.0001, t, 0.055);
+        self._forestStoryLoops.delete(h);
+        self._loops.delete(h);
+        setTimeout(() => {
+          try { src.stop(); } catch {}
+          for (const node of [src, gain, panner, wet]) {
+            try { node.disconnect(); } catch {}
+          }
+        }, 360);
+      },
+    };
+    this._forestStoryLoops.add(h);
+    this._loops.add(h);
+    h.setGain(opts.gain ?? 0.22, 0.09);
+    return h;
+  }
+
+  // Silencing one of the forest's calling objects is deliberately louder than
+  // leaving it alone: a transformer cough, a metal case buckling, then the
+  // local voice is gone. The world couples this to player.noise so it remains
+  // a systemic choice even when no enemy is currently close enough to answer.
+  forestStoryBreak(kind, opts = {}) {
+    if (!this._ready) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.35, 1, 0.48);
+    const body = ctx.createOscillator();
+    body.type = kind === 'bell' ? 'sine' : 'sawtooth';
+    body.frequency.setValueAtTime(kind === 'crt' ? 180 : 104, t);
+    body.frequency.exponentialRampToValueAtTime(34, t + 0.62);
+    const bodyGain = ctx.createGain();
+    this._env(bodyGain, t, 0.42 * (opts.gain ?? 1), 0.006, 0.72);
+    body.connect(bodyGain).connect(out);
+    body.start(t); body.stop(t + 0.8);
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 920; bp.Q.value = 0.7;
+    const noiseGain = ctx.createGain();
+    this._env(noiseGain, t, 0.55 * (opts.gain ?? 1), 0.002, 0.34);
+    noise.connect(bp).connect(noiseGain).connect(out);
+    noise.start(t); noise.stop(t + 0.42);
+    return true;
+  }
+
   // ---------------- enemy presence loops ----------------
 
   // Two-layer presence per Behind You: a far loop that carries the threat math and
@@ -1435,6 +1731,7 @@ export class GameAudio {
   // computed on y-flattened vectors or looking down reads as "behind you".
   enemyLoop(kind) {
     if (!this._ready) return { setPos() {}, setThreat() {}, stop() {} };
+    if (!this._enemyBufs?.walker) this._bakeEnemyBuffers?.();
     const ctx = this.ctx;
     const cfg = ENEMIES[kind] || ENEMIES.walker;
     const bufs = this._enemyBufs[kind] || this._enemyBufs.walker;
@@ -1502,8 +1799,9 @@ export class GameAudio {
 
   // ---------------- teardown ----------------
 
-  stopAll() {
+  stopAll({ suspend = false } = {}) {
     if (!this._ready) return;
+    this._cancelForestStoryPrewarm?.();
     const t = this.ctx.currentTime;
     for (const h of Array.from(this._loops)) h.stop();
     this.skullMoanStop();
@@ -1519,6 +1817,17 @@ export class GameAudio {
     // clear any in-flight duck; beds stay alive but silent — the next setZone()
     // brings them back without re-allocating anything
     this.bedGain.gain.cancelScheduledValues(t);
-    this.bedGain.gain.setTargetAtTime(1, t, 0.5);
+    this.bedGain.gain.setTargetAtTime(0.0001, t, 0.16);
+    this._tGain.gain.cancelScheduledValues(t);
+    this._tGain.gain.setTargetAtTime(0.0001, t, 0.1);
+    this.master.gain.cancelScheduledValues(t);
+    this.master.gain.setTargetAtTime(0.0001, t, 0.18);
+    if (suspend && !this._suspendTimer) {
+      const ctx = this.ctx;
+      this._suspendTimer = setTimeout(() => {
+        this._suspendTimer = null;
+        if (ctx.state === 'running') ctx.suspend().catch(() => {});
+      }, 420);
+    }
   }
 }

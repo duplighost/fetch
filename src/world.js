@@ -560,6 +560,11 @@ export class World {
     this.candlePool = [];
     for (let i = 0; i < 8; i++) {
       const l = new THREE.PointLight(0xff9540, 0, 9, 1.8);
+      // Keep the light count resident so crossing the eighth-candle boundary
+      // never invalidates every lit material's shader. Inactive slots are true
+      // zero-intensity lights, not scene-graph visibility variants.
+      l.visible = true;
+      l.userData.c = null;
       this.candlePool.push(l);
     }
     this._candleT = 0;
@@ -579,13 +584,13 @@ export class World {
       for (let i = 0; i < this.candlePool.length; i++) {
         const l = this.candlePool[i];
         const c = sorted[i];
-        if (c) { l.position.set(c.x, c.y, c.z); l.userData.c = c; l.visible = true; }
-        else { l.visible = false; l.userData.c = null; }
+        if (c) { l.position.set(c.x, c.y, c.z); l.userData.c = c; }
+        else { l.intensity = 0; l.userData.c = null; }
       }
     }
     for (const l of this.candlePool) {
       const c = l.userData.c;
-      if (!c) continue;
+      if (!c) { l.intensity = 0; continue; }
       // ×35: physically-correct lighting wants candela-scale point intensities
       l.intensity = c.intensity * 35 *
         (0.82 + Math.sin(t * 11 + c.x * 7.7) * 0.09 + Math.sin(t * 23 + c.z * 13.3) * 0.06 + Math.random() * 0.05);

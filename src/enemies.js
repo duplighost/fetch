@@ -6,15 +6,18 @@ import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 
 const KIND = {
   walker: {
-    h: 2.05, r: 0.3, chase: 5.6, stalk: 1.1, hp: 1, stun: 2.8, scale: 1, windup: 1.1, strike: 0.66,
+    h: 2.05, r: 0.3, chase: 5.6, stalk: 1.1, hp: 1, stun: 2.8, scale: 1,
+    windup: 1.1, strike: 0.66, strikeRadius: 0.96, recovery: 0.42, lunge: 0.72,
     hit: { y0: 0.22, y1: 1.58, r: 0.32, shoulderY: 1.48, shoulderR: 0.42, headY: 1.79, headR: 0.23 },
   },
   resident: {
-    h: 2.5, r: 0.38, chase: 4.9, stalk: 0.9, hp: Infinity, stun: 1.6, scale: 1.22, windup: 0.8,
+    h: 2.5, r: 0.38, chase: 4.9, stalk: 0.9, hp: Infinity, stun: 1.6, scale: 1.22,
+    windup: 0.8, strike: 0.74, strikeRadius: 1.05, recovery: 0.58, lunge: 0.92,
     hit: { y0: 0.24, y1: 2.02, r: 0.46, shoulderY: 1.72, shoulderR: 0.62, headY: 2.14, headR: 0.3 },
   },
   kneeler: {
-    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 0.4, scale: 2.4, windup: 2.2,
+    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 0.4, scale: 2.4,
+    windup: 2.2, strike: 1.02, strikeRadius: 1.48, recovery: 0.9, lunge: 1.16,
     hit: { y0: 0.22, y1: 3.58, r: 0.9, shoulderY: 3.12, shoulderR: 1.15, headY: 3.38, headR: 0.68 },
   },
 };
@@ -25,6 +28,7 @@ const KIND = {
 // and runs slower than a committed sprint. Those are its three fairness rails.
 const DROWNED_CHOIR = Object.freeze({
   h: 2.75,
+  r: 0.42,
   warning: 2.65,
   drySpeed: 1.55,
   heardSpeed: 4.35,
@@ -832,6 +836,7 @@ export class Enemies {
       pos: new THREE.Vector3(x, this.game.world.groundHeightAt(x, z, yHint), z),
       phase: Math.random() * TAU,
       stunT: 0, windT: 0, stepT: 0,
+      strikeT: 0, recoverT: 0, strikePos: new THREE.Vector3(),
       loop: this.game.audio.ready ? this.game.audio.enemyLoop(kind) : null,
       hits: 0,
       serial,
@@ -879,7 +884,15 @@ export class Enemies {
       washV: new THREE.Vector3(),
       warned: false,
       loop: null,
+      nav: null,
     };
+    const underfalls = game.underfalls;
+    if (underfalls) {
+      underfalls.clamp?.(e.pos, 0);
+      e.pos.y = underfalls.groundAt(e.pos.x, e.pos.z);
+      underfalls.clamp?.(e.heardPos, 0);
+      e.heardPos.y = underfalls.groundAt(e.heardPos.x, e.heardPos.z);
+    }
     e.loop = game.audio.drownedChoirLoop(e.pos);
     mesh.position.copy(e.pos);
     game.scene.add(mesh);
@@ -906,6 +919,12 @@ export class Enemies {
     const e = this.choir;
     if (!e || e.state === 'spent') return null;
     e.heardPos.set(pos.x, pos.y ?? this.game.player.pos.y, pos.z);
+    const underfalls = this.game.underfalls;
+    if (underfalls) {
+      underfalls.clamp?.(e.heardPos, 0);
+      e.heardPos.y = underfalls.groundAt(e.heardPos.x, e.heardPos.z);
+    }
+    e.nav = null;
     e.heardStrength = Math.max(e.heardStrength || 0, clamp(intensity, 0, 1.25));
     e.memoryT = Math.max(e.memoryT || 0, 1.4 + clamp(intensity, 0, 1.25) * 2.2);
     if (source === 'call') {
@@ -1016,6 +1035,13 @@ export class Enemies {
       const dx = e.pos.x - pos.x, dz = e.pos.z - pos.z;
       const d = Math.hypot(dx, dz);
       if (d > radius) continue;
+      const alreadyStunned = e.state === 'stunned' && (e.stunT || 0) > 0.08;
+      if (this.game.act === 'graveyard' && alreadyStunned
+        && (e.graveArena || e.gravePressure) && e.spec.hp !== Infinity) {
+        this._layToRest(e);
+        caught++;
+        continue;
+      }
       this._releaseGraveClaim(e, 0.65);
       e.state = 'stunned';
       e.stunT = Math.max(e.stunT || 0, stun * (1 - d / radius * 0.35));
@@ -1144,14 +1170,13 @@ export class Enemies {
             this._moveWithPush(e, toP.x * 0.85 * dt, toP.z * 0.85 * dt);
             e.phase += dt * 2.2;                 // silent gait — no footsteps. worse.
           } else if (dist <= 0.9 && !game.dead) {
-            if (e.gravePressure && graveArenaActive) {
-              // In a crowd, even the Standing Kind has to commit. Its silence
-              // gets it close; lifted arms and breath give the player one last
-              // physical answer instead of converting overlap into death.
-              e.state = 'strike';
-              e.strikeT = 0;
-            } else {
-              game.director.death(e);
+            // Its silence gets it close; lifted arms and breath still give the
+            // player one physical answer instead of converting overlap into an
+            // invisible first-frame death.
+            if (!this._beginCommittedStrike(e, player)) {
+              if (e.gravePressure) this._releaseGraveClaim(e, 0.34);
+              e.state = 'recover';
+              e.recoverT = 0;
             }
           }
           break;
@@ -1250,34 +1275,27 @@ export class Enemies {
               game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
             }
           } else if (!game.dead) {
-            if (e.graveArena || e.gravePressure) {
-              // Late waves may own two pursuit claimants, but never two lethal
-              // commitments. The previous rule let both bodies enter `strike`
-              // on the same fixed step and made a correct sprint a coin toss.
-              const strikeBusy = this.list.some((other) => other !== e
-                && (other.graveArena || other.gravePressure)
-                && other.state === 'strike');
-              if (strikeBusy) {
-                this._releaseGraveClaim(e, 0.34);
-                e.state = 'wind';
-                e.windT = e.spec.windup * 0.66;
-              } else {
-                // Contact begins a committed attack, not an invisible
-                // one-frame kill. Running clears it; freezing in reach does not.
-                e.state = 'strike';
-                e.strikeT = 0;
-              }
+            // Every body obeys the same contact law: contact begins a readable,
+            // fixed-point commitment. Resident, walker, and Kneeler remain
+            // one-hit lethal, but a sidestep, door, sprint or skull hit can beat
+            // the action the player actually saw begin.
+            if (!this._beginCommittedStrike(e, player)) {
+              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+              e.state = 'recover';
+              e.recoverT = 0;
             } else {
-              game.director.death(e);
+              const toward = V.d.copy(e.strikePos).sub(e.pos).setY(0);
+              if (toward.lengthSq() > 0.001) toward.normalize();
+              e.strikeDirX = toward.x;
+              e.strikeDirZ = toward.z;
             }
           }
           break;
         }
         case 'strike': {
-          // The horde keeps the one-hit consequence, but earns it with a short
-          // readable commitment. A body that loses its claim or finds an older
-          // strike already active must fold back into the crowd; token trimming
-          // can never leave an unclaimed lethal state running for one frame.
+          // The one-hit consequence is still severe; now every body earns it
+          // with a visible fixed-point commitment. The target coordinate never
+          // updates after contact, so movement and doors are actual answers.
           if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
             e.state = e.standing ? 'standing' : 'wind';
             e.windT = e.spec.windup * 0.62;
@@ -1285,36 +1303,66 @@ export class Enemies {
             break;
           }
           const olderStrike = this.list.some((other) => other !== e
-            && (other.graveArena || other.gravePressure)
-            && other.state === 'strike' && other.graveClaimed
-            && (other.serial ?? 0) < (e.serial ?? 0));
+            && other.state === 'strike' && (other.serial ?? 0) < (e.serial ?? 0));
           if (olderStrike) {
-            this._releaseGraveClaim(e, 0.34);
-            e.state = e.standing ? 'standing' : 'wind';
-            e.windT = e.spec.windup * 0.62;
-            e.strikeT = 0;
+            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+            e.state = 'recover';
+            e.recoverT = 0;
             break;
           }
           if (!sameLevel) {
-            e.state = e.standing ? 'standing' : 'wind';
-            e.windT = 0;
+            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+            e.state = 'recover';
+            e.recoverT = 0;
             break;
           }
           e.strikeT = (e.strikeT || 0) + dt;
           if (e.strikeT === dt) {
-            game.audio.walkerStrike({ pos: e.pos, gain: 0.88, rate: 0.96, verb: 0.38 });
+            const rate = e.kind === 'kneeler' ? 0.52 : (e.kind === 'resident' ? 0.74 : 0.96);
+            const gain = e.kind === 'kneeler' ? 1.0 : (e.kind === 'resident' ? 0.94 : 0.88);
+            game.audio.walkerStrike({ pos: e.pos, gain, rate,
+              verb: e.kind === 'resident' ? 0.5 : 0.38 });
+            if (e.kind === 'kneeler') game.shake(0.09);
           }
-          const lift = Math.min(1, e.strikeT / 0.24);
+          const duration = e.spec.strike || 0.66;
+          const lift = Math.min(1, e.strikeT / Math.max(0.18, duration * 0.46));
           e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.46 * lift; });
-          if (e.strikeT >= (e.spec.strike || 0.66)) {
-            if (dist <= 0.95 && !game.dead) {
+          const lungeWindow = smoothstep(duration * 0.42, duration * 0.82, e.strikeT)
+            * (1 - smoothstep(duration * 0.82, duration, e.strikeT));
+          if (lungeWindow > 0) {
+            this._moveWithPush(e, (e.strikeDirX || 0) * e.spec.lunge * lungeWindow * dt,
+              (e.strikeDirZ || 0) * e.spec.lunge * lungeWindow * dt);
+          }
+          if (e.strikeT >= duration) {
+            const missDistance = Math.hypot(player.pos.x - e.strikePos.x,
+              player.pos.z - e.strikePos.z);
+            const blocked = this._segmentBlocked(
+              e.pos.x, e.pos.y + Math.min(1.25, e.spec.h * 0.55), e.pos.z,
+              player.pos.x, player.pos.y + 0.9, player.pos.z,
+            );
+            const landed = missDistance <= e.spec.strikeRadius
+              && Math.abs(player.pos.y - e.strikePos.y) <= 0.72 && !blocked;
+            if (landed && !game.dead) {
               game.director.death(e);
             } else {
-              this._releaseGraveClaim(e, 0.42);
-              e.state = e.standing ? 'standing' : 'wind';
-              e.windT = 0;
-              game.audio.walkerMiss({ pos: e.pos, gain: 0.5, rate: 0.94, verb: 0.25 });
+              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.42);
+              e.state = 'recover';
+              e.recoverT = 0;
+              game.audio.walkerMiss({ pos: e.pos, gain: e.kind === 'kneeler' ? 0.72 : 0.5,
+                rate: e.kind === 'kneeler' ? 0.58 : 0.94, verb: 0.25 });
             }
+          }
+          break;
+        }
+        case 'recover': {
+          e.recoverT = (e.recoverT || 0) + dt;
+          const u = clamp(e.recoverT / Math.max(0.1, e.spec.recovery), 0, 1);
+          e.mesh.userData.limbs.arms.forEach((a, i) => {
+            a.rotation.x = lerp(-1.18, i ? -0.08 : 0.08, smoothstep(0, 1, u));
+          });
+          if (u >= 1) {
+            e.state = e.standing ? 'standing' : 'wind';
+            e.windT = e.standing ? 0 : e.spec.windup * 0.52;
           }
           break;
         }
@@ -1345,6 +1393,16 @@ export class Enemies {
           break;
         }
         case 'dying': {
+          if (e.quietRest) {
+            e.deadT -= dt;
+            const u = 1 - clamp(e.deadT / 0.9, 0, 1);
+            e.pos.y = e.restGround - u * u * 0.72;
+            e.mesh.rotation.x = u * 0.42;
+            e.mesh.scale.set(e.spec.scale * (1 - u * 0.22),
+              e.spec.scale * (1 - u * 0.58), e.spec.scale * (1 - u * 0.22));
+            if (e.deadT <= 0) this._remove(e);
+            break;
+          }
           // a physical death: launched along the throw, tumbling, shrinking —
           // a corpse that goes somewhere instead of a mesh that blinks out
           e.deadT -= dt;
@@ -1471,6 +1529,161 @@ export class Enemies {
     for (const e of this.list) e.graveClaimed = false;
   }
 
+  _beginCommittedStrike(e, player) {
+    // Contact reserves one authored attack at a time. The committed footprint
+    // is copied once and never tracks the player through the tell.
+    const busy = this.list.some((other) => other !== e && other.state === 'strike');
+    if (busy) return false;
+    e.state = 'strike';
+    e.strikeT = 0;
+    e.recoverT = 0;
+    e.strikePos.copy(player.pos);
+    const dx = e.strikePos.x - e.pos.x;
+    const dz = e.strikePos.z - e.pos.z;
+    const length = Math.hypot(dx, dz) || 1;
+    e.strikeDirX = dx / length;
+    e.strikeDirZ = dz / length;
+    return true;
+  }
+
+  _choirRouteEdgeClear(e, a, b) {
+    // Movement resolves the Choir as a horizontal body against every live AABB.
+    // Navigation must test that same swept footprint, not an eye-height ray:
+    // the low pump altar can stop its feet while remaining below its "vision".
+    const underfalls = this.game.underfalls;
+    const radius = e?.spec?.r ?? DROWNED_CHOIR.r;
+    const ax = a.x, az = a.z;
+    const ay = Number.isFinite(a.y) ? a.y : underfalls?.groundAt?.(a.x, a.z) ?? 0;
+    const dx = b.x - ax, dz = b.z - az;
+    const by = Number.isFinite(b.y) ? b.y : underfalls?.groundAt?.(b.x, b.z) ?? ay;
+    const dy = by - ay;
+    for (const c of this.game.world.colliders) {
+      if (c.max.y <= c.min.y) continue;
+      let near = 0.002, far = 0.998;
+
+      const minX = c.min.x - radius, maxX = c.max.x + radius;
+      if (Math.abs(dx) < 1e-8) {
+        if (ax < minX || ax > maxX) continue;
+      } else {
+        let t0 = (minX - ax) / dx, t1 = (maxX - ax) / dx;
+        if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
+        near = Math.max(near, t0); far = Math.min(far, t1);
+        if (near > far) continue;
+      }
+
+      const minZ = c.min.z - radius, maxZ = c.max.z + radius;
+      if (Math.abs(dz) < 1e-8) {
+        if (az < minZ || az > maxZ) continue;
+      } else {
+        let t0 = (minZ - az) / dz, t1 = (maxZ - az) / dz;
+        if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
+        near = Math.max(near, t0); far = Math.min(far, t1);
+        if (near > far) continue;
+      }
+
+      // _moveWithPush collides while [ground + .5, ground + 1.8] overlaps.
+      const minY = c.min.y - 1.8, maxY = c.max.y - 0.5;
+      if (Math.abs(dy) < 1e-8) {
+        if (ay < minY || ay > maxY) continue;
+      } else {
+        let t0 = (minY - ay) / dy, t1 = (maxY - ay) / dy;
+        if (t0 > t1) { const swap = t0; t0 = t1; t1 = swap; }
+        near = Math.max(near, t0); far = Math.min(far, t1);
+        if (near > far) continue;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  _choirLineClear(a, b, pad = 0.16) {
+    const underfalls = this.game.underfalls;
+    if (!underfalls?.lineOfSight?.(a, b, { pad })) return false;
+    // Route-union visibility owns the cave walls and storeys; the ordinary
+    // world segment test adds the chapel's real pillars, pump altar, and hatch
+    // shell. Pressure therefore cannot pass through either kind of geometry.
+    return !this._segmentBlocked(
+      a.x, a.y + 1.12, a.z,
+      b.x, b.y + 1.12, b.z,
+    );
+  }
+
+  _choirRoute(e, target, dt = 0) {
+    const underfalls = this.game.underfalls;
+    if (!underfalls?.route) return null;
+    if (e.nav) e.nav.ttl -= dt;
+    const targetMoved = !e.nav || Math.hypot(
+      target.x - e.nav.target.x,
+      target.z - e.nav.target.z,
+      (target.y || 0) - (e.nav.target.y || 0),
+    ) > 0.28;
+    let routeInvalid = false;
+    if (e.nav && e.nav.ttl <= 0 && !targetMoved) {
+      const waypoint = e.nav.route?.points?.[e.nav.index] || null;
+      const exhaustedFar = !waypoint
+        && Math.hypot(target.x - e.pos.x, target.z - e.pos.z) > 0.35;
+      routeInvalid = !e.nav.route?.reachable || exhaustedFar || (waypoint && (
+        !underfalls.lineOfSight(e.pos, waypoint, { pad: 0.2 })
+        || !this._choirRouteEdgeClear(e, e.pos, waypoint)
+      ));
+      // A fixed heard target owns one stable authored path. Periodically verify
+      // the current edge for a spray displacement or changed collider, but do
+      // not choose a new equally-short side every 0.22s and manufacture jitter.
+      if (!routeInvalid) e.nav.ttl = 0.22;
+    }
+    if (!e.nav || targetMoved || routeInvalid) {
+      const route = underfalls.route(e.pos, target, {
+        pad: 0.2,
+        edgeAllowed: (a, b) => this._choirRouteEdgeClear(e, a, b),
+      });
+      e.nav = {
+        route,
+        target: { x: target.x, y: target.y, z: target.z },
+        origin: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+        index: 0,
+        ttl: 0.22,
+      };
+    }
+    const nav = e.nav;
+    while (nav.route?.points?.[nav.index]
+      && Math.hypot(
+        nav.route.points[nav.index].x - e.pos.x,
+        nav.route.points[nav.index].z - e.pos.z,
+      ) < 0.3) nav.index++;
+    return nav;
+  }
+
+  _choirPlayerRoute(e, player, dt = 0) {
+    const underfalls = this.game.underfalls;
+    if (!underfalls?.route) return null;
+    const cache = e.acousticNav;
+    if (cache) cache.ttl -= dt;
+    const targetMoved = !cache || Math.hypot(
+      player.pos.x - cache.target.x,
+      player.pos.z - cache.target.z,
+      player.pos.y - cache.target.y,
+    ) > 0.85;
+    const originMoved = !cache || Math.hypot(
+      e.pos.x - cache.origin.x,
+      e.pos.z - cache.origin.z,
+      e.pos.y - cache.origin.y,
+    ) > 0.85;
+    if (!cache || cache.ttl <= 0 || targetMoved || originMoved) {
+      e.acousticNav = {
+        route: underfalls.route(e.pos, player.pos, {
+          pad: 0.16,
+          edgeAllowed: (a, b) => this._choirRouteEdgeClear(e, a, b),
+        }),
+        target: { x: player.pos.x, y: player.pos.y, z: player.pos.z },
+        origin: { x: e.pos.x, y: e.pos.y, z: e.pos.z },
+        // At 120 Hz this caps the acoustic solve near seven per second. Together
+        // with the movement route's five, one live Choir remains below 15.
+        ttl: 0.14,
+      };
+    }
+    return e.acousticNav.route;
+  }
+
   _updateDrownedChoir(e, dt, camPos, camFwd) {
     const game = this.game;
     const player = game.player;
@@ -1490,7 +1703,8 @@ export class Enemies {
     // Spray applies momentum instead of teleporting the threat. The player can
     // hear and watch it wash away, and authored water volumes can stack pushes.
     if (e.washV.lengthSq() > 0.0001) {
-      e.pos.addScaledVector(e.washV, dt);
+      this._moveWithPush(e, e.washV.x * dt, e.washV.z * dt);
+      game.underfalls?.clamp?.(e.pos, dt);
       e.washV.multiplyScalar(Math.exp(-4.2 * dt));
     }
 
@@ -1513,17 +1727,25 @@ export class Enemies {
       case 'stalk': {
         // It goes to the last sound, never the live player coordinate. When the
         // memory thins, it still finishes that dry interval at a slower creep.
-        const hx = e.heardPos.x - e.pos.x;
-        const hz = e.heardPos.z - e.pos.z;
+        // The next point comes from Underfalls' authored route union: it can
+        // take the dry-return shortcut, but never cut across the rock between
+        // two nearby corridors or climb through a different floor.
+        const nav = this._choirRoute(e, e.heardPos, dt);
+        const waypoint = nav?.route?.points?.[nav.index] || null;
+        const hx = waypoint ? waypoint.x - e.pos.x : 0;
+        const hz = waypoint ? waypoint.z - e.pos.z : 0;
         const hd = Math.hypot(hx, hz);
         if (hd > 0.12) {
           const heard = clamp(e.heardStrength, 0, 1);
           const speed = lerp(DROWNED_CHOIR.drySpeed, DROWNED_CHOIR.heardSpeed, heard)
             * (e.wetT > 0 ? 0.08 : 1);
-          e.pos.x += hx / hd * speed * dt;
-          e.pos.z += hz / hd * speed * dt;
+          this._moveWithPush(e, hx / hd * speed * dt, hz / hd * speed * dt);
+          game.underfalls?.clamp?.(e.pos, dt);
         }
-        if (dist < DROWNED_CHOIR.attackRange && e.stateT > 0.22 && e.wetT <= 0) {
+        const sameReachableSpace = Math.abs(player.pos.y - e.pos.y) < 0.72
+          && this._choirLineClear(e.pos, player.pos);
+        if (dist < DROWNED_CHOIR.attackRange && sameReachableSpace
+          && e.stateT > 0.22 && e.wetT <= 0) {
           e.state = 'pressure';
           e.stateT = 0;
           e.strikePos.copy(player.pos); // commitment: this point never tracks after the warning begins
@@ -1536,7 +1758,9 @@ export class Enemies {
       case 'pressure': {
         if (e.stateT >= DROWNED_CHOIR.attackCommit) {
           const miss = Math.hypot(player.pos.x - e.strikePos.x, player.pos.z - e.strikePos.z)
-            > DROWNED_CHOIR.attackRadius;
+            > DROWNED_CHOIR.attackRadius
+            || Math.abs(player.pos.y - e.strikePos.y) > 0.72
+            || !this._choirLineClear(e.pos, player.pos);
           if (!miss && !e.warned) {
             // The first caught wave teaches the consequence without killing.
             // There is no HUD mark: choking audio, full-value camera fear, and
@@ -1583,7 +1807,10 @@ export class Enemies {
         break;
     }
 
-    e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1.5);
+    const caveGround = game.underfalls?.groundAt?.(e.pos.x, e.pos.z);
+    e.pos.y = Number.isFinite(caveGround)
+      ? caveGround
+      : game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1.5);
     e.mesh.position.copy(e.pos);
     dx = player.pos.x - e.pos.x;
     dz = player.pos.z - e.pos.z;
@@ -1720,12 +1947,16 @@ export class Enemies {
     rib.rotation.z = rib.userData.baseRot + pressure * 0.035 - recoil * 0.1;
     e.mesh.scale.setScalar(1 + pressure * 0.2 - recoil * 0.08);
 
-    const level = clamp(1 - (dist - 1) / 19, 0, 1)
+    const playerRoute = this._choirPlayerRoute(e, player, dt);
+    const pressureDistance = playerRoute?.reachable ? playerRoute.distance : Infinity;
+    const level = clamp(1 - (pressureDistance - 1) / 19, 0, 1)
       * (e.state === 'warning' ? 0.36 : e.state === 'spent' ? 0.15 : 0.82 + pressure * 0.18);
     const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
     const el = toE.length() || 1;
     toE.divideScalar(el);
-    const rear = clamp(-camFwd.dot(toE), 0, 1) * clamp(1 - dist / 10, 0, 1);
+    const rear = this._choirLineClear(e.pos, player.pos)
+      ? clamp(-camFwd.dot(toE), 0, 1) * clamp(1 - pressureDistance / 10, 0, 1)
+      : 0;
     if (e.loop) {
       e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
       e.loop.setState(level, reveal, pressure, rear);
@@ -1756,6 +1987,23 @@ export class Enemies {
     // popping is loud. everything nearby turns toward the sound.
     this.wakeAll(e.pos.x, e.pos.z, 30);
     if (game.director) game.director.onPop(e);
+  }
+
+  _layToRest(e) {
+    if (!e || e.state === 'dying') return false;
+    const game = this.game;
+    this._releaseGraveClaim(e, 0.78);
+    e.state = 'dying';
+    e.quietRest = true;
+    e.deadT = 0.9;
+    e.restGround = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
+    e.pos.y = e.restGround;
+    e.deadV = new THREE.Vector3();
+    if (e.loop) { e.loop.stop(); e.loop = null; }
+    game.flag('firstRest');
+    game.audio.stoneGrind({ pos: e.pos, gain: 0.26, rate: 1.9, verb: 0.7 });
+    game.audio.walkerMiss({ pos: e.pos, gain: 0.32, rate: 0.62, verb: 0.55 });
+    return true;
   }
 
   _bestDoorNode(e) {

@@ -137,25 +137,54 @@ function createFurnitureKit(game) {
   };
   const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
-  const frame = (x, y, z, ry = 0) => ({ x, y, z, ry });
+  // Most furniture is merged into the house's static material batches. A few
+  // authored hero props need to be capable of changing between visits without
+  // turning the whole room into loose draw calls. Passing `dynamic` builds the
+  // exact same primitive rig under one transformable root instead.
+  const frame = (x, y, z, ry = 0, dynamic = false) => {
+    const f = { x, y, z, ry, root: null };
+    if (dynamic) {
+      f.root = new THREE.Group();
+      f.root.position.set(x, y, z);
+      f.root.rotation.y = ry;
+      scene.add(f.root);
+    }
+    return f;
+  };
   const worldXZ = (f, x, z) => ({
     x: f.x + Math.cos(f.ry) * x + Math.sin(f.ry) * z,
     z: f.z - Math.sin(f.ry) * x + Math.cos(f.ry) * z,
   });
   const box = (f, w, h, d, mat, x = 0, y = 0, z = 0, ry = 0) => {
+    if (f.root) {
+      const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      o.position.set(x, y, z);
+      o.rotation.y = ry;
+      o.castShadow = true;
+      o.receiveShadow = true;
+      f.root.add(o);
+      return o;
+    }
     const p = worldXZ(f, x, z);
     world.box(mat, p.x, f.y + y, p.z, w, h, d, f.ry + ry);
+    return null;
   };
   const mesh = (f, geometry, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, cast = true) => {
     const o = new THREE.Mesh(geometry, mat);
-    const p = worldXZ(f, x, z);
-    o.position.set(p.x, f.y + y, p.z);
-    const base = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, f.ry);
-    const local = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
-    o.quaternion.copy(base).multiply(local);
+    if (f.root) {
+      o.position.set(x, y, z);
+      o.rotation.set(rx, ry, rz);
+      f.root.add(o);
+    } else {
+      const p = worldXZ(f, x, z);
+      o.position.set(p.x, f.y + y, p.z);
+      const base = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, f.ry);
+      const local = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
+      o.quaternion.copy(base).multiply(local);
+      scene.add(o);
+    }
     o.castShadow = cast;
     o.receiveShadow = true;
-    scene.add(o);
     return o;
   };
   const cylinder = (f, r0, r1, h, mat, x = 0, y = 0, z = 0, seg = 8, rx = 0, ry = 0, rz = 0) =>
@@ -268,8 +297,8 @@ function createFurnitureKit(game) {
     return { ...f, top: y + h + 0.04 };
   }
 
-  function chair(x, y, z, ry = 0, upholstered = false) {
-    const f = frame(x, y, z, ry);
+  function chair(x, y, z, ry = 0, upholstered = false, dynamic = false) {
+    const f = frame(x, y, z, ry, dynamic);
     box(f, 0.48, 0.07, 0.46, upholstered ? D.upholstery : D.woodMid, 0, 0.47, 0);
     for (const sx of [-1, 1]) for (const sz of [-1, 1])
       cylinder(f, 0.025, 0.04, sz < 0 ? 0.94 : 0.47, D.wood, sx * 0.19, (sz < 0 ? 0.94 : 0.47) / 2, sz * 0.18, 7);
@@ -278,8 +307,8 @@ function createFurnitureKit(game) {
     return f;
   }
 
-  function rockingChair(x, y, z, ry = 0) {
-    const f = frame(x, y, z, ry);
+  function rockingChair(x, y, z, ry = 0, dynamic = false) {
+    const f = frame(x, y, z, ry, dynamic);
     box(f, 0.56, 0.07, 0.55, D.upholsteryDark, 0, 0.53, 0);
     for (const sx of [-1, 1]) {
       cylinder(f, 0.025, 0.04, 1.0, D.wood, sx * 0.23, 0.5, -0.21, 8);
@@ -496,8 +525,8 @@ function createFurnitureKit(game) {
     return f;
   }
 
-  function framedArt(x, y, z, ry = 0, seed = 0, w = 0.68, h = 0.88) {
-    const f = frame(x, y, z, ry);
+  function framedArt(x, y, z, ry = 0, seed = 0, w = 0.68, h = 0.88, dynamic = false) {
+    const f = frame(x, y, z, ry, dynamic);
     box(f, w + 0.13, 0.07, 0.055, D.wood, 0, h / 2 + 0.065, 0);
     box(f, w + 0.13, 0.07, 0.055, D.wood, 0, -h / 2 - 0.065, 0);
     box(f, 0.07, h, 0.055, D.wood, -w / 2 - 0.065, 0, 0);
@@ -635,6 +664,7 @@ export function buildHouse(game) {
   nurseryAct(game);
   voidDoorAct(game);
   buildWindowRelay(game);
+  buildHouseReturnHorror(game);
   buildHouseLagMirror(game);
   cellarBoards(game);
   basementAct(game);
@@ -672,7 +702,7 @@ function furnish(game) {
   // nursery: crib, rocking chair, dresser — and the mobile turning with no wind
   K.rug(-8.35, F, 3.0, 4.8, 3.35, -0.04);
   K.crib(-10.4, F, 4.6, 0);
-  K.rockingChair(-6.3, F, 5.0, 0.38);
+  const returnRockingChair = K.rockingChair(-6.3, F, 5.0, 0.38, true);
   const nurseryDresser = K.dresser(-10.2, F, 1.05, 0, 1.24, 0.92);
   K.book(-10.42, nurseryDresser.top, 1.02, -0.17, 0);
   // backed to the landing wall SOUTH of the doorway — its old spot put a
@@ -714,8 +744,10 @@ function furnish(game) {
   // Dining: long table, six spindle-back chairs and abandoned settings.
   K.rug(9.2, G, -10.0, 4.7, 5.75);
   const diningTable = K.table(9.35, G, -10.05, 1.45, 4.0, 0, 0.79);
+  let returnDiningChair = null;
   for (const z of [-11.45, -10.05, -8.65]) {
-    K.chair(8.25, G, z, -Math.PI / 2, false);
+    if (z === -8.65) returnDiningChair = K.chair(8.25, G, z, -Math.PI / 2, false, true);
+    else K.chair(8.25, G, z, -Math.PI / 2, false);
     K.chair(10.45, G, z, Math.PI / 2, false);
   }
   for (let i = 0; i < 6; i++) {
@@ -726,7 +758,12 @@ function furnish(game) {
   K.bottle(9.35, diningTable.top, -10.05, 1.08);
   K.consoleTable(11.5, G, -7.0, -Math.PI / 2, 1.25);
   K.curtains(11.84, G + 0.02, -11, -Math.PI / 2, 1.55, 2.28);
-  K.framedArt(4.16, 1.78, -8.9, Math.PI / 2, 0, 0.76, 0.95);
+  const returnDiningPortrait = K.framedArt(4.16, 1.78, -8.9, Math.PI / 2, 0, 0.76, 0.95, true);
+  game.houseReturnProps = {
+    rockingChair: returnRockingChair.root,
+    diningChair: returnDiningChair.root,
+    diningPortrait: returnDiningPortrait.root,
+  };
   // Kitchen and scullery: paneled cabinets, stone tops, iron range, open
   // shelves and practical clutter. The direct route to the cellar stays open.
   const counter = K.counter(11.35, G, -2.6, 0, 4.9);
@@ -917,6 +954,51 @@ function furnish(game) {
 }
 
 // ---------------------------------------------------------------- act 0
+function wireCarriedKeyDoor(game, door, {
+  keyId, targetId, flag, radius = 1.15,
+}) {
+  let target = null;
+  const unlock = () => {
+    const carry = game.skull.carry;
+    if (!carry || carry.id !== keyId) return false;
+    if (target) target.enabled = false;
+    const dropped = game.skull.dropCarry();
+    if (dropped?.mesh) dropped.mesh.visible = false;
+    door.unlock(game);
+    game.flag(flag);
+    // The key turning is the irreversible commit. Door motion is a global,
+    // idempotent consequence so a life-scope change can never leave the key
+    // consumed while the visible panel remains inexplicably locked shut.
+    game.after(0.42, () => {
+      if (door.open) return;
+      door.setOpen(true);
+      game.audio.doorOpen(false, { pos: door.group.position });
+    }, { global: true });
+    return true;
+  };
+  const reject = (at) => {
+    door.rattleT = Math.max(door.rattleT || 0, 0.45);
+    game.impact('locked', at || door.panel.getWorldPosition(new THREE.Vector3()));
+    game.audio.lockedRattle({ pos: door.group.position, gain: 0.82, rate: 0.9 });
+    game.shake(0.1);
+  };
+  target = game.world.addFetchTarget({
+    id: targetId,
+    // Door.group is the hinge. The panel is the thing the player sees and
+    // throws at; object-owned targeting follows its rotated world silhouette.
+    object: door.panel,
+    radius,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!unlock()) reject(at);
+      return 'return';
+    },
+  });
+  door.carriedUnlock = unlock;
+  door.carriedUnlockTarget = target;
+  return target;
+}
+
 function bedroomAct(game) {
   const { world, scene, mats: M } = game;
   const F = HOUSE_TABLES.levels.first.floor;
@@ -1001,6 +1083,7 @@ function bedroomAct(game) {
   world.addFetchTarget({
     id: 'locket', object: oval, radius: 0.6,
     onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
       if (!game.flags.has('gotBedroomKey')) return 'continue';
       this.enabled = false;
       scene.remove(locket);
@@ -1026,18 +1109,8 @@ function bedroomAct(game) {
 
   // the locked bedroom door takes the key from the skull's teeth
   const door = world.doorById.bedroomDoor;
-  world.addFetchTarget({
-    id: 'bedroomLock', pos: door.group.position.clone(), radius: 1.0,
-    onHit(skull) {
-      if (!skull.carry || skull.carry.id !== 'bedroomKey') return 'return';
-      this.enabled = false;
-      const c = skull.dropCarry();
-      c.mesh.visible = false;
-      door.unlock(game);
-      game.after(0.7, () => { door.setOpen(true); game.audio.doorOpen(false, { pos: door.group.position }); });
-      game.flag('bedroomOpen');
-      return 'return';
-    },
+  wireCarriedKeyDoor(game, door, {
+    keyId: 'bedroomKey', targetId: 'bedroomLock', flag: 'bedroomOpen', radius: 1.2,
   });
 }
 
@@ -1061,18 +1134,8 @@ function nurseryAct(game) {
   });
 
   const door = world.doorById.stairDoor;
-  world.addFetchTarget({
-    id: 'stairLock', pos: door.group.position.clone(), radius: 1.0,
-    onHit(skull) {
-      if (!skull.carry || skull.carry.id !== 'stairKey') return 'return';
-      this.enabled = false;
-      const c = skull.dropCarry();
-      c.mesh.visible = false;
-      door.unlock(game);
-      game.after(0.7, () => { door.setOpen(true); game.audio.doorOpen(false, { pos: door.group.position }); });
-      game.flag('stairsOpen');
-      return 'return';
-    },
+  wireCarriedKeyDoor(game, door, {
+    keyId: 'stairKey', targetId: 'stairLock', flag: 'stairsOpen', radius: 1.2,
   });
 
   // the mobile over the crib, turning with no wind. while it turns you are safe.
@@ -1103,6 +1166,7 @@ function nurseryAct(game) {
   world.addFetchTarget({
     id: 'mobile', object: mobile, radius: 0.7,
     onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
       game.musicBox.wound = 1;
       game.audio.glassTink({ pos: mobile.position, gain: 0.45, rate: 1.3 });
       game.flag('woundBox');
@@ -1220,6 +1284,24 @@ function basementAct(game) {
   const handle = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), brass);
   handle.position.set(0.52, 0, 0.05);
   hinge.add(handle);
+  // The pump gallery owns the furnace draft. A face-on pressure dial turns
+  // that dependency into a visible sentence: dead needle before the far pawl,
+  // a hard mechanical sweep when the under-house line finally takes pressure.
+  const draftGauge = new THREE.Group();
+  draftGauge.position.set(-0.37, 1.35, 0.515);
+  inc.add(draftGauge);
+  const gaugeFace = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.035, 16), brass);
+  gaugeFace.rotation.x = Math.PI / 2;
+  draftGauge.add(gaugeFace);
+  const gaugeVoid = new THREE.Mesh(new THREE.CircleGeometry(0.13, 16),
+    new THREE.MeshBasicMaterial({ color: 0x12100d }));
+  gaugeVoid.position.z = 0.022;
+  draftGauge.add(gaugeVoid);
+  const gaugeNeedle = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.1, 0.012), brass);
+  gaugeNeedle.position.set(0, 0.045, 0.035);
+  gaugeNeedle.geometry.translate(0, -0.045, 0);
+  gaugeNeedle.rotation.z = 1.18;
+  draftGauge.add(gaugeNeedle);
   // ash pan drawer, jammed shut until the backdraft
   const pan = new THREE.Group();
   pan.position.set(0, 0.2, 0.32);
@@ -1244,19 +1326,53 @@ function basementAct(game) {
   pan.add(key);
 
   // breathing ember glow (candle descriptor; intensity is live-animated)
-  const glow = { x: 10.55, y: B + 0.95, z: -1.5, intensity: 1.3, r: 4.5 };
+  // Cold until the flame-bearing skull enters its circuit. The upgrade from
+  // the unreachable guest room is therefore a visible cause, not optional
+  // decoration that happens to precede an unrelated basement key.
+  const glow = { x: 10.55, y: B + 0.95, z: -1.5, intensity: 0.035, r: 4.5 };
   world.candles.push(glow);
 
-  const incin = { doorOpen: false, offered: false, refused: false, glowTarget: 1.3 };
+  const incin = {
+    doorOpen: false, offered: false, refused: false,
+    awake: false, wakePlayed: false, glowTarget: 0.035,
+  };
   game.incinerator = incin;
   const incPos = new THREE.Vector3(11.0, B + 0.9, -1.5);
+  game.incineratorPosition = incPos;
+  let keyTarget = null;
+
+  // One idempotent commit owns the irreversible refusal. Death changes a life
+  // scope; it cannot turn a completed physical offering into a half-disabled
+  // firebox with no key. Keeping every correlated field here also prevents a
+  // late global timer from replaying the drop or resurrecting a collected key.
+  const commitRefusal = () => {
+    if (incin.refused) return false;
+    incin.refused = true;
+    incin.glowTarget = 0.08;
+    game.flag('fireRefused');
+    const collected = game.flags.has('gotHatchKey');
+    key.visible = !collected;
+    if (keyTarget) keyTarget.enabled = !collected;
+    game.audio.metalDrop({ pos: incPos, gain: 0.8 });
+    return true;
+  };
 
   world.registerInteract(fireDoor, 'incineratorDoor', () => {
     if (incin.doorOpen) return;
     incin.doorOpen = true;
     game.audio.creak({ pos: incPos, gain: 0.7 });
-    incin.glowTarget = 2.4;                      // the mouth opens; the room warms
-    fireboxTarget.enabled = true;
+    if (game.flags.has('ateFlame') && game.flags.has('pumpGalleryLatched')) {
+      incin.awake = true;
+      incin.glowTarget = 2.4;                    // the mouth recognizes what the skull carries
+      fireboxTarget.enabled = true;
+    } else {
+      incin.glowTarget = 0.035;
+      // An open mouth always accepts the player's throw. If the line has no
+      // pressure yet, the throw answers physically and points back toward the
+      // pump instead of passing through a gameplay-looking dead prop.
+      fireboxTarget.enabled = true;
+      game.audio.thud({ pos: incPos, gain: 0.42, rate: 0.56 });
+    }
   });
   world.registerInteract(panBox, 'ashPan', () => {
     if (incin.refused) return;                   // open and empty-able by skull now
@@ -1265,8 +1381,21 @@ function basementAct(game) {
   });
 
   const fireboxTarget = world.addFetchTarget({
-    id: 'firebox', pos: incPos.clone(), radius: 0.55,
+    id: 'firebox', pos: incPos.clone(), radius: 0.55, enabled: false,
     onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!game.flags.has('ateFlame')) {
+        game.impact('locked', incPos);
+        game.audio.fireChoke({ pos: incPos, gain: 0.22, rate: 0.58 });
+        return 'return';
+      }
+      if (!game.flags.has('pumpGalleryLatched')) {
+        game.flag('incineratorNeedsDraft');
+        game.impact('locked', incPos);
+        game.audio.lockedRattle({ pos: draftGauge.getWorldPosition(new THREE.Vector3()), gain: 0.72, rate: 0.64 });
+        game.pumpGallery?.nudge?.();
+        return 'return';
+      }
       if (incin.offered) return 'return';
       incin.offered = true;
       this.enabled = false;
@@ -1278,20 +1407,15 @@ function basementAct(game) {
       game.after(1.3, () => {
         game.audio.fireChoke({ pos: incPos, gain: 0.9 });
         incin.glowTarget = 0.08;                                 // ...it didn't
-      });
-      game.after(1.9, () => game.audio.skullChatter(0.5, incPos));
-      game.after(2.7, () => {
-        incin.refused = true;
-        game.flag('fireRefused');
-        game.audio.metalDrop({ pos: incPos, gain: 0.8 });
-        key.visible = true;
-        keyTarget.enabled = true;
-      });
+      }, { global: true });
+      game.after(1.9, () => game.audio.skullChatter(0.5, incPos), { global: true });
+      game.after(2.7, commitRefusal, { global: true });
       return 'anchor';
     },
   });
+  fireboxTarget.enabled = false;
 
-  const keyTarget = world.addFetchTarget({
+  keyTarget = world.addFetchTarget({
     id: 'hatchKey', object: key, radius: 0.7, enabled: false,
     onHit(skull) {
       this.enabled = false;
@@ -1304,7 +1428,21 @@ function basementAct(game) {
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
   game.tickers.push((dt) => {
+    const hasDraft = game.flags.has('ateFlame') && game.flags.has('pumpGalleryLatched');
+    if (!incin.awake && hasDraft) {
+      incin.awake = true;
+      game.flag('incineratorAwake');
+      incin.glowTarget = incin.doorOpen ? 2.4 : 1.3;
+      fireboxTarget.enabled = incin.doorOpen && !incin.offered;
+      if (!incin.wakePlayed) {
+        incin.wakePlayed = true;
+        game.audio.knock({ pos: incPos, gain: 0.42, rate: 0.62 });
+        game.after(0.18, () => game.audio.fireRoar({ pos: incPos, gain: 0.2, rate: 0.56 }));
+      }
+    }
     glow.intensity += (incin.glowTarget - glow.intensity) * Math.min(1, dt * 3.5);
+    const gaugeGoal = game.flags.has('pumpGalleryLatched') ? -1.02 : 1.18;
+    gaugeNeedle.rotation.z += (gaugeGoal - gaugeNeedle.rotation.z) * Math.min(1, dt * 4.6);
     const lit = clamp(glow.intensity / 1.3, 0.05, 2.2);
     emberMat.color.setRGB(1 * lit * 0.55 + 0.03, 0.3 * lit * 0.45 + 0.01, 0.08 * lit * 0.3);
     if (incin.doorOpen && hinge.rotation.y > -1.85) hinge.rotation.y = Math.max(-1.85, hinge.rotation.y - dt * 3.2);
@@ -1378,6 +1516,7 @@ function basementAct(game) {
   world.addFetchTarget({
     id: 'hatchLock', object: lockBody, radius: 0.9,
     onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
       if (!skull.carry || skull.carry.id !== 'hatchKey') return 'return';
       this.enabled = false;
       const c = skull.dropCarry();
@@ -1410,8 +1549,10 @@ function basementAct(game) {
       game.hatch.open = true;
       game.audio.stoneGrind({ pos: hatch.position });
       game.flag('hatchOpen');
-      game.exitBasement();   // fade + climb out to the graveyard
     }
+    // Also retries a previously committed transition if an old save/test state
+    // ever presents an already-open hatch in the basement.
+    game.exitBasement();     // fade + climb out to the graveyard
   });
 }
 
@@ -1838,12 +1979,175 @@ function buildWindowRelay(game) {
     id: 'windowRelay', state: 'idle', armed: false, solved: false,
     mooring, receiver, backplate, plateCollider,
     departureTarget: null, receiverTarget: null, dropT: 0, ringT: 0,
+    nudgeT: 0,
   };
   game.windowRelay = relay;
   const openings = Object.fromEntries(world.windowOpenings.map((o) => [o.id, o]));
   const flashWindows = (amount = 1) => {
     if (openings.livingRelayWindow) openings.livingRelayWindow.hot = Math.max(openings.livingRelayWindow.hot, amount);
     if (openings.studyRelayWindow) openings.studyRelayWindow.hot = Math.max(openings.studyRelayWindow.hot, amount);
+  };
+  relay.nudge = () => {
+    if (relay.solved) return;
+    relay.nudgeT = 1.25;
+    flashWindows(1.2);
+    // A strike on the unreachable door answers along the whole mechanism:
+    // first the rail beside the player, then the far servant bell. The house
+    // points spatially without a prompt, arrow, or magic highlight.
+    game.audio.metalDrop({ pos: mooring.position, gain: 0.34, rate: 1.7 });
+    game.after(0.18, () => game.audio.knock({ pos: receiver.position, gain: 0.42, rate: 1.42 }));
+  };
+
+  // The relay has an inhabitant. Mooring the skull at the living-room window
+  // puts a bright guard on the sill; carrying that light down the outside rail
+  // lets something climb in behind it. Direct sight freezes each authored
+  // silhouette. Ringing the receiver dismisses the body but not the wet proof
+  // that it crossed the aperture. This is causal horror, never a random timer.
+  const visitorRoot = new THREE.Group();
+  visitorRoot.name = 'window-relay-visitor';
+  visitorRoot.position.set(-12.04, G, -9);
+  scene.add(visitorRoot);
+  const visitorSkin = new THREE.MeshStandardMaterial({
+    color: 0x777973, roughness: 0.96,
+    emissive: 0x090a09, emissiveIntensity: 0.15,
+  });
+  const visitorCloth = new THREE.MeshStandardMaterial({
+    color: 0x0a0c0d, roughness: 0.98,
+  });
+  const visitorWet = new THREE.MeshStandardMaterial({
+    color: 0x080b0b, roughness: 0.18, metalness: 0.06,
+    transparent: true, opacity: 0.72, depthWrite: false,
+  });
+  const visitorStages = [];
+  const stage0 = new THREE.Group();
+  for (const side of [-1, 1]) {
+    const palm = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.13, 0.16), visitorSkin);
+    palm.position.set(0.015, 1.08, side * 0.22);
+    palm.rotation.z = side * 0.08;
+    stage0.add(palm);
+    for (let i = 0; i < 4; i++) {
+      const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.016, 0.24 + i * 0.014, 6), visitorSkin);
+      finger.position.set(0.065, 0.97 - i * 0.006, side * 0.22 + (i - 1.5) * 0.034);
+      finger.rotation.z = 0.13 + i * 0.035;
+      stage0.add(finger);
+    }
+  }
+  visitorRoot.add(stage0);
+  visitorStages.push(stage0);
+
+  const stage1 = new THREE.Group();
+  const shoulder = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.66, 3, 8), visitorCloth);
+  shoulder.position.set(-0.28, 1.32, 0.02);
+  shoulder.rotation.z = 0.68;
+  shoulder.scale.set(0.78, 1, 0.56);
+  stage1.add(shoulder);
+  const outsideHead = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), visitorSkin);
+  outsideHead.position.set(-0.18, 1.88, 0.03);
+  outsideHead.scale.set(0.7, 1.15, 0.82);
+  outsideHead.rotation.z = 0.22;
+  stage1.add(outsideHead);
+  for (const z of [-0.19, -0.06, 0.07, 0.2]) {
+    const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.016, 0.29, 6), visitorSkin);
+    finger.position.set(0.055, 1.06, z);
+    finger.rotation.z = 0.18;
+    stage1.add(finger);
+  }
+  visitorRoot.add(stage1);
+  visitorStages.push(stage1);
+
+  const stage2 = new THREE.Group();
+  const crawlingTorso = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.7, 3, 8), visitorCloth);
+  crawlingTorso.position.set(0.31, 1.25, 0);
+  crawlingTorso.rotation.z = Math.PI / 2.35;
+  crawlingTorso.scale.set(0.82, 1, 0.58);
+  stage2.add(crawlingTorso);
+  const crawlingHead = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), visitorSkin);
+  crawlingHead.position.set(0.5, 1.43, -0.02);
+  crawlingHead.scale.set(0.72, 1.13, 0.82);
+  stage2.add(crawlingHead);
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.52, 3, 6), visitorSkin);
+    arm.position.set(0.35, 1.03, side * 0.28);
+    arm.rotation.z = 1.18;
+    arm.rotation.x = side * 0.2;
+    stage2.add(arm);
+  }
+  visitorRoot.add(stage2);
+  visitorStages.push(stage2);
+
+  const stage3 = new THREE.Group();
+  const insideTorso = new THREE.Mesh(new THREE.CapsuleGeometry(0.27, 0.88, 3, 8), visitorCloth);
+  insideTorso.position.set(0.72, 0.86, 0.04);
+  insideTorso.rotation.z = 0.38;
+  insideTorso.scale.set(0.72, 1, 0.54);
+  stage3.add(insideTorso);
+  const insideHead = new THREE.Mesh(new THREE.SphereGeometry(0.18, 10, 8), visitorSkin);
+  insideHead.position.set(0.57, 1.55, -0.02);
+  insideHead.scale.set(0.7, 1.16, 0.8);
+  insideHead.rotation.z = -0.28;
+  stage3.add(insideHead);
+  const floorHand = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.055, 0.22), visitorSkin);
+  floorHand.position.set(1.04, 0.08, -0.29);
+  stage3.add(floorHand);
+  visitorRoot.add(stage3);
+  visitorStages.push(stage3);
+  for (const stage of visitorStages) stage.visible = false;
+
+  const wetProof = new THREE.Group();
+  wetProof.name = 'window-visitor-wet-proof';
+  wetProof.visible = false;
+  scene.add(wetProof);
+  for (let i = 0; i < 5; i++) {
+    const heel = new THREE.Mesh(new THREE.CircleGeometry(0.085, 10), visitorWet);
+    heel.position.set(-11.28 + i * 0.36, G + 0.006, -9 + (i % 2 ? 0.17 : -0.12));
+    heel.rotation.x = -Math.PI / 2;
+    heel.scale.set(0.72, 1.35, 1);
+    wetProof.add(heel);
+  }
+  for (const z of [-0.18, 0.18]) {
+    const smear = new THREE.Mesh(new THREE.CircleGeometry(0.1, 12), visitorWet);
+    smear.position.set(-11.93, G + 1.05, -9 + z);
+    smear.rotation.y = Math.PI / 2;
+    smear.scale.set(0.55, 1.5, 1);
+    wetProof.add(smear);
+  }
+
+  // The apparently empty guest room receives the later echo Alex asked for.
+  // It starts only after the player has a genuine view of the window; missing
+  // it is allowed, and it never takes the camera or deals damage.
+  const guestCrossing = new THREE.Group();
+  guestCrossing.name = 'guest-window-crossing';
+  const crossBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.23, 0.94, 3, 8), visitorCloth);
+  crossBody.position.y = 0.86;
+  crossBody.scale.set(0.62, 1, 0.45);
+  guestCrossing.add(crossBody);
+  const crossHead = new THREE.Mesh(new THREE.SphereGeometry(0.16, 9, 7), visitorSkin);
+  crossHead.position.set(0, 1.56, 0);
+  crossHead.scale.set(0.66, 1.15, 0.78);
+  guestCrossing.add(crossHead);
+  guestCrossing.position.set(11.72, HOUSE_TABLES.levels.first.floor, -8.05);
+  guestCrossing.visible = false;
+  scene.add(guestCrossing);
+
+  const visitor = {
+    progress: 0, stage: -1, active: false, entered: false,
+    dismissed: false, watched: false, lit: true,
+    crossed: false, crossT: 0,
+    root: visitorRoot, stages: visitorStages, proof: wetProof,
+    guestCrossing,
+  };
+  relay.visitor = visitor;
+  const visitorFocus = new THREE.Vector3(-11.86, G + 1.55, -9);
+  const guestFocus = new THREE.Vector3(11.72, HOUSE_TABLES.levels.first.floor + 1.45, -7);
+  const visitorEye = new THREE.Vector3();
+  const visitorDir = new THREE.Vector3();
+  const visitorTo = new THREE.Vector3();
+  const isWatched = (point, minDot, maxDistance) => {
+    const eye = game.camera.getWorldPosition(visitorEye);
+    const distance = visitorTo.copy(point).sub(eye).length();
+    if (distance > maxDistance || distance < 0.1) return false;
+    game.camera.getWorldDirection(visitorDir);
+    return visitorDir.dot(visitorTo.multiplyScalar(1 / distance)) > minDot;
   };
 
   const anchorPos = new THREE.Vector3();
@@ -1857,6 +2161,8 @@ function buildWindowRelay(game) {
       this.enabled = false;
       relay.armed = true;
       relay.state = 'moored';
+      visitor.active = true;
+      visitor.progress = Math.max(visitor.progress, 0.06);
       mooring.getWorldPosition(anchorPos);
       skull.anchorAt(anchorPos, {
         swing: true, maxHold: 22,
@@ -1880,6 +2186,7 @@ function buildWindowRelay(game) {
       relay.solved = true;
       relay.armed = false;
       relay.state = 'rung';
+      visitor.dismissed = true;
       relay.dropT = 0.001;
       relay.ringT = 1.6;
       relay.departureTarget.enabled = false;
@@ -1924,8 +2231,14 @@ function buildWindowRelay(game) {
       mooring.position.z += clamp(-9 - mooring.position.z, -dt * 4.5, dt * 4.5);
     }
     trolleyCable.position.z = mooring.position.z;
-    mooring.rotation.x = Math.sin(time * (anchored ? 11 : 1.7)) * (anchored ? 0.055 : 0.012);
-    mooringCore.material.opacity = 0.08 + (anchored ? 0.5 + Math.sin(time * 19) * 0.12 : 0.04);
+    relay.nudgeT = Math.max(0, relay.nudgeT - dt);
+    const nudge = relay.nudgeT > 0 ? Math.sin(time * 38) * relay.nudgeT : 0;
+    trolleyCable.rotation.x = nudge * 0.055;
+    mooring.rotation.x = Math.sin(time * (anchored ? 11 : 1.7)) * (anchored ? 0.055 : 0.012)
+      + nudge * 0.025;
+    mooringCore.material.opacity = 0.08
+      + (anchored ? 0.5 + Math.sin(time * 19) * 0.12 : 0.04)
+      + relay.nudgeT * 0.22;
     bellRingMat.emissiveIntensity = 0.12
       + (relay.solved ? 0.2 + Math.sin(time * 13) * 0.045 : relay.armed ? 0.27 + Math.sin(time * 9) * 0.06 : 0);
     if (relay.ringT > 0) {
@@ -1946,6 +2259,241 @@ function buildWindowRelay(game) {
         relay.dropT = 0;
       }
     }
+
+    // Window visitor state. The living-room aperture itself is the only valid
+    // sightline for the outside stages, preventing psychic through-wall gaze.
+    const p = game.player.pos;
+    const inLiving = game.act === 'house' && p.y < 2.95
+      && p.x >= -12.2 && p.x <= -3.8 && p.z >= -14.2 && p.z <= -3.8;
+    visitor.watched = inLiving && isWatched(visitorFocus, 0.935, 10.5);
+    visitor.lit = game.skull.pos.distanceTo(visitorFocus) < 2.45;
+    if (visitor.active && !visitor.dismissed && relay.armed && !game.dead) {
+      if (!visitor.watched && !visitor.lit) visitor.progress = Math.min(3.35, visitor.progress + dt * 0.5);
+      if (visitor.watched) game.flag('windowVisitorSeen');
+    } else if (!relay.solved && (!relay.armed || game.dead)) {
+      visitor.progress = Math.max(0, visitor.progress - dt * 1.8);
+      if (visitor.progress <= 0.001) visitor.active = false;
+    }
+    if (visitor.dismissed) visitor.progress = Math.max(0, visitor.progress - dt * 3.6);
+
+    const nextStage = visitor.progress <= 0.01 ? -1 : Math.min(3, Math.floor(visitor.progress / 0.82));
+    if (nextStage !== visitor.stage) {
+      const advancing = nextStage > visitor.stage;
+      visitor.stage = nextStage;
+      if (advancing && nextStage >= 0) {
+        game.audio.creak({ pos: visitorFocus, gain: 0.16 + nextStage * 0.05, rate: 1.48 - nextStage * 0.17 });
+        if (nextStage === 2) game.audio.glassTink({ pos: visitorFocus, gain: 0.22, rate: 0.48 });
+      }
+    }
+    for (let i = 0; i < visitorStages.length; i++) visitorStages[i].visible = i === visitor.stage;
+    if (!visitor.entered && visitor.progress >= 2.45) {
+      visitor.entered = true;
+      game.flag('windowVisitorEntered');
+    }
+    wetProof.visible = visitor.entered && (visitor.dismissed || visitor.stage >= 3);
+
+    if (relay.solved && visitor.entered && !visitor.crossed && game.act === 'house'
+      && p.y > 3.2 && p.x > 1.5 && p.z > -10.5 && p.z < -1.5
+      && isWatched(guestFocus, 0.9, 11)) {
+      visitor.crossed = true;
+      visitor.crossT = 0.001;
+      game.flag('guestWindowCrossing');
+      game.audio.creak({ pos: guestFocus, gain: 0.31, rate: 0.74 });
+    }
+    if (visitor.crossT > 0) {
+      visitor.crossT += dt;
+      const q = clamp(visitor.crossT / 1.35, 0, 1);
+      guestCrossing.visible = q < 1;
+      guestCrossing.position.z = -8.05 + q * 2.2;
+      guestCrossing.rotation.z = Math.sin(q * Math.PI) * 0.12;
+      if (q >= 1) visitor.crossT = 0;
+    } else guestCrossing.visible = false;
+  });
+}
+
+// -------------------------------------------- the house remembers the return
+// Solving the window relay and stealing the unreachable flame are the player's
+// two loudest insults to the house. On the return to the cellar, those causes
+// become one deterministic physical answer: a second set of footsteps takes a
+// coherent route through rooms the player already learned, familiar furniture
+// is different only after it leaves the frame, and a harmless unlocked side
+// door gives a few inches before the Resident takes over. Nothing here moves
+// the player or camera, schedules a wall-clock callback, or unlocks progression.
+function buildHouseReturnHorror(game) {
+  const { world, camera } = game;
+  const F = HOUSE_TABLES.levels.first.floor;
+  const props = game.houseReturnProps;
+
+  // The backhall/scullery door is a real ordinary door immediately west of the
+  // cellar shaft: unlocked from frame one, closed by default, and unrelated to
+  // any progression lock. Its crack remains collidable until the player uses
+  // the knob and opens it normally.
+  const returnDoor = world.doors.find((d) => d.floor === 0 && !d.id && !d.locked
+    && Math.abs(d.center.x - 4) < 0.01 && Math.abs(d.center.z - 3) < 0.01);
+
+  const route = [
+    { id: 'living-aperture', pos: new THREE.Vector3(-11.28, 0.08, -9.0), wait: 0.16, surface: 'wood' },
+    { id: 'living-door', pos: new THREE.Vector3(-4.18, 0.08, -8.95), wait: 0.42, surface: 'wood', creak: true },
+    { id: 'stair-foot', pos: new THREE.Vector3(1.15, 0.08, -8.2), wait: 0.44, surface: 'wood' },
+    { id: 'guest-threshold', pos: new THREE.Vector3(4.22, F + 0.08, -7.0), wait: 0.48, surface: 'wood' },
+    { id: 'landing-turn', pos: new THREE.Vector3(0.8, F + 0.08, 1.0), wait: 0.46, surface: 'wood', creak: true },
+    { id: 'stair-descent', pos: new THREE.Vector3(1.05, 2.15, -3.8), wait: 0.34, surface: 'wood', gate: 'descending' },
+    { id: 'dining-return', pos: new THREE.Vector3(5.05, 0.08, -8.9), wait: 0.38, surface: 'wood', gate: 'ground' },
+    { id: 'kitchen-door', pos: new THREE.Vector3(4.0, 0.08, 3.0), wait: 0.42, surface: 'stone', creak: true, gate: 'kitchen', door: true },
+    { id: 'cellar-boards', pos: new THREE.Vector3(9.0, 0.08, 1.82), wait: 0.46, surface: 'stone', creak: true, gate: 'cellar' },
+  ];
+
+  const eye = new THREE.Vector3();
+  const look = new THREE.Vector3();
+  const toPoint = new THREE.Vector3();
+  const rockerFocus = new THREE.Vector3(-6.3, F + 0.72, 5.0);
+  const diningFocus = new THREE.Vector3(6.2, 1.05, -8.8);
+  const initial = {
+    rockerPos: props.rockingChair.position.clone(),
+    rockerRot: props.rockingChair.rotation.clone(),
+    chairPos: props.diningChair.position.clone(),
+    chairRot: props.diningChair.rotation.clone(),
+    portraitPos: props.diningPortrait.position.clone(),
+    portraitRot: props.diningPortrait.rotation.clone(),
+  };
+  const state = {
+    id: 'houseReturnHorror', active: false, complete: false,
+    index: 0, clock: 0, completionCount: 0, handoffCount: 0,
+    route, events: [], mutations: [], props, initial, returnDoor,
+    visits: { rocker: false, rockerLeft: false, dining: false, diningLeft: false },
+    moved: { rocker: false, dining: false },
+    doorCreep: 'pending', residentSerial: null,
+  };
+  game.houseReturnHorror = state;
+
+  const isWatched = (point, minDot = 0.91, maxDistance = 8.5) => {
+    camera.getWorldPosition(eye);
+    // A floor or ceiling is an authored occluder. This also prevents a player
+    // facing the right compass direction downstairs from psychically freezing
+    // an upstairs change through two slabs and a wall.
+    if (Math.abs(eye.y - point.y) > 2.15) return false;
+    const distance = toPoint.copy(point).sub(eye).length();
+    if (distance < 0.12 || distance > maxDistance) return false;
+    camera.getWorldDirection(look);
+    return look.dot(toPoint.multiplyScalar(1 / distance)) > minDot;
+  };
+
+  const routeGate = (beat) => {
+    const p = game.player.pos;
+    if (!beat.gate) return true;
+    if (beat.gate === 'descending') return p.y < 3.15;
+    if (beat.gate === 'ground') return p.y < 1.15;
+    if (beat.gate === 'kitchen') return p.y < 1.15 && p.x > 3.25 && p.z > -6.65;
+    if (beat.gate === 'cellar') return p.y < 1.15
+      && Math.hypot(p.x - 9, p.z - 2) < 7.0;
+    return false;
+  };
+
+  const mutateRocker = () => {
+    if (state.moved.rocker) return;
+    state.moved.rocker = true;
+    props.rockingChair.position.set(initial.rockerPos.x + 0.34, initial.rockerPos.y, initial.rockerPos.z - 0.28);
+    props.rockingChair.rotation.set(initial.rockerRot.x, initial.rockerRot.y - 0.56, -0.045);
+    state.mutations.push({ id: 'rocking-chair', at: state.index });
+    game.flag('houseReturnRockingMoved');
+    game.audio.creak({ pos: rockerFocus, gain: 0.34, rate: 0.58, verb: 0.52 });
+  };
+
+  const mutateDining = () => {
+    if (state.moved.dining) return;
+    state.moved.dining = true;
+    props.diningChair.position.set(initial.chairPos.x - 0.38, initial.chairPos.y, initial.chairPos.z + 0.16);
+    props.diningChair.rotation.set(initial.chairRot.x, initial.chairRot.y + 0.62, initial.chairRot.z);
+    props.diningPortrait.rotation.set(initial.portraitRot.x, initial.portraitRot.y - 0.08, 0.19);
+    state.mutations.push({ id: 'dining-chair-and-portrait', at: state.index });
+    game.flag('houseReturnDiningMoved');
+    game.audio.creak({ pos: diningFocus, gain: 0.28, rate: 1.16, verb: 0.44 });
+  };
+
+  const emitBeat = (beat) => {
+    game.audio.footstep(beat.surface, {
+      pos: beat.pos, gain: beat.surface === 'stone' ? 0.66 : 0.58,
+      rate: 0.76 + state.index * 0.025, verb: beat.pos.y > 2.8 ? 0.48 : 0.32,
+    });
+    if (beat.creak) game.audio.creak({
+      pos: beat.pos, gain: beat.door ? 0.43 : 0.26,
+      rate: beat.door ? 0.64 : 0.82, verb: 0.5,
+    });
+    state.events.push({
+      id: beat.id, ordinal: state.index,
+      pos: [beat.pos.x, beat.pos.y, beat.pos.z],
+      sound: beat.creak ? 'footstep+creak' : 'footstep',
+    });
+    game.flag(`houseReturnBeat${state.index + 1}`);
+
+    if (beat.door) {
+      if (returnDoor && !returnDoor.locked && !returnDoor.open) {
+        // Deliberately do not call setOpen: a crack is not a passable opening.
+        // `tryUse` remains the one valid action that drops the collider.
+        returnDoor.target = Math.max(returnDoor.target, 0.14);
+        state.doorCreep = 'cracked';
+      } else if (returnDoor?.open) state.doorCreep = 'player-opened';
+      else state.doorCreep = 'unavailable';
+    }
+
+    state.index++;
+    state.clock = 0;
+    if (state.index !== route.length) return;
+
+    state.complete = true;
+    state.completionCount++;
+    state.handoffCount++;
+    game.flag('houseReturnCompleted');
+    // The boards still require the authored skull hits. The final footfall only
+    // tells the existing Resident system exactly what made the noise.
+    game.residentHeard(0.34);
+    const resident = game.director.resident;
+    if (resident) {
+      resident.state = 'wind';
+      resident.windT = 0;
+      state.residentSerial = resident.serial ?? null;
+    }
+  };
+
+  game.tickers.push((dt) => {
+    const p = game.player.pos;
+    const rockerDistance = Math.hypot(p.x - rockerFocus.x, p.z - rockerFocus.z);
+    const diningDistance = Math.hypot(p.x - diningFocus.x, p.z - diningFocus.z);
+    if (game.act === 'house' && !game.dead) {
+      if (p.y > 3.0 && rockerDistance < 8.0) state.visits.rocker = true;
+      if (state.visits.rocker && (p.y < 2.75 || rockerDistance > 9.0)) state.visits.rockerLeft = true;
+      if (p.y < 1.35 && diningDistance < 7.2) state.visits.dining = true;
+      if (state.visits.dining && (p.y > 2.2 || diningDistance > 7.8)) state.visits.diningLeft = true;
+    }
+
+    const prerequisites = game.flags.has('windowRelaySolved') && game.flags.has('ateFlame');
+    if (!prerequisites || state.complete) return;
+    if (!state.active) {
+      state.active = true;
+      game.flag('houseReturnStarted');
+    }
+    if (game.act !== 'house' || game.dead) {
+      // Never carry a nearly-expired beat through a death or act transition.
+      // Progress is retained; pending time is not.
+      state.clock = 0;
+      return;
+    }
+
+    // These are permanent between-visit changes, not animations the player can
+    // catch. Each waits for a real prior visit, a real departure, its matching
+    // visitor beat, and a camera that is genuinely elsewhere on the same floor.
+    if (!state.moved.rocker && state.visits.rocker && state.visits.rockerLeft
+      && state.index >= 5 && !isWatched(rockerFocus, 0.9, 9.0)) mutateRocker();
+    if (!state.moved.dining && state.visits.dining && state.visits.diningLeft
+      && state.index >= 7 && !isWatched(diningFocus, 0.9, 9.0)) mutateDining();
+
+    const beat = route[state.index];
+    if (!beat || !routeGate(beat) || isWatched(beat.pos, 0.925, 7.5)) {
+      state.clock = 0;
+      return;
+    }
+    state.clock += dt;
+    if (state.clock >= beat.wait) emitBeat(beat);
   });
 }
 
@@ -2194,6 +2742,13 @@ function buildHouseLagMirror(game) {
       pool.update(sceneArg, cameraArg);
       return pool._activeCount > 0;
     },
+    dispose() {
+      this.active = false;
+      double.visible = false;
+      echo.visible = false;
+      pane.setActive(false);
+      pool.dispose();
+    },
   };
   game.houseMirror = beat;
 
@@ -2260,7 +2815,7 @@ function buildHouseLagMirror(game) {
 }
 
 // ---------------------------------------------- flooded pump-gallery route
-// A second basement district, optional and authored around continuous hold.
+// The basement's second required district, authored around continuous hold.
 // The skull becomes the counterweight; the player keeps LMB down while the
 // bridge pays out and crosses under their own control. Stepping onto the far
 // bank drops a physical pawl, after which release recalls the skull and leaves
@@ -2717,9 +3272,15 @@ function buildPumpGallery(game) {
     gateOpen: false, heard: false, winch, cradle, pawl, water,
     archiveWake: 0, archivePumps: pumpStands,
     bridgeSegments: bridgeSegments.map((b) => b.mesh),
-    gate, gateCollider, waterBarriers, target: null,
+    gate, gateCollider, waterBarriers, target: null, clue: 0,
   };
   game.pumpGallery = route;
+  route.nudge = () => {
+    route.clue = 1;
+    game.audio.metalDrop({ pos: winch.position, gain: 0.46, rate: 0.62 });
+    game.after(0.22, () => game.audio.knock({ pos: cradle.getWorldPosition(new THREE.Vector3()),
+      gain: 0.52, rate: 0.58 }));
+  };
 
   // This district looks east beneath the entire furnished house. WebGL has no
   // occlusion culling, so without a sector mask it submitted hundreds of fully
@@ -2805,6 +3366,7 @@ function buildPumpGallery(game) {
     for (const pump of pumpStands) pump.group.visible = archiveDetailVisible;
     const holding = skull && skull.mode === 'anchored'
       && skull.anchor && skull.anchor.puzzleId === route.id;
+    route.clue = Math.max(0, route.clue - dt * 0.58);
     if (!route.latched) {
       if (!holding && skull && skull.mode === 'held') {
         route.armed = false;
@@ -2826,6 +3388,12 @@ function buildPumpGallery(game) {
         game.flag('pumpGalleryLatched');
         game.audio.metalDrop({ pos: pawl.position, gain: 0.94, rate: 0.58 });
         game.audio.stoneGrind({ pos: winch.position, gain: 0.42, rate: 1.35 });
+        if (game.incineratorPosition) {
+          game.after(0.26, () => game.audio.knock({ pos: game.incineratorPosition,
+            gain: 0.7, rate: 0.48 }));
+          game.after(0.62, () => game.audio.fireRoar({ pos: game.incineratorPosition,
+            gain: 0.28, rate: 0.54 }));
+        }
         game.after(0.48, () => game.audio.knock({ pos: pumpStands[2].group.position, gain: 0.45, rate: 0.55 }));
         game.after(1.05, () => game.audio.whisper({ pos: pumpStands[4].group.position, gain: 0.3, rate: 0.65, verb: 0.9 }));
       }
@@ -2848,7 +3416,10 @@ function buildPumpGallery(game) {
     const cableBottom = cradle.position.y + 0.32;
     cable.scale.y = Math.max(0.04, cableTop - cableBottom);
     cable.position.set(cradleBase.x, (cableTop + cableBottom) / 2, cradleBase.z);
-    cradleGlow.material.opacity = 0.12 + (holding ? 0.52 + Math.sin(time * 18) * 0.1 : 0);
+    cradleGlow.material.opacity = 0.12
+      + (holding ? 0.52 + Math.sin(time * 18) * 0.1 : 0)
+      + route.clue * (0.26 + Math.sin(time * 11) * 0.08);
+    if (!holding) cradle.rotation.z = Math.sin(time * 8.2) * route.clue * 0.055;
 
     bridgeSegments.forEach((segment, i) => {
       const q = clamp(route.progress * 1.28 - i * 0.07, 0, 1);
@@ -2928,7 +3499,10 @@ function voidDoorAct(game) {
 
   const doorPos = new THREE.Vector3(4, F + 1.15, -7);
   const flameTarget = world.addFetchTarget({
-    id: 'guestFlame', object: flame, radius: 0.6, enabled: false,
+    // The visible flame is narrow, but the throw arrives from the stairwell
+    // below at a steep retained arc. Own the whole candle-dish silhouette so a
+    // clean aimed throw cannot slip through the mathematically tiny fireball.
+    id: 'guestFlame', object: flame, radius: 0.9, enabled: false,
     onHit(skull) {
       this.enabled = false;
       flame.visible = false;
@@ -2974,13 +3548,34 @@ function voidDoorAct(game) {
     flameTarget.enabled = true;
     return true;
   };
+  const rattleDoor = (at = null) => {
+    if (game.flags.has('voidDoorOpen')) return false;
+    door.rattleT = Math.max(door.rattleT || 0, 0.58);
+    game.flag('voidDoorTried');
+    if (at) game.impact('locked', at);
+    else game.shake(0.08);
+    game.audio.lockedRattle({ pos: door.group.position, gain: 0.78, rate: 0.82 });
+    game.windowRelay?.nudge?.();
+    return true;
+  };
   doorTarget = world.addFetchTarget({
     id: 'voidDoor', pos: doorPos.clone(), radius: 0.8,
-    onHit() {
-      openDoor('skull');
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (game.flags.has('voidDoorOpen')) return 'return';
+      rattleDoor(at || doorPos);
       return 'return';
     },
   });
+  // Door interaction registration deliberately dispatches through the live
+  // method, so this override gives E the exact same causal law as a skull hit.
+  // Before the relay it can only rattle/nudge the window mechanism; afterwards
+  // it remains physically open so an ordinary use cannot contradict the
+  // solved flag by closing the required flame behind an inert panel.
+  door.tryUse = () => {
+    if (game.flags.has('voidDoorOpen')) return;
+    rattleDoor();
+  };
   game.voidDoorBeat = { door, target: doorTarget, flameTarget, open: openDoor };
 }
 

@@ -1,3 +1,154 @@
+# FETCH — current state of play, 2026-08-09 masterpiece integration
+
+> **CURRENT SOURCE TRUTH; PACKAGED LOCALLY, NOT DEPLOYED.** Integration work is on the
+> isolated branch `codex/fetch-masterpiece-2026-08-09`, started from `ea414a8`, in
+> `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
+> A deterministic standalone ZIP has passed clean-extraction verification; the
+> exact artifact identity appears below. This section records no merge,
+> deployment, or production-URL verification; check Git, the artifact hash, and
+> the live URL independently.
+> Read the newest section of `docs/HANDOFF.md` for the feature/evidence ledger
+> and `docs/WALKTHROUGH.md` for the exact spoiler route. Everything below the
+> horizontal rule that closes this current section is retained historical
+> forensics, not an active queue.
+
+## What the game is now
+
+FETCH remains a first-person browser-horror game whose entire relationship with
+the player is one cursed skull: weapon, fetcher, remote light, threat radar,
+counterweight, rope bite, and eventual absence. The game still teaches through
+play and never inserts a separate tutorial or playable cutscene.
+
+The current critical path is:
+
+```text
+bedroom key
+  -> nursery key
+  -> living-window mooring / study-window return bell
+  -> upstairs flame
+  -> cellar boards
+  -> pump-gallery hold-and-cross
+  -> incinerator refusal / hatch key
+  -> grave ritual or three-wave clear
+  -> required mausoleum ossuary / counterweight / far hatch
+  -> two-fork sealing forest / tree / mire-rope / arena / Kneeler
+  -> waterfall sacrifice
+  -> Underfalls and Drowned Choir
+  -> closing mirror room and terminal shutdown
+```
+
+The new house dependency is intentionally strict:
+
+`windowRelaySolved + ateFlame + pumpGalleryLatched`
+`→ fireRefused → gotHatchKey → hatchUnlocked → hatchOpen`
+
+The new graveyard dependency is also strict:
+
+`graveyardResolved (ritual or loud) → ossuaryOpened`
+`→ uninterrupted counterweight → ossuaryCleared → forest checkpoint`
+
+The forest gate no longer opens directly when combat or ritual resolves. The
+mausoleum floor opens first; the counterweight at the end of the under-yard
+route opens both the physical surface gate and the far hatch.
+
+## Non-negotiable laws still in force
+
+1. Press LMB throws immediately; holding keeps the skull out and steerable;
+   releasing recalls it. RMB or E is the backup call when E is not using a
+   nearby world interaction.
+2. `FEEL_PROFILE` remains frozen.
+3. No HUD instructions, solution text, forced camera, or control theft.
+4. Required reads cannot depend on hue. Use value, silhouette, motion, timing,
+   spatial structure, and sound together.
+5. Audio must originate from the thing and world position that caused it.
+6. The waterfall is the one authored broken promise: after that throw, the
+   skull does not return.
+7. A gameplay-looking object needs a behavior, a causal dependency read, or a
+   clearly environmental role. Do not add decorative fake controls.
+8. Do not erase the established game to install an expansion. Extend the same
+   input grammar, geography, checkpoints, and consequences.
+
+## Current subsystem ownership
+
+| File | Current responsibility |
+|---|---|
+| `src/main.js` | fixed-step input, focus safety, throw/use dispatch, shader warm-up, bounded gore, scene lifecycle, ending shutdown |
+| `src/house.js` | opening key locks, nursery, window relay/visitor, return horror, lag mirror, flame, cellar, pump gallery, incinerator, hatch |
+| `src/outside.js` | grave arena props, destructible/resonant graves, gate and ossuary, forked forest, story objects, fallen tree, mire/ropes, clearing |
+| `src/director.js` | act/checkpoint ownership, quiet/loud grave resolution, wave lifecycle, company debt, respawn grace, cave ecology |
+| `src/enemies.js` | Resident/walkers/Kneeler/Standing Kind, bounded strike claims, stains, Drowned Choir navigation and fixed-point pressure |
+| `src/underfalls.js` | one route union for floor, clamp, cover/LOS, main path, dry-return shortcut, spray, hatch |
+| `src/finale.js` / `src/mirrors.js` | articulated human reflection, exact selected skull clone, closing-room contact, pooled planar mirrors |
+| `src/audio.js` | procedural positional audio, 24 kHz interactive-context fallback, forest story prewarm/voice cap, finite loop cleanup |
+| `src/atmosphere.js` | progression-neutral dressing and act-local visibility for house/outdoor/cave compositions |
+
+## The old THIN and queue claims are superseded
+
+| Historical claim below | Current truth |
+|---|---|
+| Guest/ground-floor rooms are purposeless | Required two-window relay, causal window visitor, delayed house mirror, flame room, and deterministic return route use them. |
+| Basement is one straight key fetch | Relay-earned flame plus mandatory pump hold/cross power the incinerator refusal that reveals the hatch key. |
+| Graveyard is a zero-puzzle traverse | It has a ritual-versus-loud resolution, 4/5/6 arena waves, three resonant graves, six destructible hero graves, and a required ossuary counterweight route. |
+| Forest still needs wandering paths and localized objects | Two physical braids commit at six metres; eight world-anchored HRTF objects, two rope pockets, landmark chapters, and cumulative seals form the path system. |
+| The pre-rope edge is a map hole | It is a visible depth-driven mire; the rope arrests sinking and preserves held/release control. |
+| Cave is a short candle tunnel | Underfalls is a 125.158 m, 13-node district with a real shortcut, multi-height sluice, spray ecology, and a routed Drowned Choir. |
+| Finale fades around a mannequin | Props crush inward, hands/glass/fractures make contact physical, and an articulated human reflection wears the exact opening skull before hard black. |
+| Retry effects can grow forever | Gore, stains, grave debris, fork closures, candles, enemy geometry, and reflection targets are fixed pools/shared kits or otherwise bounded. |
+
+The old queue is obsolete and the final source is locally verified. The
+remaining work is repository/release-state handling—recording and reviewing the
+final commits, any canonical merge, and any authorized deployment/live
+verification—not a license to invent another parallel expansion before this
+integration is safely handed off.
+
+## Donor provenance
+
+Marrow, The Eaten Path, and Still were audited directly in both local source and
+runtime. The current implementation is a synthesis:
+
+- The Eaten Path supplied forest-graph and localized-object grammar. Its bog is
+  not true sinking; FETCH's mire is new.
+- Marrow supplied forest landmark and crypt/baffle grammar. Its gravestones are
+  not destructible; FETCH's tactical stones are new.
+- Still supplied observation/light/noise house-horror grammar. It does not have
+  FETCH's literal window-climbing visitor; none of the three donor games does.
+
+Do not call these ports or copied areas. No donor map, asset set, puzzle, or plot
+was lifted whole. Continue to mine Alex's library, but mutate every useful idea
+through FETCH's skull verb and narrative logic.
+
+## Local and artifact verification complete; release-state gates remain
+
+Final-source evidence is green: forest nervous system **9/9** (repeated);
+forest hardening **4/4**; district culling **12/12** (newest sampled maximum
+**420 draws** under the 450-draw ceiling; far-hatch forest **330**; exact
+restoration difference `[]`); Choir routing **6/6**; Underfalls **13/13**;
+horror expansion **16/16**; house return **12/12**; basement **8/8**; pump
+recovery **10/10**; stain pool **5/5**; Standing Kind **2/2**; and all house-
+expansion and performance-pool checks. Failure-state regression is **20/20**,
+including the resonant-return guard. Canonical `autotest` is **24/24**,
+canonical `regressions` is **50/50**, all eight per-act `smoke` cases are green,
+and two consecutive real-input full `playthrough` runs completed **38/38** beats
+with zero failures. System-Chrome/ANGLE-D3D11 `render-perf` is green, and final
+grave-body, exterior, grave-arena, and district checks are green.
+
+The standalone package is also verified:
+
+1. `fetch-netlify-2026-08-09-ossuary.zip` contains 24 root-relative shipping
+   files and is 495,884 bytes.
+2. Two packer runs matched byte-for-byte at SHA-256
+   `e4edf64544352dd2d5d8760388c74102e66fc803bbcc0be07007bd89a95c73aa`.
+3. A unique clean extraction booted through system Chrome/ANGLE-D3D11 with zero
+   browser errors; release-integrity rejection cases passed **5/5**.
+
+The remaining release-state work is final commit/review, any canonical merge,
+and—only after Alex authorizes shipping—deployment through the canonical site
+workflow followed by independent production-URL verification. This package is
+not evidence of a merge or deploy. Older hashes, PRs, and "live" notes below
+belong to historical snapshots.
+
+---
+
 # FETCH — state of play, for a new model with zero context
 
 > **HISTORICAL FORENSIC SNAPSHOT — NOT CURRENT RELEASE TRUTH.** This file
@@ -144,7 +295,7 @@ Sculpt variants `skull-variant-{a,b,c,d,e}.js` are alternative skull meshes.
 
 ---
 
-## 5. What is broken — Alex's live test, verbatim, with diagnosis
+## 5. Historical bug ledger — statuses below are superseded
 
 He played the deployed build and reported this list. Status is honest: some are
 fixed, most are not.
@@ -270,7 +421,7 @@ time, so you are never inside geometry and never not driving.
 
 ---
 
-## 8. The plan, condensed
+## 8. Historical plan, condensed
 
 Seven steps, ordered so each makes the next cheaper and the game is shippable
 after every one. Steps 1 and 2 are done.
@@ -312,7 +463,7 @@ because that tension is the game.
 
 ---
 
-## 9. The backlog Alex is carrying in his head
+## 9. Historical backlog Alex was carrying in his head
 
 His instinct was right: *"there are probably many ideas in old threads too we
 never got to that i said"* and *"probably many glitches that i mentioned that
@@ -323,7 +474,7 @@ counts, and some of these he has now raised **three separate times**.
 it is because we did not do it the first time.** Treat a repeat as a priority
 signal, not as new information.
 
-### Asked for repeatedly, never built
+### Asked for repeatedly, not built in this historical snapshot
 
 | | times asked | status |
 |---|---|---|
@@ -333,7 +484,7 @@ signal, not as new information.
 | **Reuse the traversal verbs after teaching them** | today | *"there is no reason not to use the fun mechanics like the rope swing once the player learns them... if the player has to traverse through the woods on those things"* — this is exactly the canopy-chain lane in §8, and his saying it unprompted is the strongest possible endorsement of it |
 | **A leading pass** — *"things can very visually lead the player in an intuitive way"* | 2× | parked, never done |
 
-### Raised today, all outstanding
+### Raised that day, outstanding in this historical snapshot
 
 - **The graveyard battle is bad.** *"right now the graveyard is a lame battle that doesnt feel good or look good."* Combat feel plus staging, not just dressing.
 - **The house should be much bigger.** *"this spooky home needs to be more gigantic."* `HOUSE_TABLES.rooms` in `house.js` is a compact grid — the house compiles from a table, so growing it is data, not code. That is the cheap way in.
@@ -389,7 +540,7 @@ signal, not as new information.
   before building** — he has described it as both empty and as useful, and those
   point at different rooms.
 
-### Older, still unverified against the current build
+### Older, then unverified against that snapshot
 
 From his first playtest, none confirmed fixed:
 - *"The sound can get absolutely wrecked sometimes when the skull gets stuck on stuff and hits stuff before it comes back... maxing out and then cutting and coming back."* An audio voice-stealing / gain-stacking bug. **Nobody has ever gone and looked.**
@@ -534,13 +685,13 @@ another agent is working, create a separate worktree from `origin/main`.
 
 ---
 
-## 13. The full mined backlog — 44 candidates, verified against the source
+## 13. Historical mined backlog — 44 candidates from the old source
 
 Every one of these came out of Alex's own messages in the old FETCH threads,
 and each was then checked against the current code before being listed. His
 quote sits on every entry because his words are the specification.
 
-### Ideas he asked for that were never built
+### Ideas not built in the historical source audited here
 
 #### One real puzzle that isn't a key — put it in front of him  *(whole-game)*
 
@@ -614,7 +765,7 @@ The realism half of this ask has had real work (material grade pass in main.js ~
 
 Never built. Two things are called bosses in DESIGN.md:135,141 and neither is a battle: enemies.js:12-19 gives both resident and kneeler hp: Infinity so they can only be stunned; the Resident's entire boss logic is six lines (_updateResident, director.js:382-389 — if chasing for 9s, go back to stalking) and it is deleted outright on entering the basement (:134-142); the Kneeler spawns dormant (:511-517) and is enemies.clear-ed the moment you reach the clearing (:526-531). Critically there is no player health anywhere in the codebase — contact calls director.death (:582) instantly — so the sustained near-death feel he asked for is not expressible yet. Start with the Kneeler in _updateKneeler (director.js:519): a phase loop whose only opening is its existing 0.4s stun (enemies.js:17), so every throw buys you seconds and costs you your light while it is away. It is already staged in an open, authored spot 93% down the forest spline.
 
-### Bugs he reported that are still broken
+### Bugs still broken in the historical source audited here
 
 #### The skull: wrong sculpt is shipping, and it is too small  *(skull)*
 

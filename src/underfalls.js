@@ -44,6 +44,14 @@ const CHAMBERS_LOCAL = Object.freeze([
   Object.freeze({ x: 68, z: 104, y: 0.00, r: 4.25, name: 'hatch cistern' }),
 ]);
 
+// Navigation-only turns are deliberately sparse. The public route already owns
+// every major decision; this single north-transept point keeps a body-radius
+// route around the chapel's real eastern pillar/altar cluster without making a
+// second, invisible path network.
+const NAVIGATION_LOCAL = Object.freeze([
+  Object.freeze({ x: 29.25, z: 55.75, y: 0.00, name: 'chapel north transept' }),
+]);
+
 export const UNDERFALLS_METRICS = Object.freeze({
   oldRouteMeters: 31.2,
   mainRouteMeters: 0, // calculated world value is exposed on the built layout
@@ -83,6 +91,7 @@ export function createUnderfallsLayout(center) {
   const main = MAIN_LOCAL.map((p) => worldNode(C, p));
   const secret = SECRET_LOCAL.map((p) => worldNode(C, p));
   const chambers = CHAMBERS_LOCAL.map((p) => worldNode(C, p));
+  const navigationWaypoints = NAVIGATION_LOCAL.map((p) => worldNode(C, p));
   const mainSegments = makeSegments(main, 'main');
   const secretSegments = makeSegments(secret, 'secret');
   const named = Object.fromEntries(main.map((p) => [p.name, p]));
@@ -116,6 +125,7 @@ export function createUnderfallsLayout(center) {
     main,
     secret,
     chambers,
+    navigationWaypoints,
     mainSegments,
     secretSegments,
     segments: [...mainSegments, ...secretSegments],
@@ -206,6 +216,208 @@ export function underfallsGroundAt(layout, x, z) {
   return nearestSegment?.y ?? 0;
 }
 
+// A straight chord is traversable only when its whole footprint remains in
+// the authored corridor/chamber union and on the same continuous floor. This
+// is deliberately stricter than a Euclidean distance check: two wet walls can
+// be centimetres apart while the walk between them is half the district.
+export function underfallsLineOfSight(layout, a, b, {
+  pad = 0.18,
+  sampleSpacing = 0.32,
+  floorTolerance = 0.62,
+} = {}) {
+  if (!layout || !a || !b) return false;
+  // postClamp deliberately permits a legal actor centre eight centimetres from
+  // the route-union edge. Route clearance is wider than that. Pull only the two
+  // query endpoints inward before testing the chord, so a legal shoulder pose
+  // can enter navigation while every interior sample still pays the full pad.
+  // This is not a relaxed wall test: off-floor endpoints are rejected first.
+  const insetEndpoint = (point) => {
+    const projection = projectUnderfalls(layout, point.x, point.z);
+    if (!projection || projection.clearance > 1e-4) return null;
+    let x = point.x, z = point.z;
+    if (pad > 0 && projection.clearance > -pad) {
+      const safeDistance = Math.max(0, projection.w - pad - 0.002);
+      if (projection.d <= 1e-8) {
+        x = projection.cx;
+        z = projection.cz;
+      } else {
+        const scale = Math.min(1, safeDistance / projection.d);
+        x = projection.cx + (point.x - projection.cx) * scale;
+        z = projection.cz + (point.z - projection.cz) * scale;
+      }
+    }
+    return {
+      x,
+      y: Number.isFinite(point.y) ? point.y : underfallsGroundAt(layout, x, z),
+      z,
+    };
+  };
+  const start = insetEndpoint(a), end = insetEndpoint(b);
+  if (!start || !end) return false;
+  const dx = end.x - start.x, dz = end.z - start.z;
+  const distance = Math.hypot(dx, dz);
+  const steps = Math.max(1, Math.ceil(distance / Math.max(0.12, sampleSpacing)));
+  const ay = start.y;
+  const by = end.y;
+  let previousGround = null;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = lerp(start.x, end.x, t), z = lerp(start.z, end.z, t);
+    const projection = projectUnderfalls(layout, x, z);
+    if (!projection || projection.clearance > -pad + 1e-4) return false;
+    const ground = underfallsGroundAt(layout, x, z);
+    const expected = lerp(ay, by, t);
+    if (!Number.isFinite(ground) || Math.abs(ground - expected) > floorTolerance) return false;
+    // Authored ramps rise gradually. A discontinuous storey selection at an XZ
+    // crossing is not a route, even if both endpoints happen to be legal floor.
+    if (previousGround != null && Math.abs(ground - previousGround) > 0.48) return false;
+    previousGround = ground;
+  }
+  return true;
+}
+
+function navigationNodeKey(p) {
+  return `${p.x.toFixed(3)},${p.y.toFixed(3)},${p.z.toFixed(3)}`;
+}
+
+function buildUnderfallsNavigation(layout) {
+  const byPosition = new Map();
+  const add = (point, kind, name) => {
+    const key = navigationNodeKey(point);
+    let node = byPosition.get(key);
+    if (!node) {
+      node = {
+        id: byPosition.size,
+        x: point.x, y: point.y, z: point.z,
+        kinds: new Set(), names: new Set(), edges: [],
+      };
+      byPosition.set(key, node);
+    }
+    node.kinds.add(kind);
+    if (name) node.names.add(name);
+    return node;
+  };
+  for (const point of layout.main) add(point, 'main', point.name);
+  for (const point of layout.secret) add(point, 'secret', point.name);
+  for (const chamber of layout.chambers) {
+    add(chamber, chamber.secret ? 'secret' : 'chamber', chamber.name);
+  }
+  for (const point of layout.navigationWaypoints || []) add(point, 'navigation', point.name);
+  const nodes = [...byPosition.values()];
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      if (!underfallsLineOfSight(layout, a, b, { pad: 0.2 })) continue;
+      const cost = Math.hypot(b.x - a.x, b.z - a.z, b.y - a.y);
+      a.edges.push({ to: j, cost });
+      b.edges.push({ to: i, cost });
+    }
+  }
+  return { nodes };
+}
+
+// Deterministic shortest route through the same corridor/chamber union that
+// clamps the player. `edgeAllowed` lets a caller reject a chord blocked by a
+// live structural collider (the pump altar, pillars, a closed seal) without
+// teaching this pure layout module about the World class.
+export function findUnderfallsRoute(layout, from, to, {
+  pad = 0.18,
+  edgeAllowed = null,
+} = {}) {
+  if (!layout || !from || !to) return null;
+  const start = {
+    x: from.x,
+    y: Number.isFinite(from.y) ? from.y : underfallsGroundAt(layout, from.x, from.z),
+    z: from.z,
+  };
+  const end = {
+    x: to.x,
+    y: Number.isFinite(to.y) ? to.y : underfallsGroundAt(layout, to.x, to.z),
+    z: to.z,
+  };
+  const canUse = (a, b) => underfallsLineOfSight(layout, a, b, { pad })
+    && (!edgeAllowed || edgeAllowed(a, b));
+  const directDistance = Math.hypot(end.x - start.x, end.z - start.z, end.y - start.y);
+  if (canUse(start, end)) {
+    return {
+      reachable: true,
+      direct: true,
+      distance: directDistance,
+      points: [{ ...end, kinds: [], names: [] }],
+      usesSecret: false,
+    };
+  }
+
+  const navigation = layout.navigation || (layout.navigation = buildUnderfallsNavigation(layout));
+  const base = navigation.nodes;
+  const startIndex = base.length;
+  const endIndex = base.length + 1;
+  const count = base.length + 2;
+  const dist = new Array(count).fill(Infinity);
+  const prev = new Array(count).fill(-1);
+  const used = new Array(count).fill(false);
+  dist[startIndex] = 0;
+
+  const pointAt = (index) => index === startIndex ? start : index === endIndex ? end : base[index];
+  const neighbours = (index) => {
+    const out = [];
+    if (index < base.length) {
+      for (const edge of base[index].edges) {
+        if (!edgeAllowed || edgeAllowed(base[index], base[edge.to])) out.push(edge);
+      }
+      if (canUse(base[index], end)) {
+        out.push({ to: endIndex, cost: Math.hypot(
+          end.x - base[index].x, end.z - base[index].z, end.y - base[index].y,
+        ) });
+      }
+    } else if (index === startIndex) {
+      for (let i = 0; i < base.length; i++) {
+        if (!canUse(start, base[i])) continue;
+        out.push({ to: i, cost: Math.hypot(
+          base[i].x - start.x, base[i].z - start.z, base[i].y - start.y,
+        ) });
+      }
+    }
+    return out;
+  };
+
+  for (let pass = 0; pass < count; pass++) {
+    let current = -1;
+    for (let i = 0; i < count; i++) {
+      if (!used[i] && Number.isFinite(dist[i]) && (current < 0 || dist[i] < dist[current])) current = i;
+    }
+    if (current < 0 || current === endIndex) break;
+    used[current] = true;
+    for (const edge of neighbours(current)) {
+      const next = dist[current] + edge.cost;
+      if (next + 1e-7 >= dist[edge.to]) continue;
+      dist[edge.to] = next;
+      prev[edge.to] = current;
+    }
+  }
+  if (!Number.isFinite(dist[endIndex])) {
+    return { reachable: false, direct: false, distance: Infinity, points: [], usesSecret: false };
+  }
+  const indices = [];
+  for (let at = endIndex; at !== startIndex && at >= 0; at = prev[at]) indices.push(at);
+  indices.reverse();
+  const points = indices.map((index) => {
+    const point = pointAt(index);
+    return {
+      x: point.x, y: point.y, z: point.z,
+      kinds: point.kinds ? [...point.kinds] : [],
+      names: point.names ? [...point.names] : [],
+    };
+  });
+  return {
+    reachable: true,
+    direct: false,
+    distance: dist[endIndex],
+    points,
+    usesSecret: points.some((point) => point.kinds.includes('secret')),
+  };
+}
+
 export function sampleUnderfallsPath(path, spacing = 0.75) {
   const samples = [];
   for (let i = 0; i < path.length - 1; i++) {
@@ -227,6 +439,8 @@ export function sampleUnderfallsPath(path, spacing = 0.75) {
 
 function addFloorAndShell(game, layout) {
   const { world, mats: M } = game;
+  let routeRoofs = 0;
+  let chamberCaps = 0;
   // The tread cadence makes the changing elevation visible while collision
   // remains the smoother shared route height. Every tread sits just below that
   // height, so it can never become a surprise wall or counterfeit platform.
@@ -246,13 +460,22 @@ function addFloorAndShell(game, layout) {
     const opensIntoChamber = layout.chambers.some((chamber) =>
       Math.hypot(seg.a.x - chamber.x, seg.a.z - chamber.z) < chamber.r * 0.94
       || Math.hypot(seg.b.x - chamber.x, seg.b.z - chamber.z) < chamber.r * 0.94);
-    // Chambers own their perimeter. Carrying corridor wall/roof boxes through
+    const avgY = (seg.a.y + seg.b.y) * 0.5;
+    const avgW = (seg.a.w + seg.b.w) * 0.5;
+    // Every route leg owns continuous overburden, including the long joins
+    // whose endpoints open into chambers. Previously those whole joins skipped
+    // their roof along with their side walls, leaving strips of moon and stars
+    // visible between the decorative chamber caps.
+    world.box(M.rock,
+      (seg.a.x + seg.b.x) * 0.5, avgY + 4.86,
+      (seg.a.z + seg.b.z) * 0.5,
+      avgW * 2 + 1.25, 0.46, seg.length + 1.4, yaw);
+    routeRoofs++;
+    // Chambers own their perimeter. Carrying corridor side-wall boxes through
     // them partitions the landmark into black slabs and makes a broad room
     // look like several accidental closets. The floor remains continuous;
     // the chamber's outer rock ring and cap provide the actual enclosure.
     if (opensIntoChamber) continue;
-    const avgY = (seg.a.y + seg.b.y) * 0.5;
-    const avgW = (seg.a.w + seg.b.w) * 0.5;
     // Structural backing behind the later low-poly rock skin. It is deliberately
     // not an AABB collider: diagonal wall boxes were the old forest trap bug.
     world.box(M.rock,
@@ -263,10 +486,6 @@ function addFloorAndShell(game, layout) {
       (seg.a.x + seg.b.x) * 0.5 - nx * (avgW + 0.42), avgY + 2.35,
       (seg.a.z + seg.b.z) * 0.5 - nz * (avgW + 0.42),
       0.54, 5.15, seg.length + 1.1, yaw);
-    world.box(M.rock,
-      (seg.a.x + seg.b.x) * 0.5, avgY + 4.86,
-      (seg.a.z + seg.b.z) * 0.5,
-      avgW * 2 + 1.0, 0.34, seg.length + 1.15, yaw);
   }
 
   // Chamber floors are broad and honest. The clamp's matching discs are the
@@ -274,7 +493,16 @@ function addFloorAndShell(game, layout) {
   for (const chamber of layout.chambers) {
     world.box(M.rock, chamber.x, chamber.y - 0.14, chamber.z,
       chamber.r * 1.72, 0.28, chamber.r * 1.72);
+    // The atmosphere layer adds an irregular low-poly vault for appearance;
+    // this square backing is the light-tight structural shell beneath it. Its
+    // overlap reaches beyond the wall ring, so no camera angle can expose the
+    // outdoor dome through the cap's former annulus.
+    const backingY = chamber.name === 'drowned pump chapel' ? 6.08 : 5.68;
+    world.box(M.rock, chamber.x, chamber.y + backingY, chamber.z,
+      chamber.r * 2 + 2.5, 0.52, chamber.r * 2 + 2.5);
+    chamberCaps++;
   }
+  layout.shell = { routeRoofs, chamberCaps };
 }
 
 function addColliderCylinder(world, x, z, r, y0, y1, role) {
@@ -790,17 +1018,36 @@ function installClamp(game, layout, state) {
       const p = projectUnderfalls(layout, pos.x, pos.z);
       if (!p) return;
     }
+    const beforeX = pos.x, beforeZ = pos.z;
     const p = projectUnderfalls(layout, pos.x, pos.z);
     if (!p || p.clearance <= -0.04) return;
     const safeW = Math.max(0.35, p.w - 0.08);
     if (p.d < 1e-5) {
       pos.x = p.cx;
       pos.z = p.cz;
-      return;
+    } else {
+      const k = safeW / p.d;
+      pos.x = p.cx + (pos.x - p.cx) * k;
+      pos.z = p.cz + (pos.z - p.cz) * k;
     }
-    const k = safeW / p.d;
-    pos.x = p.cx + (pos.x - p.cx) * k;
-    pos.z = p.cz + (pos.z - p.cz) * k;
+
+    // Player vertical integration ran at the old XZ. At the overflow/chamber
+    // joins, a five-centimetre lateral correction can cross onto a floor more
+    // than a metre higher. Reconcile only the live player: generic projection
+    // queries remain pure XZ clamps. Grounded feet own the new floor exactly;
+    // airborne motion remains continuous unless it would penetrate that floor.
+    if (pos === game.player.pos && Math.hypot(pos.x - beforeX, pos.z - beforeZ) > 1e-5) {
+      const ground = underfallsGroundAt(layout, pos.x, pos.z);
+      if (Number.isFinite(ground)) {
+        if (game.player.grounded) {
+          pos.y = ground;
+          game.player.fallV = 0;
+        } else if (pos.y < ground) {
+          pos.y = ground;
+          game.player.fallV = Math.max(0, game.player.fallV);
+        }
+      }
+    }
   };
   game.world.postClamp = state.clamp;
 }
@@ -808,6 +1055,15 @@ function installClamp(game, layout, state) {
 function installCaveVisibility(game, state) {
   const saved = new Map();
   let active = false;
+  let sky = null;
+  const caveAtmosphereNames = new Set([
+    'cave broken wall skin',
+    'underfalls chamber ceiling vaults',
+    'cave stalactites',
+    'cave mica trail (grows toward the way out)',
+    'underfalls interior cataracts',
+    'underfalls displaced spray',
+  ]);
   const restore = () => {
     if (!active) return;
     for (const [child, visible] of saved) child.visible = visible;
@@ -842,8 +1098,24 @@ function installCaveVisibility(game, state) {
       if (!saved.has(child)) saved.set(child, child.visible);
       child.visible = false;
     }
+    // The atmosphere root contains both cave dressing and every exterior
+    // stratum. Keep its six named cave batches and hide the outdoor siblings;
+    // this removes not just the moon sky subtree but distant grave/forest
+    // silhouettes that could otherwise show through an oblique shell seam.
+    const atmosphereRoot = game.atmosphere?.group;
+    sky = sky || atmosphereRoot?.getObjectByName('moon sky') || null;
+    for (const child of atmosphereRoot?.children || []) {
+      if (caveAtmosphereNames.has(child.name)) continue;
+      if (!saved.has(child)) saved.set(child, child.visible);
+      child.visible = false;
+    }
   });
-  state.visibility = { saved, restore, get active() { return active; } };
+  state.visibility = {
+    saved,
+    restore,
+    get active() { return active; },
+    get sky() { return sky; },
+  };
 }
 
 function installBeats(game, layout, state) {
@@ -851,6 +1123,19 @@ function installBeats(game, layout, state) {
   const cameraDir = new THREE.Vector3();
   game.tickers.push((dt, t) => {
     const inCave = game.act === 'cave';
+    if (state.renderActive !== inCave) {
+      if (inCave) {
+        for (const root of state.renderRoots || []) {
+          root.visible = state.renderVisibility?.get(root) !== false;
+        }
+      } else {
+        for (const root of state.renderRoots || []) {
+          state.renderVisibility?.set(root, root.visible);
+          root.visible = false;
+        }
+      }
+      state.renderActive = inCave;
+    }
     if (state.lightsActive !== inCave) {
       state.lightsActive = inCave;
       for (const light of state.lights) light.visible = inCave;
@@ -959,7 +1244,8 @@ function installBeats(game, layout, state) {
 }
 
 export function buildUnderfalls(game) {
-  const { world } = game;
+  const { world, scene } = game;
+  const renderStart = scene.children.length;
   const layout = createUnderfallsLayout(game.clearingCenter);
   const state = {
     id: 'underfalls',
@@ -972,6 +1258,8 @@ export function buildUnderfalls(game) {
     groundAt(x, z) { return underfallsGroundAt(layout, x, z); },
     contains(x, z, pad = 0) { return underfallsContains(layout, x, z, pad); },
     project(x, z) { return projectUnderfalls(layout, x, z); },
+    lineOfSight(a, b, options) { return underfallsLineOfSight(layout, a, b, options); },
+    route(a, b, options) { return findUnderfallsRoute(layout, a, b, options); },
   };
   game.underfalls = state;
 
@@ -987,6 +1275,14 @@ export function buildUnderfalls(game) {
   buildBellCistern(game, layout, state);
   buildSprayDisplacement(game, layout, state);
   buildHatchCistern(game, layout, state);
+  // The district exists under the exterior coordinates, but none of its
+  // chapel, sluice, hatch or spray geometry belongs in an exterior render.
+  // Remember each root's live visibility so one-shot cave beats survive a
+  // leave/re-entry, then remove the whole district until the cave act begins.
+  state.renderRoots = scene.children.slice(renderStart);
+  state.renderVisibility = new Map(state.renderRoots.map((root) => [root, root.visible]));
+  state.renderActive = false;
+  for (const root of state.renderRoots) root.visible = false;
   for (const light of state.lights) light.visible = false;
   installClamp(game, layout, state);
   installCaveVisibility(game, state);

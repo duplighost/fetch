@@ -37,10 +37,11 @@ beats your instincts.
 7. **Growth is never witnessed.** The skull gains its face off-screen only.
 8. **One ending.** The oasis is sincere. Do not foreshadow the twist.
 
-## Gates — all three must be green before any merge
+## Gates — all four must be green before any merge
 
 ```sh
 node tests/autotest.mjs      # 24 named checks (feel laws, fetch chain, stun/pop)
+node tests/regressions.mjs   # release invariants, checkpoints, progression, finale
 node tests/smoke.mjs         # per-act boot, budgets, screenshots
 node tests/playthrough.mjs   # plays the ENTIRE game via real inputs (10+ min)
 ```
@@ -77,7 +78,7 @@ Environment traps (hard-won — do not relearn):
 
 ## Cloud agents & the gates
 
-The three gates need Alex's machine: a real GPU (system Chrome, d3d11 ANGLE —
+The four gates need Alex's machine: a real GPU (system Chrome, d3d11 ANGLE —
 never swiftshader) and playwright-core resolved from a local npx cache. If you
 are running in a cloud sandbox (Codex/Sol): you cannot run them, and that's
 expected. Instead: (1) `node --check` every file you touched, (2) keep changes

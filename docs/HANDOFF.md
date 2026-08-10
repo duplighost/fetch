@@ -1,3 +1,259 @@
+# HANDOFF — 2026-08-09, masterpiece integration (CURRENT, PACKAGED, UNDEPLOYED)
+
+Read `AGENTS.md` first. This section is the current source truth for the
+isolated worktree at
+`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
+The integration work is on `codex/fetch-masterpiece-2026-08-09`, started from
+`ea414a8`. A deterministic standalone ZIP has been built and independently
+clean-booted; its exact identity is recorded below. This section does not claim
+a merge, Netlify deploy, or change to the live game. Verify `git status`,
+`git log`, the artifact hash, and the production URL independently instead of
+inferring one release state from another.
+
+The older handoffs below remain as an append-only engineering diary. Their old
+"release", "THIN", "not fixed", queue, hash, branch, and deployment statements
+describe the snapshots that produced them; they do not override this section.
+For the current spoiler route, use `docs/WALKTHROUGH.md`. For a compact current
+engineering map plus the old forensic record, use `docs/STATE-OF-PLAY.md`.
+
+## Current playable spine
+
+The house and graveyard are no longer collections of suggestive but optional
+props. The required route now has an explicit physical chain:
+
+`bedroom key → nursery key → window relay → stolen flame → cellar → pump`
+`→ incinerator refusal → hatch key → grave ritual/combat → ossuary`
+`→ forest → clearing → Underfalls → mirror contact`
+
+- **The opening door accepts the game's verb.** The skull fetches the key from
+  the branch; an outbound throw at the lock consumes it and opens the door.
+  Walking up and pressing E remains a valid accessibility/fallback interaction.
+  Wrong-key throws answer with a real locked impact and rattle instead of
+  silently passing through the door.
+- **The window relay is required house progression.** Throw through the open
+  living-room window into the exterior mooring, keep LMB held while walking the
+  skull's trolley down the outside rail, then release so the returning skull
+  enters through the study window and rings the one-way servant bell. That
+  physical return opens the door above the stair void and wakes the lag mirror.
+- **The house uses the relay as horror, not just wiring.** A staged body climbs
+  through the living-room aperture while the skull's light is travelling away;
+  direct observation freezes its poses, and the solved relay leaves wet proof
+  and a later guest-window echo. The relay also wakes a pooled planar mirror
+  whose inhabitant follows the player about a second late.
+- **The flame is a real dependency.** The newly opened upstairs room exposes a
+  candle. A skull hit extinguishes it, seats embers behind the skull's sockets,
+  and increases the carried light by value as well as warmth. This is the
+  `ateFlame` state the basement machinery reads.
+- **The return through the house is deterministic.** Only the completed relay
+  plus the stolen flame arms a nine-beat spatial footstep route from the window,
+  through both floors, to the cellar boards. Previously visited furniture moves
+  only after the player has left and is not looking. An ordinary scullery door
+  creeps open only a crack and keeps its collider until the player uses it. The
+  final beat hands the noise to the Resident rather than spawning an unrelated
+  scare. Death and act changes pause the exact prefix without duplicating it.
+- **The pump is now mandatory, not an optional side district.** In the old
+  under-house works, an outbound skull clamps into the winch. Keep holding while
+  five bridge leaves pay out and cross under player control; the far-bank pawl
+  latches the route. Early release visibly rewinds and re-arms the mechanism.
+  The incinerator requires its latched draft, so this is part of the critical
+  path rather than optional basement dressing.
+- **The incinerator closes the causal chain.** Its firebox accepts a throw but
+  refuses to complete without both the stolen flame and the latched pump draft.
+  With both prerequisites, it tries and fails to burn the skull, opens the ash
+  pan, and exposes the hatch key. Fetch that key, throw it at the hatch lock,
+  then use the visibly unchained hatch to leave. Death cannot consume the key or
+  cancel an already committed hatch exit.
+
+The old crawl-room counterweight, dog-and-ball secret, nursery mobile threat,
+Resident, bedroom locket, and furnished rooms remain. Expansion was layered
+onto the established game rather than reconstructing it.
+
+## Graveyard: two resolutions, one required under-yard route
+
+- The iron gate is shut from entry. Crossing the central grave row starts a
+  three-wave arena of 4, 5, and 6 risen bodies, with a real breath between
+  waves. One enemy may own a committed strike in the early fight and two in the
+  later fight; attacks commit to fixed ground so sprinting out is valid
+  counterplay. A first skull hit stuns quietly; a second pop is loud.
+- Three resonant graves provide the alternate ritual resolution and function as
+  crowd control. Each must receive its own outbound throw; a returning skull
+  cannot credit a second stone backwards. Completing all three ends the funeral
+  without requiring the remaining loud clear.
+- Six hero graves are destructible tactical terrain. The first hit chips and
+  rocks one; the second topples it, drops its collider to a walkable obstruction,
+  emits a bounded resonance stun, and uses a fixed debris pool. An unresolved
+  death restores the stones, targets, collision, and pool state.
+- Resolving either grave route opens the left mausoleum, **not** the forest gate
+  by magic. Its stair descends to a short, authored ossuary with alternating
+  baffles, two shallow pockets, a watched/unwatched witness, and a counterweight.
+  Short pulls decay; one uninterrupted hold lowers the far slab, opens the
+  surface gate with the gate's own creak, and raises the forest-side hatch. The
+  intended far hatch exits just beyond the gate and commits the forest act.
+- The old orb/cylinder body placeholders have been replaced with dressed,
+  jointed, asymmetric dragged figures and readable drag marks. The final close-
+  body and exterior visual passes are green on the current source. The bodies
+  have custom rib/waist/head volumes, tapered bent limbs, hands/fingers, wedge
+  footwear, clothing folds, contact shadows, and directional drag poses. This
+  remains a procedural low-poly game: the evidence establishes readable human
+  anatomy and grounding, not photoreal scans.
+
+## Forest: authored topology and a spatial nervous system
+
+- The 208 m route now contains two actual braided forks, not painted signs.
+  Both sides can be entered and examined. Six metres into a branch commits the
+  choice: the forest visibly knits behind the parent path and across the rejected
+  mouth while the chosen ribbon remains physically open. All four left/right
+  combinations preserve one monotonic progress clock and respawn on the chosen
+  ribbon instead of inside a closure.
+- Eight deterministic objects occupy real forest coordinates: a radio on a
+  chair, a telephone on a stump, the searchers' swing, a CRT in a ditch, a
+  washer, a refrigerator, an arena generator, and a bell in the copse. Their
+  HRTF loops are heard before the objects become visually legible, with a strict
+  nearest-two continuous-voice cap. A skull hit visibly silences an object but
+  makes a loud world event that may wake nearby sleepers or invite bounded
+  company. Rejected branches, the advancing seal, death, act changes, and the
+  terminal ending all retire unreachable voices and targets.
+- The fallen tree is three knitted branch/collision layers around one uprooted
+  bole. Each outbound hit removes exactly one visible and physical layer; a
+  returning skull cannot double-count. The last hit tears the root mass and
+  drags the full log lengthwise off the route while collision remains until its
+  visible mass has cleared.
+- The apparent pre-rope map hole is now a visible mire: peat, reeds, suction
+  rings, and a half-swallowed chair. It slows and sinks the player by depth, not
+  by an out-of-map fall. Catching the ravine rope arrests the sink and preserves
+  the press/hold/release swing verb; the checkpoint is earned only on firm far
+  ground.
+- The earlier forest arena, quiet-stun/loud-pop economy, optional held-rope
+  search blind and bell copse, landmark chapters, Kneeler, and one-way seal
+  remain. Loud play accumulates bounded company debt and sustained quiet drains
+  it. A forest respawn grants 3.25 seconds before the Kneeler can be authored
+  again, preventing the reported spawn-catch loop.
+
+## Clearing, Underfalls, and ending
+
+- The clearing is now composed as a place rather than a transition pad: closed
+  forest edges, streams, a visibly matched plunge basin, shore detail, motes,
+  layered waterfall rock/water, and the locket's optional shore return. The one
+  sacred exception remains: throw the skull through the falls and it does not
+  return. Stone steps rise through the water and expose the cave route.
+- Underfalls is a skull-less 125.158 m authored district with thirteen main
+  nodes: stone veil, intake, drowned pump chapel, multi-height sluice, overflow,
+  descent, and hatch cistern. A real dry-return culvert and bell-cistern shortcut
+  rejoins the upper route. One route model owns floors, clamp, cover, line of
+  sight, and enemy navigation, so adjacent corridors cannot become a through-
+  wall shortcut or a vertical-storey mismatch.
+- The Drowned Choir follows its last audible world position, not the player's
+  live coordinates. It warns before moving, follows collider-safe authored
+  routes, and commits attacks to a fixed point. A committed sprint can evade it;
+  the first catch teaches the consequence without killing, while the next can.
+  Authored spray reveals, washes back, and resets it. Opening the ceiling hatch
+  retires the Choir before the mirror transition.
+- The finale preserves look and movement through recognition, lag, wall motion,
+  prop consumption, hand pressure, fractures, and contact. The reflection now
+  has a tailored articulated human body and wears an exact clone of the selected
+  opening skull. Hard black happens before control freezes. The delayed catch,
+  title, and human gasp then run once, after which animation frames, cave/forest
+  loops, mirrors, shader warm-up resources, and WebAudio are explicitly retired.
+
+## Donor audit: direct, useful, and honest
+
+Marrow, The Eaten Path, and Still were inspected directly in local source **and
+at runtime**. FETCH synthesizes their useful design grammar; it does not clone a
+map, asset set, plot, or puzzle wholesale.
+
+- **The Eaten Path** contributed the idea of a forest as a graph of authored
+  paths and of strange side objects whose sounds belong to exact positions.
+  FETCH mutated that into two reversible-then-committed braids, cumulative
+  physical closures, eight breakable HRTF story appliances, and the existing
+  skull/noise economy. Its bog is atmospheric ground; it is **not** a true
+  sinking/quicksand mechanic. FETCH's mire behavior is new synthesis.
+- **Marrow** contributed landmark-led forest composition and the grammar of a
+  readable crypt route with chambers, baffles, and a physical exit mechanism.
+  FETCH mutated that into the required under-yard ossuary and combat yard.
+  Marrow's gravestones are **not** destructible; FETCH's two-hit tactical hero
+  graves and pooled debris are new.
+- **Still** contributed observation, light, noise, and delayed-house-horror
+  thinking. FETCH mutated that into the causal window visitor, lag mirror, and
+  deterministic return route. Still does **not** contain the literal visitor
+  climbing through this window. In fact, none of the three donors contains the
+  finished window-invasion sequence now in FETCH.
+
+This donor honesty matters: use Alex's library as a feature-and-feel vocabulary,
+then make the result obey FETCH's verb, story, geography, and failure laws.
+
+## Laws preserved
+
+1. Press LMB throws immediately; hold keeps the skull out; release recalls it.
+2. `FEEL_PROFILE` is unchanged.
+3. No separate tutorial, HUD solution text, forced camera, or playable cutscene
+   was added. Every new gate is taught by geometry, light/value, motion, sound,
+   failure, and consequence while input stays live.
+4. No required read depends on hue. Silhouette, brightness, motion, timing, and
+   spatial audio carry state for Alex's deuteranopia.
+5. Sounds come from the things and coordinates that caused them.
+6. Gameplay-looking objects either act, communicate a causal dependency, or
+   remain clearly environmental; they are not fake controls.
+
+## Verification state — full local and artifact gates green
+
+Final-source local evidence:
+
+- Canonical `autotest`: **24/24**.
+- Canonical `regressions`: **50/50**.
+- Per-act `smoke`: all eight acts green with zero browser errors.
+- Two consecutive real-input full `playthrough` runs: **38/38 beats** each,
+  bedroom through terminal shutdown, with zero failures.
+- `failure-state-regression.mjs`: **20/20**, including the resonant-grave
+  return-leg guard plus death/respawn, tree, mire, ossuary, and lifecycle cases.
+- `forest-hardening.mjs`: **4/4**; edge-biased restores start on the active
+  authored route, remain grounded, clear the cumulative seal, and move forward.
+- `forest-nervous-system-regression.mjs`: **9/9**, repeated; cold Start remained
+  below 250 ms, eight story buffers prewarmed in bounded idle slices, and the
+  first loop was hitch-free.
+- `district-culling-regression.mjs`: **12/12**; sampled maximum **420 draws**
+  under the 450-draw ceiling, far-hatch forest frame **330 draws**, and cave →
+  house restored exact authored visibility (`[]` difference).
+- `choir-route-occlusion-regression.mjs`: **6/6**.
+- Underfalls expansion: **13/13**; horror expansion: **16/16**; house-return
+  horror: **12/12**.
+- House expansion, performance-pool, basement foundation, pump recovery,
+  enemy-stain, and Standing Kind focused suites are green (respectively: all
+  house checks, all pool checks, **8/8**, **10/10**, **5/5**, and **2/2**).
+- The final system-Chrome/ANGLE-D3D11 `render-perf` gate is green with zero
+  browser errors. GPU p95 stayed below 8.5 ms in forest, 4.0 ms in cave, and
+  16.5 ms in the mirror room against the 45 ms ceiling.
+- Final grave-body, exterior-composition, five-seed grave-arena, and district
+  checks are green with zero browser errors.
+
+The culling/pool work is structural, not a raised budget: completed house/yard
+districts retire after the forest commitment; Underfalls and the ossuary isolate
+and exactly restore their resident roots; deep basement hides upper-house detail
+outside its sightline. Gore (64), enemy stains (48), grave debris (36), fork
+closures (60), candles, and mirror render targets are fixed resident pools or
+bounded instance sets rather than retry-grown scene graphs.
+
+## Verified standalone artifact
+
+- Archive: `fetch-netlify-2026-08-09-ossuary.zip`
+- SHA-256: `e4edf64544352dd2d5d8760388c74102e66fc803bbcc0be07007bd89a95c73aa`
+- Contents: **24** root-relative shipping files, **1,827,683** raw bytes,
+  **495,884** ZIP bytes; only `index.html`, `src/`, and `vendor/` are shipped.
+- Two independent packer runs produced the same SHA-256.
+- The verifier checked paths, bounds, central-directory metadata, CRC-32, and
+  clean-extracted every entry to a unique temp directory before serving it.
+  System Chrome/ANGLE-D3D11 reached ready in the bedroom with the intended
+  skull variant and zero browser errors.
+- The negative release-integrity suite is **5/5**: corrupt content, truncated
+  EOCD, broken central directory, oversized declared output, and an unsafe
+  output path are all rejected.
+
+**Still separate from that green artifact:** final integration commit/review,
+any merge into the canonical repository, and—only if Alex authorizes shipping—
+production deployment followed by independent live-URL verification. The live
+game has not been changed by this worktree or ZIP.
+
+---
+
 # HANDOFF — 2026-08-09, Underfalls horror release (Codex)
 
 Read `AGENTS.md` first. The canonical source checkout is
