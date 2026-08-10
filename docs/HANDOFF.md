@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-10, bell/pilot/intruder recovery (CURRENT, UNRELEASED)
+# HANDOFF — 2026-08-10, bell/pilot/intruder recovery (CURRENT, DEPLOYED)
 
 Read `AGENTS.md` first. This section supersedes every release-state claim below.
 Alex's public playtest of `0.4.0-ossuary` exposed a real human-route failure:
@@ -7,13 +7,11 @@ and upstairs flame were understood, while the incinerator still required a
 flame. The supposed bell payoff used a generic metal-drop sound. The result was
 a basement full of convincing valves with no legible critical flame.
 
-The in-progress `0.5.0-intruder` repair is on
-`codex/fetch-masterpiece-2026-08-09` in the isolated worktree
-`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
-It is not live merely because focused tests are green. Its source commit,
-standalone artifact identity, source PR, Qualiacology PR/deploy preview, merge,
-and production verification must be recorded independently before this heading
-can say deployed.
+The `0.5.0-intruder` repair landed through source
+[PR #17](https://github.com/duplighost/fetch/pull/17) as merge
+`d66c4a682b21f02fefa6eaaaf6e2ffaa10ab406d`. Its deterministic standalone
+artifact, Qualiacology preview, site merge, and production deployment were then
+verified independently below. No one state is inferred from another.
 
 ## Current repaired house contract
 
@@ -80,7 +78,7 @@ clearing cancels unfinished arena waves. If a later design makes that boss
 mandatory, it needs a real physical gate and new failure-state tests; prose must
 never pretend the current gate exists.
 
-## Release gates still pending at this heading
+## Release identity and production evidence
 
 - Frozen source verification is complete: **67/67** JavaScript modules parse;
   focused house/progression/crawler **21/21**; pause/title/pointer-lock fallback
@@ -91,18 +89,36 @@ never pretend the current gate exists.
   draws against 450. An unmuted system-Chrome direct-bell throw committed once,
   kept AudioContext running, and scheduled the four scaled inharmonic partials
   plus strike source once; the return leg added no second ring.
-- Deterministic standalone package is complete: two builds matched exactly at
-  **25 entries**, **1,953,010 raw bytes**, **578,074 ZIP bytes**, SHA-256
+- Deterministic standalone package `fetch-netlify-2026-08-10-intruder.zip` is
+  complete: two builds matched exactly at **25 entries**, **1,953,010 raw
+  bytes**, **578,074 ZIP bytes**, SHA-256
   `71521a2bff1f9290cd1cb39034b22e1171d786cd28993e60ae44c15ed3e89db3`.
   The verifier extracted to a unique clean directory, exact-compared every byte
   to current shipping roots, decoded the 1280x720 title art, and booted
   `0.5.0-intruder` / skull variant E with zero browser errors. Release-integrity
   negatives passed **7/7**, and the old ossuary ZIP is explicitly rejected for
   lacking the required content-addressed title artwork.
-- Source commit/PR/merge.
-- Qualiacology isolated sync, generated-hub validation, deploy-preview browser
-  inspection, production merge, and fresh live checks of bell, pilot, crawler,
-  pause, title, catalog card, social image, version, and cache headers.
+- Source [PR #17](https://github.com/duplighost/fetch/pull/17) merged as
+  `d66c4a682b21f02fefa6eaaaf6e2ffaa10ab406d`.
+- Qualiacology [PR #35](https://github.com/duplighost/qualiacology/pull/35)
+  passed its release probe on preview deploy `6a79a1e6b620fa00075f97c3` at
+  `https://deploy-preview-35--classy-strudel-55444b.netlify.app` with
+  **29/29 + 5/5** checks and zero browser errors, then merged as
+  `77c24f86abc1074d71d802172021df67167a0175`.
+- Netlify production deploy `6a79a4b384c0e400081ad376`, published
+  `2026-08-10T10:15:22.317Z`, serves `0.5.0-intruder` at
+  `https://qualiacology.com/fetch/`. The fresh production probe again passed
+  **29/29 + 5/5** with zero browser errors, including the bell, pilot-flame,
+  crawler, pause, title, catalog-card, and shell behavior exercised in preview.
+- The live title master at
+  `/fetch/assets/fetch-title-keyart-5ab7c65b.webp` and card master at
+  `/assets/games/fetch-card-keyart-5ab7c65b.webp` each return **200**,
+  `image/webp`, and **66,346 bytes**, and each exact-matches SHA-256
+  `5AB7C65B0E3ECC50D96454EE5F3393284D02D521ED7F1AF2DCFC2691B1CFF998`.
+  Both content-addressed art responses use
+  `Cache-Control: public,max-age=31536000,immutable`; the mutable `/fetch/`
+  document and `/fetch/src/main.js` correctly use
+  `Cache-Control: public,max-age=0,must-revalidate`.
 
 ---
 

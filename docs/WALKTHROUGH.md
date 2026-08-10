@@ -1,7 +1,8 @@
 # FETCH — complete current walkthrough (designer's copy)
 
-This is the spoiler-complete route for the **2026-08-10 `0.5.0-intruder`
-source revision**, not the older `0.4.0-ossuary` live release. It describes what the current source
+This is the spoiler-complete route for the **public 2026-08-10
+`0.5.0-intruder` production release**, which supersedes the older
+`0.4.0-ossuary` release. It describes what the current source
 expects the player to learn, what is mandatory, what is optional, how failure
 recovers, and which pieces of apparent scenery are actually systemic.
 
@@ -524,7 +525,9 @@ There is no puzzle prompt and no hidden combat solution. The ending is contact:
   fires once and then explicitly stops animation frames, audio, forest/cave
   loops, house/finale mirror targets, and retained warm-up resources.
 
-That is the current source route. The preceding `0.4.0-ossuary` release and site
-PR #34 are historical; the bell/pilot/crawler/pause/title revision has its own
-source → package → preview → production verification chain and must not be
-called live until every one of those gates has actually passed.
+That is the current public route. The preceding `0.4.0-ossuary` release and site
+PR #34 are historical. The bell/pilot/crawler/pause/title revision landed
+through source [PR #17](https://github.com/duplighost/fetch/pull/17),
+Qualiacology [PR #35](https://github.com/duplighost/qualiacology/pull/35), and
+verified Netlify production deploy `6a79a4b384c0e400081ad376`; the live game is
+`https://qualiacology.com/fetch/` at `0.5.0-intruder`.

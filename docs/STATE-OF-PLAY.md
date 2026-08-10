@@ -1,12 +1,15 @@
 # FETCH — current state of play, 2026-08-10 bell/pilot/intruder recovery
 
-> **CURRENT SOURCE TRUTH; NOT YET RELEASED AT THIS HEADING.** Alex's live
+> **CURRENT SOURCE AND PRODUCTION TRUTH; DEPLOYED.** Alex's live
 > `0.4.0-ossuary` playtest found that the human house route was unclear and
 > could strand a player below the house without a legible flame. The current
-> branch repairs that route, adds the exact scullery-window intrusion requested,
+> release repairs that route, adds the exact scullery-window intrusion requested,
 > adds authoritative pause/checkpoint restart, and replaces the title/catalog
-> art. Do not call `0.5.0-intruder` live until the new source/artifact/site gates
-> in the newest `docs/HANDOFF.md` section are all recorded.
+> art. Source PR #17 merged as
+> `d66c4a682b21f02fefa6eaaaf6e2ffaa10ab406d`; Qualiacology PR #35 merged as
+> `77c24f86abc1074d71d802172021df67167a0175`; Netlify production deploy
+> `6a79a4b384c0e400081ad376` published `0.5.0-intruder` on
+> `2026-08-10T10:15:22.317Z`.
 
 The repaired house dependency is a partial order:
 
@@ -36,9 +39,15 @@ canonical **24/24 + 50/50 + eight-act smoke + 38/38 playthrough**, and zero
 browser errors. The reproducible 25-entry standalone ZIP is 578,074 bytes at
 SHA-256 `71521a2bff1f9290cd1cb39034b22e1171d786cd28993e60ae44c15ed3e89db3`;
 its unique clean extraction exact-matches current shipping source and boots with
-the decoded title art, while integrity negatives pass 7/7. Commits, site
-preview/merge, and production checks remain separate pending release states at
-this heading.
+the decoded title art, while integrity negatives pass 7/7. Source
+[PR #17](https://github.com/duplighost/fetch/pull/17) and Qualiacology
+[PR #35](https://github.com/duplighost/qualiacology/pull/35) are merged; preview
+and production each passed **29/29 + 5/5** checks with zero browser errors.
+The public route is `https://qualiacology.com/fetch/`. Its 66,346-byte title and
+card masters exact-match SHA-256
+`5AB7C65B0E3ECC50D96454EE5F3393284D02D521ED7F1AF2DCFC2691B1CFF998`
+and return `public,max-age=31536000,immutable`; mutable `/fetch/` and
+`/fetch/src/main.js` return `public,max-age=0,must-revalidate`.
 
 For the exact required-versus-optional route, use the current
 `docs/WALKTHROUGH.md`. For release status and evidence, use only the newest
