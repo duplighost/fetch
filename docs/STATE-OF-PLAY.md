@@ -1,6 +1,54 @@
-# FETCH — current state of play, 2026-08-10 masterpiece integration
+# FETCH — current state of play, 2026-08-10 bell/pilot/intruder recovery
 
-> **CURRENT SOURCE TRUTH; PACKAGED AND DEPLOYED.** Integration work is on the
+> **CURRENT SOURCE TRUTH; NOT YET RELEASED AT THIS HEADING.** Alex's live
+> `0.4.0-ossuary` playtest found that the human house route was unclear and
+> could strand a player below the house without a legible flame. The current
+> branch repairs that route, adds the exact scullery-window intrusion requested,
+> adds authoritative pause/checkpoint restart, and replaces the title/catalog
+> art. Do not call `0.5.0-intruder` live until the new source/artifact/site gates
+> in the newest `docs/HANDOFF.md` section are all recorded.
+
+The repaired house dependency is a partial order:
+
+```text
+bedroom key + nursery key
+  -> servant bell and three cellar boards (either order once downstairs)
+servant bell
+  -> optional early upstairs flame
+servant bell + all boards
+  -> cellar -> alternate basement-pilot flame + pump
+either flame + latched pump
+  -> incinerator refusal -> ash key -> hatch
+```
+
+The primary bell is now one visible ordinary outbound throw. The exterior held-
+trolley return is a valid advanced alternate. Either flame source produces the
+same required `ateFlame` state and disables the other. The tiny scullery window
+owns a watched crawler, but that scare does not gate escape; close approach
+makes every visible stage recoil/dissolve before player overlap. Escape/P freeze
+simulation and WebAudio; a clickable icon is shown only when pointer lock is
+unavailable, and Restart from Checkpoint preserves solved flags. The forest arena is honestly optional because reaching the clearing
+cancels it; the graveyard resolution and ossuary are not optional.
+
+Frozen-source evidence for this revision is complete: 67/67 syntax, focused
+house **21/21**, pause/title **25/25**, all 23 formal browser/simulation modules,
+canonical **24/24 + 50/50 + eight-act smoke + 38/38 playthrough**, and zero
+browser errors. The reproducible 25-entry standalone ZIP is 578,074 bytes at
+SHA-256 `71521a2bff1f9290cd1cb39034b22e1171d786cd28993e60ae44c15ed3e89db3`;
+its unique clean extraction exact-matches current shipping source and boots with
+the decoded title art, while integrity negatives pass 7/7. Commits, site
+preview/merge, and production checks remain separate pending release states at
+this heading.
+
+For the exact required-versus-optional route, use the current
+`docs/WALKTHROUGH.md`. For release status and evidence, use only the newest
+section of `docs/HANDOFF.md`.
+
+---
+
+# FETCH — state of play, 2026-08-10 masterpiece integration (HISTORICAL OSSUARY RELEASE)
+
+> **HISTORICAL OSSUARY RELEASE TRUTH; PACKAGED AND DEPLOYED.** Integration work was on the
 > isolated branch `codex/fetch-masterpiece-2026-08-09`, started from `ea414a8`, in
 > `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
 > The shipping-source integration is commit `c8a50c2`.

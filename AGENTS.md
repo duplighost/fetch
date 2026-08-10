@@ -24,9 +24,9 @@ beats your instincts.
    decelerate on approach; clocks are monotonic; recall is duration-only.
 2. **Flawless handling.** No input lag, no random refusal, no terror-adaptive
    controls, no control theft — ever, including the ending.
-3. **NO HUD.** No words or meters on screen during play. State lives in the
-   skull (jaw chatter = proximity, grown eyes track threats), in audio, in
-   light. The one text surface is the title overlay.
+3. **NO HUD.** No words or meters on screen during active play. State lives in
+   the skull (jaw chatter = proximity, grown eyes track threats), in audio, in
+   light. Text belongs only to non-playing overlays: title, pause, and retry.
 4. **Never hue-only meaning.** Alex is colorblind. Threat/state = brightness,
    motion, shape, timing, sound. (Time-stop = you hurt it.)
 5. **Audio-first horror.** HRTF spatial. You hear things before you see them.
@@ -83,7 +83,7 @@ never swiftshader) and playwright-core resolved from a local npx cache. If you
 are running in a cloud sandbox (Codex/Sol): you cannot run them, and that's
 expected. Instead: (1) `node --check` every file you touched, (2) keep changes
 inside your lane, (3) say plainly in the PR body that gates weren't run and
-why. The reviewing agent on Alex's machine runs all three gates against your
+why. The reviewing agent on Alex's machine runs all four gates against your
 branch before merge — a PR is not mergeable until someone has. Never weaken,
 skip, or edit the gates themselves to get green.
 
@@ -101,8 +101,9 @@ skip, or edit the gates themselves to get green.
 - **Deploying is a separate repo.** The live game is a shelled COPY at
   `fetch/` inside the qualiacology site repo, which has its own AGENTS.md
   (read it; its rules differ). Sync flow: land here on main with green gates
-  → copy `src/` (+ `index.html` if changed, keeping the site shell: meta,
-  favicon, home pill) into the site repo → push there. Never deploy from
-  this repo; never edit the site copy directly except to sync.
+  → copy `src/` and any referenced runtime `assets/` (+ `index.html` if
+  changed, keeping the site shell: meta, favicon, home pill) into the site repo
+  → push there. Never deploy from this repo; never edit the site copy
+  directly except to sync.
 - Commit identity: the repo default (Alex's). Tag your model in the commit
   body (`Co-Authored-By:`) so history stays legible across the team.

@@ -11,13 +11,15 @@ import { createServer } from 'node:http';
 import {
   mkdirSync,
   mkdtempSync,
+  lstatSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, resolve, sep } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, openPage } from '../tests/lib/harness.mjs';
@@ -25,6 +27,8 @@ import { launchBrowser, openPage } from '../tests/lib/harness.mjs';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const archiveArg = process.argv.find((arg) => arg.startsWith('--archive='))?.slice(10);
 const archivePath = resolve(archiveArg || join(projectRoot, 'release', 'fetch-netlify.zip'));
+const shippingRoots = ['index.html', 'assets', 'src', 'vendor'];
+const TITLE_ART_SHA256 = '5ab7c65b0e3ecc50d96454ee5f3393284d02d521ed7f1af2dcfc2691b1cff998';
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRIES = 4096;
 const MAX_ENTRY_RAW_BYTES = 32 * 1024 * 1024;
@@ -55,6 +59,20 @@ function safeName(rawName) {
     throw new Error(`Unsafe ZIP entry: ${rawName}`);
   }
   return rawName;
+}
+
+function collectShippingFiles(path) {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) throw new Error(`Refusing symlink in shipping source: ${path}`);
+  if (stat.isFile()) return [path];
+  if (!stat.isDirectory()) return [];
+  return readdirSync(path, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((entry) => collectShippingFiles(join(path, entry.name)));
+}
+
+function shippingName(path) {
+  return relative(projectRoot, path).split(sep).join('/');
 }
 
 const crcTable = new Uint32Array(256);
@@ -205,6 +223,37 @@ try {
   archive = readFileSync(archivePath);
   extractRoot = mkdtempSync(join(tmpdir(), 'fetch-netlify-verify-'));
   const names = extractFlatZip();
+  const titleArtName = 'assets/fetch-title-keyart-5ab7c65b.webp';
+  if (!names.includes(titleArtName)) {
+    throw new Error(`Archive is missing the title artwork: ${titleArtName}`);
+  }
+  const titleArtBytes = readFileSync(join(extractRoot, ...titleArtName.split('/')));
+  const titleArtSha256 = createHash('sha256').update(titleArtBytes).digest('hex');
+  if (titleArtSha256 !== TITLE_ART_SHA256) {
+    throw new Error(`Title artwork filename hash disagrees with content: ${titleArtSha256}`);
+  }
+  // A clean boot proves only that an archive is internally runnable. Release
+  // verification must also prove it is *this* working tree, not yesterday's
+  // still-valid ZIP passed under a new filename.
+  const shippingFiles = shippingRoots
+    .flatMap((root) => collectShippingFiles(join(projectRoot, root)))
+    .sort((a, b) => shippingName(a).localeCompare(shippingName(b)));
+  const sourceNames = shippingFiles.map(shippingName);
+  const archiveNames = [...names].sort((a, b) => a.localeCompare(b));
+  if (JSON.stringify(sourceNames) !== JSON.stringify(archiveNames)) {
+    throw new Error('Archive entry set does not exactly match current shipping roots');
+  }
+  for (const sourcePath of shippingFiles) {
+    const name = shippingName(sourcePath);
+    const extracted = readFileSync(join(extractRoot, ...name.split('/')));
+    if (!readFileSync(sourcePath).equals(extracted)) {
+      throw new Error(`Archive content differs from current shipping source: ${name}`);
+    }
+  }
+  const versionMatch = readFileSync(join(projectRoot, 'src', 'main.js'), 'utf8')
+    .match(/const VERSION = '([^']+)'/);
+  if (!versionMatch) throw new Error('Could not read current source VERSION');
+  const expectedVersion = versionMatch[1];
   server = createServer((req, res) => {
     try {
       let pathname = decodeURIComponent(new URL(req.url, 'http://fetch.local').pathname);
@@ -237,18 +286,40 @@ try {
     { timeout: 60000, polling: 200 },
   );
   const state = await page.evaluate(async () => {
+    const titleArt = await new Promise((resolveImage, rejectImage) => {
+      const image = new Image();
+      image.onload = () => resolveImage({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        src: new URL(image.currentSrc || image.src, location.href).pathname,
+      });
+      image.onerror = () => rejectImage(new Error('title artwork failed to load'));
+      image.src = './assets/fetch-title-keyart-5ab7c65b.webp';
+    });
+    const titleBackground = getComputedStyle(document.getElementById('title'), '::before').backgroundImage;
     window.__FETCH.start();
     await window.__FETCH.step(1 / 60, 30, false);
     window.__game.render();
     return {
       act: window.__FETCH.state().act,
+      version: window.__FETCH.version,
       skullVariant: window.__game.skull.variant,
       render: window.__FETCH.state().render,
+      titleArt,
+      titleBackground,
     };
   });
   if (errors.length) throw new Error(`Browser errors: ${errors.join(' | ')}`);
   if (state.act !== 'bedroom') throw new Error(`Unexpected boot act: ${state.act}`);
+  if (state.version !== expectedVersion) {
+    throw new Error(`Standalone ZIP version ${state.version} does not match current source ${expectedVersion}`);
+  }
   if (state.skullVariant !== 'e') throw new Error(`Standalone ZIP did not boot shipping skull: ${state.skullVariant}`);
+  if (state.titleArt.width !== 1280 || state.titleArt.height !== 720
+    || state.titleArt.src !== '/assets/fetch-title-keyart-5ab7c65b.webp'
+    || !state.titleBackground.includes('fetch-title-keyart-5ab7c65b.webp')) {
+    throw new Error(`Standalone ZIP title artwork contract failed: ${JSON.stringify(state.titleArt)}`);
+  }
   console.log(JSON.stringify({
     archive: archivePath,
     sha256: createHash('sha256').update(archive).digest('hex'),
@@ -260,6 +331,8 @@ try {
       totalRawBytes: MAX_TOTAL_RAW_BYTES,
     },
     extractedToUniqueTemp: true,
+    exactCurrentShippingSource: true,
+    titleArtSha256,
     rootIndex: true,
     ready: true,
     browserErrors: errors,

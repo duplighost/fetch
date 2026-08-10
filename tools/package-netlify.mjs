@@ -20,7 +20,10 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outputArg = process.argv.find((arg) => arg.startsWith('--output='))?.slice(9);
 const outputPath = resolve(outputArg || join(projectRoot, 'release', 'fetch-netlify.zip'));
-const shippingRoots = ['index.html', 'src', 'vendor'];
+// Keep the title artwork inside the deterministic archive alongside the code.
+// The content-addressed filename prevents a hosted update from reusing a stale
+// immutable asset while still letting the same image serve standalone builds.
+const shippingRoots = ['index.html', 'assets', 'src', 'vendor'];
 
 if (extname(outputPath).toLowerCase() !== '.zip') {
   throw new Error(`Release output must be a .zip file: ${outputPath}`);

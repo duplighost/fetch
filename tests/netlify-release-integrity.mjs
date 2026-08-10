@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,6 +32,121 @@ function run(script, args) {
   };
 }
 
+const crcTable = new Uint32Array(256);
+for (let n = 0; n < 256; n += 1) {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+  crcTable[n] = c >>> 0;
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// Parse only the deterministic packer's deliberately small ZIP dialect. The
+// rebuilt negative fixtures then have coherent CRCs, sizes, offsets, headers,
+// and central directories; a semantic rejection cannot be a malformed-ZIP
+// false positive.
+function readPackedEntries(archive) {
+  const eocdOffset = archive.length - 22;
+  if (eocdOffset < 0 || archive.readUInt32LE(eocdOffset) !== 0x06054b50) {
+    throw new Error('Expected the deterministic packer\'s zero-comment EOCD record');
+  }
+  const count = archive.readUInt16LE(eocdOffset + 10);
+  const centralOffset = archive.readUInt32LE(eocdOffset + 16);
+  const entries = [];
+  let cursor = centralOffset;
+  for (let index = 0; index < count; index += 1) {
+    if (archive.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new Error(`Expected central-directory entry ${index + 1}`);
+    }
+    const method = archive.readUInt16LE(cursor + 10);
+    const compressedSize = archive.readUInt32LE(cursor + 20);
+    const rawSize = archive.readUInt32LE(cursor + 24);
+    const nameLength = archive.readUInt16LE(cursor + 28);
+    const extraLength = archive.readUInt16LE(cursor + 30);
+    const commentLength = archive.readUInt16LE(cursor + 32);
+    const localOffset = archive.readUInt32LE(cursor + 42);
+    const name = archive.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8');
+    if (archive.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error(`Expected local header for ${name}`);
+    }
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataStart, dataStart + compressedSize);
+    const data = method === 8 ? inflateRawSync(compressed) : Buffer.from(compressed);
+    if (data.length !== rawSize) throw new Error(`Unexpected raw size for ${name}`);
+    entries.push({ name, data });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function buildPackedArchive(entries) {
+  const localChunks = [];
+  const centralChunks = [];
+  let localOffset = 0;
+  for (const { name, data } of entries) {
+    const nameBytes = Buffer.from(name, 'utf8');
+    const compressed = deflateRawSync(data, { level: 9 });
+    const checksum = crc32(data);
+    const flags = 0x0800;
+    const method = 8;
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(flags, 6);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(33, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(compressed.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    localChunks.push(local, nameBytes, compressed);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(flags, 8);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(33, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(compressed.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(localOffset, 42);
+    centralChunks.push(central, nameBytes);
+    localOffset += local.length + nameBytes.length + compressed.length;
+  }
+
+  const centralDirectory = Buffer.concat(centralChunks);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(localOffset, 16);
+  return Buffer.concat([...localChunks, centralDirectory, end]);
+}
+
+function replaceEntry(entries, name, replacement) {
+  let replaced = false;
+  const next = entries.map((entry) => {
+    if (entry.name !== name) return entry;
+    replaced = true;
+    return { name, data: Buffer.from(replacement(entry.data)) };
+  });
+  if (!replaced) throw new Error(`Archive fixture is missing ${name}`);
+  return next;
+}
+
 try {
   const archive = readFileSync(archivePath);
   const eocdOffset = archive.length - 22;
@@ -38,6 +154,41 @@ try {
     throw new Error('Expected the deterministic packer\'s zero-comment EOCD record');
   }
   const centralOffset = archive.readUInt32LE(eocdOffset + 16);
+  const packedEntries = readPackedEntries(archive);
+
+  const staleSourceEntries = replaceEntry(packedEntries, 'src/main.js', (data) => {
+    const source = data.toString('utf8');
+    const stale = source.replace(
+      /const VERSION = '[^']+';/,
+      "const VERSION = '0.4.0-stale-negative';",
+    );
+    if (stale === source) throw new Error('Could not create stale src/main.js fixture');
+    return Buffer.from(stale, 'utf8');
+  });
+  const staleSourcePath = join(scratch, 'stale-current-source.zip');
+  writeFileSync(staleSourcePath, buildPackedArchive(staleSourceEntries));
+  const staleSourceResult = run(verifier, [`--archive=${staleSourcePath}`]);
+  check(
+    'verifier rejects a structurally valid archive built from stale source',
+    staleSourceResult.status !== 0
+      && /Archive content differs from current shipping source: src\/main\.js/.test(staleSourceResult.output),
+    staleSourceResult,
+  );
+
+  const wrongTitleEntries = replaceEntry(
+    packedEntries,
+    'assets/fetch-title-keyart-5ab7c65b.webp',
+    () => Buffer.from('valid ZIP entry, deliberately wrong title artwork', 'utf8'),
+  );
+  const wrongTitlePath = join(scratch, 'wrong-title-art.zip');
+  writeFileSync(wrongTitlePath, buildPackedArchive(wrongTitleEntries));
+  const wrongTitleResult = run(verifier, [`--archive=${wrongTitlePath}`]);
+  check(
+    'verifier rejects wrong title artwork despite a matching content-addressed filename',
+    wrongTitleResult.status !== 0
+      && /Title artwork filename hash disagrees with content/.test(wrongTitleResult.output),
+    wrongTitleResult,
+  );
 
   const badCrc = Buffer.from(archive);
   const wrongCrc = (badCrc.readUInt32LE(14) ^ 1) >>> 0;

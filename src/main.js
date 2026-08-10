@@ -21,7 +21,7 @@ const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const _impV = new THREE.Vector3();
-const VERSION = '0.4.0-ossuary';
+const VERSION = '0.5.0-intruder';
 const GORE_CAP = 64;
 
 // ------------------------------------------------------------------- input
@@ -46,6 +46,50 @@ class InputState {
     this.pending = {
       throwPressed: false,
       throwReleased: releaseThrow,
+      callTap: false,
+      interact: false,
+      jump: false,
+    };
+    this.throwHeld = false;
+    this.callHeld = false;
+    this.callDownAt = 0;
+    this.lookX = 0;
+    this.lookY = 0;
+  }
+  suspendForPause({ releaseHeld = false } = {}) {
+    // A pause is not a synthetic mouse-up. Keep the physical LMB state and any
+    // release that already happened, but discard movement/look and one-shot
+    // actions so Escape can never manufacture a delayed throw or interaction.
+    // If LMB is released while the pause screen is open, the ordinary mouseup
+    // handler records that promise and it lands on the first resumed step.
+    // A deliberate menu pause can preserve a physically held button because
+    // the global mouseup listener will still observe its release. Focus or
+    // visibility loss cannot make that promise: the release may happen in
+    // another window. Queue one safe release edge in that case so resuming can
+    // never resurrect a phantom held throw or anchored rope.
+    const releaseThrow = this.pending.throwReleased || (releaseHeld && this.throwHeld);
+    this.keys.clear();
+    this.pending = {
+      throwPressed: false,
+      throwReleased: releaseThrow,
+      callTap: false,
+      interact: false,
+      jump: false,
+    };
+    this.callHeld = false;
+    this.callDownAt = 0;
+    if (releaseHeld) this.throwHeld = false;
+    this.lookX = 0;
+    this.lookY = 0;
+  }
+  resetAll() {
+    // Restart-from-checkpoint owns a fresh control edge. Unlike focus loss,
+    // there is no live throw promise to preserve: respawn explicitly puts the
+    // skull in the hands and aborts any rope swing.
+    this.keys.clear();
+    this.pending = {
+      throwPressed: false,
+      throwReleased: false,
       callTap: false,
       interact: false,
       jump: false,
@@ -92,6 +136,10 @@ class Game {
     this.bridgeStones = [];
     this.dead = false;
     this.started = false;
+    this.paused = false;
+    this.pauseReason = null;
+    this._pauseChangedAt = -Infinity;
+    this._pausedAnimations = [];
     this.time = 0;
     this.hitStop = 0;
     this._shake = 0;
@@ -204,6 +252,8 @@ class Game {
     r.toneMappingExposure = 1.05;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.domElement.tabIndex = -1;
+    r.domElement.setAttribute('aria-label', 'FETCH game view');
     document.getElementById('app').appendChild(r.domElement);
     r.domElement.addEventListener('webglcontextlost', (e) => e.preventDefault());
     r.domElement.addEventListener('webglcontextrestored', () => this._dropQuality());
@@ -508,8 +558,8 @@ class Game {
   _wireInput() {
     const canvas = this.renderer.domElement;
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.started || this.dead) return;
-      if (!TEST_MODE && document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+      if (!this.started || this.dead || this.paused) return;
+      if (!TEST_MODE && document.pointerLockElement !== canvas) { this._requestPointerLock(); return; }
       if (e.button === 0) { this.input.throwHeld = true; this.input.pending.throwPressed = true; }
       if (e.button === 2) { this.input.callHeld = true; this.input.callDownAt = performance.now(); }
     });
@@ -520,35 +570,66 @@ class Game {
       }
       if (e.button === 2) {
         this.input.callHeld = false;
+        if (this.paused) { this.input.callDownAt = 0; return; }
         // duration alone decides — never gate the recall on mouse motion
         if (performance.now() - this.input.callDownAt < 260) this.input.pending.callTap = true;
       }
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('mousemove', (e) => {
+      if (this.paused) return;
       if (!TEST_MODE && document.pointerLockElement !== canvas) return;
       this.input.lookX += e.movementX;
       this.input.lookY += e.movementY;
     });
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        e.preventDefault();
+        const now = performance.now();
+        if (this.paused) {
+          // Chromium may report the pointer-lock loss and its Escape keydown in
+          // either order. Do not let one physical key both pause and resume.
+          if (now - this._pauseChangedAt > 160) this.resumeGame();
+        } else {
+          this.pauseGame('keyboard');
+        }
+        return;
+      }
+      if (this.paused) return;
       if (this.dead || this.flags.has('ended') || this._basementExit) return;
       this.input.keys.add(e.code);
       if (e.code === 'Space') this.input.pending.jump = true;
       if (e.code === 'KeyE') this.input.pending.interact = true;
     });
     addEventListener('keyup', (e) => this.input.keys.delete(e.code));
-    addEventListener('blur', () => this.input.clearKeys());
+    addEventListener('blur', () => {
+      if (this._canPause()) this.pauseGame('focus-loss');
+      else this.input.clearKeys();
+    });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) this.input.clearKeys();
+      if (!document.hidden) return;
+      if (this._canPause()) this.pauseGame('visibility');
+      else this.input.clearKeys();
     });
     document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement !== canvas) this.input.clearKeys();
+      if (document.pointerLockElement === canvas) {
+        // A DOM button cannot honestly be mouse-clicked while Pointer Lock
+        // retargets every pointer event to the canvas. Hide that false
+        // affordance; Escape/P remain the immediate desktop pause controls.
+        this._syncPauseUi();
+        return;
+      }
+      // Pointer lock is a gameplay contract. Losing it is a pause, not a silent
+      // return-to-play state with dead mouse-look and manufactured releases.
+      if (this._canPause()) this.pauseGame('pointer-lock');
+      else if (!this.paused) this.input.clearKeys();
     });
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
+      if (this.paused) this.render();
     });
   }
 
@@ -556,21 +637,165 @@ class Game {
     this.el = {
       title: document.getElementById('title'),
       die: document.getElementById('die'),
+      pause: document.getElementById('pause'),
+      pauseButton: document.getElementById('pauseButton'),
       fade: document.getElementById('fade'),
       crosshair: document.getElementById('crosshair'),
       vignette: document.getElementById('vignette'),
       sr: document.getElementById('srState'),
     };
-    this.el.title.addEventListener('click', () => {
+    this.el.title.addEventListener('click', (event) => {
       if (this.flags.has('ended')) { location.reload(); return; }
-      this.startGame();
+      if (event.target.closest('[data-action="start"]')) this.startGame();
     });
     this.el.die.addEventListener('click', () => {
       this.el.die.classList.add('hidden');
       this.director.respawn();
       this.fadeIn(1.2);
-      if (!TEST_MODE) this.renderer.domElement.requestPointerLock();
+      this._syncPauseUi();
+      this._requestPointerLock();
     });
+    this.el.pauseButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.pauseGame('button');
+    });
+    this.el.pause.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'resume') this.resumeGame();
+      if (action === 'restart-checkpoint') this.restartFromCheckpoint();
+    });
+    this._syncPauseUi();
+  }
+
+  _canPause() {
+    return this.started && !this.dead && !this.flags.has('ended')
+      && !this.endingTail && !this.terminal;
+  }
+
+  _requestPointerLock() {
+    try { this.renderer.domElement.focus({ preventScroll: true }); } catch { /* detached canvas */ }
+    if (TEST_MODE || this.paused || this.dead || this.terminal) return;
+    try {
+      const pending = this.renderer.domElement.requestPointerLock?.();
+      pending?.catch?.(() => {});
+    } catch { /* unsupported or denied: the next canvas click can retry */ }
+  }
+
+  _pauseDocumentAnimations() {
+    this._pausedAnimations = [];
+    if (!document.getAnimations) return;
+    for (const animation of document.getAnimations()) {
+      if (animation.playState !== 'running' && animation.playState !== 'pending') continue;
+      const target = animation.effect?.target;
+      if (target && this.el.pause?.contains(target)) continue;
+      try { animation.pause(); this._pausedAnimations.push(animation); } catch { /* detached target */ }
+    }
+  }
+
+  _resumeDocumentAnimations() {
+    for (const animation of this._pausedAnimations) {
+      try { if (animation.playState === 'paused') animation.play(); } catch { /* detached target */ }
+    }
+    this._pausedAnimations.length = 0;
+  }
+
+  _setAudioPaused(paused) {
+    const ctx = this.audio?.ctx;
+    if (!ctx) return;
+    try {
+      const op = paused ? ctx.suspend?.() : ctx.resume?.();
+      Promise.resolve(op).catch(() => {}).finally(() => {
+        // A rapid Escape double-tap can reverse the desired state while the
+        // browser is still settling the first AudioContext promise. Reconcile
+        // once more from authoritative game state so sound cannot resume under
+        // a pause or remain muted after it.
+        const shouldSuspend = this.paused || this.terminal;
+        try {
+          const settle = shouldSuspend && ctx.state === 'running'
+            ? ctx.suspend?.()
+            : (!shouldSuspend && this.started && ctx.state === 'suspended' ? ctx.resume?.() : null);
+          settle?.catch?.(() => {});
+        } catch { /* browser audio policy owns the fallback */ }
+      });
+    } catch { /* browsers without a live AudioContext simply remain silent */ }
+  }
+
+  _syncPauseUi() {
+    if (!this.el) return;
+    const showPause = this.paused && this._canPause();
+    this.el.pause?.classList.toggle('hidden', !showPause);
+    if (this.el.pauseButton) {
+      const pointerLocked = document.pointerLockElement === this.renderer.domElement;
+      this.el.pauseButton.hidden = !this.started || this.paused || this.dead
+        || this.flags.has('ended') || this.endingTail || this.terminal
+        || (!TEST_MODE && pointerLocked);
+    }
+    document.body.dataset.paused = showPause ? '1' : '0';
+    this.el.crosshair?.setAttribute('aria-hidden', showPause ? 'true' : 'false');
+  }
+
+  pauseGame(reason = 'manual') {
+    const releaseHeld = reason === 'focus-loss' || reason === 'visibility';
+    if (this.paused) {
+      // Pointer-lock loss can arrive just before blur/visibilitychange. Let the
+      // later, stronger signal repair a mouse-up that the page may never see.
+      if (releaseHeld) this.input.suspendForPause({ releaseHeld: true });
+      return true;
+    }
+    if (!this._canPause()) return false;
+    this.paused = true;
+    this.pauseReason = reason;
+    this._pauseChangedAt = performance.now();
+    this.input.suspendForPause({ releaseHeld });
+    this._lastShakeDt = 0;
+    this.renderer.domElement.style.transform = '';
+    this._pauseDocumentAnimations();
+    this._setAudioPaused(true);
+    this._syncPauseUi();
+    if (!TEST_MODE && document.pointerLockElement === this.renderer.domElement) {
+      document.exitPointerLock?.();
+    }
+    requestAnimationFrame(() => {
+      this.el.pause?.querySelector('[data-action="resume"]')?.focus({ preventScroll: true });
+    });
+    return true;
+  }
+
+  _leavePause({ resumeAudio = true } = {}) {
+    if (!this.paused) return false;
+    this.paused = false;
+    this.pauseReason = null;
+    this._pauseChangedAt = performance.now();
+    this._resumeDocumentAnimations();
+    this._syncPauseUi();
+    if (resumeAudio) this._setAudioPaused(false);
+    return true;
+  }
+
+  resumeGame() {
+    if (!this.paused || !this._canPause()) return false;
+    this._leavePause({ resumeAudio: true });
+    this._requestPointerLock();
+    return true;
+  }
+
+  restartFromCheckpoint() {
+    if (!this.paused || this.terminal || this.flags.has('ended')) return false;
+    // Cancel an in-flight basement transaction before its global callback can
+    // pull a checkpoint restart forward into the graveyard a second later.
+    if (this._basementExit) {
+      this._basementExit.complete = true;
+      this._basementExit = null;
+    }
+    this.input.resetAll();
+    this.hitStop = 0;
+    this.snapBuffer = 0;
+    this.director.respawn();
+    this.el.die.classList.add('hidden');
+    this.fadeIn(0.7);
+    this._leavePause({ resumeAudio: true });
+    this._requestPointerLock();
+    return true;
   }
 
   startGame() {
@@ -581,7 +806,8 @@ class Game {
     this.el.title.classList.add('hidden');
     this.fadeIn(2.4);
     this.director.start();
-    if (!TEST_MODE) this.renderer.domElement.requestPointerLock();
+    this._syncPauseUi();
+    this._requestPointerLock();
   }
 
   // ------------------------------------------------------------- services
@@ -750,12 +976,15 @@ class Game {
   }
 
   showDeath() {
+    this._leavePause({ resumeAudio: true });
     this.el.die.classList.remove('hidden');
+    this._syncPauseUi();
     document.exitPointerLock && document.exitPointerLock();
   }
 
   showEnd() {
     if (this.endingTail || this.terminal) return;
+    this._leavePause({ resumeAudio: true });
     this.endingTail = true;
     this.flag('ended');
     // in the dark: the catch you know — and someone else's gasp
@@ -780,7 +1009,9 @@ class Game {
     // model-authored epitaph; the only returning text surface is the title.
     t.querySelector('.tag').textContent = '';
     t.querySelector('.go').textContent = '';
+    t.classList.add('ending');
     t.classList.remove('hidden');
+    this._syncPauseUi();
     document.exitPointerLock && document.exitPointerLock();
   }
 
@@ -794,6 +1025,7 @@ class Game {
     this._shaderWarmMaterials = null;
     this.tickers.length = 0;
     this.terminal = true;
+    this._syncPauseUi();
   }
 
   teleport(act) {
@@ -830,7 +1062,7 @@ class Game {
 
   // ----------------------------------------------------------------- step
   step(dt, frame) {
-    if (this.terminal) return;
+    if (this.terminal || this.paused) return;
     this.time += dt;
     const ctx = {
       playerVel: new THREE.Vector3(this.player.vel.x, this.player.fallV, this.player.vel.z),
@@ -988,7 +1220,7 @@ class Game {
     // negative delta into the FOV decay *adds* kick every render until the
     // perspective matrix crosses 180 degrees and the whole world turns into
     // an inverted fisheye/starburst. Clamp at both consumption and capture.
-    const rdt = clamp(this._lastShakeDt || 0.016, 0, 0.05);
+    const rdt = this.paused ? 0 : clamp(this._lastShakeDt || 0.016, 0, 0.05);
     if (this._impactLight && this._impactLight.intensity > 0.1)
       this._impactLight.intensity *= Math.exp(-rdt * 9);
     if (this._ringT > 0) {
@@ -1006,7 +1238,7 @@ class Game {
     // applied for this frame only, removed after render
     let rkx = 0, rky = 0;
     const s2r = this._shake * this._shake;
-    if (!REDUCED_MOTION && s2r > 0.0001) {
+    if (!this.paused && !REDUCED_MOTION && s2r > 0.0001) {
       rkx = (Math.random() - 0.5) * s2r * 0.05;
       rky = (Math.random() - 0.5) * s2r * 0.04;
       this.camera.rotation.x += rkx;
@@ -1065,7 +1297,7 @@ class Game {
     // camera shake as canvas transform
     this._shake = Math.max(0, this._shake - rdt * 2.8);
     const s = this._shake * this._shake;
-    this.renderer.domElement.style.transform = !REDUCED_MOTION && s > 0.0001
+    this.renderer.domElement.style.transform = !this.paused && !REDUCED_MOTION && s > 0.0001
       ? `translate(${(Math.random() - 0.5) * s * 14}px, ${(Math.random() - 0.5) * s * 10}px)` : '';
   }
 
@@ -1078,6 +1310,14 @@ class Game {
       const rawDt = clamp((now - last) / 1000, 0, 0.05);
       last = now;
       this._lastShakeDt = rawDt;
+      if (this.paused) {
+        // Drop wall time instead of accumulating a catch-up burst. The already
+        // rendered WebGL frame stays pinned under the DOM pause layer.
+        acc = 0;
+        this._lastShakeDt = 0;
+        if (!this.terminal) requestAnimationFrame(tick);
+        return;
+      }
       if (TEST_MODE && !this._selfStep) {
         this.render();
         if (!this.terminal) requestAnimationFrame(tick);
@@ -1115,6 +1355,9 @@ class Game {
       feelProfile: FEEL_PROFILE,
       ready: true,
       start() { g.startGame(); return true; },
+      pause(reason = 'debug') { return g.pauseGame(reason); },
+      resume() { return g.resumeGame(); },
+      restartCheckpoint() { return g.restartFromCheckpoint(); },
       step(dt = 1 / 120, n = 1, render = true) {
         for (let i = 0; i < n; i++) g.step(dt, g.input.frame(i === 0));
         if (render) g.render();
@@ -1138,6 +1381,8 @@ class Game {
       state() {
         return {
           act: g.act,
+          paused: g.paused,
+          pauseReason: g.pauseReason,
           pos: [+g.player.pos.x.toFixed(2), +g.player.pos.y.toFixed(2), +g.player.pos.z.toFixed(2)],
           yaw: +g.player.yaw.toFixed(3),
           pitch: +g.player.pitch.toFixed(3),

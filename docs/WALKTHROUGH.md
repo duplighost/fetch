@@ -1,7 +1,7 @@
 # FETCH — complete current walkthrough (designer's copy)
 
-This is the spoiler-complete route for the **2026-08-09 masterpiece integration
-worktree**, not the older live release. It describes what the current source
+This is the spoiler-complete route for the **2026-08-10 `0.5.0-intruder`
+source revision**, not the older `0.4.0-ossuary` live release. It describes what the current source
 expects the player to learn, what is mandatory, what is optional, how failure
 recovers, and which pieces of apparent scenery are actually systemic.
 
@@ -9,6 +9,12 @@ recovers, and which pieces of apparent scenery are actually systemic.
 
 - WASD moves, mouse looks, Shift runs, Space jumps, and E uses the world object
   under the crosshair.
+- Escape or P freezes the simulation and WebAudio. Resume continues from the
+  same fixed step. Restart from Checkpoint reseats the current checkpoint
+  without erasing solved progression. While desktop pointer lock owns the
+  mouse, those keys are the honest pause controls; an actually clickable
+  top-right button appears when pointer lock is unavailable (including
+  touch/fallback play) instead of showing a dead mouse affordance.
 - Press LMB to throw immediately. Keep LMB held and the skull stays out, flies
   toward the aim, then treads air. Release LMB and it returns. There is no
   charge-up. RMB calls it; E also calls it when there is no nearby usable object.
@@ -27,11 +33,19 @@ recovers, and which pieces of apparent scenery are actually systemic.
 - Required state is communicated by locks, moving mechanisms, silhouettes,
   light value, animation, and spatial sound. Hue is never the only answer.
 
-The mandatory chain in one line:
+The mandatory chain is a partial order rather than one compulsory room order:
 
-`bedroom key → nursery key → window relay → flame → pump → incinerator`
-`→ hatch key → grave resolution → ossuary → forest → waterfall`
-`→ Underfalls hatch → mirror contact`
+```text
+bedroom key + nursery key
+  -> servant bell and three cellar boards
+servant bell
+  -> optional early upstairs flame
+servant bell + all boards
+  -> cellar -> alternate basement-pilot flame + pump
+either flame + latched pump
+  -> incinerator -> hatch key -> grave resolution -> ossuary
+  -> forest tree/forks/mire rope -> waterfall -> Underfalls hatch -> mirror contact
+```
 
 ## Act 0 — locked bedroom
 
@@ -72,63 +86,83 @@ floor rather than swapping in from a placeholder. The player can leave, rewind
 the mobile, stun the result, or accept the chase.
 
 The guest room and upper landing are no longer empty future-work flags. They
-become part of the mandatory flame route and the later return-horror path.
+hold the safer upstairs flame route and the later return-horror path, but a
+second deliberate flame route exists on the basement landing.
 
 ## Act 1 — ground-floor house
 
 The front door remains a dead end. The real progression is split across the
 living room and study, with its mechanism visible outside both west windows.
 
-### Required puzzle: the two-window relay
+### Required circuit: ring the servant bell
 
-1. Go to the living room and face the open west window. Outside it is a toothed
-   iron mooring connected to a long rail.
-2. Throw through the living-room window and hit the mooring. **Keep LMB held.**
-   The skull anchors into the trolley instead of returning.
-3. While still holding LMB, walk through the house toward the study. The trolley
-   and skull travel along the exterior rail beside the player's progress.
-4. From the study end, release LMB. The return leg enters through the study
-   window and rings the servant-bell receiver from its valid outside face.
-5. The bell drops the blocker, opens the upstairs door above the stair void, and
-   wakes the house lag mirror. An interior throw at the receiver cannot fake the
-   solution because its physical backplate is in the way.
+The normal solution is intentionally simple and visible:
+
+1. Enter the study and face the hanging servant bell and striker.
+2. Hit its visible center with one ordinary **outbound** skull throw.
+3. The bell audibly rings, retracts the cellar's brass circuit latch, opens the
+   upstairs flame-room door, and wakes the house lag mirror. The completion is
+   idempotent: a return leg cannot ring it again or stack its consequences.
+
+The exterior two-window relay remains a richer alternate solution, not a hidden
+requirement:
+
+1. At the living-room west window, throw into the toothed exterior mooring and
+   **keep LMB held** so the skull anchors into its trolley.
+2. Walk through the house toward the study while the held skull and trolley
+   travel along the exterior rail.
+3. Release at the study end. The return enters through the study window and
+   rings the same servant-bell circuit. A close release at the authored end also
+   completes cleanly instead of demanding a pixel-perfect return sphere.
 
 Throwing at the locked upstairs void door before solving the relay does not open
 it. The door rattles, the rail answers beside the player, and the distant bell
 knocks to point toward the mechanism without a HUD prompt.
 
-### What enters while the light is outside
+### What enters through the small scullery window
 
-The relay's missing-light interval is also an authored invasion:
+The graveyard-facing window in the tiny scullery is now a real watched invasion
+instead of an empty frame:
 
-- Hands, shoulder/head, crawl, and inside-floor poses advance at the living-room
-  aperture as the trolley travels.
-- Looking directly at the visitor freezes its current pose. The game never
-  moves the camera to show it.
-- Completing the return bell dismisses the visible body, but wet prints and
-  smears remain. A later guest-window crossing can be seen if the player gives
-  that window a real look.
+- Enter the scullery and deliberately look through that exact aperture. The
+  first genuine look finds a wet, long-haired figure outside.
+- Continued observation pulls it through authored outside, sill, and inside
+  poses. Looking away freezes the current stage; the game never steals the
+  camera or forces the witness.
+- Walking toward the watched figure never lets its solid-looking body clip
+  through the player. At any outside, sill, or inside stage it gasps, scrapes
+  back through the frame, and visibly dissolves before contact, leaving the wet
+  evidence behind without moving the player's feet or camera.
+- If death interrupts it before entry, the unresolved encounter resets. Once
+  it has crossed, the body withdraws but wet contact evidence remains.
+
+The advanced exterior trolley route has its own separate missing-light visitor
+and wet proof. Neither creature is required progression; both make the house's
+observation law causal rather than random timer ambience.
 
 The mirror awakened by the relay is a real planar reflection. Its wrong human
 inhabitant follows the player's recorded pose about a second late, then catches
 up. It cannot hurt the player and does not steal input; its purpose is to teach
 the house's observation grammar before the finale.
 
-### Required puzzle: steal the flame
+### Required state: steal one flame
 
-Return upstairs. The relay-opened room contains a tall iron candle stand.
+The bell circuit exposes two deliberate routes to the same required state:
 
-1. Throw the skull into the visible flame.
-2. The flame dies into the sockets. Two small embers become part of the skull,
-   and its carried light becomes brighter/longer-reaching. The `ateFlame` state
-   is now physically visible and will power the basement firebox.
+- **Upstairs route:** return above the stairs and throw the skull into the tall
+  candle inside the bell-opened guest room. This is the safer early pickup.
+- **Basement route:** after the bell and all three cellar boards, descend and
+  hit the conspicuous caged pilot lantern on the first landing. This is a real
+  alternate, not a secret hidden among the decorative valves.
 
-The flame cannot be taken before the window relay because the door remains a
-real locked panel. Pressing E does not counterfeit that state.
+The first source hit dies into the skull's sockets, disables/extinguishes the
+other source atomically, and brightens the carried light. Either earns the one
+shared `ateFlame` state required by the incinerator. Taking both is neither
+possible nor necessary.
 
 ### Deterministic return horror
 
-Completing both the relay and flame arms a nine-beat path through the house. It
+Completing both the bell circuit and flame arms a nine-beat path through the house. It
 is not random ambience: spatial footsteps travel from the living aperture, past
 the living door and stair foot, to the guest threshold and landing, down the
 stairs, through dining, into the kitchen, and finally to the cellar boards.
@@ -147,19 +181,22 @@ stairs, through dining, into the kitchen, and finally to the cellar boards.
 ### Cellar boards and the Resident
 
 The kitchen cellar door is visibly nailed shut by three boards. Hit each board
-once with an outbound skull. The planks tear loose with loud impacts.
+once with an outbound skull. One throw removes one plank; the returning leg
+cannot credit another. The planks tear loose with loud impacts.
 
 The first break brings the Resident. It is large and permanent: one hit buys a
 short stun, but it cannot be popped. Closed doors, alternate room connections,
-and fixed-point attack tells are the player's route-making tools. Breaking the
-last board unlocks the cellar; open it and descend. The Resident does not follow
-into the basement.
+and fixed-point attack tells are the player's route-making tools. The cellar
+opens only when **both** conditions are true: all three boards are gone and the
+servant bell has released the visible brass latch. Either order reconciles to
+the same open door. The Resident does not follow into the basement.
 
 ## Act 2 — basement and under-house works
 
 The old straight boiler-key solution is gone. The hatch key exists in the ash,
 but the player must make the whole house breathe before the incinerator will
-refuse the skull and expose it.
+refuse the skull and expose it. If the upstairs flame was skipped, the first
+landing's bright caged pilot is the intentional second flame route.
 
 ### Existing basement threats and optional crawl secret
 
@@ -193,8 +230,9 @@ behind the floor while preserving the real cellar sightline.
 
 Return to the boiler-room incinerator and use its fire door.
 
-- Without the stolen flame, an outbound throw produces a cold choke and points
-  back to the upstairs dependency.
+- Without the stolen flame, an outbound throw produces a cold choke and nudges
+  the nearby basement pilot so the missing dependency is visible rather than
+  hidden in the machine gallery.
 - With the flame but no latched pump, the dead pressure gauge and pump response
   point back to the under-house draft.
 - With both `ateFlame` and `pumpGalleryLatched`, throw the skull into the open
@@ -369,13 +407,15 @@ branch contains a washer; the right contains a refrigerator. Both are complete
 walkable ribbons that rejoin the shared progress clock. Their distinct localized
 sounds announce the decision before either appliance is fully visible.
 
-### Forest arena
+### Optional forest arena
 
-The arena generator and standing-stone ring mark the next commitment. The skull
-screams on its own and the fight runs three waves: 3, 4, and 4 walkers, with
-staggered arrivals and silence between waves. Stun to control, pop deliberately,
-and keep moving out of committed strikes. Clearing it grants total quiet, grows
-the skull, and places a post-arena checkpoint.
+The arena generator and standing-stone ring mark a loud optional confrontation.
+The skull screams on its own and the fight runs three waves: 3, 4, and 4 walkers,
+with staggered arrivals and silence between waves. Stun to control, pop
+deliberately, and keep moving out of committed strikes. Clearing it grants total
+quiet, grows the skull, and places a post-arena checkpoint. A player who keeps
+moving into the sincere clearing escapes the unfinished fight; the clearing
+retires its enemies rather than leaking a wave scheduler into the safe space.
 
 ### Bell copse and Kneeler
 
@@ -484,10 +524,7 @@ There is no puzzle prompt and no hidden combat solution. The ending is contact:
   fires once and then explicitly stops animation frames, audio, forest/cave
   loops, house/finale mirror targets, and retained warm-up resources.
 
-That is the complete current route. There are no remaining **THIN** placeholders
-in this walkthrough masquerading as implemented progression. Any future idea
-belongs in a new, evidence-backed queue after this locally verified integration
-is packaged, clean-booted, committed, and reviewed. That release chain is now
-complete: Qualiacology PR #34 deployed `0.4.0-ossuary`, and the public FETCH
-route passed an independent post-deploy browser boot. Future revisions begin a
-new source → package → preview → production verification chain.
+That is the current source route. The preceding `0.4.0-ossuary` release and site
+PR #34 are historical; the bell/pilot/crawler/pause/title revision has its own
+source → package → preview → production verification chain and must not be
+called live until every one of those gates has actually passed.

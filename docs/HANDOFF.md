@@ -1,6 +1,114 @@
-# HANDOFF — 2026-08-10, masterpiece integration (CURRENT, PACKAGED, DEPLOYED)
+# HANDOFF — 2026-08-10, bell/pilot/intruder recovery (CURRENT, UNRELEASED)
 
-Read `AGENTS.md` first. This section is the current source truth for the
+Read `AGENTS.md` first. This section supersedes every release-state claim below.
+Alex's public playtest of `0.4.0-ossuary` exposed a real human-route failure:
+the cellar boards admitted the player before the old fussy exterior-return bell
+and upstairs flame were understood, while the incinerator still required a
+flame. The supposed bell payoff used a generic metal-drop sound. The result was
+a basement full of convincing valves with no legible critical flame.
+
+The in-progress `0.5.0-intruder` repair is on
+`codex/fetch-masterpiece-2026-08-09` in the isolated worktree
+`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
+It is not live merely because focused tests are green. Its source commit,
+standalone artifact identity, source PR, Qualiacology PR/deploy preview, merge,
+and production verification must be recorded independently before this heading
+can say deployed.
+
+## Current repaired house contract
+
+The house is a partial-order mechanism, not one misleading single-file queue:
+
+```text
+bedroom key + nursery key
+  -> servant bell and three cellar boards (either order once downstairs)
+servant bell
+  -> upstairs guest flame becomes available
+servant bell + three boards
+  -> cellar opens -> basement pilot flame and pump become reachable
+either flame + latched pump
+  -> incinerator refusal -> ash key -> hatch
+```
+
+- The primary bell solution is one ordinary outbound throw at a plainly
+  silhouetted study servant bell. It uses a dedicated long positional bell
+  ring, releases the visible cellar circuit latch, opens the upstairs flame
+  room, and wakes the lag mirror. The held living-window trolley and study-
+  window return remain an advanced alternate solution to the same idempotent
+  circuit, with a tolerant authored endpoint.
+- The cellar requires both the servant-bell latch and all three boards. Bell-
+  first and boards-first reconcile to the same state. Each board accepts only
+  an outbound hit so a returning skull cannot tear a second plank for free.
+- `ateFlame` has two intentional routes. The upstairs guest candle is the safer
+  early source; the caged pilot on the first basement landing is an equally
+  valid visible alternate. The first source atomically extinguishes/disables
+  the other and seats the same persistent ember upgrade in the skull. One flame
+  is required; neither individual source is secretly mandatory.
+- The small graveyard-facing scullery window now owns a separate watched
+  invasion. A genuine look starts a wet long-haired body outside; continuing
+  to look pulls it across the sill in authored stages, while looking away
+  freezes it. Approaching any visible stage triggers an authored recoil and
+  dissolve before the body can overlap the player; the wet sill/floor proof
+  remains. It never steals the camera or input and it gates no progression.
+- Escape and P now pause fixed-step simulation, director
+  beats, held skull/rope state, finale time, cosmetic animation, camera shake,
+  and WebAudio. Resume drops paused wall time; Restart from Checkpoint preserves
+  solved progression and cancels an in-flight basement exit transaction. A
+  real clickable pause button remains available whenever pointer lock is not;
+  locked desktop play hides that otherwise unclickable affordance.
+- The standalone title uses the content-addressed 1280×720 intruder key art at
+  `assets/fetch-title-keyart-5ab7c65b.webp`. The deterministic packer and clean-
+  archive verifier now include and decode that asset rather than trusting a CSS
+  reference to a missing file.
+
+## Optionality truth for this revision
+
+- Required: both opening keys; one servant-bell solution; either flame source;
+  all cellar boards plus bell latch; pump hold/cross; incinerator refusal, ash
+  key, and hatch; one graveyard resolution; ossuary counterweight/far hatch;
+  fallen tree, two forest choices, mire rope, waterfall sacrifice, Underfalls
+  hatch, and finale contact.
+- Optional/alternate: locket; nursery mobile management; the bell solution not
+  chosen; the flame source not chosen; both house visitors/lag mirror/return
+  horror; kennel and blind archive; hero graves and the grave route not chosen;
+  forest story objects, rope pockets, the three-wave forest arena, Kneeler
+  combat, branch alternatives after commitment; Underfalls dry-return shortcut
+  and bell-cistern exploration.
+
+The forest arena's optionality is source truth, not euphemism: entering the safe
+clearing cancels unfinished arena waves. If a later design makes that boss
+mandatory, it needs a real physical gate and new failure-state tests; prose must
+never pretend the current gate exists.
+
+## Release gates still pending at this heading
+
+- Frozen source verification is complete: **67/67** JavaScript modules parse;
+  focused house/progression/crawler **21/21**; pause/title/pointer-lock fallback
+  **25/25**; all 23 formal browser/simulation modules green; canonical
+  autotest **24/24**, regressions **50/50**, eight-act smoke, and complete
+  playthrough **38/38**; zero browser errors. Real D3D11 render p95 peaks at
+  **10.701 ms** against the 45 ms gate, and district culling peaks at **420**
+  draws against 450. An unmuted system-Chrome direct-bell throw committed once,
+  kept AudioContext running, and scheduled the four scaled inharmonic partials
+  plus strike source once; the return leg added no second ring.
+- Deterministic standalone package is complete: two builds matched exactly at
+  **25 entries**, **1,953,010 raw bytes**, **578,074 ZIP bytes**, SHA-256
+  `71521a2bff1f9290cd1cb39034b22e1171d786cd28993e60ae44c15ed3e89db3`.
+  The verifier extracted to a unique clean directory, exact-compared every byte
+  to current shipping roots, decoded the 1280x720 title art, and booted
+  `0.5.0-intruder` / skull variant E with zero browser errors. Release-integrity
+  negatives passed **7/7**, and the old ossuary ZIP is explicitly rejected for
+  lacking the required content-addressed title artwork.
+- Source commit/PR/merge.
+- Qualiacology isolated sync, generated-hub validation, deploy-preview browser
+  inspection, production merge, and fresh live checks of bell, pilot, crawler,
+  pause, title, catalog card, social image, version, and cache headers.
+
+---
+
+# HANDOFF — 2026-08-10, masterpiece integration (HISTORICAL OSSUARY RELEASE)
+
+Read `AGENTS.md` first. This historical section records the ossuary source truth for the
 isolated worktree at
 `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
 The integration work is on `codex/fetch-masterpiece-2026-08-09`, started from

@@ -58,7 +58,10 @@ export const HOUSE_TABLES = {
     ['first', 8, 7, 'W', { id: 'bedroomDoor', locked: 'bedroomKey' }],  // bedroom -> landing
     ['first', 4, 7, 'W', { ajar: true }],         // landing -> nursery
     ['first', 6, 7, 'N', { id: 'stairDoor', locked: 'stairKey' }],      // landing -> stairwell
-    ['first', 8, 3, 'W', { id: 'voidDoor' }],     // guest -> the door over the stair void
+    // The 1.9 m opening admits the authored lower-stair skull arc before it
+    // meets the frame; the stock 1.3 m doorway bounced that honest throw and
+    // made the candle reachable only on the uncommitted return leg.
+    ['first', 8, 3, 'W', { id: 'voidDoor', w: 1.9 }], // guest -> the door over the stair void
     // basement
     ['basement', 5, 8, 'N', { ajar: true }],      // bcorr -> storeroom
     ['basement', 8, 5, 'W', { heavy: true }],     // storeroom -> boiler (closed: the key room)
@@ -72,7 +75,9 @@ export const HOUSE_TABLES = {
     ['ground', 0, 2, 'W', { open: true, id: 'livingRelayWindow' }],
     ['ground', 0, 7, 'W', { open: true, id: 'studyRelayWindow' }],
     ['ground', 11, 1, 'E', {}], ['ground', 11, 5, 'E', {}],
-    ['ground', 9, 9, 'S', {}],
+    // The tiny graveyard-facing scullery window is a real aperture. It remains
+    // player-blocking, but the watched crawler and the skull can cross it.
+    ['ground', 9, 9, 'S', { open: true, id: 'sculleryCrawlerWindow' }],
     ['first', 1, 9, 'S', {}], ['first', 11, 3, 'E', {}],
     ['first', 9, 9, 'S', { open: true, w: 1.7, id: 'bedroomWindow' }],   // THE window
     ['first', 5, 9, 'S', {}],
@@ -664,6 +669,7 @@ export function buildHouse(game) {
   nurseryAct(game);
   voidDoorAct(game);
   buildWindowRelay(game);
+  buildSculleryCrawler(game);
   buildHouseReturnHorror(game);
   buildHouseLagMirror(game);
   cellarBoards(game);
@@ -1180,6 +1186,90 @@ function cellarBoards(game) {
   const door = world.doorById.cellarDoor;
   const p = door.group.position;
   game.boards = [];
+  // The bell circuit owns a second, plainly mechanical latch behind the wood.
+  // The old build let three early board hits admit the player to a basement
+  // whose required flame circuit had not been rung. Now the boards reveal this
+  // bolt; the same physical bell that opens the guest flame room retracts it
+  // and makes the basement pilot a deliberate second branch. The authored
+  // route cannot run backwards, but it does not pretend one flame is mandatory.
+  const latch = new THREE.Group();
+  latch.name = 'cellar-bell-circuit-latch';
+  latch.position.set(p.x + 0.65, 0, p.z - 0.235);
+  scene.add(latch);
+  const latchBrass = new THREE.MeshStandardMaterial({
+    color: 0x9d7f43, roughness: 0.34, metalness: 0.84,
+    emissive: 0x211707, emissiveIntensity: 0.24,
+  });
+  const latchIron = new THREE.MeshStandardMaterial({
+    color: 0x2a3031, roughness: 0.58, metalness: 0.72,
+  });
+  const latchPlate = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.72, 0.07), latchIron);
+  latchPlate.name = 'cellar-bell-latch-striker';
+  latchPlate.position.set(0, 1.48, 0);
+  latch.add(latchPlate);
+  const latchBell = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.19, 0.22, 14), latchBrass);
+  latchBell.position.set(0, 1.61, -0.075);
+  latchBell.rotation.x = Math.PI / 2;
+  latch.add(latchBell);
+  const bolt = new THREE.Mesh(new THREE.BoxGeometry(1.48, 0.15, 0.13), latchIron);
+  bolt.name = 'cellar-bell-bolt';
+  bolt.position.set(0, 1.1, 0);
+  latch.add(bolt);
+  for (const sx of [-1, 1]) {
+    const guide = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.025, 6, 14), latchBrass);
+    guide.position.set(sx * 0.52, 1.1, -0.08);
+    guide.rotation.x = Math.PI / 2;
+    latch.add(guide);
+  }
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.58, 7), latchBrass);
+  rod.position.set(0, 1.32, -0.04);
+  latch.add(rod);
+
+  let latchTarget = null;
+  const circuitLatch = {
+    group: latch, plate: latchPlate, bolt,
+    engaged: true, releaseT: 0,
+    release() {
+      if (!this.engaged) return false;
+      this.engaged = false;
+      this.releaseT = 0.001;
+      if (latchTarget) latchTarget.enabled = false;
+      game.flag('cellarBellLatchReleased');
+      game.audio.unlock({ pos: latch.position, gain: 0.68, rate: 0.72 });
+      if (game.boards.every((board) => board.userData.off)) {
+        door.locked = null;
+        door.unlockedOnce = true;
+        game.flag('cellarOpen');
+      }
+      return true;
+    },
+  };
+  game.cellarRelayLatch = circuitLatch;
+  latchTarget = world.addFetchTarget({
+    id: 'cellarRelayLatch', object: latchPlate, radius: 0.62,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!circuitLatch.engaged) return 'continue';
+      game.impact('locked', at || latchPlate.getWorldPosition(new THREE.Vector3()));
+      game.audio.lockedRattle({ pos: latch.position, gain: 0.76, rate: 0.7 });
+      game.windowRelay?.nudge?.();
+      return 'return';
+    },
+  });
+  // It is physically behind the planks. Enabling this target early let the
+  // invisible latch steal centre-board throws before the visible wood could.
+  latchTarget.enabled = false;
+  game.tickers.push((dt, time) => {
+    if (!circuitLatch.engaged) {
+      circuitLatch.releaseT += dt;
+      const q = clamp(circuitLatch.releaseT / 0.72, 0, 1);
+      bolt.position.x = -q * 1.25;
+      rod.rotation.z = -q * 1.1;
+      latchBell.rotation.z = Math.sin(q * Math.PI * 4) * (1 - q) * 0.22;
+    } else {
+      latchBell.rotation.z = Math.sin(time * 0.55) * 0.008;
+    }
+  });
   // boards on the KITCHEN face (z-), pale rough wood: the player must SEE
   // what's nailing the door shut to know to throw at it (playtest 2 — they
   // were on the stair side, invisible, and the door was a mystery)
@@ -1190,24 +1280,189 @@ function cellarBoards(game) {
     b.rotation.z = (i - 1) * 0.16;
     scene.add(b);
     game.boards.push(b);
-    world.addFetchTarget({
-      id: 'board' + i, object: b, radius: 0.55,
-      onHit(skull, at) {
-        this.enabled = false;
-        // the board tears free and clatters — LOUD. the house hears it.
-        game.impact('break', at);
-        game.audio.pop({ pos: b.position, gain: 0.5, rate: 1.5 });
-        game.detachBoard(b);
-        if (game.boards.every((bb) => bb.userData.off)) {
+    // Three small points trace the whole 1.7 m silhouette. The old single
+    // centre sphere left both visible ends inert; one shared commit now makes
+    // left, centre, and right equally honest without permitting multi-breaks.
+    const boardTargets = [];
+    const breakBoard = (skull, at) => {
+      // A returning skull can sweep back through the stacked boards. Only the
+      // committed outbound contact owns destruction: one throw, one plank.
+      if (skull.mode !== 'outbound' || b.userData.off) return 'continue';
+      for (const target of boardTargets) target.enabled = false;
+      // the board tears free and clatters — LOUD. the house hears it.
+      game.impact('break', at);
+      game.audio.pop({ pos: b.position, gain: 0.5, rate: 1.5 });
+      game.detachBoard(b);
+      if (game.boards.every((bb) => bb.userData.off)) {
+        game.flag('cellarBoardsCleared');
+        const circuitReleased = !circuitLatch.engaged
+          || game.flags.has('windowRelaySolved');
+        if (circuitReleased) {
+          circuitLatch.release();
           door.locked = null;
           door.unlockedOnce = true;
           game.flag('cellarOpen');
+        } else {
+          door.locked = 'bellCircuit';
+          door.unlockedOnce = false;
+          latchTarget.enabled = true;
+          game.audio.lockedRattle({ pos: latch.position, gain: 0.72, rate: 0.72 });
+          game.windowRelay?.nudge?.();
         }
-        game.residentHeard(1);
-        return 'return';
-      },
-    });
+      }
+      game.residentHeard(1);
+      return 'return';
+    };
+    for (const [segment, x] of [['left', -0.58], ['center', 0], ['right', 0.58]]) {
+      const point = new THREE.Object3D();
+      point.name = `cellar-board-${i}-${segment}-target`;
+      // Sit just proud of the timber/door plane so a correct visual hit is
+      // committed before the underlying heavy-door collider can bounce it.
+      point.position.set(x, 0, -0.42);
+      b.add(point);
+      const target = world.addFetchTarget({
+        id: segment === 'center' ? `board${i}` : `board${i}:${segment}`,
+        object: point, radius: 0.3, onHit: breakBoard,
+      });
+      boardTargets.push(target);
+    }
+    b.userData.fetchTargets = boardTargets;
   }
+}
+
+// The required bell deliberately feeds two visible flames: the unreachable
+// guest candle above and this pilot on the first basement landing below. The
+// player chooses which branch to steal from, but neither is a timeout or free
+// state mutation: the skull must physically cross a flame. If an old checkpoint
+// or geometry edge somehow enters the basement before the bell, this same
+// tactile pilot safely trips the circuit instead of leaving a dead save.
+function buildBasementPilot(game, B) {
+  const { world, scene } = game;
+  // These circuit fixtures sit directly in the skull lamp's near field. Unlit
+  // iron/brass values preserve their silhouette there instead of blooming into
+  // the featureless white bullseyes that the former metal materials produced.
+  const brass = new THREE.MeshBasicMaterial({ color: 0x8c6d31, toneMapped: false });
+  const brassEdge = new THREE.MeshBasicMaterial({ color: 0xb28e45, toneMapped: false });
+  const iron = new THREE.MeshBasicMaterial({ color: 0x202526, toneMapped: false });
+  const bellDark = new THREE.MeshBasicMaterial({ color: 0x171714, toneMapped: false });
+  const porcelain = new THREE.MeshBasicMaterial({ color: 0x736956, toneMapped: false });
+  const flameMat = new THREE.MeshBasicMaterial({
+    color: 0xe9a84a, transparent: true, opacity: 0.98,
+    toneMapped: false,
+  });
+  const pilot = new THREE.Group();
+  pilot.name = 'basement-required-pilot-bell';
+  pilot.position.set(7, B, 5.48);
+  scene.add(pilot);
+
+  // A waist-to-ceiling brass line visibly belongs to the house-wide bell and
+  // furnace circuit rather than reading as one more anonymous basement prop.
+  const riser = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.32, 8), brass);
+  riser.position.set(0.42, 1.28, 0.08);
+  pilot.add(riser);
+  const elbow = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.045, 7, 16, Math.PI / 2), brass);
+  elbow.position.set(0.16, 2.44, 0.08);
+  elbow.rotation.set(Math.PI / 2, 0, Math.PI);
+  pilot.add(elbow);
+  const header = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.78, 8), brass);
+  header.position.set(-0.22, 2.44, 0.08);
+  header.rotation.z = Math.PI / 2;
+  pilot.add(header);
+
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.78, 1.22, 0.11), iron);
+  back.position.set(0, 1.23, 0.03);
+  pilot.add(back);
+  const bellHanger = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.023, 0.25, 6), brassEdge);
+  bellHanger.position.set(0, 2.04, -0.11);
+  pilot.add(bellHanger);
+  const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.205, 0.28, 14), brass);
+  cup.name = 'basement-pilot-servant-bell';
+  cup.position.set(0, 1.82, -0.11);
+  pilot.add(cup);
+  const bellMouth = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.025, 6, 20), brassEdge);
+  bellMouth.position.set(0, 1.675, -0.11);
+  bellMouth.rotation.x = Math.PI / 2;
+  pilot.add(bellMouth);
+  const clapperStem = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.16, 6), bellDark);
+  clapperStem.position.set(0, 1.61, -0.11);
+  pilot.add(clapperStem);
+  const clapper = new THREE.Mesh(new THREE.DodecahedronGeometry(0.045, 0), brassEdge);
+  clapper.position.set(0, 1.52, -0.11);
+  pilot.add(clapper);
+  const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.58, 14, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: 0x9eab9f, transparent: true, opacity: 0.28,
+      roughness: 0.08, metalness: 0.12, depthWrite: false,
+    }));
+  glass.position.set(0, 0.99, -0.17);
+  pilot.add(glass);
+  const wick = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.032, 0.28, 7), porcelain);
+  wick.position.set(0, 0.88, -0.17);
+  pilot.add(wick);
+  const flame = new THREE.Mesh(new THREE.SphereGeometry(0.105, 10, 8), flameMat);
+  flame.name = 'basement-pilot-flame';
+  flame.position.set(0, 1.08, -0.18);
+  flame.scale.set(0.72, 1.42, 0.72);
+  pilot.add(flame);
+  for (let i = -2; i <= 2; i++) {
+    const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.015, 0.66, 6), brass);
+    guard.position.set(i * 0.095, 1.0, -0.24);
+    pilot.add(guard);
+  }
+  for (const y of [0.67, 1.33]) {
+    const cageRing = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.018, 6, 18), brassEdge);
+    cageRing.position.set(0, y, -0.2);
+    cageRing.rotation.x = Math.PI / 2;
+    pilot.add(cageRing);
+  }
+  const pilotGlow = { x: 7, y: B + 1.08, z: 5.3, intensity: 1.0, r: 4.8 };
+  world.candles.push(pilotGlow);
+
+  const source = { id: 'basement-pilot', flame, glow: pilotGlow, target: null };
+  const target = world.addFetchTarget({
+    id: 'basementPilotFlame', object: flame, radius: 0.76,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (game.flags.has('ateFlame')) return 'return';
+      game.windowRelay?.complete?.('basement-pilot', at || flame.getWorldPosition(new THREE.Vector3()));
+      const absorbed = game.flameCircuit?.absorb?.(skull, source);
+      if (!absorbed) return 'return';
+      game.flag('basementPilotUsed');
+      game.audio.fireChoke({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.52, rate: 0.72 });
+      game.audio.metalDrop({ pos: pilot.position, gain: 0.5, rate: 1.35 });
+      return 'return';
+    },
+  });
+  source.target = target;
+  game.flameCircuit?.register?.(source);
+  const state = {
+    group: pilot, flame, target, source,
+    wasVisible: flame.visible, cueT: 0.8, pulse: 0,
+    nudge() {
+      if (game.flags.has('ateFlame')) return;
+      this.pulse = 1.35;
+      this.cueT = Math.max(this.cueT, 2.8);
+      game.audio.glassTink({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.5, rate: 0.62 });
+    },
+  };
+  game.basementPilot = state;
+  game.tickers.push((dt, time) => {
+    const active = !game.flags.has('ateFlame') && target.enabled;
+    state.pulse = Math.max(0, state.pulse - dt);
+    flame.scale.set(0.7, 1.32 + Math.sin(time * 15) * 0.13, 0.7);
+    flame.material.opacity = active
+      ? 0.88 + Math.sin(time * 19) * 0.08
+      : 0;
+    pilotGlow.intensity = active
+      ? 0.94 + Math.sin(time * 9) * 0.12 + state.pulse * 0.7
+      : 0;
+    if (game.act !== 'basement' || !active || game.dead) return;
+    state.cueT -= dt;
+    if (state.cueT <= 0) {
+      state.cueT = 5.2;
+      game.audio.glassTink({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.2, rate: 0.78 });
+    }
+  });
 }
 
 // ---------------------------------------------------------------- act 2
@@ -1216,6 +1471,7 @@ function basementAct(game) {
   const B = HOUSE_TABLES.levels.basement.floor;
 
   buildCrawlCounterweightSecret(game, B);
+  buildBasementPilot(game, B);
 
   // ---- the incinerator (Alex, playtest 3: "the player should try to burn
   // the skull down there but it doesn't work") -------------------------------
@@ -1326,9 +1582,9 @@ function basementAct(game) {
   pan.add(key);
 
   // breathing ember glow (candle descriptor; intensity is live-animated)
-  // Cold until the flame-bearing skull enters its circuit. The upgrade from
-  // the unreachable guest room is therefore a visible cause, not optional
-  // decoration that happens to precede an unrelated basement key.
+  // Cold until a flame-bearing skull enters its circuit. Both authored flame
+  // branches are therefore a visible cause of the furnace response rather than
+  // optional decoration before an unrelated basement key.
   const glow = { x: 10.55, y: B + 0.95, z: -1.5, intensity: 0.035, r: 4.5 };
   world.candles.push(glow);
 
@@ -1372,6 +1628,7 @@ function basementAct(game) {
       // pump instead of passing through a gameplay-looking dead prop.
       fireboxTarget.enabled = true;
       game.audio.thud({ pos: incPos, gain: 0.42, rate: 0.56 });
+      if (!game.flags.has('ateFlame')) game.after(0.18, () => game.basementPilot?.nudge?.());
     }
   });
   world.registerInteract(panBox, 'ashPan', () => {
@@ -1387,6 +1644,7 @@ function basementAct(game) {
       if (!game.flags.has('ateFlame')) {
         game.impact('locked', incPos);
         game.audio.fireChoke({ pos: incPos, gain: 0.22, rate: 0.58 });
+        game.basementPilot?.nudge?.();
         return 'return';
       }
       if (!game.flags.has('pumpGalleryLatched')) {
@@ -1965,7 +2223,12 @@ function buildWindowRelay(game) {
   ]) world.box(iron, -11.52, y, z, 0.09, h, d);
 
   const plateBase = new THREE.Vector3(-10.94, G + 1.75, 1);
-  const backplate = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.65, 1.18), iron);
+  const backplateMat = iron.clone();
+  backplateMat.color.setHex(0x181d1e);
+  backplateMat.roughness = 0.8;
+  backplateMat.emissive.setHex(0x020303);
+  backplateMat.emissiveIntensity = 0.05;
+  const backplate = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.65, 1.18), backplateMat);
   backplate.name = 'study-window-one-way-backplate';
   backplate.position.copy(plateBase);
   backplate.castShadow = true;
@@ -1978,8 +2241,8 @@ function buildWindowRelay(game) {
   const relay = {
     id: 'windowRelay', state: 'idle', armed: false, solved: false,
     mooring, receiver, backplate, plateCollider,
-    departureTarget: null, receiverTarget: null, dropT: 0, ringT: 0,
-    nudgeT: 0,
+    departureTarget: null, receiverTarget: null, directTarget: null, directTargets: [],
+    dropT: 0, ringT: 0, nudgeT: 0, solveSource: null,
   };
   game.windowRelay = relay;
   const openings = Object.fromEntries(world.windowOpenings.map((o) => [o.id, o]));
@@ -1997,6 +2260,110 @@ function buildWindowRelay(game) {
     game.audio.metalDrop({ pos: mooring.position, gain: 0.34, rate: 1.7 });
     game.after(0.18, () => game.audio.knock({ pos: receiver.position, gain: 0.42, rate: 1.42 }));
   };
+
+  // One idempotent commit owns every legitimate way to ring the physical
+  // servant bell. The old callback duplicated half this state and used only
+  // generic metal/unlock noises, so an earned solve could look and sound like
+  // another dead prop. bellRing is the dedicated positional one-shot supplied
+  // by Audio; metal and door hardware remain secondary consequences.
+  relay.complete = (source = 'trolley-return', at = null) => {
+    if (relay.solved) return false;
+    relay.solved = true;
+    relay.armed = false;
+    relay.state = 'rung';
+    relay.solveSource = source;
+    if (relay.visitor) relay.visitor.dismissed = true;
+    relay.dropT = 0.001;
+    relay.ringT = 1.9;
+    if (relay.departureTarget) relay.departureTarget.enabled = false;
+    if (relay.receiverTarget) relay.receiverTarget.enabled = false;
+    for (const target of relay.directTargets) target.enabled = false;
+    plateCollider.min.y = -20;
+    plateCollider.max.y = -19;
+    flashWindows(1.35);
+    game.flag('windowRelaySolved');
+    if (source === 'direct-bell') game.flag('windowRelayDirect');
+    if (source === 'basement-pilot') game.flag('windowRelayBasementPilot');
+    game.impact('pop', at || receiver.position);
+    game.audio.bellRing?.({ pos: receiver.position, gain: 0.96, rate: 0.94 });
+    game.audio.metalDrop({ pos: receiver.position, gain: 0.72, rate: 1.18 });
+    game.after(0.16, () => game.audio.unlock({ pos: receiver.position, gain: 0.72, rate: 1.34 }));
+    game.after(0.32, () => game.audio.knock({ pos: mooring.position, gain: 0.42, rate: 0.76 }));
+    game.voidDoorBeat?.open?.('windowRelay');
+    game.houseMirror?.signalRelay?.();
+    game.cellarRelayLatch?.release?.();
+    return true;
+  };
+
+  // Human-primary path: the study side now presents a brass striker in front
+  // of the one-way plate. A normal outbound throw at the thing that plainly
+  // looks like a bell rings it. The exterior mooring/trolley remains a richer
+  // alternate solution, but it is no longer a secret ten-second prerequisite.
+  const directStriker = new THREE.Group();
+  directStriker.name = 'study-bell-direct-striker';
+  directStriker.position.set(-10.72, G + 1.75, 1);
+  scene.add(directStriker);
+  // This fixture is close enough to the carried skull light that ordinary
+  // metal shades bleach white. Stable unlit values keep the bell mouth,
+  // clapper, bracket, and pull readable by form rather than glare.
+  const strikerBrass = new THREE.MeshBasicMaterial({ color: 0x896c32, toneMapped: false });
+  const strikerEdge = new THREE.MeshBasicMaterial({ color: 0xb18b43, toneMapped: false });
+  const strikerDark = new THREE.MeshBasicMaterial({ color: 0x191713, toneMapped: false });
+  const strikerCup = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.105, 0.07, 12), strikerEdge);
+  strikerCup.name = 'study-bell-wall-rosette';
+  strikerCup.rotation.z = Math.PI / 2;
+  strikerCup.position.set(0.02, 0.22, 0);
+  directStriker.add(strikerCup);
+  const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.34, 0.07), strikerBrass);
+  bracket.position.set(0.04, 0.04, 0);
+  bracket.rotation.z = -0.16;
+  directStriker.add(bracket);
+  const strikerHanger = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.022, 0.18, 6), strikerEdge);
+  strikerHanger.position.set(0.07, -0.18, 0);
+  directStriker.add(strikerHanger);
+  const strikerBell = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.265, 0.32, 14), strikerBrass);
+  strikerBell.name = 'study-bell-mouth-body';
+  strikerBell.position.set(0.07, -0.41, 0);
+  directStriker.add(strikerBell);
+  const strikerMouth = new THREE.Mesh(new THREE.TorusGeometry(0.265, 0.028, 6, 20), strikerEdge);
+  strikerMouth.position.set(0.07, -0.575, 0);
+  strikerMouth.rotation.x = Math.PI / 2;
+  directStriker.add(strikerMouth);
+  const strikerClapperStem = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.2, 6), strikerDark);
+  strikerClapperStem.position.set(0.07, -0.61, 0);
+  directStriker.add(strikerClapperStem);
+  const strikerClapper = new THREE.Mesh(new THREE.DodecahedronGeometry(0.052, 0), strikerEdge);
+  strikerClapper.position.set(0.07, -0.735, 0);
+  directStriker.add(strikerClapper);
+  const pullCord = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.014, 0.78, 6), strikerDark);
+  pullCord.position.set(0.045, -0.45, 0.36);
+  directStriker.add(pullCord);
+  const pullHandle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.018, 6, 14), strikerEdge);
+  pullHandle.position.set(0.045, -0.87, 0.36);
+  directStriker.add(pullHandle);
+  relay.directStriker = directStriker;
+  // Target the actual visible silhouette, not the group's empty pivot. The
+  // original pivot sphere stopped just above the bell mouth and far above the
+  // pull, recreating the exact “I threw at the bell and nothing happened” bug.
+  const directHit = (skull, at) => {
+    if (skull.mode !== 'outbound') return 'continue';
+    relay.complete('direct-bell', at || directStriker.position);
+    return 'return';
+  };
+  for (const [id, local, radius] of [
+    ['studyBellRosette', [0.02, 0.22, 0], 0.14],
+    ['studyBellMouth', [0.07, -0.48, 0], 0.25],
+    ['studyBellClapper', [0.07, -0.735, 0], 0.11],
+    ['studyBellPull', [0.045, -0.87, 0.36], 0.14],
+  ]) {
+    const point = new THREE.Object3D();
+    point.name = `${id}-target`;
+    point.position.set(...local);
+    directStriker.add(point);
+    const target = world.addFetchTarget({ id, object: point, radius, onHit: directHit });
+    relay.directTargets.push(target);
+    if (id === 'studyBellMouth') relay.directTarget = target;
+  }
 
   // The relay has an inhabitant. Mooring the skull at the living-room window
   // puts a bright guard on the sill; carrying that light down the outside rail
@@ -2181,28 +2548,9 @@ function buildWindowRelay(game) {
     // Broad enough to accept the sacred return leg's retained lateral arc, but
     // still entirely protected from an interior throw by the backplate.
     id: 'studyWindowReceiver', object: receiver, radius: 0.9,
-    onHit(skull) {
+    onHit(skull, at) {
       if (relay.solved || !relay.armed || skull.mode !== 'returning') return 'continue';
-      relay.solved = true;
-      relay.armed = false;
-      relay.state = 'rung';
-      visitor.dismissed = true;
-      relay.dropT = 0.001;
-      relay.ringT = 1.6;
-      relay.departureTarget.enabled = false;
-      this.enabled = false;
-      // Remove the blocker at the instant the returning skull earns the route;
-      // the animated plate remains visible while the return leg stays flawless.
-      plateCollider.min.y = -20;
-      plateCollider.max.y = -19;
-      flashWindows(1);
-      game.flag('windowRelaySolved');
-      game.impact('pop', receiver.position);
-      game.audio.metalDrop({ pos: receiver.position, gain: 0.86, rate: 1.18 });
-      game.audio.unlock({ pos: receiver.position, gain: 0.72, rate: 1.34 });
-      game.after(0.28, () => game.audio.knock({ pos: mooring.position, gain: 0.42, rate: 0.76 }));
-      if (game.voidDoorBeat) game.voidDoorBeat.open('windowRelay');
-      if (game.houseMirror) game.houseMirror.signalRelay();
+      relay.complete('trolley-return', at || receiver.position);
       return 'continue';
     },
   });
@@ -2222,6 +2570,13 @@ function buildWindowRelay(game) {
       flashWindows(0.42);
     } else if (relay.armed && skull) {
       relay.state = skull.mode === 'returning' ? 'returning-through-house' : relay.state;
+      // Once the player has physically carried the trolley to the study end,
+      // releasing there is itself an unambiguous strike. This plane-level
+      // qualification accepts ordinary retained return arcs that skim the
+      // small receiver sphere by a few centimetres.
+      if (skull.mode === 'returning' && mooring.position.z >= 0.18) {
+        relay.complete('trolley-release', receiver.position);
+      }
       if (skull.mode === 'held') {
         relay.armed = false;
         relay.state = 'idle';
@@ -2245,9 +2600,13 @@ function buildWindowRelay(game) {
       relay.ringT = Math.max(0, relay.ringT - dt);
       receiver.rotation.x = Math.sin(time * 34) * relay.ringT * 0.045;
       clapper.position.z = Math.sin(time * 38) * relay.ringT * 0.07;
+      directStriker.rotation.x = Math.sin(time * 31) * relay.ringT * 0.055;
+      strikerBell.rotation.z = Math.sin(time * 39) * relay.ringT * 0.16;
     } else {
       receiver.rotation.x *= Math.exp(-dt * 12);
       clapper.position.z *= Math.exp(-dt * 12);
+      directStriker.rotation.x *= Math.exp(-dt * 12);
+      strikerBell.rotation.z *= Math.exp(-dt * 12);
     }
     if (relay.dropT > 0) {
       relay.dropT += dt;
@@ -2308,6 +2667,438 @@ function buildWindowRelay(game) {
       guestCrossing.rotation.z = Math.sin(q * Math.PI) * 0.12;
       if (q >= 1) visitor.crossT = 0;
     } else guestCrossing.visible = false;
+  });
+}
+
+// ----------------------------------------- watched scullery-window crossing
+// The small south-facing scullery window in Alex's screenshot is its own
+// authored scare, not the living-room relay visitor. Looking out through the
+// real aperture invites a soaked figure to climb toward the gaze. Continued
+// watching advances its weight from earth to sill to room; looking away freezes
+// the crossing. The camera and player remain completely live throughout.
+function buildSculleryCrawler(game) {
+  const { world, scene } = game;
+  const opening = world.windowOpenings.find((o) => o.id === 'sculleryCrawlerWindow');
+  if (!opening) return;
+  // The crawler approaches the skull lamp head-on. Unlit corpse/cloth values
+  // stop that near-field light from flattening her into a white comedy mask;
+  // the layered faceted anatomy and hair silhouette provide the modelling.
+  const skin = new THREE.MeshBasicMaterial({ color: 0x4b4b45, toneMapped: false });
+  const bruised = new THREE.MeshBasicMaterial({ color: 0x302f2c, toneMapped: false });
+  const cloth = new THREE.MeshBasicMaterial({ color: 0x101313, toneMapped: false });
+  const hair = new THREE.MeshBasicMaterial({ color: 0x070808, toneMapped: false, side: THREE.DoubleSide });
+  const wet = new THREE.MeshStandardMaterial({
+    color: 0x080c0d, roughness: 0.14, metalness: 0.04,
+    transparent: true, opacity: 0.72, depthWrite: false,
+  });
+  const faceVoid = new THREE.MeshBasicMaterial({ color: 0x030303 });
+  const eyeGlint = new THREE.MeshBasicMaterial({
+    color: 0xbfc1b4, transparent: true, opacity: 0.54,
+    toneMapped: false,
+  });
+
+  const root = new THREE.Group();
+  root.name = 'scullery-window-watched-crawler';
+  root.visible = false;
+  scene.add(root);
+  const body = new THREE.Group();
+  root.add(body);
+
+  // Faceted, tapered volumes keep the silhouette anatomical without importing
+  // another asset or falling back to the old orb/cylinder mannequin language.
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.32, 0.82, 7), cloth);
+  torso.name = 'crawler-rib-waist-volume';
+  torso.position.y = 0.62;
+  torso.scale.z = 0.62;
+  body.add(torso);
+  const shoulders = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.36, 0.32, 7), cloth);
+  shoulders.name = 'crawler-shoulder-volume';
+  shoulders.position.y = 0.94;
+  shoulders.rotation.z = Math.PI / 2;
+  shoulders.scale.z = 0.62;
+  body.add(shoulders);
+  const pelvis = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.22, 0.28, 7), cloth);
+  pelvis.name = 'crawler-pelvis-volume';
+  pelvis.position.set(0.02, 0.15, 0.01);
+  pelvis.scale.z = 0.72;
+  body.add(pelvis);
+
+  const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18, 1), skin);
+  head.name = 'crawler-faceted-head';
+  head.position.set(-0.025, 1.28, -0.02);
+  head.scale.set(0.76, 1.22, 0.82);
+  head.rotation.set(-0.08, 0.12, -0.12);
+  body.add(head);
+  const hairCap = new THREE.Mesh(new THREE.DodecahedronGeometry(0.155, 1), hair);
+  hairCap.name = 'crawler-wet-hair-cap';
+  hairCap.position.set(-0.02, 1.365, 0.045);
+  hairCap.scale.set(0.86, 1.04, 0.82);
+  hairCap.rotation.set(-0.05, 0.1, -0.14);
+  body.add(hairCap);
+  const jaw = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.09, 0.19, 6), bruised);
+  jaw.position.set(-0.02, 1.11, -0.075);
+  jaw.scale.z = 0.7;
+  body.add(jaw);
+  for (const sx of [-1, 1]) {
+    const socket = new THREE.Mesh(new THREE.DodecahedronGeometry(0.043, 0), faceVoid);
+    socket.position.set(sx * 0.061 - 0.025, 1.315, -0.148);
+    socket.scale.set(1.16, 0.62, 0.4);
+    body.add(socket);
+    const glint = new THREE.Mesh(new THREE.DodecahedronGeometry(0.012, 0), eyeGlint);
+    glint.position.set(sx * 0.061 - 0.025, 1.318, -0.171);
+    body.add(glint);
+  }
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.11, 4), bruised);
+  nose.position.set(-0.025, 1.255, -0.16);
+  nose.rotation.x = -Math.PI / 2;
+  nose.rotation.z = Math.PI / 4;
+  body.add(nose);
+  for (const [x, a] of [[-0.045, -0.34], [0.01, 0.26]]) {
+    const mouthCut = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.013, 0.014), faceVoid);
+    mouthCut.position.set(x, 1.18, -0.169);
+    mouthCut.rotation.z = a;
+    body.add(mouthCut);
+  }
+
+  // Two ragged front curtains cross the cheeks asymmetrically. They keep the
+  // eyes glimpsed through wet hair instead of presenting a centered mask.
+  const fringeGeo = new THREE.BufferGeometry();
+  fringeGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.18, 1.48, -0.185, -0.045, 1.47, -0.205, -0.085, 0.93, -0.215,
+    -0.18, 1.48, -0.185, -0.085, 0.93, -0.215, -0.205, 1.08, -0.175,
+     0.035, 1.49, -0.205, 0.16, 1.43, -0.18, 0.13, 1.01, -0.205,
+     0.035, 1.49, -0.205, 0.13, 1.01, -0.205, 0.055, 1.12, -0.225,
+  ], 3));
+  fringeGeo.setIndex([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  fringeGeo.computeVertexNormals();
+  const fringe = new THREE.Mesh(fringeGeo, hair);
+  fringe.name = 'crawler-face-wet-hair-curtains';
+  body.add(fringe);
+
+  // Long wet hair hangs in asymmetric planar ropes. Each strip has its own
+  // length and cant, keeping the head readable while breaking primitive symmetry.
+  for (let i = 0; i < 9; i++) {
+    const lock = new THREE.Mesh(new THREE.ConeGeometry(0.055 + (i % 3) * 0.012,
+      0.55 + (i % 4) * 0.11, 5), hair);
+    const side = i < 5 ? -1 : 1;
+    lock.position.set(side * (0.09 + (i % 3) * 0.045), 1.11 - (i % 2) * 0.08,
+      -0.005 + (i % 4) * 0.025);
+    lock.rotation.z = side * (0.16 + (i % 3) * 0.08);
+    lock.rotation.x = 0.08 + (i % 2) * 0.1;
+    body.add(lock);
+  }
+
+  const between = (name, a, b, ra, rb, material, parent = body, radial = 7) => {
+    const delta = b.clone().sub(a);
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rb, ra, delta.length(), radial), material);
+    mesh.name = name;
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+    parent.add(mesh);
+    return mesh;
+  };
+  const joints = {};
+  for (const side of [-1, 1]) {
+    const tag = side < 0 ? 'left' : 'right';
+    const shoulder = new THREE.Vector3(side * 0.31, 0.91, 0);
+    const elbow = new THREE.Vector3(side * (0.48 + (side < 0 ? 0.04 : -0.02)), 0.48,
+      side < 0 ? -0.06 : 0.1);
+    const wrist = new THREE.Vector3(side * (0.37 + (side > 0 ? 0.1 : 0)), 0.02,
+      side < 0 ? -0.18 : 0.2);
+    joints[`${tag}UpperArm`] = between(`crawler-${tag}-upper-arm`, shoulder, elbow, 0.075, 0.058, skin);
+    joints[`${tag}Forearm`] = between(`crawler-${tag}-forearm`, elbow, wrist, 0.063, 0.038, skin);
+    const hand = new THREE.Mesh(new THREE.DodecahedronGeometry(0.095, 0), skin);
+    hand.name = `crawler-${tag}-hand`;
+    hand.position.copy(wrist);
+    hand.scale.set(0.82, 0.42, 1.15);
+    body.add(hand);
+    for (let finger = 0; finger < 4; finger++) {
+      const base = wrist.clone().add(new THREE.Vector3(
+        side * ((finger - 1.5) * 0.018), -0.055, (finger - 1.5) * 0.028));
+      const tip = base.clone().add(new THREE.Vector3(
+        side * (0.02 + finger * 0.006), -0.16 - finger * 0.013, -0.015));
+      between(`crawler-${tag}-finger-${finger}`, base, tip, 0.014, 0.006, skin);
+    }
+    const hip = new THREE.Vector3(side * 0.18, 0.17, 0.02);
+    const knee = new THREE.Vector3(side * (0.29 + (side > 0 ? 0.05 : 0)), -0.31,
+      side < 0 ? 0.16 : -0.13);
+    const ankle = new THREE.Vector3(side * (0.34 + (side < 0 ? 0.07 : 0)), -0.74,
+      side < 0 ? -0.04 : 0.18);
+    joints[`${tag}Thigh`] = between(`crawler-${tag}-thigh`, hip, knee, 0.105, 0.075, cloth);
+    joints[`${tag}Shin`] = between(`crawler-${tag}-shin`, knee, ankle, 0.078, 0.042, bruised);
+    const foot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), bruised);
+    foot.name = `crawler-${tag}-foot`;
+    foot.position.copy(ankle).add(new THREE.Vector3(0, -0.04, -0.11));
+    foot.scale.set(0.65, 0.42, 1.35);
+    body.add(foot);
+  }
+
+  // Torn cloth panels and one displaced shoulder make body orientation legible
+  // as its weight rolls over the sill.
+  const tearGeo = new THREE.BufferGeometry();
+  tearGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.25, 0.7, 0.05, 0.02, 0.72, 0.12, -0.13, -0.08, 0.16,
+    0.06, 0.76, 0.11, 0.29, 0.66, 0.02, 0.24, -0.22, 0.13,
+  ], 3));
+  tearGeo.setIndex([0, 1, 2, 3, 4, 5]);
+  tearGeo.computeVertexNormals();
+  const tears = new THREE.Mesh(tearGeo, cloth);
+  tears.name = 'crawler-asymmetric-torn-coat';
+  body.add(tears);
+
+  const proof = new THREE.Group();
+  proof.name = 'scullery-crawler-wet-contact';
+  scene.add(proof);
+  const sillSmear = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.18), wet);
+  sillSmear.position.set(opening.center.x, 1.02, 5.935);
+  sillSmear.rotation.x = -Math.PI / 2;
+  sillSmear.visible = false;
+  proof.add(sillSmear);
+  const floorSmear = new THREE.Mesh(new THREE.PlaneGeometry(1.35, 0.46), wet);
+  floorSmear.position.set(opening.center.x - 0.08, 0.012, 5.05);
+  floorSmear.rotation.x = -Math.PI / 2;
+  floorSmear.visible = false;
+  proof.add(floorSmear);
+  for (const side of [-1, 1]) {
+    const print = new THREE.Mesh(new THREE.DodecahedronGeometry(0.095, 0), wet);
+    print.position.set(opening.center.x + side * 0.28, 1.04, 5.91);
+    print.scale.set(0.72, 0.22, 1.18);
+    print.visible = false;
+    proof.add(print);
+  }
+
+  // Every body material is local to this apparition. Keep its authored base
+  // opacity so a close-range recoil can visibly dissolve the whole silhouette
+  // without fading the wet contact evidence with it.
+  const dissolveMaterials = new Map();
+  body.traverse((part) => {
+    if (!part.isMesh) return;
+    const materials = Array.isArray(part.material) ? part.material : [part.material];
+    for (const material of materials) {
+      if (material && !dissolveMaterials.has(material)) {
+        dissolveMaterials.set(material, material.opacity ?? 1);
+      }
+    }
+  });
+
+  const focus = opening.center.clone().add(new THREE.Vector3(0, 0.02, 0.34));
+  const eye = new THREE.Vector3();
+  const forward = new THREE.Vector3();
+  const toFocus = new THREE.Vector3();
+  const crawler = {
+    root, body, proof, focus,
+    triggered: false, entered: false, watched: false,
+    gazeT: 0, progress: 0, stage: -1, stageHistory: [],
+    settledT: 0, lookAwayT: 0, vanished: false, deathReset: false,
+    resolving: false, resolved: false, resolveT: 0, resolveReason: null,
+    resolveAtDistance: null, resolveProgress: null,
+    proximityThreshold: 1.48, safeClearance: 1.05,
+    playerDistance: Infinity, minPlayerDistance: Infinity,
+    reset() {
+      // A recoil is a committed encounter, including when the player forces it
+      // while the body is still outside/on the sill. Death may pause it, but
+      // cannot rewind the creature through the player or replay the crawl.
+      if (this.entered || this.resolving || this.resolved) return;
+      this.triggered = false;
+      this.watched = false;
+      this.gazeT = 0;
+      this.progress = 0;
+      this.stage = -1;
+      this.stageHistory.length = 0;
+      this.settledT = 0;
+      this.lookAwayT = 0;
+      this.vanished = false;
+      this.resolveT = 0;
+      this.resolveReason = null;
+      this.resolveAtDistance = null;
+      this.resolveProgress = null;
+      this.playerDistance = Infinity;
+      this.minPlayerDistance = Infinity;
+      root.visible = false;
+      root.scale.set(1, 1, 1);
+      for (const mark of proof.children) mark.visible = false;
+    },
+  };
+  game.sculleryCrawler = crawler;
+
+  const beginProximityResolution = (distance) => {
+    if (crawler.resolving || crawler.resolved || crawler.vanished) return false;
+    crawler.resolving = true;
+    crawler.resolveT = 0;
+    crawler.resolveReason = 'proximity-recoil';
+    crawler.resolveAtDistance = distance;
+    crawler.resolveProgress = crawler.progress;
+    game.flag('sculleryCrawlerRecoiled');
+    for (const mark of proof.children) mark.visible = true;
+    for (const [material] of dissolveMaterials) {
+      material.transparent = true;
+      material.depthWrite = false;
+      material.needsUpdate = true;
+    }
+    // A close human inhale and a low frame scrape occupy the crawler's actual
+    // position. Nothing touches the camera or feet; the body chooses retreat.
+    game.audio.gasp({ pos: root.position, gain: 0.54, verb: 0.45 });
+    game.audio.creak({ pos: root.position, gain: 0.42, rate: 0.46, verb: 0.58 });
+    return true;
+  };
+
+  const watchedThroughAperture = () => {
+    const p = game.player.pos;
+    const inScullery = game.act === 'house' && p.y > -0.35 && p.y < 2.95
+      && p.x > 4.05 && p.x < 8.05 && p.z > 1.95 && p.z < 5.92;
+    if (!inScullery) return false;
+    game.camera.updateMatrixWorld(true);
+    game.camera.getWorldPosition(eye);
+    const distance = toFocus.copy(focus).sub(eye).length();
+    if (distance > 5.4 || distance < 0.25) return false;
+    game.camera.getWorldDirection(forward);
+    return forward.dot(toFocus.multiplyScalar(1 / distance)) > 0.955;
+  };
+
+  game.tickers.push((dt, time) => {
+    if (game.dead) {
+      if (!crawler.deathReset && !crawler.entered) crawler.reset();
+      crawler.deathReset = true;
+      root.visible = false;
+      return;
+    }
+    crawler.deathReset = false;
+    crawler.watched = watchedThroughAperture();
+    if (!crawler.entered && crawler.watched && !crawler.resolving) {
+      crawler.gazeT = Math.min(0.6, crawler.gazeT + dt);
+      if (!crawler.triggered && crawler.gazeT >= 0.32) {
+        crawler.triggered = true;
+        crawler.stage = 0;
+        crawler.stageHistory.push(0);
+        root.visible = true;
+        game.flag('sculleryCrawlerTriggered');
+        game.audio.whisper({ pos: focus, gain: 0.28, rate: 0.58, verb: 1.1 });
+      }
+      if (crawler.triggered) crawler.progress = Math.min(1, crawler.progress + dt / 4.15);
+    } else if (!crawler.triggered) {
+      crawler.gazeT = Math.max(0, crawler.gazeT - dt * 1.6);
+    }
+
+    root.visible = game.act === 'house' && crawler.triggered && !crawler.vanished;
+    if (!crawler.triggered) return;
+    const q = clamp(crawler.progress, 0, 1);
+    let y, z, rx;
+    if (q < 0.26) {
+      const u = q / 0.26;
+      y = 0.04 + u * 0.66;
+      z = 6.88 - u * 0.23;
+      rx = -u * 0.16;
+    } else if (q < 0.68) {
+      const u = (q - 0.26) / 0.42;
+      y = 0.7 + Math.sin(u * Math.PI) * 0.26;
+      // Rotation, rather than a camera-ward root lunge, carries the head and
+      // hands across the sill. That preserves readable human scale up close.
+      z = 6.65 - u * 0.3;
+      rx = -0.16 - u * 1.22;
+    } else {
+      const u = (q - 0.68) / 0.32;
+      y = 0.7 - u * 0.37;
+      // Clear the sill, plant both hands inside, then rise into a low crouch.
+      // The old final pose stayed horizontal and vanished behind the held
+      // skull; this weight shift leaves the head and shoulders visibly in-room.
+      z = 6.35 - u * 0.6;
+      rx = -1.38 + u;
+    }
+    const lateralCrawl = 0.14 + Math.max(0, (q - 0.35) / 0.65) * 0.42;
+    root.position.set(opening.center.x - lateralCrawl + Math.sin(q * Math.PI * 2.4) * 0.035, y, z);
+    root.rotation.set(rx, Math.sin(q * Math.PI) * 0.08, Math.sin(q * Math.PI * 3) * 0.035);
+    root.scale.set(1, 1, 1);
+    body.rotation.y = Math.sin(time * 0.83) * 0.025;
+    const reach = Math.sin(q * Math.PI * 5);
+    joints.leftForearm.rotation.y = reach * 0.12;
+    joints.rightForearm.rotation.y = -reach * 0.12;
+    joints.leftShin.rotation.x = -reach * 0.09;
+    joints.rightShin.rotation.x = reach * 0.09;
+
+    const nextStage = Math.min(4, Math.floor(q * 5));
+    if (nextStage !== crawler.stage) {
+      crawler.stage = nextStage;
+      crawler.stageHistory.push(nextStage);
+      if (nextStage === 1) game.audio.creak({ pos: focus, gain: 0.28, rate: 0.64 });
+      if (nextStage === 2) game.audio.glassTink({ pos: opening.center, gain: 0.38, rate: 0.44 });
+      if (nextStage === 3) game.audio.thud({ pos: opening.center, gain: 0.38, rate: 0.52 });
+      if (nextStage === 4) game.audio.whisper({ pos: root.position, gain: 0.35, rate: 0.48, verb: 0.85 });
+    }
+    sillSmear.visible = crawler.stage >= 2;
+    for (const print of proof.children.slice(2)) print.visible = crawler.stage >= 2;
+    floorSmear.visible = crawler.stage >= 4;
+    if (!crawler.entered && q >= 0.999) {
+      crawler.entered = true;
+      game.flag('sculleryCrawlerEntered');
+    }
+    if (crawler.entered && !crawler.vanished) {
+      // Entry owns a full watched tableau before the apparition is permitted
+      // to leave. It can only disappear behind a genuine look-away; the wet
+      // hand/floor proof remains, so no indefinite walk-through mannequin is
+      // left standing in the room and no cheap on-camera pop is possible.
+      if (crawler.watched) {
+        crawler.settledT = Math.min(2, crawler.settledT + dt);
+        crawler.lookAwayT = 0;
+      } else if (crawler.settledT >= 1.05) {
+        crawler.lookAwayT += dt;
+        if (crawler.lookAwayT >= 0.38) {
+          crawler.resolved = true;
+          crawler.resolveReason = 'look-away';
+          crawler.vanished = true;
+          root.visible = false;
+          game.flag('sculleryCrawlerVanished');
+          game.audio.whisper({ pos: root.position, gain: 0.28, rate: 0.42, verb: 1.15 });
+        }
+      }
+    }
+
+    // Before recoil begins, the authored pose is the visible pose and owns the
+    // tripwire. Once recoil is active, the base crawl transform below is only
+    // an animation origin; do not record it as player clearance because it is
+    // displaced again before this tick can render.
+    if (!crawler.vanished && !crawler.resolving) {
+      const distance = Math.hypot(game.player.pos.x - root.position.x,
+        game.player.pos.z - root.position.z);
+      // The 1.48 m tripwire encloses the 0.34 m player capsule plus the
+      // crawler's forward-projected head/shoulders with a visible safety beat.
+      // It is stage-independent, so walking up during the outside/sill crawl
+      // cannot put those long limbs through the player either.
+      if (distance <= crawler.proximityThreshold) beginProximityResolution(distance);
+      else {
+        crawler.playerDistance = distance;
+        crawler.minPlayerDistance = Math.min(crawler.minPlayerDistance, distance);
+      }
+    }
+
+    if (crawler.resolving && !crawler.vanished) {
+      crawler.resolveT += dt;
+      const r = clamp(crawler.resolveT / 0.48, 0, 1);
+      const ease = r * r * (3 - 2 * r);
+      // Recoil away from the room faster than the player's maximum run, then
+      // collapse upward through the aperture as the silhouette thins out.
+      root.position.z += ease * 3.0;
+      root.position.y += Math.sin(r * Math.PI) * 0.18 + ease * 0.34;
+      root.rotation.x -= ease * 0.48;
+      root.scale.set(1 - ease * 0.18, 1 + Math.sin(r * Math.PI) * 0.08, 1 - ease * 0.18);
+      for (const mark of proof.children) mark.visible = true;
+      for (const [material, baseOpacity] of dissolveMaterials) {
+        material.opacity = baseOpacity * (1 - ease);
+      }
+      const retreatedDistance = Math.hypot(game.player.pos.x - root.position.x,
+        game.player.pos.z - root.position.z);
+      // This is the final transform for the tick and therefore the only recoil
+      // distance that the renderer/player can actually observe.
+      crawler.playerDistance = retreatedDistance;
+      crawler.minPlayerDistance = Math.min(crawler.minPlayerDistance, retreatedDistance);
+      if (r >= 1) {
+        crawler.resolving = false;
+        crawler.resolved = true;
+        crawler.vanished = true;
+        root.visible = false;
+        game.flag('sculleryCrawlerVanished');
+        game.flag('sculleryCrawlerProximityResolved');
+      }
+    }
   });
 }
 
@@ -3359,8 +4150,8 @@ function buildPumpGallery(game) {
     // The archive is two solid turns west of the default cellar spawn.  Its
     // small valves/gauges have no business submitting through those walls;
     // reveal them only after the player actually reaches the west archive
-    // approach.  The previous z-only test made the entire optional room render
-    // from the ordinary basement start at x=9.
+    // approach. The previous z-only test made the far archive machinery render
+    // from the ordinary basement start at x=9, long before the required route.
     const archiveDetailVisible = game.act === 'basement'
       && game.player.pos.x < -11.45 && game.player.pos.z > 0.35;
     for (const pump of pumpStands) pump.group.visible = archiveDetailVisible;
@@ -3497,44 +4288,81 @@ function voidDoorAct(game) {
   const glow = { x: 5.3, y: F + 1.55, z: -7, intensity: 1.6, r: 5 };
   world.candles.push(glow);
 
+  // The upstairs candle and basement pilot feed one required flame circuit.
+  // Whichever visible source the player uses first atomically extinguishes
+  // every duplicate, seats one pair of socket embers, and establishes the
+  // exact same `ateFlame` dependency for the furnace.
+  const flameCircuit = {
+    sources: [], source: null, embers: [],
+    register(source) {
+      this.sources.push(source);
+      return source;
+    },
+    absorb(skull, source) {
+      if (game.flags.has('ateFlame')) {
+        if (source?.target) source.target.enabled = false;
+        if (source?.flame) source.flame.visible = false;
+        return false;
+      }
+      this.source = source?.id || 'unknown';
+      for (const candidate of this.sources) {
+        if (candidate.target) candidate.target.enabled = false;
+        if (candidate.flame) candidate.flame.visible = false;
+        if (candidate.glow) {
+          // Extinguish the descriptor and any currently assigned pool light in
+          // this exact hit, rather than waiting up to the pool's 0.4 s resort.
+          candidate.glow.intensity = 0;
+          for (const light of world.candlePool || []) {
+            if (light.userData.c !== candidate.glow) continue;
+            light.intensity = 0;
+            light.userData.c = null;
+          }
+          const i = world.candles.indexOf(candidate.glow);
+          if (i >= 0) world.candles.splice(i, 1);
+        }
+      }
+      const emberMat = new THREE.MeshBasicMaterial({ color: 0xffb060 });
+      for (const socket of (skull.sockets || []).slice(0, 2)) {
+        const local = socket.getWorldPosition(new THREE.Vector3());
+        skull.root.worldToLocal(local);
+        const ember = new THREE.Mesh(new THREE.SphereGeometry(0.0095, 8, 6), emberMat);
+        ember.position.copy(local);
+        ember.position.z += 0.012;
+        skull.root.add(ember);
+        this.embers.push([ember, socket]);
+      }
+      game.tickers.push(() => {
+        for (const [ember, socket] of this.embers) ember.visible = socket.visible;
+      });
+      game.skullLight.intensity = 62;
+      game.skullLight.distance = 12.5;
+      game.skullLight.color.setHex(0xd8c8a4);
+      game.flag('ateFlame');
+      return true;
+    },
+  };
+  game.flameCircuit = flameCircuit;
+
   const doorPos = new THREE.Vector3(4, F + 1.15, -7);
+  const guestSource = { id: 'guest-candle', flame, glow, target: null };
   const flameTarget = world.addFetchTarget({
     // The visible flame is narrow, but the throw arrives from the stairwell
     // below at a steep retained arc. Own the whole candle-dish silhouette so a
     // clean aimed throw cannot slip through the mathematically tiny fireball.
     id: 'guestFlame', object: flame, radius: 0.9, enabled: false,
     onHit(skull) {
-      this.enabled = false;
-      flame.visible = false;
-      const gi = world.candles.indexOf(glow);
-      if (gi >= 0) world.candles.splice(gi, 1);
+      // Both natural approaches now cross the widened real doorway while the
+      // skull is outbound. A retained return may still pass the candle, but it
+      // cannot spend a second interaction credit or grant progression.
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!flameCircuit.absorb(skull, guestSource)) return 'return';
       game.audio.fireChoke({ pos: stand.position, gain: 0.4 });   // the flame dies into it
       game.audio.glassTink({ pos: stand.position, gain: 0.5, rate: 0.7 });
-      // ember sockets: from now on it carries fire behind its eyes
-      const emberMat = new THREE.MeshBasicMaterial({ color: 0xffb060 });
-      const sockets = skull.sockets || [];
-      const embersOn = [];
-      for (const s of sockets.slice(0, 2)) {
-        const p = s.getWorldPosition(new THREE.Vector3());
-        skull.root.worldToLocal(p);
-        const ember = new THREE.Mesh(new THREE.SphereGeometry(0.0095, 8, 6), emberMat);
-        ember.position.copy(p);
-        ember.position.z += 0.012;
-        skull.root.add(ember);
-        embersOn.push([ember, s]);
-      }
-      game.tickers.push(() => {
-        for (const [e, s] of embersOn) e.visible = s.visible;   // hide under the stage-5 face
-      });
-      // and your carried light warms and reaches further — brightness, not hue,
-      // carries the upgrade (colorblind law)
-      game.skullLight.intensity = 62;
-      game.skullLight.distance = 12.5;
-      game.skullLight.color.setHex(0xd8c8a4);
-      game.flag('ateFlame');
       return 'return';
     },
   });
+  guestSource.target = flameTarget;
+  flameCircuit.register(guestSource);
   flameTarget.enabled = false;
 
   let doorTarget = null;

@@ -369,24 +369,42 @@ try {
     }
     beat('graveyard-funeral-resolved', g.flags.has('graveyardResolved') && !g.dead,
       { dead: g.dead, waves: g.director.graveArena && g.director.graveArena.wave, guard: graveGuard });
-    // Combat can legitimately finish inside either open mausoleum. Leave it
-    // through its visible front doorway before bearing for the forest gate;
-    // otherwise a straight-line bot keeps walking into the rear wall and
-    // reports a false progression failure even though ordinary turning works.
-    for (const [mx, mz] of [[15.6, 31.5], [-14.6, 34.2]]) {
-      const inside = Math.abs(g.player.pos.x - mx) < 1.45
-        && g.player.pos.z > mz - 1.3 && g.player.pos.z < mz + 1.35;
-      if (inside) {
+    // Combat can finish inside a mausoleum OR exactly one capsule radius along
+    // its side wall. Clear either shell through visible floor before crossing
+    // the open yard. The old narrow "inside" test missed that edge pose, then
+    // its straight westward walk drove into the east wall forever.
+    const clearMausoleumShell = (mx, mz) => {
+      const dx = g.player.pos.x - mx;
+      const dz = g.player.pos.z - mz;
+      if (Math.abs(dx) > 2.8 || Math.abs(dz) > 2.35) return;
+      if (Math.abs(dx) < 1.45 && dz > -1.3 && dz < 1.35) {
         walkTo(mx, mz - 0.75, 8);
         walkTo(mx, mz - 2.35, 8);
+      } else if (dz > -1.9 && dz < 1.9) {
+        const outsideX = mx + (dx >= 0 ? 2.55 : -2.55);
+        walkTo(outsideX, g.player.pos.z, 8);
+        walkTo(outsideX, mz - 2.35, 8);
       }
-    }
+    };
+    clearMausoleumShell(15.6, 31.5);
+    clearMausoleumShell(-14.6, 34.2);
     // All grave solutions now open the same required under-yard route. Enter
     // the left mausoleum, follow its three readable alternating baffles, and
     // use the same held-skull grammar to pay out the gate counterweight.
+    // These are open-yard landmarks, not a teleport or white-box shortcut.
+    // They route around the readable open grave at (-7.2, 27) and the west
+    // hero stone instead of asking a deliberately simple straight-line bot to
+    // solve obstacle avoidance that a turning human gets for free.
+    walkTo(7.5, 24.5, 22);
+    walkTo(-4.0, 23.5, 22);
+    walkTo(-11.5, 25.0, 18);
     walkTo(-14.6, 31.6, 35);
-    walkTo(-14.6, 34.45, 12);
-    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
+    walkTo(-14.6, 33.4, 12);
+    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) {
+      const dx = -14.6 - g.player.pos.x, dz = 34.8 - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+    }
     beat('mausoleum-opens-required-ossuary',
       g.flags.has('ossuaryEntered') && g.ossuary.inOssuary, g.player.pos.toArray());
     walkTo(-68.0, -3.4, 18);

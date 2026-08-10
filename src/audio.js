@@ -994,6 +994,44 @@ export class GameAudio {
     }
   }
 
+  // A real struck servant bell, not the generic metal-drop cluster.  The
+  // inharmonic partials and long positional tail make the window relay audible
+  // from either floor, so its causal payoff cannot be mistaken for a loose
+  // latch.  Brightness, motion and this sound all tell the same state change.
+  bellRing(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const rate = opts.rate ?? 1;
+    const out = this._bus(opts, 3.4, 0.92, opts.verb ?? 0.78);
+    for (const [frequency, peak, decay, phase] of [
+      [512, 0.42, 2.7, 0],
+      [731, 0.3, 2.35, 0.35],
+      [1049, 0.19, 1.85, 0.8],
+      [1486, 0.1, 1.25, 1.2],
+    ]) {
+      const oscillator = ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency * rate;
+      oscillator.detune.value = Math.sin(phase) * 5;
+      const gain = ctx.createGain();
+      this._env(gain, t, peak, 0.0025, decay);
+      oscillator.connect(gain).connect(out);
+      oscillator.start(t);
+      oscillator.stop(t + decay + 0.04);
+    }
+    const strike = ctx.createBufferSource();
+    strike.buffer = this._noiseBuf;
+    const strikeFilter = ctx.createBiquadFilter();
+    strikeFilter.type = 'bandpass';
+    strikeFilter.frequency.value = 2780 * rate;
+    strikeFilter.Q.value = 1.7;
+    const strikeGain = ctx.createGain();
+    this._env(strikeGain, t, 0.34, 0.0015, 0.055);
+    strike.connect(strikeFilter).connect(strikeGain).connect(out);
+    strike.start(t);
+    strike.stop(t + 0.08);
+  }
+
   unlock(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
