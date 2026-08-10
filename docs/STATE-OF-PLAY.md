@@ -1,13 +1,13 @@
-# FETCH — current state of play, 2026-08-09 masterpiece integration
+# FETCH — current state of play, 2026-08-10 masterpiece integration
 
-> **CURRENT SOURCE TRUTH; PACKAGED LOCALLY, NOT DEPLOYED.** Integration work is on the
+> **CURRENT SOURCE TRUTH; PACKAGED AND DEPLOYED.** Integration work is on the
 > isolated branch `codex/fetch-masterpiece-2026-08-09`, started from `ea414a8`, in
 > `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
 > The shipping-source integration is commit `c8a50c2`.
 > A deterministic standalone ZIP has passed clean-extraction verification; the
-> exact artifact identity appears below. This section records no merge,
-> deployment, or production-URL verification; check Git, the artifact hash, and
-> the live URL independently.
+> exact artifact identity appears below. Site PR #34 merged as `dc8555a`, and
+> `https://qualiacology.com/fetch/` was independently verified serving
+> `0.4.0-ossuary` after the production deployment.
 > Read the newest section of `docs/HANDOFF.md` for the feature/evidence ledger
 > and `docs/WALKTHROUGH.md` for the exact spoiler route. Everything below the
 > horizontal rule that closes this current section is retained historical
@@ -96,10 +96,10 @@ route opens both the physical surface gate and the far hatch.
 | Finale fades around a mannequin | Props crush inward, hands/glass/fractures make contact physical, and an articulated human reflection wears the exact opening skull before hard black. |
 | Retry effects can grow forever | Gore, stains, grave debris, fork closures, candles, enemy geometry, and reflection targets are fixed pools/shared kits or otherwise bounded. |
 
-The old queue is obsolete and the final source is locally verified, packaged,
-and recorded on its integration branch. The remaining work is repository/
-release-state handling—any canonical merge and any authorized deployment/live
-verification—not a license to blur those distinct states.
+The old queue is obsolete and this integration is locally verified, packaged,
+recorded on its integration branch, merged into the canonical site repository,
+and verified on production. Those facts do not pre-judge Alex's next live
+playtest or turn it into permission for an unrelated parallel expansion.
 
 ## Donor provenance
 
@@ -141,11 +141,11 @@ The standalone package is also verified:
 3. A unique clean extraction booted through system Chrome/ANGLE-D3D11 with zero
    browser errors; release-integrity rejection cases passed **5/5**.
 
-The remaining release-state work is any canonical merge and—only after Alex
-authorizes shipping—deployment through the canonical site workflow followed by
-independent production-URL verification. This branch commit and package are not
-evidence of a merge or deploy. Older hashes, PRs, and "live" notes below belong
-to historical snapshots.
+Production deployment is complete through Qualiacology PR #34: site sync
+`ad6a126`, merge `dc8555a`, and live `0.4.0-ossuary` verification on the public
+FETCH route. The existing site shell and cache rules were preserved, and only
+the eleven semantic runtime changes shipped. Older hashes, PRs, and "live"
+notes below belong to historical snapshots.
 
 ---
 

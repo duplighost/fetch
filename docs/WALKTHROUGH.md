@@ -487,6 +487,7 @@ There is no puzzle prompt and no hidden combat solution. The ending is contact:
 That is the complete current route. There are no remaining **THIN** placeholders
 in this walkthrough masquerading as implemented progression. Any future idea
 belongs in a new, evidence-backed queue after this locally verified integration
-is packaged, clean-booted, committed, and reviewed. Any Alex-authorized
-deployment and independent live-URL verification remain separate release-state
-gates.
+is packaged, clean-booted, committed, and reviewed. That release chain is now
+complete: Qualiacology PR #34 deployed `0.4.0-ossuary`, and the public FETCH
+route passed an independent post-deploy browser boot. Future revisions begin a
+new source → package → preview → production verification chain.

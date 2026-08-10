@@ -1,4 +1,4 @@
-# HANDOFF — 2026-08-09, masterpiece integration (CURRENT, PACKAGED, UNDEPLOYED)
+# HANDOFF — 2026-08-10, masterpiece integration (CURRENT, PACKAGED, DEPLOYED)
 
 Read `AGENTS.md` first. This section is the current source truth for the
 isolated worktree at
@@ -6,10 +6,11 @@ isolated worktree at
 The integration work is on `codex/fetch-masterpiece-2026-08-09`, started from
 `ea414a8`. The shipping-source integration is recorded at commit `c8a50c2`.
 A deterministic standalone ZIP built from that source has been independently
-clean-booted; its exact identity is recorded below. This section does not claim
-a merge, Netlify deploy, or change to the live game. Verify `git status`,
-`git log`, the artifact hash, and the production URL independently instead of
-inferring one release state from another.
+clean-booted; its exact identity is recorded below. The existing Qualiacology
+FETCH runtime was updated through site PR #34 and production merge `dc8555a`.
+The public game at `https://qualiacology.com/fetch/` was independently verified
+as `0.4.0-ossuary` after deployment. Verify Git, artifact, deploy, and live state
+independently instead of inferring one state from another.
 
 The older handoffs below remain as an append-only engineering diary. Their old
 "release", "THIN", "not fixed", queue, hash, branch, and deployment statements
@@ -248,10 +249,23 @@ bounded instance sets rather than retry-grown scene graphs.
   EOCD, broken central directory, oversized declared output, and an unsafe
   output path are all rejected.
 
-**Still separate from that green artifact and recorded branch commit:** any
-merge into the canonical repository and—only if Alex authorizes shipping—
-production deployment followed by independent live-URL verification. The live
-game has not been changed by this worktree, commit, or ZIP.
+## Production deployment
+
+- Site repository PR: `duplighost/qualiacology#34`
+- Site sync commit: `ad6a126`
+- Production merge commit: `dc8555a`
+- Live route: `https://qualiacology.com/fetch/`
+- Live version: **`0.4.0-ossuary`**
+- The site deployment preserved the existing Qualiacology index shell,
+  canonical/OG metadata, favicon, home pill, redirects, cache rules, and vendor
+  files. Exactly eleven semantically changed FETCH runtime modules shipped.
+- PR and post-merge static-site CI passed. The deploy preview and production
+  route both passed fresh system-Chrome/ANGLE-D3D11 boots with the correct
+  version, 402 opening draw calls, correct shell/cache headers, and zero browser
+  errors.
+- An unrelated local `behind-you/index.html` edit appeared in the primary site
+  checkout during deployment. It was neither touched nor included; the FETCH
+  sync used an isolated worktree and GitHub merge.
 
 ---
 
