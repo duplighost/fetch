@@ -4,7 +4,8 @@ Read `AGENTS.md` first. This section is the current source truth for the
 isolated worktree at
 `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-masterpiece-dev`.
 The integration work is on `codex/fetch-masterpiece-2026-08-09`, started from
-`ea414a8`. A deterministic standalone ZIP has been built and independently
+`ea414a8`. The shipping-source integration is recorded at commit `c8a50c2`.
+A deterministic standalone ZIP built from that source has been independently
 clean-booted; its exact identity is recorded below. This section does not claim
 a merge, Netlify deploy, or change to the live game. Verify `git status`,
 `git log`, the artifact hash, and the production URL independently instead of
@@ -247,10 +248,10 @@ bounded instance sets rather than retry-grown scene graphs.
   EOCD, broken central directory, oversized declared output, and an unsafe
   output path are all rejected.
 
-**Still separate from that green artifact:** final integration commit/review,
-any merge into the canonical repository, and—only if Alex authorizes shipping—
+**Still separate from that green artifact and recorded branch commit:** any
+merge into the canonical repository and—only if Alex authorizes shipping—
 production deployment followed by independent live-URL verification. The live
-game has not been changed by this worktree or ZIP.
+game has not been changed by this worktree, commit, or ZIP.
 
 ---
 
