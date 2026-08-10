@@ -6,7 +6,21 @@
 <link rel="icon" href="data:,">
 <title>FETCH</title>
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  :root {
+    color-scheme: dark;
+    --paper: #eee9de;
+    --ash: #aaa79f;
+    --coal: #08090a;
+    --iron: #34312d;
+    --bruise: #17191b;
+    --old-gold: #a4916d;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; background: #000;
+    overflow: hidden; font-family: Georgia, 'Times New Roman', serif;
+  }
+  button { font: inherit; }
   #app { position: fixed; inset: 0; }
   canvas { display: block; width: 100%; height: 100%; }
 
@@ -16,13 +30,14 @@
     position: absolute; left: 50%; top: 50%; width: 4px; height: 4px;
     margin: -2px 0 0 -2px; border-radius: 50%;
     background: rgba(220, 226, 232, 0.55);
-    transition: width .12s, height .12s, margin .12s, background .12s;
+    transition: width .12s, height .12s, margin .12s, background .12s, opacity .12s;
   }
   #crosshair[data-target="1"] {
     width: 8px; height: 8px; margin: -4px 0 0 -4px;
     background: rgba(240, 244, 248, 0.9);
   }
   #crosshair[data-skull="away"] { background: rgba(220, 226, 232, 0.2); }
+  body[data-paused="1"] #crosshair { opacity: 0; }
   #vignette {
     position: absolute; inset: 0; opacity: 0;
     background: radial-gradient(ellipse at center, transparent 42%, rgba(10, 2, 2, 0.92) 100%);
@@ -35,29 +50,189 @@
     clip: rect(0 0 0 0); overflow: hidden; white-space: nowrap;
   }
 
-  /* ---- overlays (reading costs nothing here) ---- */
+  /* Escape owns pointer-lock play; the visible control also serves touch and
+     non-locked sessions without turning the game into a dashboard. */
+  #pauseButton {
+    position: fixed; top: max(1rem, env(safe-area-inset-top));
+    right: max(1rem, env(safe-area-inset-right)); z-index: 8;
+    width: 46px; height: 46px; padding: 0; display: grid; place-items: center;
+    border: 1px solid rgba(238, 233, 222, 0.48); border-radius: 2px;
+    background: rgba(5, 6, 7, 0.72); color: var(--paper); cursor: pointer;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.36);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #pauseButton[hidden] { display: none !important; }
+  #pauseButton:hover { background: rgba(18, 18, 17, 0.9); border-color: var(--paper); }
+  #pauseButton:focus-visible,
+  .menu-button:focus-visible,
+  .go:focus-visible {
+    outline: 3px solid var(--paper); outline-offset: 4px;
+    box-shadow: 0 0 0 7px rgba(7, 8, 9, 0.92);
+  }
+  .pause-glyph {
+    width: 13px; height: 17px; display: block;
+    background: linear-gradient(90deg, currentColor 0 33%, transparent 33% 67%, currentColor 67% 100%);
+  }
+
+  /* ---- overlays ---- */
   .overlay {
-    position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 1.2rem;
-    background: #000; color: #b9bfc6;
-    font-family: Georgia, 'Times New Roman', serif;
-    text-align: center; user-select: none; z-index: 10;
+    position: fixed; inset: 0; z-index: 10; color: var(--paper);
+    user-select: none; isolation: isolate;
   }
-  .overlay.hidden { display: none; }
-  .overlay h1 { font-size: 3.4rem; letter-spacing: 1.1rem; margin: 0; font-weight: normal; color: #d8dde2; text-indent: 1.1rem; }
-  .overlay .tag { font-size: 1.05rem; opacity: 0.75; margin: 0; font-style: italic; }
-  .overlay .keys { font-size: 0.85rem; opacity: 0.55; line-height: 1.9; margin: 0.6rem 0 0; font-family: 'Segoe UI', system-ui, sans-serif; font-style: normal; }
-  .overlay .go {
-    appearance: none; border: 0; background: transparent; color: inherit;
-    font: inherit; font-size: 0.95rem; opacity: 0.85; margin-top: 1.4rem;
-    padding: 0.7rem 1.2rem; cursor: pointer; animation: breathe 3.2s ease-in-out infinite;
+  .overlay.hidden { display: none !important; }
+
+  #title {
+    display: flex; align-items: center; justify-content: flex-end;
+    padding: clamp(1.5rem, 5vw, 6.5rem);
+    background: var(--coal); overflow: hidden;
   }
-  .overlay .go:focus-visible { outline: 2px solid #8bd9ee; outline-offset: 0.45rem; }
-  @keyframes breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.9; } }
-  #die h1 { font-size: 2rem; letter-spacing: 0.6rem; text-indent: 0.6rem; }
+  #title::before {
+    content: ''; position: absolute; inset: 0; z-index: -2;
+    background: #08090a url('./assets/fetch-title-keyart-5ab7c65b.webp') center center / cover no-repeat;
+    transform: scale(1.012); filter: saturate(0.78) contrast(1.08) brightness(0.9);
+  }
+  #title::after {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(ellipse at 53% 58%, transparent 0 20%, rgba(1, 2, 3, 0.16) 52%, rgba(1, 2, 3, 0.72) 100%),
+      linear-gradient(90deg, rgba(2, 3, 4, 0.1) 24%, rgba(2, 3, 4, 0.28) 50%, rgba(2, 3, 4, 0.94) 82%, #020303 100%),
+      linear-gradient(0deg, rgba(0, 0, 0, 0.64), transparent 45%);
+  }
+  .title-shell {
+    width: min(36rem, 42vw); min-width: 29rem; position: relative;
+    display: flex; flex-direction: column; align-items: flex-start;
+    text-align: left; padding: clamp(1.5rem, 3vw, 3.1rem) 0 clamp(1.5rem, 3vw, 3.1rem) clamp(1.4rem, 2.5vw, 2.5rem);
+    border-left: 1px solid rgba(238, 233, 222, 0.33);
+    text-shadow: 0 2px 18px #000, 0 1px 2px #000;
+  }
+  .eyebrow {
+    margin: 0 0 .7rem; color: #d3cec3; font: 600 .68rem/1.4 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: .28em; text-transform: uppercase;
+  }
+  .title-wordmark { display: flex; align-items: flex-start; gap: .5rem; }
+  #fetchTitle {
+    margin: 0; color: #f1ede4; font-size: clamp(5.2rem, 9vw, 8.7rem);
+    font-weight: 400; line-height: .83; letter-spacing: .105em;
+    text-indent: -.02em; text-transform: uppercase;
+  }
+  .return-mark {
+    display: block; margin-top: .15em; color: var(--old-gold);
+    font: 300 clamp(2rem, 3.5vw, 3.5rem)/1 Georgia, serif;
+    transform: rotate(-18deg); opacity: .9;
+  }
+  #title .tag {
+    margin: 1.15rem 0 0; max-width: 28rem; color: #d4d0c7;
+    font-size: clamp(1rem, 1.35vw, 1.24rem); line-height: 1.5; font-style: italic;
+  }
+  .go, .menu-button {
+    appearance: none; border-radius: 2px; cursor: pointer;
+    transition: background .16s ease, color .16s ease, border-color .16s ease, transform .16s ease;
+  }
+  #title .go {
+    min-width: 14.5rem; min-height: 3.35rem; margin: 2rem 0 0;
+    padding: .85rem 1.15rem; display: flex; align-items: center; justify-content: space-between; gap: 2rem;
+    border: 1px solid rgba(238, 233, 222, .65); background: rgba(9, 10, 10, .62);
+    color: var(--paper); font: 650 .78rem/1 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: .19em; text-transform: uppercase;
+  }
+  #title .go:hover { color: #0b0b0a; background: var(--paper); border-color: var(--paper); transform: translateX(3px); text-shadow: none; }
+  .button-return { color: var(--old-gold); font: 400 1.35rem/1 Georgia, serif; }
+  #title .go:hover .button-return { color: #29251e; }
+  #title .keys {
+    margin: 1.35rem 0 0; max-width: 31rem; display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
+    color: #aaa79f; font: 500 .68rem/1.55 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: .07em; text-transform: uppercase;
+  }
+  #title .keys span { white-space: nowrap; }
+  #title .keys strong { color: #e2ddd3; font-weight: 650; }
+
+  /* The ending returns to the title word, not the promotional image. */
+  #title.ending { justify-content: center; background: #000; }
+  #title.ending::before { opacity: 0; }
+  #title.ending::after { background: #000; }
+  #title.ending .title-shell {
+    width: auto; min-width: 0; align-items: center; padding: 0; border: 0; text-align: center;
+  }
+  #title.ending .eyebrow,
+  #title.ending .return-mark,
+  #title.ending .go { display: none; }
+
+  #pause {
+    z-index: 12; display: grid; place-items: center; padding: 1.25rem;
+    background: rgba(3, 4, 5, .76);
+    backdrop-filter: blur(9px) grayscale(.45); -webkit-backdrop-filter: blur(9px) grayscale(.45);
+  }
+  .pause-card {
+    width: min(31rem, 100%); padding: clamp(2rem, 5vw, 3.5rem);
+    position: relative; overflow: hidden; text-align: left;
+    border: 1px solid rgba(238, 233, 222, .32); border-top-color: rgba(238, 233, 222, .82);
+    background: linear-gradient(145deg, rgba(18, 19, 19, .97), rgba(5, 6, 7, .98));
+    box-shadow: 0 34px 90px rgba(0, 0, 0, .68);
+  }
+  .pause-card::after {
+    content: ''; position: absolute; width: 13rem; height: 13rem; right: -8rem; top: -8rem;
+    border: 1px solid rgba(164, 145, 109, .28); border-radius: 50%;
+    box-shadow: 0 0 0 1.1rem rgba(164, 145, 109, .035), 0 0 0 3.2rem rgba(164, 145, 109, .025);
+  }
+  .pause-card h2 {
+    margin: 0; font-weight: 400; font-size: clamp(2.65rem, 8vw, 4.8rem);
+    line-height: .95; letter-spacing: .14em; text-indent: -.03em;
+  }
+  .pause-copy { margin: .9rem 0 2rem; color: var(--ash); font-size: 1rem; font-style: italic; }
+  .pause-actions { display: grid; gap: .7rem; }
+  .menu-button {
+    width: 100%; min-height: 3.25rem; padding: .8rem 1rem;
+    border: 1px solid rgba(238, 233, 222, .48); background: transparent; color: var(--paper);
+    font: 650 .74rem/1 'Segoe UI', system-ui, sans-serif; letter-spacing: .16em; text-transform: uppercase;
+  }
+  .menu-button.primary { background: var(--paper); color: #101110; border-color: var(--paper); }
+  .menu-button:hover { background: #d8d2c6; color: #111; border-color: #d8d2c6; }
+  .menu-button.secondary:hover { background: #292825; color: var(--paper); }
+  .pause-hint {
+    margin: 1.25rem 0 0; color: #88867f;
+    font: 600 .64rem/1.4 'Segoe UI', system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase;
+  }
+
+  #die {
+    z-index: 13; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.4rem;
+    background: #000; text-align: center;
+  }
+  #die h1 { margin: 0; font-size: 2rem; font-weight: 400; letter-spacing: .6rem; text-indent: .6rem; }
+  #die .go {
+    border: 1px solid rgba(238, 233, 222, .42); background: transparent; color: var(--paper);
+    padding: .8rem 1.3rem; font: 650 .72rem/1 'Segoe UI', system-ui, sans-serif;
+    letter-spacing: .16em; text-transform: uppercase; cursor: pointer;
+  }
+
+  @media (max-width: 760px) {
+    #title { align-items: flex-end; justify-content: stretch; padding: 0; }
+    #title::before { background-position: 43% center; filter: saturate(.7) contrast(1.05) brightness(.74); }
+    #title::after {
+      background:
+        linear-gradient(0deg, #020303 0%, rgba(2, 3, 3, .97) 20%, rgba(2, 3, 3, .76) 48%, rgba(2, 3, 3, .18) 78%),
+        radial-gradient(ellipse at 50% 40%, transparent 5%, rgba(0, 0, 0, .54) 100%);
+    }
+    .title-shell {
+      width: 100%; min-width: 0; padding: 1.8rem max(1.3rem, env(safe-area-inset-right)) max(1.7rem, env(safe-area-inset-bottom));
+      border: 0; background: transparent;
+    }
+    #fetchTitle { font-size: clamp(4.5rem, 24vw, 7.4rem); }
+    .return-mark { font-size: 2.5rem; }
+    #title .tag { margin-top: .75rem; }
+    #title .go { margin-top: 1.25rem; min-width: min(100%, 17rem); }
+    #title .keys { max-width: 100%; margin-top: 1rem; gap: .3rem .8rem; font-size: .62rem; }
+    #pauseButton { width: 48px; height: 48px; }
+  }
+  @media (max-height: 610px) and (min-width: 761px) {
+    #title { padding-top: 1rem; padding-bottom: 1rem; }
+    .title-shell { padding-top: 1.2rem; padding-bottom: 1.2rem; }
+    #fetchTitle { font-size: 5.6rem; }
+    #title .go { margin-top: 1.15rem; min-height: 2.9rem; }
+    #title .keys { margin-top: .8rem; }
+  }
   @media (prefers-reduced-motion: reduce) {
-    .overlay .go { animation: none; opacity: 0.8; }
-    #fade, #vignette { transition-duration: 0.01ms !important; }
+    #title::before { transform: none; }
+    .go, .menu-button, #crosshair, #vignette, #fade { transition-duration: .01ms !important; }
   }
 </style>
 </head>
@@ -71,20 +246,50 @@
   <span id="srState" class="sr-only" role="status" aria-live="polite"></span>
 </div>
 
+<button id="pauseButton" type="button" aria-label="Pause game" title="Pause (Escape or P)" hidden>
+  <span class="pause-glyph" aria-hidden="true"></span>
+</button>
+
 <div id="title" class="overlay" role="dialog" aria-labelledby="fetchTitle" aria-describedby="fetchTag fetchKeys">
-  <h1 id="fetchTitle">FETCH</h1>
-  <p class="tag" id="fetchTag">Throw it. It comes back.</p>
-  <p class="keys" id="fetchKeys">
-    hold left mouse &mdash; it goes where you look, and stays out &nbsp;&middot;&nbsp; let go &mdash; it comes back<br>
-    WASD &mdash; move &nbsp;&middot;&nbsp; shift &mdash; run &nbsp;&middot;&nbsp; space &mdash; jump &nbsp;&middot;&nbsp; E &mdash; use<br>
-    headphones on
-  </p>
-  <button class="go" type="button">click</button>
+  <div class="title-shell">
+    <p class="eyebrow">The house throws nothing away</p>
+    <div class="title-wordmark">
+      <h1 id="fetchTitle">FETCH</h1>
+      <span class="return-mark" aria-hidden="true">&#8630;</span>
+    </div>
+    <p class="tag" id="fetchTag">Throw it. Hold on. Let go.</p>
+    <button class="go" type="button" data-action="start">
+      <span>Wake up</span><span class="button-return" aria-hidden="true">&#8627;</span>
+    </button>
+    <p class="keys" id="fetchKeys">
+      <span><strong>Hold mouse</strong> throw</span>
+      <span><strong>Release</strong> return</span>
+      <span><strong>WASD</strong> move</span>
+      <span><strong>Shift</strong> run</span>
+      <span><strong>Space</strong> jump</span>
+      <span><strong>E</strong> use</span>
+      <span><strong>Esc / P</strong> pause</span>
+      <span><strong>Headphones</strong> recommended</span>
+    </p>
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle" aria-describedby="pauseCopy pauseHint">
+  <div class="pause-card">
+    <p class="eyebrow">The tether holds</p>
+    <h2 id="pauseTitle">PAUSED</h2>
+    <p class="pause-copy" id="pauseCopy">Nothing moves while you are gone.</p>
+    <div class="pause-actions">
+      <button class="menu-button primary" type="button" data-action="resume">Resume</button>
+      <button class="menu-button secondary" type="button" data-action="restart-checkpoint">Restart from checkpoint</button>
+    </div>
+    <p class="pause-hint" id="pauseHint">Escape or P resumes</p>
+  </div>
 </div>
 
 <div id="die" class="overlay hidden" role="dialog" aria-labelledby="deathTitle">
   <h1 id="deathTitle">IT KEEPS YOU</h1>
-  <button class="go" type="button">click</button>
+  <button class="go" type="button">Return to checkpoint</button>
 </div>
 
 <script type="importmap">

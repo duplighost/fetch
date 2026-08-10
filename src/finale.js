@@ -46,6 +46,114 @@ function makeDrapeGeometry(width, height, side) {
   return geo;
 }
 
+// A seven-ring torso gives the reflected body an actual ribcage, waist, pelvis
+// transition, and sloped shoulders. It is still deliberately low-poly, but its
+// silhouette now comes from anatomy and tailoring instead of a scaled pill.
+function makeTailoredTorsoGeometry() {
+  const rings = [
+    // y, half-width, half-depth, slight front/back offset, shoulder drop
+    [0.79, 0.17, 0.105, -0.004, 0],
+    [0.88, 0.205, 0.125, 0, 0],
+    [1.03, 0.155, 0.102, 0.004, 0],
+    [1.22, 0.19, 0.118, 0.006, 0],
+    [1.38, 0.245, 0.137, 0.002, 0],
+    [1.5, 0.282, 0.143, -0.002, 0.075],
+    [1.54, 0.122, 0.086, -0.008, 0],
+  ];
+  const segments = 12;
+  const verts = [];
+  const indices = [];
+  for (const [y, rx, rz, zBias, shoulderDrop] of rings) {
+    for (let j = 0; j < segments; j++) {
+      const a = (j / segments) * Math.PI * 2;
+      // Flatten the back fractionally and leave more cloth over the sternum.
+      const s = Math.sin(a);
+      const z = s * rz * (s > 0 ? 1.06 : 0.9) + zBias;
+      // A human shoulder line falls away from the neck. Applying that fall to
+      // the outer x-axis vertices avoids a horizontal top face under the light.
+      const ringY = y - shoulderDrop * Math.pow(Math.abs(Math.cos(a)), 1.35);
+      verts.push(Math.cos(a) * rx, ringY, z);
+    }
+  }
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let j = 0; j < segments; j++) {
+      const next = (j + 1) % segments;
+      const a = i * segments + j;
+      const b = i * segments + next;
+      const c = (i + 1) * segments + j;
+      const d = (i + 1) * segments + next;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  const bottomCenter = verts.length / 3;
+  verts.push(0, rings[0][0], rings[0][3]);
+  const topCenter = verts.length / 3;
+  verts.push(0, rings.at(-1)[0], rings.at(-1)[3]);
+  for (let j = 0; j < segments; j++) {
+    const next = (j + 1) % segments;
+    indices.push(bottomCenter, j, next);
+    const top = (rings.length - 1) * segments;
+    indices.push(topCenter, top + next, top + j);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+function makeLapelGeometry() {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([
+    0.025, 1.49, 0.151,
+    0.165, 1.445, 0.143,
+    0.108, 1.17, 0.137,
+    0.035, 1.305, 0.148,
+  ], 3));
+  geo.setIndex([0, 1, 2, 0, 2, 3]);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function makeCoatPanelGeometry() {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute([
+    0.012, 1.2, 0.13,
+    0.16, 1.17, 0.125,
+    0.145, 0.79, 0.112,
+    0.085, 0.735, 0.108,
+    0.018, 0.78, 0.12,
+  ], 3));
+  geo.setIndex([0, 1, 2, 0, 2, 4, 4, 2, 3]);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Shared, blunt-toed shoe geometry. The sloped vamp and squared heel keep the
+// feet planted without reintroducing another toy-like capsule.
+function makeShoeGeometry() {
+  const w = 0.065;
+  const verts = [
+    -w, 0, -0.085, w, 0, -0.085, -w, 0, 0.18, w, 0, 0.18,
+    -w, 0.105, -0.085, w, 0.105, -0.085, -w, 0.062, 0.18, w, 0.062, 0.18,
+  ];
+  const indices = [
+    0, 2, 1, 1, 2, 3,
+    4, 5, 6, 5, 7, 6,
+    0, 1, 4, 1, 5, 4,
+    2, 6, 3, 3, 6, 7,
+    0, 4, 2, 2, 4, 6,
+    1, 3, 5, 3, 7, 5,
+  ];
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  return geo;
+}
+
 // One deterministic fracture shared by all four panes. Four LineSegments are
 // still only four cheap draws, including in the mirror pass, and the branching
 // silhouette reads by brightness rather than hue. It stays invisible until a
@@ -389,46 +497,83 @@ export class Finale {
     const figure = new THREE.Group();
     figure.name = 'the-reflection';
     const cloth = new THREE.MeshStandardMaterial({
-      color: 0x030405, emissive: 0x000000, emissiveIntensity: 0,
-      roughness: 0.94,
+      color: 0x0a0d0e, emissive: 0x000000, emissiveIntensity: 0,
+      roughness: 0.97,
     });
-    const clothDark = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.98 });
-    const seam = new THREE.MeshStandardMaterial({
-      color: 0x11161a, emissive: 0x010202, emissiveIntensity: 0.04, roughness: 0.82,
+    const clothDark = new THREE.MeshStandardMaterial({
+      color: 0x020303, roughness: 1, side: THREE.DoubleSide,
     });
-    const handMat = new THREE.MeshStandardMaterial({ color: 0x91867d, roughness: 0.83 });
+    const clothRaised = new THREE.MeshStandardMaterial({
+      color: 0x252a2b, roughness: 0.9, side: THREE.DoubleSide,
+    });
+    const seam = new THREE.MeshStandardMaterial({ color: 0x343a3b, roughness: 0.92 });
+    const handMat = new THREE.MeshStandardMaterial({ color: 0x69635e, roughness: 0.9 });
+
+    // Every bilateral body part shares geometry. The mirror renders four
+    // times, so articulation is authored from a small fixed kit rather than
+    // allocating unique primitives for each limb.
+    const torsoGeo = makeTailoredTorsoGeometry();
+    const neckGeo = new THREE.CylinderGeometry(0.072, 0.087, 0.15, 10);
+    const pelvisGeo = new THREE.CylinderGeometry(0.13, 0.17, 0.235, 10);
+    const lapelGeo = makeLapelGeometry();
+    const coatPanelGeo = makeCoatPanelGeometry();
+    const thighGeo = new THREE.CylinderGeometry(0.067, 0.077, 0.36, 9);
+    const kneeGeo = new THREE.SphereGeometry(0.064, 9, 7);
+    const calfGeo = new THREE.CylinderGeometry(0.05, 0.063, 0.32, 9);
+    const shoeGeo = makeShoeGeometry();
+    const deltoidGeo = new THREE.SphereGeometry(0.068, 9, 7);
+    const upperArmGeo = new THREE.CylinderGeometry(0.048, 0.062, 0.3, 9);
+    const elbowGeo = new THREE.SphereGeometry(0.052, 9, 7);
+    const forearmGeo = new THREE.CylinderGeometry(0.038, 0.052, 0.285, 9);
+    const cuffGeo = new THREE.CylinderGeometry(0.044, 0.047, 0.07, 8);
+    const palmGeo = new THREE.CapsuleGeometry(0.032, 0.062, 3, 7);
+    const digitGeo = new THREE.CapsuleGeometry(0.009, 0.045, 2, 6);
 
     const torso = new THREE.Group();
     torso.position.y = 0;
-    const chest = addMesh(torso, new THREE.CapsuleGeometry(0.19, 0.5, 5, 10), cloth,
-      0, 1.2, 0);
-    chest.scale.set(1.32, 1, 0.74);
-    const shoulders = addMesh(torso, new THREE.CapsuleGeometry(0.085, 0.36, 4, 8), cloth,
-      0, 1.47, 0, 0, 0, Math.PI / 2);
-    shoulders.scale.z = 0.82;
-    const hips = addMesh(torso, new THREE.CapsuleGeometry(0.13, 0.18, 4, 8), clothDark,
-      0, 0.86, 0);
-    hips.scale.set(1.28, 1, 0.82);
-    addBox(torso, clothDark, 0.19, 0.58, 0.07, -0.12, 1.12, -0.13, 0, 0, -0.055);
-    addBox(torso, clothDark, 0.19, 0.58, 0.07, 0.12, 1.12, -0.13, 0, 0, 0.055);
-    addBox(torso, seam, 0.045, 0.72, 0.026, 0, 1.17, 0.145);
-    addBox(torso, seam, 0.17, 0.055, 0.03, -0.08, 1.48, 0.14, 0, 0, -0.55);
-    addBox(torso, seam, 0.17, 0.055, 0.03, 0.08, 1.48, 0.14, 0, 0, 0.55);
+    const chest = addMesh(torso, torsoGeo, cloth);
+    chest.name = 'reflection-tailored-ribcage';
+    const pelvis = addMesh(torso, pelvisGeo, clothDark, 0, 0.82, -0.004);
+    pelvis.name = 'reflection-pelvis';
+    pelvis.scale.set(1.27, 1, 0.76);
+    const neck = addMesh(torso, neckGeo, clothDark, 0, 1.595, -0.01);
+    neck.name = 'reflection-neck-collar';
+    neck.scale.z = 0.78;
+
+    // Raised lapels describe collarbones and sternum without the bright,
+    // uniform-like V that made the old body read as a mannequin. Torn coat
+    // fronts break the lower silhouette asymmetrically while remaining static.
+    for (const s of [-1, 1]) {
+      const lapel = addMesh(torso, lapelGeo, clothRaised);
+      lapel.name = 'reflection-lapel';
+      lapel.scale.x = s;
+      const panel = addMesh(torso, coatPanelGeo, s < 0 ? clothDark : cloth);
+      panel.name = 'reflection-torn-coat-front';
+      panel.scale.x = s;
+      panel.rotation.z = s * (s < 0 ? 0.018 : -0.01);
+    }
+    addBox(torso, seam, 0.025, 0.49, 0.018, 0, 1.08, 0.145);
+    addBox(torso, seam, 0.09, 0.024, 0.018, -0.1, 0.87, 0.136, 0, 0, -0.08);
     figure.add(torso);
 
     const legs = [];
     for (const s of [-1, 1]) {
       const hip = new THREE.Group();
-      hip.position.set(s * 0.105, 0.82, 0);
-      const upper = addMesh(hip, new THREE.CapsuleGeometry(0.073, 0.35, 4, 8), clothDark,
-        0, -0.22, 0);
+      hip.position.set(s * 0.105, 0.82, -0.002);
+      const upper = addMesh(hip, thighGeo, clothDark, 0, -0.19, 0);
+      upper.name = 'reflection-thigh';
       upper.scale.z = 0.82;
       const knee = new THREE.Group();
-      knee.position.set(0, -0.45, 0.005);
-      const lower = addMesh(knee, new THREE.CapsuleGeometry(0.062, 0.37, 4, 8), cloth,
-        0, -0.23, 0);
-      lower.scale.z = 0.8;
-      addBox(knee, clothDark, 0.14, 0.1, 0.28, 0, -0.49, 0.07);
+      knee.position.set(0, -0.41, 0.004);
+      const kneeCap = addMesh(knee, kneeGeo, s < 0 ? cloth : clothDark, 0, 0, 0.012);
+      kneeCap.name = 'reflection-knee';
+      kneeCap.scale.set(0.93, 0.8, 0.72);
+      const lower = addMesh(knee, calfGeo, cloth, 0, -0.2, -0.003);
+      lower.name = 'reflection-calf';
+      lower.scale.z = 0.78;
+      const shoe = addMesh(knee, shoeGeo, clothDark, 0, -0.405, 0.018);
+      shoe.name = 'reflection-planted-shoe';
+      shoe.rotation.y = s * 0.025;
       hip.add(knee);
       figure.add(hip);
       legs.push({ hip, knee });
@@ -437,23 +582,68 @@ export class Finale {
     const arms = [];
     for (const s of [-1, 1]) {
       const shoulder = new THREE.Group();
-      shoulder.position.set(s * 0.27, 1.44, 0);
+      shoulder.position.set(s * 0.268, 1.445, -0.002);
       shoulder.rotation.z = s * -0.08;
-      const upper = addMesh(shoulder, new THREE.CapsuleGeometry(0.058, 0.3, 4, 8), cloth,
-        0, -0.19, 0);
-      upper.scale.z = 0.84;
+      const deltoid = addMesh(shoulder, deltoidGeo, cloth, 0, -0.025, 0);
+      deltoid.name = 'reflection-deltoid';
+      deltoid.scale.set(0.9, 1.24, 0.76);
+      const upper = addMesh(shoulder, upperArmGeo, s < 0 ? cloth : clothDark,
+        0, -0.18, 0);
+      upper.name = 'reflection-upper-arm';
+      upper.scale.z = 0.82;
       const elbow = new THREE.Group();
-      elbow.position.set(0, -0.39, 0);
-      const lower = addMesh(elbow, new THREE.CapsuleGeometry(0.05, 0.3, 4, 8), clothDark,
-        0, -0.19, 0);
-      lower.scale.z = 0.82;
-      const hand = addMesh(elbow, new THREE.CapsuleGeometry(0.043, 0.09, 4, 8), handMat,
-        0, -0.43, 0.015);
-      hand.scale.set(0.9, 1, 0.72);
+      elbow.position.set(0, -0.375, 0.002);
+      const joint = addMesh(elbow, elbowGeo, s < 0 ? cloth : clothDark, 0, 0, 0);
+      joint.name = 'reflection-elbow';
+      joint.scale.set(0.9, 0.76, 0.72);
+      const lower = addMesh(elbow, forearmGeo, clothDark, 0, -0.17, 0.002);
+      lower.name = 'reflection-forearm';
+      lower.scale.z = 0.8;
+      const cuff = addMesh(elbow, cuffGeo, seam, 0, -0.337, 0.002);
+      cuff.name = 'reflection-cuff';
+      cuff.scale.z = 0.78;
+
+      const hand = new THREE.Group();
+      hand.name = 'reflection-articulated-hand';
+      hand.position.set(0, -0.37, 0.012);
+      const palm = addMesh(hand, palmGeo, handMat, 0, -0.045, 0);
+      palm.name = 'reflection-palm';
+      palm.scale.set(0.92, 1, 0.68);
+      const fingers = new THREE.InstancedMesh(digitGeo, handMat, 4);
+      fingers.name = 'reflection-fingers';
+      fingers.castShadow = true;
+      fingers.receiveShadow = true;
+      const matrix = new THREE.Matrix4();
+      const position = new THREE.Vector3();
+      const rotation = new THREE.Quaternion();
+      const scale = new THREE.Vector3();
+      for (let i = 0; i < 4; i++) {
+        position.set((i - 1.5) * 0.017, -0.125 + Math.abs(i - 1.5) * 0.006, 0.003);
+        rotation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), (i - 1.5) * -0.035);
+        scale.set(0.92, 1 - Math.abs(i - 1.5) * 0.1, 0.72);
+        matrix.compose(position, rotation, scale);
+        fingers.setMatrixAt(i, matrix);
+      }
+      fingers.instanceMatrix.needsUpdate = true;
+      hand.add(fingers);
+      const thumb = addMesh(hand, digitGeo, handMat,
+        s * 0.046, -0.077, 0.006, 0, 0, s * -0.72);
+      thumb.name = 'reflection-thumb';
+      thumb.scale.set(1, 0.86, 0.76);
+      elbow.add(hand);
       shoulder.add(elbow);
       figure.add(shoulder);
-      arms.push({ shoulder, elbow });
+      arms.push({ shoulder, elbow, hand });
     }
+
+    const contactShadow = addMesh(figure, new THREE.CircleGeometry(0.24, 20),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000, transparent: true, opacity: 0.34,
+        depthWrite: false, side: THREE.DoubleSide,
+      }), 0, 0.008, 0.025, -Math.PI / 2);
+    contactShadow.name = 'reflection-contact-shadow';
+    contactShadow.castShadow = false;
+    contactShadow.receiveShadow = false;
 
     const headMount = new THREE.Group();
     headMount.position.y = 1.78;
@@ -960,8 +1150,8 @@ export class Finale {
     // Pull the rim inward as it brightens. A huge-range point light turned the
     // whole torso into a flat white cutout; a tight bone light keeps the jaw and
     // sockets legible while the body remains a silhouette.
-    fd.headLight.intensity = lerp(3.4, 4.5, u) * pulse;
-    fd.headLight.distance = lerp(1.45, 0.82, u);
+    fd.headLight.intensity = lerp(3.55, 4.2, u) * pulse;
+    fd.headLight.distance = lerp(0.92, 0.5, u);
     this.lamp.intensity = lerp(25, 13, u) * (0.94 + pulse * 0.06);
     g.baseTension = 1;
     g.audio.setTension(1);

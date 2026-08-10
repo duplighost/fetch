@@ -27,6 +27,11 @@ function batchStaticGroup(group, name) {
   const buckets = new Map();
   group.traverse((object) => {
     if (!object.isMesh || object.isInstancedMesh || !object.geometry || Array.isArray(object.material)) return;
+    let owner = object;
+    while (owner && owner !== group) {
+      if (owner.userData?.noBatch) return;
+      owner = owner.parent;
+    }
     const material = object.material;
     if (!buckets.has(material)) buckets.set(material, {
       geometries: [], objects: [], cast: false, receive: false,
@@ -100,7 +105,9 @@ export function terrainHeightFn(game) {
 }
 
 export function buildOutside(game) {
+  const graveRenderStart = game.scene.children.length;
   buildGraveyard(game);
+  game.graveyardRenderRoots = game.scene.children.slice(graveRenderStart);
   game.forest = new Forest(game);
   buildClearing(game);
   buildCave(game);
@@ -126,9 +133,11 @@ function buildGraveyard(game) {
   }
   g.computeVertexNormals();
   const ground = new THREE.Mesh(g, M.grass);
+  ground.name = 'graveyard terrain';
   ground.position.set(2, 0, 25);
   ground.receiveShadow = true;
   scene.add(ground);
+  game.graveyardGround = ground;
   // strips flanking the house so no plane crosses under it
   world.box(M.dirt, 0, -0.06, 5.2, 48, 0.1, 2.4);
   world.box(M.dirt, -16, -0.06, -4, 8, 0.1, 22);
@@ -160,12 +169,14 @@ function buildGraveyard(game) {
   addFence(11.9, 6.5, 24, 6.5);
   const postGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.5, 5);
   const postMesh = new THREE.InstancedMesh(postGeo, M.metal, rails.length);
+  postMesh.name = 'graveyard perimeter fence posts';
   const mtx = new THREE.Matrix4();
   rails.forEach(([x, z], i) => {
     mtx.makeTranslation(x, 0.75, z);
     postMesh.setMatrixAt(i, mtx);
   });
   scene.add(postMesh);
+  game.graveyardFencePosts = postMesh;
 
   // headstones — pale against the dark, in uneven rows
   const rng = new RNG(0x9d2f);
@@ -244,6 +255,7 @@ function buildGraveyardLandmarks(game) {
     const darkness = add(new THREE.PlaneGeometry(1.04, 2.05), voidMat, 0, 1.18, -1.735);
     darkness.rotation.y = mirror < 0 ? Math.PI : 0;
     scene.add(g);
+    if (x < 0) game.ritualMausoleum = { group: g, darkness, x, z };
     world.addCollider(x - 1.82, -0.5, z + 1.35, x + 1.82, 3, z + 1.75);
     world.addCollider(x - 1.82, -0.5, z - 1.75, x - 1.42, 3, z + 1.75);
     world.addCollider(x + 1.42, -0.5, z - 1.75, x + 1.82, 3, z + 1.75);
@@ -275,8 +287,218 @@ function buildGraveyardLandmarks(game) {
     landmarks.push(pit);
   }
   game.graveLandmarks = landmarks;
+  buildDestructibleGraves(game);
   buildResonantGraves(game);
   buildGraveyardGate(game);
+  buildOssuaryRoute(game);
+}
+
+function buildDestructibleGraves(game) {
+  const { world, scene, mats: M } = game;
+  const sites = [
+    [-16.2, 12.1, -0.13], [-2.5, 12.7, 0.08], [7.2, 13.4, -0.06],
+    [18.3, 16.8, 0.12], [-10.8, 30.1, -0.1], [18.1, 37.2, 0.07],
+  ];
+  const stoneMat = M.headstone.clone();
+  stoneMat.color.multiplyScalar(0.58);
+  stoneMat.roughness = 0.96;
+  const shaftMesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.72, 1.34, 0.25), stoneMat, sites.length,
+  );
+  const baseMesh = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1.02, 0.22, 0.54), stoneMat, sites.length,
+  );
+  const capMesh = new THREE.InstancedMesh(
+    new THREE.DodecahedronGeometry(0.38, 0), stoneMat, sites.length,
+  );
+  shaftMesh.name = 'destructible hero headstone shafts';
+  baseMesh.name = 'destructible hero headstone bases';
+  capMesh.name = 'destructible hero headstone crowns';
+  for (const mesh of [shaftMesh, baseMesh, capMesh]) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+  }
+
+  // One fixed pool for every chip and topple. Breaking all six stones cannot
+  // allocate another Mesh or grow the scene: exhausted cosmetics are dropped.
+  const DEBRIS_CAP = 36;
+  const debrisMesh = new THREE.InstancedMesh(
+    new THREE.DodecahedronGeometry(0.12, 0), stoneMat, DEBRIS_CAP,
+  );
+  debrisMesh.name = 'bounded destructible-grave debris';
+  debrisMesh.castShadow = true;
+  debrisMesh.frustumCulled = false;
+  scene.add(debrisMesh);
+  const debris = Array.from({ length: DEBRIS_CAP }, () => ({
+    active: false, owner: -1, p: new THREE.Vector3(), v: new THREE.Vector3(),
+    spin: new THREE.Vector3(), age: 0, scale: 0, settled: false,
+  }));
+  const Mtx = new THREE.Matrix4();
+  const P = new THREE.Vector3();
+  const S = new THREE.Vector3();
+  const Q = new THREE.Quaternion();
+  const E = new THREE.Euler();
+  const hiddenQ = new THREE.Quaternion();
+  const hideDebris = (i) => {
+    Mtx.compose(P.set(0, -100, 0), hiddenQ, S.set(0, 0, 0));
+    debrisMesh.setMatrixAt(i, Mtx);
+  };
+  for (let i = 0; i < DEBRIS_CAP; i++) hideDebris(i);
+  debrisMesh.instanceMatrix.needsUpdate = true;
+
+  const states = sites.map(([x, z, lean], index) => {
+    const yaw = (index * 1.73) % 0.7 - 0.35;
+    const collider = world.addCollider(x - 0.5, -0.4, z - 0.36, x + 0.5, 1.72, z + 0.36,
+      { destructibleGrave: index });
+    const state = {
+      index, x, z, yaw, lean, collider, hits: 0,
+      rock: 0, chip: 0, chipTarget: 0, topple: 0, toppleTarget: 0,
+      target: null, _visualDirty: true,
+      reset() {
+        this.hits = 0;
+        this.rock = 0;
+        this.chip = this.chipTarget = 0;
+        this.topple = this.toppleTarget = 0;
+        this._visualDirty = true;
+        this.collider.max.y = 1.72;
+        if (this.target) this.target.enabled = true;
+        for (let i = 0; i < debris.length; i++) {
+          if (debris[i].owner !== this.index) continue;
+          debris[i].active = false;
+          debris[i].owner = -1;
+          debris[i].settled = false;
+          hideDebris(i);
+        }
+        debrisMesh.instanceMatrix.needsUpdate = true;
+      },
+    };
+    state.target = world.addFetchTarget({
+      id: `breakableGrave:${index + 1}`,
+      pos: new THREE.Vector3(x, 0.9, z),
+      radius: 0.92,
+      onHit(skull, at) {
+        if (skull.mode !== 'outbound') return 'continue';
+        if (state.hits >= 2) return 'return';
+        state.hits++;
+        state.rock = 1;
+        state.chipTarget = 1;
+        state._visualDirty = true;
+        const fragments = state.hits === 2 ? 5 : 2;
+        let made = 0;
+        for (let i = 0; i < debris.length && made < fragments; i++) {
+          const d = debris[i];
+          if (d.active) continue;
+          const angle = index * 1.71 + made * 2.17;
+          d.active = true;
+          d.owner = index;
+          d.age = 0;
+          d.settled = false;
+          d.scale = 0.65 + ((index + made * 3) % 5) * 0.12;
+          d.p.set(x + Math.cos(angle) * 0.14, 0.72 + made * 0.08, z + Math.sin(angle) * 0.14);
+          d.v.set(Math.cos(angle) * (0.65 + made * 0.13), 1.45 + made * 0.22,
+            Math.sin(angle) * (0.65 + made * 0.13));
+          d.spin.set(2.1 + made, angle, 1.4 + index * 0.17);
+          made++;
+        }
+        game.impact('hurt', at || state.target.pos);
+        game.audio.stoneGrind({ pos: state.target.pos, gain: state.hits === 2 ? 0.78 : 0.48,
+          rate: state.hits === 2 ? 0.68 : 0.92, verb: 0.75 });
+        game.player.noise = 1;
+        if (state.hits === 2) {
+          state.toppleTarget = 1;
+          state.collider.max.y = 0.25;
+          state.target.enabled = false;
+          game.enemies.resonancePulse?.(state.target.pos, 5.4, 1.15);
+          game.flag(`graveToppled:${index + 1}`);
+          game.audio.metalDrop({ pos: state.target.pos, gain: 0.55, rate: 0.62 });
+        }
+        return 'return';
+      },
+    });
+    return state;
+  });
+
+  const writeStones = (dt, force = false) => {
+    let dirty = false;
+    for (const st of states) {
+      const oldRock = st.rock;
+      const oldChip = st.chip;
+      const oldTopple = st.topple;
+      st.rock = Math.max(0, st.rock - dt * 2.7);
+      st.chip += (st.chipTarget - st.chip) * Math.min(1, dt * 8);
+      st.topple += (st.toppleTarget - st.topple) * Math.min(1, dt * 3.2);
+      if (Math.abs(st.chipTarget - st.chip) < 0.0001) st.chip = st.chipTarget;
+      if (Math.abs(st.toppleTarget - st.topple) < 0.0001) st.topple = st.toppleTarget;
+      const changed = force || st._visualDirty
+        || Math.abs(st.rock - oldRock) > 1e-7
+        || Math.abs(st.chip - oldChip) > 1e-7
+        || Math.abs(st.topple - oldTopple) > 1e-7;
+      st._visualDirty = false;
+      if (!changed) continue;
+      dirty = true;
+      const wobble = Math.sin(st.rock * Math.PI * 5) * st.rock * 0.09;
+      const ground = Math.sin(st.x * 0.23) * Math.sin(st.z * 0.31) * 0.22;
+      const fall = smoothstep(0, 1, st.topple);
+
+      Q.setFromEuler(E.set(fall * (1.32 + (st.index % 2) * 0.18), st.yaw,
+        st.lean + wobble + fall * (st.index % 2 ? -0.28 : 0.28)));
+      Mtx.compose(P.set(st.x + Math.sin(st.yaw) * fall * 0.32,
+        ground + 0.78 - fall * 0.52, st.z + Math.cos(st.yaw) * fall * 0.32),
+      Q, S.set(1 - st.chip * 0.06, 1 - st.chip * 0.08, 1));
+      shaftMesh.setMatrixAt(st.index, Mtx);
+
+      Q.setFromEuler(E.set(0, st.yaw, 0));
+      Mtx.compose(P.set(st.x, ground + 0.11, st.z), Q, S.set(1, 1, 1));
+      baseMesh.setMatrixAt(st.index, Mtx);
+
+      Q.setFromEuler(E.set(st.chip * 0.5 + fall * 1.1, st.yaw + st.chip * 0.35,
+        st.lean + fall * 0.45));
+      Mtx.compose(P.set(st.x + st.chip * 0.24 + fall * 0.42,
+        ground + 1.55 - st.chip * 0.32 - fall * 1.24,
+        st.z + st.chip * (st.index % 2 ? -0.16 : 0.16)), Q,
+      S.set(1.05, 0.68, 0.8));
+      capMesh.setMatrixAt(st.index, Mtx);
+    }
+    if (dirty) {
+      shaftMesh.instanceMatrix.needsUpdate = true;
+      capMesh.instanceMatrix.needsUpdate = true;
+      if (force) baseMesh.instanceMatrix.needsUpdate = true;
+    }
+  };
+  writeStones(0, true);
+
+  game.tickers.push((dt) => {
+    writeStones(dt);
+    let dirty = false;
+    for (let i = 0; i < debris.length; i++) {
+      const d = debris[i];
+      if (!d.active || d.settled) continue;
+      dirty = true;
+      d.age += dt;
+      if (d.p.y > 0.08 || d.v.y > 0) {
+        d.v.y -= 8.8 * dt;
+        d.p.addScaledVector(d.v, dt);
+        if (d.p.y < 0.08) {
+          d.p.y = 0.08;
+          d.v.multiplyScalar(0.28);
+          d.v.y = Math.abs(d.v.y) * 0.16;
+        }
+      }
+      if (d.p.y <= 0.0801 && d.v.lengthSq() < 0.0064) {
+        d.p.y = 0.08;
+        d.v.set(0, 0, 0);
+        d.settled = true;
+      }
+      Q.setFromEuler(E.set(d.spin.x * d.age, d.spin.y + d.age, d.spin.z * d.age));
+      Mtx.compose(d.p, Q, S.setScalar(d.scale));
+      debrisMesh.setMatrixAt(i, Mtx);
+    }
+    if (dirty) debrisMesh.instanceMatrix.needsUpdate = true;
+  });
+  game.destructibleGraves = states;
+  game.graveDebrisPool = { mesh: debrisMesh, entries: debris, capacity: DEBRIS_CAP };
 }
 
 function buildResonantGraves(game) {
@@ -323,12 +545,31 @@ function buildResonantGraves(game) {
     group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     scene.add(group);
     world.addCollider(x - 0.66, -0.5, z - 0.66, x + 0.66, 2.65, z + 0.66);
-    const state = { group, shaft, cooldown: 0, flare: 0 };
+    const state = {
+      group, shaft, crownLeft, crownRight, brokenCap,
+      index: graves.length, cooldown: 0, flare: 0,
+      credited: false, credit: 0, creditTarget: 0,
+      setCredited(on = true) {
+        this.credited = !!on;
+        this.creditTarget = on ? 1 : 0;
+      },
+      reset() {
+        this.cooldown = 0;
+        this.flare = 0;
+        this.credited = false;
+        this.credit = 0;
+        this.creditTarget = 0;
+      },
+    };
     state.target = world.addFetchTarget({
       id: `resonantGrave:${graves.length + 1}`,
       object: shaft,
       radius: 0.82,
       onHit(skull, at) {
+        // One ritual statement belongs to one committed throw. A curved return
+        // may pass another headstone on its way home, but it must not solve a
+        // second grave backwards or emit a second resonance consequence.
+        if (skull.mode !== 'outbound') return 'continue';
         if (state.cooldown > 0) return 'return';
         state.cooldown = 3.4;
         state.flare = 1;
@@ -336,6 +577,7 @@ function buildResonantGraves(game) {
         const caught = game.enemies.resonancePulse
           ? game.enemies.resonancePulse(pos, 8.2, 1.65)
           : 0;
+        game.director.onGraveResonance?.(state.index, pos);
         game.impact('hurt', at || pos);
         game.audio.stoneGrind({ pos, gain: 0.62, rate: 1.65, verb: 0.7 });
         game.audio.metalDrop({ pos: new THREE.Vector3(x, 1.2, z), gain: 0.42 + Math.min(0.25, caught * 0.04), rate: 1.5 });
@@ -359,11 +601,21 @@ function buildResonantGraves(game) {
     for (const g of graves) {
       g.cooldown = Math.max(0, g.cooldown - dt);
       g.flare = Math.max(0, g.flare - dt * 1.9);
+      g.credit += (g.creditTarget - g.credit) * Math.min(1, dt * 4.2);
       const k = g.flare * g.flare;
       g.group.scale.y = 1 + Math.sin((1 - g.flare) * Math.PI) * k * 0.06;
+      // A credited grave does not merely change color: the fork bows and the
+      // stone's whole mass settles, a permanent silhouette the player can read
+      // from the opposite side of the yard.
+      g.shaft.position.y = 1.38 - g.credit * 0.16;
+      g.crownLeft.position.y = 2.82 - g.credit * 0.28;
+      g.crownRight.position.y = 2.77 - g.credit * 0.24;
+      g.crownLeft.rotation.z = -0.23 - g.credit * 0.34;
+      g.crownRight.rotation.z = 0.3 + g.credit * 0.38;
+      g.brokenCap.position.y = 2.49 - g.credit * 0.18;
       for (let i = 1; i < g.group.children.length; i++) {
         const child = g.group.children[i];
-        if (child.material === seamMat) child.material.opacity = 0.4 + k * 0.6;
+        if (child.material === seamMat) child.material.opacity = 0.4 + k * 0.6 + g.credit * 0.2;
       }
     }
     for (let i = pulses.length - 1; i >= 0; i--) {
@@ -383,7 +635,7 @@ function buildResonantGraves(game) {
 
 function buildGraveyardGate(game) {
   const { world, scene, mats: M } = game;
-  const gate = { t: 0, opening: false, open: false };
+  const gate = { t: 0, opening: false, open: false, ritualStage: 0, ritualTarget: 0 };
   const makeLeaf = (dir) => {
     const leaf = new THREE.Group();
     for (let i = 0; i < 6; i++) {
@@ -409,18 +661,67 @@ function buildGraveyardGate(game) {
   gate.left.position.set(FOREST_GATE.x - 1.6, 0, 42);
   gate.right.position.set(FOREST_GATE.x + 1.6, 0, 42);
   scene.add(gate.left, gate.right);
+  // Three bright, heavy latch weights turn the three distant graves into one
+  // readable physical sentence. Each first toll drops a different weight; no
+  // counter, prompt or hue is needed to understand what the gate is learning.
+  const latchMat = M.metal.clone();
+  latchMat.color.setHex(0x8c887d);
+  latchMat.roughness = 0.58;
+  const header = new THREE.Mesh(new THREE.BoxGeometry(4.05, 0.13, 0.18), M.metal);
+  header.position.set(FOREST_GATE.x, 2.7, 41.96);
+  header.castShadow = true;
+  scene.add(header);
+  gate.header = header;
+  gate.weights = [];
+  for (let i = 0; i < 3; i++) {
+    const weight = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.5, 0.24), latchMat);
+    weight.position.set(FOREST_GATE.x + (i - 1) * 0.62, 2.37, 41.82);
+    weight.rotation.z = (i - 1) * 0.045;
+    weight.castShadow = true;
+    weight.userData.homeY = weight.position.y;
+    scene.add(weight);
+    gate.weights.push(weight);
+  }
   gate.collider = world.addCollider(FOREST_GATE.x - 1.68, -1, 41.82,
     FOREST_GATE.x + 1.68, 2.55, 42.18);
-  gate.openGate = () => { gate.opening = true; };
+  gate.setRitualStage = (stage) => {
+    gate.ritualStage = Math.max(gate.ritualStage, clamp(Math.floor(stage), 0, 3));
+    gate.ritualTarget = gate.ritualStage;
+  };
+  gate.openGate = () => {
+    if (gate.opening || gate.open) return false;
+    gate.setRitualStage(3);
+    gate.opening = true;
+    game.audio.ironGateCreak({
+      pos: new THREE.Vector3(FOREST_GATE.x, 1.15, 42), gain: 0.92, rate: 0.78,
+    });
+    return true;
+  };
   gate.reset = () => {
     gate.t = 0;
     gate.opening = false;
     gate.open = false;
+    gate.ritualStage = 0;
+    gate.ritualTarget = 0;
     gate.left.rotation.y = 0;
     gate.right.rotation.y = 0;
     gate.collider.max.y = 2.55;
+    for (const [i, weight] of gate.weights.entries()) {
+      weight.position.y = weight.userData.homeY;
+      weight.rotation.x = 0;
+      weight.rotation.z = (i - 1) * 0.045;
+    }
   };
   game.tickers.push((dt) => {
+    for (let i = 0; i < gate.weights.length; i++) {
+      const weight = gate.weights[i];
+      const down = i < gate.ritualTarget;
+      const targetY = weight.userData.homeY - (down ? 1.48 : 0);
+      weight.position.y += (targetY - weight.position.y) * Math.min(1, dt * 5.4);
+      const fall = clamp((weight.userData.homeY - weight.position.y) / 1.48, 0, 1);
+      weight.rotation.x = fall * (0.28 + i * 0.09);
+      weight.rotation.z = (i - 1) * 0.045 + fall * (i === 1 ? -0.12 : (i - 1) * 0.16);
+    }
     if (!gate.opening || gate.open) return;
     gate.t = Math.min(1, gate.t + dt * 0.48);
     const e = 1 - (1 - gate.t) ** 3;
@@ -430,6 +731,427 @@ function buildGraveyardGate(game) {
     if (gate.t >= 1) gate.open = true;
   });
   game.graveyardGate = gate;
+  game.graveyardLookbackRoots = [
+    game.graveyardGround,
+    game.graveyardFencePosts,
+    gate.left,
+    gate.right,
+    gate.header,
+    ...gate.weights,
+  ].filter(Boolean);
+}
+
+// --------------------------------------------------------- the under-yard
+// The funeral does not magically open the surface gate. It opens the left
+// mausoleum, whose short authored ossuary turns the three distant resonances
+// into a physical under-yard route. Three alternating baffles keep the path
+// legible (Marrow's active crypt law), while one held skull counterweight opens
+// both the forest-side hatch and the gate above. One verb, one causal chain.
+function buildOssuaryRoute(game) {
+  const { world, scene, mats: M } = game;
+  const mausoleum = game.ritualMausoleum;
+  if (!mausoleum) return;
+
+  const OX = -70;
+  const OZ = -10;
+  const FLOOR = -4.2;
+  const HALF_W = 3;
+  const LENGTH = 30;
+  const HEIGHT = 2.85;
+  const routeRoot = new THREE.Group();
+  routeRoot.name = 'required graveyard ossuary';
+  routeRoot.visible = false;
+  scene.add(routeRoot);
+  const wallMat = M.stone.clone();
+  wallMat.color.multiplyScalar(0.47);
+  wallMat.roughness = 0.96;
+  const floorMat = M.dirt.clone();
+  floorMat.color.multiplyScalar(0.38);
+  const ironMat = M.metal.clone();
+  ironMat.color.setHex(0x3b3c3a);
+  ironMat.roughness = 0.72;
+  const boneMat = M.bone.clone();
+  boneMat.color.multiplyScalar(0.42);
+  if ('emissive' in boneMat) {
+    boneMat.emissive = new THREE.Color(0x171817);
+    boneMat.emissiveIntensity = 0.28;
+  }
+  const wetMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0c0b, roughness: 0.2, metalness: 0.08,
+    transparent: true, opacity: 0.76, depthWrite: false,
+  });
+  const addMeshBox = (mat, x, y, z, w, h, d, name = '') => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    mesh.position.set(x, y, z);
+    mesh.name = name;
+    mesh.receiveShadow = true;
+    routeRoot.add(mesh);
+    return mesh;
+  };
+  const addWall = (x, z, w, d, name = 'ossuary wall') => {
+    addMeshBox(wallMat, x, FLOOR + HEIGHT / 2, z, w, HEIGHT, d, name);
+    return world.addCollider(x - w / 2, FLOOR - 0.5, z - d / 2,
+      x + w / 2, FLOOR + HEIGHT, z + d / 2, { ossuary: true });
+  };
+  const addFloor = (x, z, w, d) => {
+    addMeshBox(floorMat, x, FLOOR - 0.08, z, w, 0.16, d, 'ossuary dirt floor');
+    addMeshBox(wallMat, x, FLOOR + HEIGHT + 0.12, z, w, 0.24, d, 'ossuary roof');
+  };
+
+  // Main ambulatory and two deliberately shallow pockets. They are spaces to
+  // look into, not side-quest clutter or alternate solutions.
+  addFloor(OX, OZ + LENGTH / 2, HALF_W * 2, LENGTH);
+  addFloor(OX - 4.45, OZ + 12, 2.9, 2.6);
+  addFloor(OX + 4.45, OZ + 19, 2.9, 2.6);
+  world.rooms.push(
+    { id: 'ossuaryMain', level: 'ossuary', floorY: FLOOR,
+      x0: OX - HALF_W, z0: OZ, x1: OX + HALF_W, z1: OZ + LENGTH },
+    { id: 'ossuaryPocketWest', level: 'ossuary', floorY: FLOOR,
+      x0: OX - 5.9, z0: OZ + 10.7, x1: OX - HALF_W, z1: OZ + 13.3 },
+    { id: 'ossuaryPocketEast', level: 'ossuary', floorY: FLOOR,
+      x0: OX + HALF_W, z0: OZ + 17.7, x1: OX + 5.9, z1: OZ + 20.3 },
+  );
+  world.addZone('graveyard', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
+    FLOOR - 2, FLOOR + HEIGHT + 1);
+  world.addSurface('stone', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
+    FLOOR - 2, FLOOR + HEIGHT + 1);
+
+  // Side shells leave one human-width opening into each pocket.
+  addWall(OX - HALF_W - 0.15, OZ + 5.35, 0.3, 10.7);
+  addWall(OX - HALF_W - 0.15, OZ + 21.65, 0.3, 16.7);
+  addWall(OX + HALF_W + 0.15, OZ + 9.35, 0.3, 18.7);
+  addWall(OX + HALF_W + 0.15, OZ + 25.15, 0.3, 9.7);
+  // Pocket shells.
+  addWall(OX - 5.9, OZ + 12, 0.3, 2.9);
+  addWall(OX - 4.45, OZ + 10.55, 2.9, 0.3);
+  addWall(OX - 4.45, OZ + 13.45, 2.9, 0.3);
+  addWall(OX + 5.9, OZ + 19, 0.3, 2.9);
+  addWall(OX + 4.45, OZ + 17.55, 2.9, 0.3);
+  addWall(OX + 4.45, OZ + 20.45, 2.9, 0.3);
+
+  // Three alternating ribs: a short maze-shaped sentence, never a procedural
+  // wall lottery. The 1.75m mouths clear player, skull, and return leg.
+  const baffleZ = [OZ + 7.5, OZ + 14.5, OZ + 22];
+  const baffleColliders = [];
+  baffleZ.forEach((z, i) => {
+    const blocksLeft = i % 2 === 0;
+    const w = HALF_W * 2 - 1.75;
+    const x = OX + (blocksLeft ? -1 : 1) * (HALF_W - w / 2);
+    baffleColliders.push(addWall(x, z, w, 0.36, `ossuary baffle ${i + 1}`));
+    // A toothed cap makes each baffle a rib silhouette instead of another box.
+    for (let k = 0; k < 5; k++) {
+      const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.38 + k * 0.025, 5), boneMat);
+      tooth.position.set(x - w / 2 + 0.45 + k * (w - 0.9) / 4,
+        FLOOR + HEIGHT - 0.27, z + (blocksLeft ? 0.05 : -0.05));
+      tooth.rotation.z = Math.PI;
+      routeRoot.add(tooth);
+    }
+  });
+
+  // Dirty center track, pooled water, and one instanced rib population give
+  // the route an authored material history without one draw per bone.
+  for (let i = 0; i < 7; i++) {
+    const stain = new THREE.Mesh(new THREE.CircleGeometry(0.35 + (i % 3) * 0.12, 12), wetMat);
+    stain.rotation.x = -Math.PI / 2;
+    stain.scale.set(0.65 + (i % 2) * 0.4, 1.5 + (i % 3) * 0.3, 1);
+    stain.position.set(OX + Math.sin(i * 2.4) * 1.35, FLOOR + 0.012, OZ + 3 + i * 3.5);
+    routeRoot.add(stain);
+  }
+  const ribGeo = new THREE.TorusGeometry(0.44, 0.035, 4, 10, Math.PI);
+  const ribs = new THREE.InstancedMesh(ribGeo, boneMat, 30);
+  ribs.name = 'ossuary instanced ribs';
+  const ribMtx = new THREE.Matrix4();
+  const ribPos = new THREE.Vector3();
+  const ribQuat = new THREE.Quaternion();
+  const ribScale = new THREE.Vector3();
+  const ribEuler = new THREE.Euler();
+  for (let i = 0; i < 30; i++) {
+    const side = i % 2 ? -1 : 1;
+    ribPos.set(OX + side * (2.55 + (i % 3) * 0.08), FLOOR + 0.18 + (i % 4) * 0.08,
+      OZ + 1.2 + (i / 30) * 27.4);
+    ribQuat.setFromEuler(ribEuler.set(Math.PI / 2, side * Math.PI / 2, side * 0.18));
+    ribScale.set(0.65 + (i % 4) * 0.08, 0.75 + (i % 3) * 0.09, 1);
+    ribMtx.compose(ribPos, ribQuat, ribScale);
+    ribs.setMatrixAt(i, ribMtx);
+  }
+  ribs.instanceMatrix.needsUpdate = true;
+  routeRoot.add(ribs);
+
+  // The surface mausoleum physically opens: its false black doorway clears,
+  // a floor slab sinks, and a bright stair throat replaces it.
+  const surfacePit = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.48),
+    new THREE.MeshBasicMaterial({ color: 0x010202, side: THREE.DoubleSide }));
+  surfacePit.rotation.x = -Math.PI / 2;
+  surfacePit.position.set(mausoleum.x, 0.035, mausoleum.z + 0.15);
+  surfacePit.visible = false;
+  scene.add(surfacePit);
+  const surfaceSlab = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.16, 1.5), wallMat);
+  surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
+  surfaceSlab.castShadow = true;
+  scene.add(surfaceSlab);
+  const stairThroat = new THREE.Group();
+  stairThroat.visible = false;
+  scene.add(stairThroat);
+  for (let i = 0; i < 5; i++) {
+    const tread = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.17, 0.31), wallMat);
+    tread.position.set(mausoleum.x, -0.02 - i * 0.15, mausoleum.z - 0.38 + i * 0.27);
+    stairThroat.add(tread);
+  }
+  const entryLamp = { x: mausoleum.x, y: 0.74, z: mausoleum.z + 0.45, intensity: 0, r: 5.5 };
+  world.candles.push(entryLamp);
+
+  // Final physical pawl and rising forest-side hatch.
+  const mechanism = new THREE.Group();
+  mechanism.name = 'ossuary gate counterweight';
+  mechanism.userData.noBatch = true;
+  mechanism.position.set(OX, FLOOR, OZ + 26.2);
+  routeRoot.add(mechanism);
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.075, 8, 24), ironMat);
+  wheel.position.set(0, 1.35, 0.1);
+  wheel.rotation.y = Math.PI / 2;
+  mechanism.add(wheel);
+  for (let i = 0; i < 6; i++) {
+    const spoke = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.98, 5), ironMat);
+    spoke.position.set(0, 1.35, 0.1);
+    spoke.rotation.x = i / 6 * Math.PI;
+    mechanism.add(spoke);
+  }
+  const weight = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.82, 0.5), ironMat);
+  weight.position.set(1.15, 2.15, 0);
+  mechanism.add(weight);
+  const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.7, 6), ironMat);
+  chain.position.set(1.15, 2.65, 0);
+  mechanism.add(chain);
+  const exitSlab = new THREE.Mesh(new THREE.BoxGeometry(HALF_W * 2 - 0.35, 2.65, 0.34), wallMat);
+  exitSlab.userData.noBatch = true;
+  exitSlab.position.set(OX, FLOOR + 1.33, OZ + 28.15);
+  routeRoot.add(exitSlab);
+  const exitCollider = world.addCollider(OX - HALF_W, FLOOR - 0.5, OZ + 27.94,
+    OX + HALF_W, FLOOR + HEIGHT, OZ + 28.34, { ossuaryExit: true });
+  // The shaft beyond is deliberately brighter than every side pocket.
+  const shaftGlow = { x: OX, y: FLOOR + 1.1, z: OZ + 29.2, intensity: 4.2, r: 7 };
+  world.candles.push(shaftGlow);
+  for (const x of [OX - 1.0, OX, OX + 1.0]) {
+    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.5, 6), ironMat);
+    rung.position.set(x, FLOOR + 1.6, OZ + 29.2);
+    rung.rotation.z = Math.PI / 2;
+    routeRoot.add(rung);
+  }
+
+  // A witness owns the final composition without blocking the route or
+  // becoming another mandatory health bar. It turns only between looks and
+  // sinks when the counterweight pays out.
+  const witness = new THREE.Group();
+  witness.name = 'ossuary standing witness';
+  witness.userData.noBatch = true;
+  const witnessBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.9, 3, 7),
+    new THREE.MeshStandardMaterial({ color: 0x090a0a, roughness: 1 }));
+  witnessBody.position.y = 0.88;
+  witnessBody.scale.set(0.68, 1, 0.48);
+  witness.add(witnessBody);
+  const witnessHead = new THREE.Mesh(new THREE.SphereGeometry(0.17, 9, 7), boneMat);
+  witnessHead.position.y = 1.58;
+  witnessHead.scale.set(0.68, 1.15, 0.78);
+  witness.add(witnessHead);
+  witness.position.set(OX + 1.85, FLOOR, OZ + 24.2);
+  routeRoot.add(witness);
+
+  const state = {
+    origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
+    unlocked: false, route: null, inOssuary: false, solved: false,
+    pulling: false, progress: 0, slabT: 0, exitT: 0,
+    surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider,
+    mechanism, wheel, weight, witness, target: null,
+    unlock(route = 'ritual') {
+      if (this.unlocked) return false;
+      this.unlocked = true;
+      this.route = route;
+      game.flag('graveyardResolved');
+      game.flag('ossuaryOpened');
+      mausoleum.darkness.visible = false;
+      surfacePit.visible = true;
+      stairThroat.visible = true;
+      game.audio.stoneGrind({ pos: new THREE.Vector3(mausoleum.x, 0, mausoleum.z), gain: 0.82, rate: 0.68 });
+      return true;
+    },
+    reset() {
+      if (game.flags.has('graveyardResolved')) return;
+      this.unlocked = false;
+      this.route = null;
+      this.inOssuary = false;
+      this.solved = false;
+      this.pulling = false;
+      this.progress = 0;
+      this.slabT = 0;
+      this.exitT = 0;
+      surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
+      surfaceSlab.rotation.x = 0;
+      surfacePit.visible = false;
+      stairThroat.visible = false;
+      mausoleum.darkness.visible = true;
+      exitSlab.position.y = FLOOR + 1.33;
+      exitCollider.max.y = FLOOR + HEIGHT;
+      if (this.target) this.target.enabled = true;
+    },
+  };
+  game.ossuary = state;
+
+  // A solid wall still costs every draw behind it: WebGL performs depth
+  // rejection, not whole-scene portal culling. From the east pocket the camera
+  // frustum also contains the house and most of the graveyard, which formerly
+  // submitted more than a thousand hidden draws. Treat this offset under-yard
+  // as a sealed district while occupied, preserving and restoring every
+  // exterior root's live visibility exactly.
+  const ossuarySaved = new Map();
+  let ossuaryVisibilityActive = false;
+  const keepInOssuary = (child) => child === game.camera
+    || child === game.skull?.root
+    || child === routeRoot
+    || child === game._impactRing
+    || child === game._impactLight
+    || child.isLight;
+  const syncOssuaryVisibility = () => {
+    if (state.inOssuary) {
+      ossuaryVisibilityActive = true;
+      for (const child of scene.children) {
+        if (keepInOssuary(child)) continue;
+        if (!ossuarySaved.has(child)) ossuarySaved.set(child, child.visible);
+        child.visible = false;
+      }
+      return;
+    }
+    if (!ossuaryVisibilityActive) return;
+    for (const [child, visible] of ossuarySaved) child.visible = visible;
+    ossuarySaved.clear();
+    ossuaryVisibilityActive = false;
+  };
+
+  const anchorPos = new THREE.Vector3(OX, FLOOR + 1.35, OZ + 26.1);
+  state.target = world.addFetchTarget({
+    id: 'ossuaryCounterweight', object: wheel, radius: 0.86,
+    onHit(skull, at) {
+      if (state.solved) return 'return';
+      if (skull.mode !== 'outbound') return 'continue';
+      this.enabled = false;
+      state.pulling = true;
+      skull.anchorAt(anchorPos, { maxHold: 4.5, puzzleId: 'ossuaryCounterweight' });
+      game.impact('locked', at || anchorPos);
+      game.audio.metalDrop({ pos: anchorPos, gain: 0.62, rate: 0.72 });
+      return 'anchor';
+    },
+  });
+
+  const eye = new THREE.Vector3();
+  const look = new THREE.Vector3();
+  const toWitness = new THREE.Vector3();
+  game.tickers.push((dt, time) => {
+    let crossedFarExit = false;
+    state.slabT += ((state.unlocked ? 1 : 0) - state.slabT) * Math.min(1, dt * 1.6);
+    surfaceSlab.position.y = 0.11 - state.slabT * 1.06;
+    surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.72;
+    surfaceSlab.rotation.x = -state.slabT * 0.42;
+    entryLamp.intensity += ((state.unlocked ? 3.2 : 0) - entryLamp.intensity) * Math.min(1, dt * 2.4);
+
+    const player = game.player;
+    const p = player.pos;
+    const skull = game.skull;
+    // Crossing the black stair throat swaps to an enclosed offset district on
+    // the same act. There is no prompt, camera pan, or input lock.
+    if (state.unlocked && !state.inOssuary && game.act === 'graveyard'
+      && skull?.mode === 'held'
+      && Math.abs(p.x - mausoleum.x) < 0.58
+      && p.z > mausoleum.z - 0.12 && p.z < mausoleum.z + 1.2 && p.y > -1) {
+      state.inOssuary = true;
+      p.set(OX, FLOOR, OZ + 0.85);
+      player.vel.set(0, 0, 0);
+      player.fallV = 0;
+      player.grounded = true;
+      player.yaw = 0;
+      player.pitch = 0;
+      player._sync(0);
+      game.enemies.clear((enemy) => enemy.graveArena || enemy.gravePressure);
+      game.flag('ossuaryEntered');
+      game.checkpoint('graveyard');
+      game.audio.stoneGrind({ pos: new THREE.Vector3(OX, FLOOR, OZ), gain: 0.34, rate: 0.54 });
+    }
+    if (state.inOssuary && !state.solved && p.z < OZ + 0.28 && skull?.mode === 'held') {
+      state.inOssuary = false;
+      p.set(mausoleum.x, 0.04, mausoleum.z - 1.2);
+      player.vel.set(0, 0, 0);
+      player.fallV = 0;
+      player.grounded = true;
+      player.yaw = Math.PI;
+      player._sync(0);
+      game.checkpoint('graveyard');
+    }
+
+    const anchored = skull?.mode === 'anchored'
+      && skull.anchor?.puzzleId === 'ossuaryCounterweight';
+    if (!state.solved) {
+      if (anchored) state.progress = Math.min(1, state.progress + dt / 1.7);
+      else state.progress = Math.max(0, state.progress - dt * 1.4);
+      if (!anchored && skull?.mode === 'held') {
+        state.pulling = false;
+        state.target.enabled = true;
+      }
+    }
+    wheel.rotation.x = state.progress * TAU * 1.45;
+    weight.position.y = 2.15 - state.progress * 1.34;
+    chain.scale.y = 1 + state.progress * 0.78;
+    chain.position.y = 2.65 - state.progress * 0.34;
+    if (!state.solved && state.progress >= 1) {
+      state.solved = true;
+      state.pulling = false;
+      state.target.enabled = false;
+      game.flag('ossuaryCleared');
+      game.flag('graveyardCleared');
+      game.graveyardGate?.openGate?.('ossuary');
+      exitCollider.max.y = exitCollider.min.y;
+      game.audio.metalDrop({ pos: anchorPos, gain: 0.88, rate: 0.62 });
+      game.audio.duck(0.2, 2.8);
+      game.checkpoint('graveyard');
+    }
+    state.exitT += ((state.solved ? 1 : 0) - state.exitT) * Math.min(1, dt * 1.8);
+    exitSlab.position.y = FLOOR + 1.33 - state.exitT * 3.1;
+    exitSlab.rotation.z = state.exitT * 0.08;
+
+    if (state.inOssuary) {
+      const camPos = game.camera.getWorldPosition(eye);
+      game.camera.getWorldDirection(look);
+      const d = toWitness.copy(witness.position).sub(camPos).length() || 1;
+      const watched = toWitness.multiplyScalar(1 / d).dot(look) > 0.88;
+      if (!watched && !state.solved) witness.lookAt(p.x, witness.position.y + 0.8, p.z);
+    }
+    witness.position.y += (((state.solved ? FLOOR - 1.9 : FLOOR) - witness.position.y)
+      * Math.min(1, dt * 1.2));
+
+    if (state.inOssuary && state.solved && p.z > OZ + 28.45 && skull?.mode === 'held') {
+      state.inOssuary = false;
+      p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 0.55);
+      player.vel.set(0, 0, 0);
+      player.fallV = 0;
+      player.grounded = true;
+      // The hatch rises beyond the gate. Face into the new chapter instead of
+      // back toward the completed 1,000-draw yard, and commit the forest act
+      // in this same fixed step rather than exposing one graveyard frame.
+      player.yaw = Math.PI;
+      player.pitch = 0;
+      player._sync(0);
+      game.flag('ossuaryExited');
+      game.director.setAct('forest');
+      game.forest?.recentre(player.pos);
+      game.checkpoint('forest');
+      game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
+      crossedFarExit = true;
+    }
+    routeRoot.visible = state.inOssuary;
+    syncOssuaryVisibility();
+    if (crossedFarExit) game.forest?.syncBackDistrictCulling(true);
+  });
+
+  // Keep the room's static detail to four-ish draws (batched materials plus
+  // one InstancedMesh) instead of paying for every rib, stain, and baffle.
+  batchStaticGroup(routeRoot, 'ossuary shell');
 }
 
 function buildWreckedCar(game) {
@@ -644,13 +1366,23 @@ function buildWreckedCar(game) {
 
 function buildGraveyardBodies(game) {
   const { scene } = game;
-  const clothes = [0x202329, 0x2b2628, 0x1c2526, 0x292922].map((color) =>
-    new THREE.MeshStandardMaterial({ color, roughness: 0.95 }));
-  // Desaturated, low-value flesh stays recognisably human under the headlight
-  // without turning the victims into white shop mannequins.
-  const skin = new THREE.MeshStandardMaterial({ color: 0x373634, roughness: 0.98 });
+  // Value separation does the anatomical work at gameplay distance. Clothing
+  // sits close to the night while the small areas of exposed skin remain
+  // legible in the skull light; the former shared mid-grey made every body read
+  // as one injection-moulded mannequin.
+  const clothes = [0x12191e, 0x211317, 0x111b19, 0x1d1c14].map((color) =>
+    new THREE.MeshStandardMaterial({ color, roughness: 0.98 }));
+  const trousers = [0x090c0f, 0x100b0e, 0x0a100f, 0x11110d].map((color) =>
+    new THREE.MeshStandardMaterial({ color, roughness: 0.99 }));
+  const seam = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 1 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0x554941, roughness: 1 });
   const shoe = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.98 });
   const hair = new THREE.MeshStandardMaterial({ color: 0x11100f, roughness: 1 });
+  const faceDark = new THREE.MeshStandardMaterial({ color: 0x080909, roughness: 1 });
+  const contactMat = new THREE.MeshBasicMaterial({
+    color: 0x010202, transparent: true, opacity: 0.58, depthWrite: false,
+    side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1,
+  });
   const Y = new THREE.Vector3(0, 1, 0);
   const bodies = [];
   const poses = [
@@ -689,98 +1421,319 @@ function buildGraveyardBodies(game) {
   dragMarks.name = 'graveyard body drag marks';
   scene.add(dragMarks);
 
-  const limb = (group, a, b, radius, mat) => {
+  // A small ring-volume builder gives the torso and head an actual anatomical
+  // outline: shoulder shelf, rib cage, waist, jaw and occiput.  It is cheaper
+  // than stacking spheres and, crucially, never presents a circular capsule
+  // silhouette to the camera.
+  const sectionGeometry = (sections, sides = 8) => {
+    const positions = [];
+    const indices = [];
+    for (const s of sections) {
+      for (let j = 0; j < sides; j++) {
+        const a = (j / sides) * TAU + Math.PI / sides;
+        const irregular = 1 + ((j & 1) ? 0.025 : -0.018);
+        positions.push(
+          (s.x || 0) + Math.cos(a) * s.w * irregular,
+          s.y + Math.sin(a) * s.h,
+          s.z,
+        );
+      }
+    }
+    for (let i = 0; i < sections.length - 1; i++) {
+      for (let j = 0; j < sides; j++) {
+        const n = (j + 1) % sides;
+        const a = i * sides + j, b = i * sides + n;
+        const c = (i + 1) * sides + n, d = (i + 1) * sides + j;
+        indices.push(a, b, d, b, c, d);
+      }
+    }
+    const firstCenter = positions.length / 3;
+    const first = sections[0];
+    positions.push(first.x || 0, first.y, first.z);
+    const lastCenter = positions.length / 3;
+    const last = sections.at(-1);
+    positions.push(last.x || 0, last.y, last.z);
+    for (let j = 0; j < sides; j++) {
+      const n = (j + 1) % sides;
+      indices.push(firstCenter, n, j);
+      const base = (sections.length - 1) * sides;
+      indices.push(lastCenter, base + j, base + n);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+
+  // Limbs follow a three-ring bent path with elliptical cross-sections and
+  // different joint radii.  The old CapsuleGeometry had the same rubber-hose
+  // radius at shoulder, wrist, thigh and ankle.
+  const limbGeometry = (a, b, r0, r1, flatten = 0.7, bend = 0) => {
     const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b);
-    const dir = vb.clone().sub(va);
-    const len = dir.length();
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, Math.max(0.02, len - radius * 2), 3, 7), mat);
-    mesh.position.copy(va).add(vb).multiplyScalar(0.5);
-    mesh.quaternion.setFromUnitVectors(Y, dir.normalize());
+    const axis = vb.clone().sub(va).normalize();
+    const lateral = new THREE.Vector3().crossVectors(Y, axis);
+    if (lateral.lengthSq() < 0.001) lateral.set(1, 0, 0);
+    lateral.normalize();
+    const mid = va.clone().lerp(vb, 0.52).addScaledVector(lateral, bend);
+    mid.y += Math.min(0.022, va.distanceTo(vb) * 0.035);
+    const path = [va, mid, vb];
+    const radii = [r0, (r0 + r1) * 0.525, r1];
+    const sides = 7;
+    const positions = [], indices = [];
+    for (let i = 0; i < path.length; i++) {
+      const tangent = (i === 0 ? path[1].clone().sub(path[0])
+        : i === path.length - 1 ? path[i].clone().sub(path[i - 1])
+          : path[i + 1].clone().sub(path[i - 1])).normalize();
+      const side = new THREE.Vector3().crossVectors(Y, tangent);
+      if (side.lengthSq() < 0.001) side.set(1, 0, 0);
+      side.normalize();
+      const up = new THREE.Vector3().crossVectors(tangent, side).normalize();
+      for (let j = 0; j < sides; j++) {
+        const angle = (j / sides) * TAU + 0.19;
+        const ring = path[i].clone()
+          .addScaledVector(side, Math.cos(angle) * radii[i] * (j & 1 ? 0.98 : 1.04))
+          .addScaledVector(up, Math.sin(angle) * radii[i] * flatten);
+        positions.push(ring.x, ring.y, ring.z);
+      }
+    }
+    for (let i = 0; i < path.length - 1; i++) {
+      for (let j = 0; j < sides; j++) {
+        const n = (j + 1) % sides;
+        const p0 = i * sides + j, p1 = i * sides + n;
+        const p2 = (i + 1) * sides + n, p3 = (i + 1) * sides + j;
+        indices.push(p0, p1, p3, p1, p2, p3);
+      }
+    }
+    const start = positions.length / 3;
+    positions.push(va.x, va.y, va.z);
+    const end = positions.length / 3;
+    positions.push(vb.x, vb.y, vb.z);
+    for (let j = 0; j < sides; j++) {
+      const n = (j + 1) % sides;
+      indices.push(start, n, j);
+      const base = (path.length - 1) * sides;
+      indices.push(end, base + j, base + n);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+  const limb = (group, a, b, r0, r1, mat, flatten = 0.7, bend = 0) => {
+    const mesh = new THREE.Mesh(limbGeometry(a, b, r0, r1, flatten, bend), mat);
     mesh.castShadow = true;
     group.add(mesh);
     return mesh;
   };
+  const digit = (group, a, b, r0, r1, mat) => limb(group, a, b, r0, r1, mat, 0.62);
+
+  // Faceted wedge shared by palms and shoes. A narrow heel/wrist and broad,
+  // lowered toe/finger edge reads as a hand or boot instead of a Lego brick.
+  const wedgeGeometry = (length, heelWidth, toeWidth, height) => {
+    const h = height * 0.5, l = length * 0.5;
+    const positions = [
+      -heelWidth, -h, -l, heelWidth, -h, -l, -toeWidth, -h, l, toeWidth, -h, l,
+      -heelWidth * 0.92, h, -l, heelWidth * 0.92, h, -l,
+      -toeWidth * 0.88, h * 0.56, l, toeWidth * 0.88, h * 0.56, l,
+    ];
+    const indices = [
+      0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6,
+      0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7,
+      0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5,
+    ];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+
+  const panelGeometry = (vertices, indices) => {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    return geometry;
+  };
+
+  const contactShape = new THREE.Shape();
+  contactShape.moveTo(-0.2, -0.9);
+  contactShape.bezierCurveTo(-0.5, -0.65, -0.48, -0.08, -0.32, 0.25);
+  contactShape.bezierCurveTo(-0.42, 0.67, -0.26, 1.25, -0.12, 1.57);
+  contactShape.lineTo(0.14, 1.52);
+  contactShape.bezierCurveTo(0.28, 1.08, 0.45, 0.55, 0.31, 0.2);
+  contactShape.bezierCurveTo(0.5, -0.2, 0.42, -0.68, 0.2, -0.92);
+  contactShape.closePath();
+  const contactGeo = new THREE.ShapeGeometry(contactShape, 4);
+  contactGeo.rotateX(Math.PI / 2);
 
   sites.forEach(([x, z], i) => {
     const group = new THREE.Group();
     group.name = 'graveyard body ' + (i + 1);
     const cloth = clothes[i % clothes.length];
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.23, 0.53, 4, 9), cloth);
-    torso.rotation.x = Math.PI / 2;
-    torso.position.set(0, 0.24, 0.04);
-    torso.scale.set(1.05, 1, 0.76);
+    const trouser = trousers[i % trousers.length];
+    const shoulderSkew = (i - 1.5) * 0.018;
+    const torso = new THREE.Mesh(sectionGeometry([
+      { x: -shoulderSkew, y: 0.22, z: -0.35, w: 0.23, h: 0.13 },
+      { x: shoulderSkew, y: 0.235, z: -0.24, w: 0.36, h: 0.17 },
+      { x: shoulderSkew * 0.5, y: 0.225, z: -0.02, w: 0.315, h: 0.175 },
+      { x: -shoulderSkew, y: 0.205, z: 0.22, w: 0.22, h: 0.135 },
+      { x: 0.015 * (i & 1 ? 1 : -1), y: 0.2, z: 0.34, w: 0.235, h: 0.13 },
+    ], 9), cloth);
     torso.castShadow = true;
     group.add(torso);
-    // A torn coat/skirt panel breaks the toy-doll capsule silhouette and pools
-    // against the ground in the direction the body was dragged.
-    const ragGeo = new THREE.BufferGeometry();
-    ragGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-      -0.29, 0, -0.08, 0.29, 0, -0.08, 0.42, 0, 0.74,
-      -0.29, 0, -0.08, 0.42, 0, 0.74, -0.34, 0, 0.91,
-    ], 3));
-    ragGeo.computeVertexNormals();
+    const pelvis = new THREE.Mesh(sectionGeometry([
+      { x: 0.01, y: 0.19, z: 0.25, w: 0.22, h: 0.12 },
+      { x: -0.01, y: 0.19, z: 0.43, w: 0.3, h: 0.145 },
+      { x: 0.018 * (i % 2 ? -1 : 1), y: 0.175, z: 0.58, w: 0.265, h: 0.12 },
+    ], 8), trouser);
+    group.add(pelvis);
+
+    // The irregular hem and raised lapel create cloth-over-body layering, not
+    // a second cone pasted over the same smooth torso.
+    const ragGeo = panelGeometry([
+      -0.3, 0.305, 0.05, 0.3, 0.31, 0.04, 0.35, 0.16, 0.48,
+      0.08, 0.135, 0.62, -0.19, 0.145, 0.54, -0.36, 0.15, 0.39,
+      -0.04, 0.335, 0.22,
+    ], [0, 1, 6, 1, 2, 6, 2, 3, 6, 3, 4, 6, 4, 5, 6, 5, 0, 6]);
     const rag = new THREE.Mesh(ragGeo, cloth);
-    rag.position.set(0, 0.16, 0.12);
-    rag.rotation.y = (i - 1.5) * 0.08;
+    rag.rotation.z = (i - 1.5) * 0.025;
     rag.castShadow = true;
     group.add(rag);
-    const coat = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.92, 7, 1, true), cloth);
-    coat.rotation.x = Math.PI / 2;
-    coat.rotation.z = (i - 1.5) * 0.08;
-    coat.position.set(0, 0.25, 0.08);
-    coat.scale.set(1.16, 1, 0.82);
+    const coat = new THREE.Mesh(panelGeometry([
+      -0.31, 0.335, -0.25, -0.035, 0.405, -0.16, -0.07, 0.33, 0.18,
+      0.035, 0.405, -0.16, 0.3, 0.34, -0.23, 0.08, 0.335, 0.2,
+    ], [0, 1, 2, 1, 3, 2, 3, 4, 5]), cloth);
     group.add(coat);
-    const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.24, 9, 7), cloth);
-    pelvis.position.set(0, 0.2, 0.48);
-    pelvis.scale.set(1.25, 0.65, 0.92);
-    group.add(pelvis);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 11, 8), skin);
-    head.position.set(i === 2 ? 0.09 : 0, 0.21, -0.7);
-    head.scale.set(0.9, 0.72, 1.06);
-    head.rotation.y = (i - 1.5) * 0.35;
-    group.add(head);
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.22, 7), skin);
-    neck.rotation.x = Math.PI / 2;
-    neck.position.set(0, 0.2, -0.5);
-    group.add(neck);
+    for (const [x0, z0, x1, z1] of [
+      [-0.24, -0.13, -0.04, 0.1], [0.2, -0.08, 0.055, 0.13], [-0.18, 0.33, -0.02, 0.5],
+    ]) {
+      const fold = limb(group, [x0, 0.344, z0], [x1, 0.338, z1], 0.011, 0.005,
+        seam, 0.24, 0.004 * (i % 2 ? -1 : 1));
+      fold.castShadow = false;
+    }
+
+    const neck = limb(group, [0, 0.19, -0.35], [0, 0.185, -0.52],
+      0.105, 0.085, skin, 0.68, shoulderSkew);
+    const headRig = new THREE.Group();
+    headRig.position.set(i === 2 ? 0.07 : 0, 0.19, -0.7);
+    headRig.rotation.y = [-0.82, 0.7, -0.56, 0.9][i];
+    const head = new THREE.Mesh(sectionGeometry([
+      { x: 0, y: -0.015, z: -0.2, w: 0.1, h: 0.085 },
+      { x: 0, y: 0, z: -0.13, w: 0.145, h: 0.12 },
+      { x: 0, y: 0.015, z: 0.015, w: 0.18, h: 0.145 },
+      { x: 0, y: 0.015, z: 0.15, w: 0.145, h: 0.125 },
+    ], 9), skin);
+    headRig.add(head);
     const scalp = new THREE.Mesh(new THREE.SphereGeometry(0.195, 9, 6, 0, TAU, 0, Math.PI * 0.56), hair);
-    scalp.position.copy(head.position);
-    scalp.rotation.copy(head.rotation);
-    scalp.scale.copy(head.scale).multiplyScalar(1.01);
-    group.add(scalp);
+    scalp.position.set(0, 0.042, 0.018);
+    scalp.scale.set(0.9, 0.72, 1.02);
+    headRig.add(scalp);
+    if (i !== 3) {
+      const nose = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.105, 5), skin);
+      nose.position.set(0, 0.012, -0.235);
+      nose.rotation.x = -Math.PI / 2;
+      headRig.add(nose);
+    }
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.TetrahedronGeometry(0.052, 0), skin);
+      ear.position.set(side * 0.164, 0.004, 0);
+      ear.scale.set(0.48, 0.9, 0.65);
+      headRig.add(ear);
+      const socket = new THREE.Mesh(new THREE.CircleGeometry(0.031, 7), faceDark);
+      socket.position.set(side * 0.062, 0.035, -0.184);
+      socket.rotation.x = -0.16;
+      headRig.add(socket);
+    }
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.01, 0.008), faceDark);
+    mouth.position.set(0, -0.052, -0.195);
+    mouth.rotation.z = (i - 1.5) * 0.055;
+    headRig.add(mouth);
+    group.add(headRig);
+
     const p = poses[i];
     const armSegments = [
       [[-0.2, 0.25, -0.25], p.le, false], [p.le, p.lh, true],
       [[0.2, 0.25, -0.25], p.re, false], [p.re, p.rh, true],
     ];
-    for (const [a, b, forearm] of armSegments) {
-      limb(group, a, b, 0.065, i === 1 && forearm ? skin : cloth);
+    armSegments.forEach(([a, b, forearm], segment) => {
+      const exposed = i === 1 && forearm;
+      limb(group, a, b, forearm ? 0.07 : 0.095, forearm ? 0.048 : 0.072,
+        exposed ? skin : cloth, forearm ? 0.66 : 0.74,
+        (segment % 2 ? -1 : 1) * (0.012 + i * 0.002));
+    });
+    for (const [elbow, hand, handed] of [[p.le, p.lh, -1], [p.re, p.rh, 1]]) {
+      const handPos = new THREE.Vector3(...hand);
+      const reach = handPos.clone().sub(new THREE.Vector3(...elbow)).setY(0).normalize();
+      const across = new THREE.Vector3(-reach.z, 0, reach.x);
+      const palm = new THREE.Mesh(wedgeGeometry(0.15, 0.05, 0.066, 0.045), skin);
+      palm.position.copy(handPos).addScaledVector(reach, 0.032);
+      palm.rotation.y = Math.atan2(reach.x, reach.z);
+      group.add(palm);
+      for (let finger = 0; finger < 4; finger++) {
+        const splay = (finger - 1.5) * 0.026;
+        const start = handPos.clone().addScaledVector(reach, 0.088).addScaledVector(across, splay);
+        const length = 0.065 + (finger === 1 || finger === 2 ? 0.024 : 0);
+        const end = start.clone().addScaledVector(reach, length)
+          .addScaledVector(across, splay * 0.55);
+        digit(group, start.toArray(), end.toArray(), 0.012, 0.0065, skin);
+      }
+      const thumbStart = handPos.clone().addScaledVector(reach, 0.025)
+        .addScaledVector(across, handed * 0.052);
+      const thumbEnd = thumbStart.clone().addScaledVector(reach, 0.055)
+        .addScaledVector(across, handed * 0.045);
+      digit(group, thumbStart.toArray(), thumbEnd.toArray(), 0.014, 0.007, skin);
     }
-    for (const hand of [p.lh, p.rh]) {
-      const h = new THREE.Mesh(new THREE.SphereGeometry(0.075, 7, 5), skin);
-      h.position.set(...hand);
-      h.scale.set(0.75, 0.45, 1.15);
-      group.add(h);
-    }
-    for (const [a, b, foot] of [
+    for (const [legIndex, [a, b, foot]] of [
       [[-0.14, 0.2, 0.48], p.lk, p.lf], [[0.14, 0.2, 0.48], p.rk, p.rf],
-    ]) {
-      limb(group, a, b, 0.085, cloth);
-      limb(group, b, foot, 0.072, cloth);
-      const f = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.11, 0.3), shoe);
-      f.position.set(...foot);
-      f.rotation.y = i * 0.37;
+    ].entries()) {
+      limb(group, a, b, 0.135, 0.098, trouser, 0.7,
+        (legIndex ? -1 : 1) * (0.014 + i * 0.002));
+      limb(group, b, foot, 0.095, 0.062, trouser, 0.66,
+        (legIndex ? 1 : -1) * 0.01);
+      const footDir = new THREE.Vector3(...foot).sub(new THREE.Vector3(...b));
+      footDir.y = 0;
+      footDir.normalize();
+      const f = new THREE.Mesh(wedgeGeometry(0.32, 0.062, 0.096, 0.105), shoe);
+      f.position.set(...foot).addScaledVector(footDir, 0.055);
+      f.rotation.y = Math.atan2(footDir.x, footDir.z);
+      f.rotation.z = (i % 2 ? -1 : 1) * 0.035;
       group.add(f);
     }
     if (i === 3) {
-      const sheetMat = new THREE.MeshStandardMaterial({ color: 0x4a4d49, roughness: 1, side: THREE.DoubleSide });
-      const sheet = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 1.45, 3, 4), sheetMat);
-      sheet.rotation.x = -Math.PI / 2;
-      sheet.rotation.z = -0.12;
-      sheet.position.set(0.04, 0.34, 0.24);
+      const sheetMat = new THREE.MeshStandardMaterial({ color: 0x353834, roughness: 1, side: THREE.DoubleSide });
+      const rows = 6, cols = 5, vertices = [], indices = [];
+      for (let row = 0; row < rows; row++) {
+        const t = row / (rows - 1);
+        const zz = -0.3 + t * 1.22;
+        const half = 0.5 - Math.abs(t - 0.48) * 0.075;
+        const bodyRise = 0.19 + Math.exp(-(((zz - 0.06) / 0.42) ** 2)) * 0.22
+          + Math.exp(-(((zz - 0.55) / 0.3) ** 2)) * 0.08;
+        for (let col = 0; col < cols; col++) {
+          const u = col / (cols - 1);
+          const xx = (u * 2 - 1) * half + Math.sin(row * 2.2) * 0.018;
+          const edgeDrop = Math.abs(u * 2 - 1) ** 1.7 * 0.15;
+          vertices.push(xx, bodyRise - edgeDrop + Math.sin(row * 1.7 + col * 2.1) * 0.018, zz);
+        }
+      }
+      for (let row = 0; row < rows - 1; row++) {
+        for (let col = 0; col < cols - 1; col++) {
+          const a = row * cols + col, b = a + 1, c = a + cols + 1, d = a + cols;
+          indices.push(a, b, d, b, c, d);
+        }
+      }
+      const sheet = new THREE.Mesh(panelGeometry(vertices, indices), sheetMat);
+      sheet.rotation.y = -0.12;
+      sheet.position.set(0.04, 0.015, 0.06);
       sheet.castShadow = true;
       group.add(sheet);
     }
+    const contact = new THREE.Mesh(contactGeo, contactMat);
+    contact.position.set((i - 1.5) * 0.015, 0.006, 0.28);
+    contact.scale.set(0.92 + i * 0.035, 1, 0.88 + (i % 2) * 0.09);
+    group.add(contact);
     // A body needs one coherent ground shadow, not a separate shadow-map draw
     // for every finger, shoe and hair cap. Keep the torso/coat silhouette and
     // let the smaller anatomy receive light without multiplying arena cost.
@@ -813,6 +1766,14 @@ export class Forest {
     this.game = game;
     const { world, scene, mats: M } = game;
     const rng = new RNG(0x51ab);
+    // Forest props are authored as independent top-level roots so they can
+    // animate and receive skull hits. Keep an exact ownership boundary around
+    // those roots: submitting both optional pockets, every appliance, both
+    // forks, the mire and the arena while the player is still at the house or
+    // graveyard cost more than a hundred invisible/off-route draws on the
+    // target laptop. The distant atmosphere pass supplies the treeline until
+    // the player reaches the gate; these close details wake just before entry.
+    const detailStart = scene.children.length;
 
     // authored heading walk from the gate, ~210m of corridor
     const pts = [];
@@ -839,6 +1800,31 @@ export class Forest {
       }
     }
     this.length = this.samples.length;
+
+    // Two short braids make route choice a physical forest verb instead of a
+    // painted fork sign. Progress remains the same monotonic spline distance,
+    // so the seal, checkpoints, arena trigger and every old test keep one
+    // shared clock. The alternatives are lateral authored ribbons that diverge
+    // from and return to that clock.
+    this.forks = [
+      {
+        id: 'switchboard-braid', startS: 48, endS: 64, commitDistance: 6,
+        separation: 4.25, routeWidth: 1.28, defaultSide: -1,
+      },
+      {
+        id: 'washhouse-braid', startS: 118, endS: 139, commitDistance: 6,
+        separation: 4.4, routeWidth: 1.3, defaultSide: 1,
+      },
+    ].map((fork) => ({
+      ...fork,
+      commitS: fork.startS + fork.commitDistance,
+      selected: null,
+      previewSide: fork.defaultSide,
+      committedAt: null,
+      closureT: 0,
+      closureTarget: 0,
+      closures: null,
+    }));
 
     // Two optional side chapters interrupt the long forward pressure without
     // changing the mandatory centreline. The ground is broad enough for a real
@@ -871,6 +1857,11 @@ export class Forest {
       for (const pocket of this.secretPockets) {
         w += pocket.widen * Math.exp(-(((i - pocket.centerS) / pocket.span) ** 2));
       }
+      for (const fork of this.forks) {
+        const shoulder = smoothstep(fork.startS - 3.5, fork.startS + 3, i)
+          * (1 - smoothstep(fork.endS - 3, fork.endS + 3.5, i));
+        w = Math.max(w, base + shoulder * (fork.separation + fork.routeWidth + 1.45));
+      }
       return w;
     });
 
@@ -884,9 +1875,28 @@ export class Forest {
 
     this._buildFlora(rng);
     this._buildSealPool();
+    this._buildForkTopology();
     this._setpieces();
     this._buildForestLandmarks();
     this._buildOptionalRopes();
+    this._buildForestStoryProps();
+
+    this.detailRoots = scene.children.slice(detailStart);
+    this._detailBaseVisibility = new Map(this.detailRoots.map((root) => [root, root.visible]));
+    this._detailsVisible = false;
+    for (const root of this.detailRoots) root.visible = false;
+
+    // The gate is a one-way composition boundary. Once crossed, keep only the
+    // gate, fence, and ground as a cheap look-back silhouette; the completed
+    // house and graveyard props no longer need to submit hundreds of draws
+    // whenever the player turns south in the forest.
+    const lookback = new Set(game.graveyardLookbackRoots || []);
+    this.backDistrictRoots = [
+      ...(game.houseRenderRoots || []),
+      ...(game.graveyardRenderRoots || []),
+    ].filter((root) => !lookback.has(root));
+    this.backDistrictVisibility = new Map();
+    this.backDistrictCullActive = false;
 
     // NOTE: the forest zone/surface are registered in buildOutside AFTER the
     // clearing and cave, so their tighter rects win the first-match scan.
@@ -895,6 +1905,101 @@ export class Forest {
 
   arenaS() { return Math.floor(this.length * 0.72); }
   ravineS() { return Math.floor(this.length * 0.5); }
+
+  forkAtS(s, margin = 0) {
+    return this.forks.find((fork) => s >= fork.startS - margin && s <= fork.endS + margin) || null;
+  }
+
+  forkRouteOffset(forkOrId, s) {
+    const fork = typeof forkOrId === 'string'
+      ? this.forks.find((candidate) => candidate.id === forkOrId)
+      : forkOrId;
+    if (!fork) return 0;
+    const u = clamp((s - fork.startS) / (fork.endS - fork.startS), 0, 1);
+    return fork.separation * Math.pow(Math.max(0, Math.sin(Math.PI * u)), 0.82);
+  }
+
+  forkRoutePoint(forkOrId, side, s) {
+    const fork = typeof forkOrId === 'string'
+      ? this.forks.find((candidate) => candidate.id === forkOrId)
+      : forkOrId;
+    if (!fork) return this.posAt(s, 0);
+    const point = this.posAt(s, (side < 0 ? -1 : 1) * this.forkRouteOffset(fork, s));
+    point.y = this.heightAt(point.x, point.z);
+    return point;
+  }
+
+  _setForkClosures(fork, closed) {
+    fork.closureTarget = closed ? 1 : 0;
+    if (!fork.closures) return;
+    const selected = fork.selected;
+    for (const row of fork.closures.rows) {
+      const active = !!closed && (row.kind === 'parent' || row.side === -selected);
+      row.target = active ? 1 : 0;
+    }
+  }
+
+  _commitFork(fork, side, atS, { restore = false } = {}) {
+    if (fork.selected) return fork.selected;
+    fork.selected = side < 0 ? -1 : 1;
+    fork.previewSide = fork.selected;
+    fork.committedAt = atS;
+    this._setForkClosures(fork, true);
+    this.game.flags.delete(`forestFork:${fork.id}:left`);
+    this.game.flags.delete(`forestFork:${fork.id}:right`);
+    this.game.flag(`forestFork:${fork.id}:${fork.selected < 0 ? 'left' : 'right'}`);
+    if (!restore) {
+      const mouth = this.forkRoutePoint(fork, -fork.selected, fork.startS + 2.8);
+      this.game.audio.brushCrash({ pos: mouth, gain: 0.7, rate: fork.selected < 0 ? 0.82 : 0.72 });
+      this.game.audio.creak({ pos: this.posAt(fork.startS - 0.35), gain: 0.48, rate: 0.66 });
+      // A choice that closes the parent path is an irreversible spatial beat.
+      // Own a checkpoint just beyond the commitment line, on the selected
+      // ribbon, so death cannot return the player behind their own new wall.
+      const checkpointS = Math.min(fork.endS - 1.2, fork.commitS + 0.9);
+      const checkpointPos = this.forkRoutePoint(fork, fork.selected, checkpointS);
+      checkpointPos.y += 0.025;
+      const ahead = this.forkRoutePoint(fork, fork.selected, checkpointS + 0.45);
+      const yaw = Math.atan2(-(ahead.x - checkpointPos.x), -(ahead.z - checkpointPos.z));
+      this.game.checkpoint('forest', { pos: checkpointPos, yaw, pitch: 0 });
+      fork.checkpoint = { s: checkpointS, pos: checkpointPos.clone(), yaw, pitch: 0 };
+    }
+    return fork.selected;
+  }
+
+  _resetFork(fork) {
+    fork.selected = null;
+    fork.previewSide = fork.defaultSide;
+    fork.committedAt = null;
+    this._setForkClosures(fork, false);
+    this.game.flags.delete(`forestFork:${fork.id}:left`);
+    this.game.flags.delete(`forestFork:${fork.id}:right`);
+    if (fork.closures) {
+      for (const row of fork.closures.rows) {
+        row.t = 0;
+        for (const collider of row.colliders) {
+          collider.max.y = collider.min.y;
+          collider.forkClosureActive = false;
+        }
+      }
+    }
+  }
+
+  _restoreForksForSeat(s, lat = 0) {
+    for (const fork of this.forks) {
+      // A checkpoint behind the mouth must never wake behind our own fixed
+      // parent wall. Inside the six-metre trial, both branches are restored.
+      if (s <= fork.startS + 0.75 || (s < fork.commitS && s <= fork.endS)) {
+        this._resetFork(fork);
+        if (s > fork.startS + 0.75 && Math.abs(lat) > 0.35) fork.previewSide = lat < 0 ? -1 : 1;
+        continue;
+      }
+      if (s < fork.endS - 0.35 && !fork.selected) {
+        this._commitFork(fork, Math.abs(lat) > 0.35 ? Math.sign(lat) : fork.defaultSide, s, { restore: true });
+      } else if (fork.selected) {
+        this._setForkClosures(fork, true);
+      }
+    }
+  }
 
   // Re-seat every piece of forest state on a position the player has just been
   // PUT at rather than walked to. Without this, a death in the forest respawns
@@ -912,8 +2017,11 @@ export class Forest {
     this._lastIdx = best;
     const pr = this.project(x, z);
     const s = pr ? pr.s : best;
+    this._restoreForksForSeat(s, pr?.lat || 0);
     this.sealS = Math.max(-SEAL_TRAIL, s - SEAL_TRAIL);
     this.entered = s > 2;
+    this._mireDepth = 0;
+    this._mireAudioT = 0;
     // Cumulative seal rows belong to one life. Merely moving the numeric
     // frontier does not move or remove the already-stamped instances, so a
     // checkpoint behind the place of death can otherwise wake inside the old
@@ -953,7 +2061,9 @@ export class Forest {
     if (Math.abs(s - ravine) < 2.75) {
       s = s < ravine ? ravine - 4.25 : ravine + 4.25;
     }
-    const pos = this.posAt(s, 0);
+    const fork = this.forkAtS(s);
+    const side = fork ? (fork.selected || fork.previewSide || fork.defaultSide) : 0;
+    const pos = fork ? this.forkRoutePoint(fork, side, s) : this.posAt(s, 0);
     pos.y = this.heightAt(pos.x, pos.z) + 0.025;
     return { s, pos };
   }
@@ -992,9 +2102,11 @@ export class Forest {
   heightAt(x, z) {
     const pr = this.project(x, z);
     if (pr && Math.abs(pr.s - this.ravineS()) < 3.2) {
-      // the ravine: a black gash you do not walk across
+      // What looked like an unloaded map edge is now a real forest mire. Its
+      // rendered skin is walkable ground; postClamp owns the gradual sinking
+      // state so look, movement, throw, recall, and the rope all stay live.
       const d = Math.abs(pr.s - this.ravineS());
-      return lerp(-7, 0, smoothstep(1.4, 3.2, d));
+      return lerp(-0.16, 0, smoothstep(1.9, 3.2, d));
     }
     return Math.sin(x * 0.23) * Math.sin(z * 0.31) * 0.22;
   }
@@ -1015,7 +2127,12 @@ export class Forest {
     // restore) returned a projection tens of metres off the trail, and every
     // system downstream — ground height, the corridor clamp, the seal frontier —
     // then agreed with each other about a place the player was not.
-    if (bestD > 40 * 40) {
+    const warmAnswerHitEdge = best === from || best === to;
+    // An edge winner means the true nearest sample may be just outside this
+    // window even when it is physically close (the authored path has bends).
+    // Scan the short 210m spine once instead of silently quantising progress to
+    // the warm boundary; that is especially important at a fork mouth.
+    if (bestD > 40 * 40 || warmAnswerHitEdge) {
       // cold start: full scan once
       for (let i = 0; i < this.length; i++) {
         const s = this.samples[i];
@@ -1098,6 +2215,33 @@ export class Forest {
       const p = this.posAt(Math.max(pr.s, this.sealS + SEAL_TRAIL));
       pos.x = p.x; pos.z = p.z; pos.y = 0.6;
     }
+    const player = this.game.player;
+    const mireDistance = Math.abs(pr.s - this.ravineS());
+    const inMire = mireDistance < 3.08 && !player.swing;
+    this._inMire = inMire;
+    this._mireDepth = this._mireDepth || 0;
+    this._mireAudioT = Math.max(0, (this._mireAudioT || 0) - dt);
+    if (inMire) {
+      const suction = 1 - smoothstep(1.7, 3.08, mireDistance);
+      this._mireDepth = Math.min(1.72,
+        this._mireDepth + dt * (0.22 + suction * 0.92 + this._mireDepth * 0.17));
+      // Thickening drag still leaves a positive response to every movement
+      // input. Throw/recall remain untouched, and taking the rope clears this
+      // branch entirely because beginSwing is the authored rescue.
+      player.vel.multiplyScalar(Math.exp(-dt * (2.4 + suction * 3.2 + this._mireDepth * 1.1)));
+      const mudY = this.heightAt(pos.x, pos.z);
+      pos.y = mudY - this._mireDepth;
+      player.fallV = 0;
+      player.grounded = true;
+      if (this._mireAudioT <= 0) {
+        this._mireAudioT = 0.72 - suction * 0.24;
+        this.game.audio.thud({ pos, gain: 0.16 + suction * 0.12, rate: 0.48 + (1 - suction) * 0.12 });
+        this.game.shake(0.018 + this._mireDepth * 0.012);
+      }
+      if (this._mireDepth >= 1.48 && !this.game.dead) this.game.director.death(null);
+    } else {
+      this._mireDepth = Math.max(0, this._mireDepth - dt * (player.swing ? 3.6 : 2.15));
+    }
     // Pocket widening is intentionally asymmetric and conditional. Before the
     // matching outbound skull latch, ordinary walking only owns the base route;
     // after it, that pocket's side opens all the way to its real grounded shelf.
@@ -1111,6 +2255,47 @@ export class Forest {
       if (extra < 0.08 || !this.game.flags.has(`${pocket.flag}:latched`)) continue;
       if (pocket.side > 0) maxLat = Math.max(maxLat, baseHw + extra);
       else minLat = Math.min(minLat, -baseHw - extra);
+    }
+    const fork = this.forkAtS(pr.s);
+    if (fork) {
+      const offset = this.forkRouteOffset(fork, pr.s);
+      if (!fork.selected && Math.abs(pr.lat) > 0.35) fork.previewSide = pr.lat < 0 ? -1 : 1;
+
+      // Crossing the line on a real route is the commitment. Merely standing
+      // at its mouth, aiming down it, or exploring the first 5.99 metres cannot
+      // close anything behind the player.
+      if (!fork.selected && pr.s >= fork.commitS && pr.s < fork.endS - 0.7) {
+        const candidate = Math.abs(pr.lat) > 0.35 ? (pr.lat < 0 ? -1 : 1) : fork.previewSide;
+        const routeLat = candidate * offset;
+        if (Math.abs(pr.lat - routeLat) <= fork.routeWidth + 0.7) {
+          this._commitFork(fork, candidate, pr.s);
+        }
+      }
+
+      const sides = fork.selected ? [fork.selected] : [-1, 1];
+      const intervals = sides.map((side) => ({
+        side,
+        min: side * offset - fork.routeWidth,
+        max: side * offset + fork.routeWidth,
+      }));
+      let chosen = intervals[0];
+      if (intervals.length === 2) {
+        const overlap = intervals[0].max >= intervals[1].min && intervals[1].max >= intervals[0].min;
+        if (overlap) {
+          chosen = {
+            side: fork.previewSide,
+            min: Math.min(intervals[0].min, intervals[1].min),
+            max: Math.max(intervals[0].max, intervals[1].max),
+          };
+        } else {
+          const distanceTo = (span) => pr.lat < span.min ? span.min - pr.lat
+            : pr.lat > span.max ? pr.lat - span.max : 0;
+          chosen = distanceTo(intervals[1]) < distanceTo(intervals[0]) ? intervals[1] : intervals[0];
+        }
+      }
+      fork.activeSide = chosen.side;
+      minLat = chosen.min;
+      maxLat = chosen.max;
     }
     const lat = clamp(pr.lat, minLat, maxLat);
     // self-heal: if the frontier is impossibly far AHEAD of the player, a
@@ -1145,8 +2330,27 @@ export class Forest {
       pos.x = pr.fx + -si.tz * lat + si.tx * along;
       pos.z = pr.fz + si.tx * lat + si.tz * along;
     }
+    // A lateral route offset on a tight bend can shift the nearest centreline
+    // foot by a few tenths after the first reconstruction. Resolve that new
+    // foot once more against the chosen ribbon so its physical envelope and
+    // rendered edge agree on both the inside and outside of the bend.
+    if (fork) {
+      const routed = this.project(pos.x, pos.z);
+      if (routed) {
+        const routeSide = fork.selected || fork.activeSide || fork.previewSide;
+        const routeCentre = routeSide * this.forkRouteOffset(fork, routed.s);
+        const routeLat = clamp(routed.lat,
+          routeCentre - fork.routeWidth, routeCentre + fork.routeWidth);
+        if (Math.abs(routeLat - routed.lat) > 1e-4) {
+          const routedAlong = (pos.x - routed.fx) * routed.sample.tx
+            + (pos.z - routed.fz) * routed.sample.tz;
+          pos.x = routed.fx + -routed.sample.tz * routeLat + routed.sample.tx * routedAlong;
+          pos.z = routed.fz + routed.sample.tx * routeLat + routed.sample.tz * routedAlong;
+        }
+      }
+    }
     // frontier chases; lingering makes it creep — the creaks ask you to turn
-    if (this.entered) {
+    if (this.entered && !this._inMire) {
       this._idleT = (Math.abs(pr.s - (this._idleS || 0)) < 0.5) ? (this._idleT || 0) + dt : 0;
       this._idleS = pr.s;
       let target = pr.s - SEAL_TRAIL;
@@ -1481,13 +2685,581 @@ export class Forest {
     under.rotation.x = -Math.PI / 2;
     under.position.set(10, -0.35, 220);
     scene.add(under);
-    // the ravine's black throat
-    const rvs = this.posAt(this.ravineS());
-    const pit = new THREE.Mesh(new THREE.PlaneGeometry(16, 8),
-      new THREE.MeshBasicMaterial({ color: 0x010102 }));
-    pit.rotation.x = -Math.PI / 2;
-    pit.position.set(rvs.x, -5.8, rvs.z);
-    scene.add(pit);
+    // The old ravine was literally an absent ribbon with a black plane six
+    // metres below it. From first person it read as falling out of the map.
+    // Give the exact same rope-or-die beat a visible body: a skin of sucking
+    // peat, edge reeds, breath rings, and one half-swallowed chair.
+    const mireS = this.ravineS();
+    const mirePos = [];
+    for (const s of [mireS - 3.25, mireS + 3.25]) {
+      const i = clamp(Math.round(s), 0, this.length - 1);
+      const width = this.halfW[i] + 1.05;
+      for (const lat of [-width, width]) {
+        const vtx = this.posAt(s, lat);
+        mirePos.push(vtx.x, -0.075, vtx.z);
+      }
+    }
+    const mireGeo = new THREE.BufferGeometry();
+    mireGeo.setAttribute('position', new THREE.Float32BufferAttribute(mirePos, 3));
+    mireGeo.setIndex([0, 2, 1, 1, 2, 3]);
+    mireGeo.computeVertexNormals();
+    const mireMat = new THREE.MeshStandardMaterial({
+      color: 0x17120d, roughness: 0.24, metalness: 0.18,
+      transparent: true, opacity: 0.96, side: THREE.DoubleSide,
+    });
+    const mire = new THREE.Mesh(mireGeo, mireMat);
+    mire.name = 'sucking forest mire';
+    mire.receiveShadow = true;
+    scene.add(mire);
+
+    const reedCount = 24;
+    const reedMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.018, 0.032, 1, 4),
+      new THREE.MeshLambertMaterial({ color: 0x514b2d }), reedCount,
+    );
+    reedMesh.name = 'mire edge reeds';
+    const reedMatrix = new THREE.Matrix4();
+    const reedQuat = new THREE.Quaternion();
+    const reedEuler = new THREE.Euler();
+    const reedPosition = new THREE.Vector3();
+    const reedSize = new THREE.Vector3();
+    for (let i = 0; i < reedCount; i++) {
+      const side = (i & 1) ? -1 : 1;
+      const s = mireS - 3 + (i / (reedCount - 1)) * 6;
+      const si = clamp(Math.round(s), 0, this.length - 1);
+      const lat = side * (this.halfW[si] - 0.15 - ((i * 17) % 5) * 0.11);
+      const vtx = this.posAt(s, lat);
+      const h = 0.55 + ((i * 13) % 7) * 0.12;
+      reedQuat.setFromEuler(reedEuler.set(side * 0.08, i * 0.93, (i % 3 - 1) * 0.12));
+      reedMatrix.compose(reedPosition.set(vtx.x, -0.08 + h * 0.5, vtx.z), reedQuat,
+        reedSize.set(1, h, 1));
+      reedMesh.setMatrixAt(i, reedMatrix);
+    }
+    reedMesh.instanceMatrix.needsUpdate = true;
+    scene.add(reedMesh);
+
+    const ringCount = 7;
+    const ringMesh = new THREE.InstancedMesh(
+      new THREE.TorusGeometry(1, 0.025, 4, 16),
+      new THREE.MeshBasicMaterial({ color: 0x75664a, transparent: true, opacity: 0.42 }), ringCount,
+    );
+    ringMesh.name = 'mire suction rings';
+    const ringQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+    for (let i = 0; i < ringCount; i++) {
+      const s = mireS - 2.35 + i * 0.72;
+      const vtx = this.posAt(s, ((i * 5) % 4 - 1.5) * 0.48);
+      const r = 0.14 + (i % 3) * 0.07;
+      reedMatrix.compose(reedPosition.set(vtx.x, -0.055, vtx.z), ringQ, reedSize.set(r, r, r));
+      ringMesh.setMatrixAt(i, reedMatrix);
+    }
+    ringMesh.instanceMatrix.needsUpdate = true;
+    scene.add(ringMesh);
+
+    const chair = new THREE.Group();
+    chair.name = 'half-swallowed mire chair';
+    const addChairBox = (w, h, d, x, y, z, rx = 0) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.bark);
+      mesh.position.set(x, y, z);
+      mesh.rotation.x = rx;
+      chair.add(mesh);
+    };
+    addChairBox(0.72, 0.10, 0.68, 0, 0.11, 0, -0.15);
+    addChairBox(0.08, 1.15, 0.08, -0.29, 0.64, 0.26, -0.22);
+    addChairBox(0.08, 1.15, 0.08, 0.29, 0.64, 0.26, -0.22);
+    addChairBox(0.66, 0.08, 0.08, 0, 0.98, 0.37, -0.22);
+    const chairAt = this.posAt(mireS + 0.45, this.halfW[Math.round(mireS)] * 0.47);
+    chair.position.set(chairAt.x, -0.42, chairAt.z);
+    chair.rotation.set(-0.33, Math.atan2(this.samples[Math.round(mireS)].tx,
+      this.samples[Math.round(mireS)].tz) + 0.48, 0.18);
+    scene.add(batchStaticGroup(chair, 'mire chair'));
+    this.mire = { mesh: mire, reeds: reedMesh, rings: ringMesh, chair };
+  }
+
+  _buildForkTopology() {
+    const { world, scene, mats: M } = this.game;
+    const routePositions = [];
+    const routeIndices = [];
+    const scarPositions = [];
+    const scarIndices = [];
+    const routePoint = new THREE.Vector3();
+    const before = new THREE.Vector3();
+    const after = new THREE.Vector3();
+    const tangent = new THREE.Vector3();
+    const across = new THREE.Vector3();
+    const pushRibbon = (positions, indices, fork, side, fromS, toS, halfWidth, step = 0.72) => {
+      let previous = -1;
+      for (let s = fromS; s <= toS + 1e-4; s = Math.min(toS, s + step)) {
+        if (side) routePoint.copy(this.forkRoutePoint(fork, side, s));
+        else routePoint.copy(this.posAt(s, 0)).setY(this.heightAt(routePoint.x, routePoint.z));
+        before.copy(side ? this.forkRoutePoint(fork, side, Math.max(fromS, s - 0.22))
+          : this.posAt(Math.max(fromS, s - 0.22), 0));
+        after.copy(side ? this.forkRoutePoint(fork, side, Math.min(toS, s + 0.22))
+          : this.posAt(Math.min(toS, s + 0.22), 0));
+        tangent.subVectors(after, before).setY(0).normalize();
+        across.set(-tangent.z, 0, tangent.x);
+        const index = positions.length / 3;
+        positions.push(
+          routePoint.x - across.x * halfWidth, routePoint.y + (side ? 0.055 : 0.048), routePoint.z - across.z * halfWidth,
+          routePoint.x + across.x * halfWidth, routePoint.y + (side ? 0.055 : 0.048), routePoint.z + across.z * halfWidth,
+        );
+        if (previous >= 0) indices.push(previous, index, previous + 1, previous + 1, index, index + 1);
+        previous = index;
+        if (s >= toS - 1e-4) break;
+      }
+    };
+
+    for (const fork of this.forks) {
+      pushRibbon(routePositions, routeIndices, fork, -1, fork.startS, fork.endS, fork.routeWidth + 0.13);
+      pushRibbon(routePositions, routeIndices, fork, 1, fork.startS, fork.endS, fork.routeWidth + 0.13);
+      // Cover the obsolete bright centre stripe once the paths have visibly
+      // divided. This is dirt, not a magic black patch; the knitted divider
+      // rising through it supplies the actual silhouette and collision.
+      pushRibbon(scarPositions, scarIndices, fork, 0, fork.startS + 2.1, fork.endS - 2.1, 1.16, 0.8);
+    }
+    const makeRibbon = (positions, indices, material, name) => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = name;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      return mesh;
+    };
+    const routeMat = M.dirt.clone();
+    // The fork must be readable as two routes before the player is nose-first
+    // against its physical divider. Carry the choice by ground value and
+    // silhouette, never by a coloured magic stripe.
+    routeMat.color.setHex(0x9a8a70);
+    if ('emissive' in routeMat) {
+      routeMat.emissive = new THREE.Color(0x17140f);
+      routeMat.emissiveIntensity = 0.16;
+    }
+    routeMat.roughness = 1;
+    const scarMat = M.dirt.clone();
+    scarMat.color.setHex(0x191b13);
+    scarMat.roughness = 1;
+    this.forkRouteMesh = makeRibbon(routePositions, routeIndices, routeMat, 'two authored braided forest routes');
+    this.forkScarMesh = makeRibbon(scarPositions, scarIndices, scarMat, 'dark earth beneath fork dividers');
+
+    // The divider is one fixed instance pool. It gives the lateral clamp a
+    // visible body and makes a committed route feel like somewhere the player
+    // actually walked, not a coordinate branch in a script.
+    const dividerData = [];
+    for (const fork of this.forks) {
+      let index = 0;
+      for (let s = fork.startS + 3.2; s <= fork.endS - 3.2; s += 1.12) {
+        const p = this.posAt(s, ((index % 3) - 1) * 0.22);
+        p.y = this.heightAt(p.x, p.z);
+        dividerData.push({
+          p,
+          h: 2.2 + ((index * 7 + fork.startS) % 9) * 0.19,
+          lean: ((index % 5) - 2) * 0.045,
+          yaw: index * 1.73 + fork.startS,
+        });
+        const sm = this.samples[clamp(Math.round(s), 0, this.length - 1)];
+        const hx = Math.abs(sm.tx) * 0.38 + Math.abs(sm.tz) * 0.48;
+        const hz = Math.abs(sm.tz) * 0.38 + Math.abs(sm.tx) * 0.48;
+        world.addCollider(p.x - hx, -0.25, p.z - hz, p.x + hx, 2.65, p.z + hz, {
+          skullPass: true, forkDivider: fork.id,
+        });
+        index++;
+      }
+    }
+    const dividerMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.18, 0.34, 1, 6), M.bark, dividerData.length,
+    );
+    dividerMesh.name = 'physical braided-route divider trees';
+    dividerMesh.castShadow = true;
+    dividerMesh.receiveShadow = true;
+    const matrix = new THREE.Matrix4();
+    const quat = new THREE.Quaternion();
+    const euler = new THREE.Euler();
+    const scale = new THREE.Vector3();
+    for (let i = 0; i < dividerData.length; i++) {
+      const data = dividerData[i];
+      quat.setFromEuler(euler.set(data.lean, data.yaw, -data.lean * 0.7));
+      matrix.compose(routePoint.set(data.p.x, data.p.y + data.h * 0.5, data.p.z), quat,
+        scale.set(1, data.h, 1));
+      dividerMesh.setMatrixAt(i, matrix);
+    }
+    dividerMesh.instanceMatrix.needsUpdate = true;
+    scene.add(dividerMesh);
+    this.forkDividerMesh = dividerMesh;
+
+    // Three potential closure rows per fork share one visual pool. Only two
+    // rise after commitment: the parent path and the route not chosen.
+    const closureEntries = [];
+    const addClosureRow = (fork, kind, side, s, width) => {
+      const centre = side ? this.forkRoutePoint(fork, side, s) : this.posAt(s, 0);
+      centre.y = this.heightAt(centre.x, centre.z);
+      const a = side ? this.forkRoutePoint(fork, side, Math.max(fork.startS, s - 0.28))
+        : this.posAt(Math.max(0, s - 0.28), 0);
+      const b = side ? this.forkRoutePoint(fork, side, Math.min(fork.endS, s + 0.28))
+        : this.posAt(Math.min(this.length - 1, s + 0.28), 0);
+      tangent.subVectors(b, a).setY(0).normalize();
+      across.set(-tangent.z, 0, tangent.x);
+      const row = { kind, side, s, centre: centre.clone(), width, t: 0, target: 0, colliders: [], entries: [] };
+      for (let k = 0; k < 10; k++) {
+        const lateral = lerp(-width * 0.5, width * 0.5, k / 9) + ((k % 3) - 1) * 0.08;
+        const h = 2.9 + ((k * 7 + fork.startS) % 8) * 0.24;
+        const entry = {
+          row,
+          p: centre.clone().addScaledVector(across, lateral).addScaledVector(tangent, ((k % 2) - 0.5) * 0.32),
+          h,
+          yaw: k * 1.27 + side * 0.43,
+          delay: (k % 4) * 0.08,
+        };
+        row.entries.push(entry);
+        closureEntries.push(entry);
+      }
+      const segments = 5;
+      for (let k = 0; k < segments; k++) {
+        const lateral = lerp(-width * 0.42, width * 0.42, k / (segments - 1));
+        const c = centre.clone().addScaledVector(across, lateral);
+        const halfAcross = width / segments * 0.62;
+        const hx = Math.abs(across.x) * halfAcross + Math.abs(tangent.x) * 0.34;
+        const hz = Math.abs(across.z) * halfAcross + Math.abs(tangent.z) * 0.34;
+        const collider = world.addCollider(c.x - hx, -0.22, c.z - hz, c.x + hx, -0.22, c.z + hz, {
+          forkClosure: fork.id,
+          forkClosureKind: kind,
+          forkClosureSide: side,
+          forkClosureActive: false,
+        });
+        collider.forkClosedMaxY = 3.2;
+        row.colliders.push(collider);
+      }
+      return row;
+    };
+
+    for (const fork of this.forks) {
+      const parentWidth = this.baseHalfW[clamp(Math.round(fork.startS), 0, this.length - 1)] * 2 + 1.05;
+      const rows = [
+        addClosureRow(fork, 'parent', 0, fork.startS - 0.45, parentWidth),
+        addClosureRow(fork, 'mouth', -1, fork.startS + 2.8, fork.routeWidth * 2 + 0.85),
+        addClosureRow(fork, 'mouth', 1, fork.startS + 2.8, fork.routeWidth * 2 + 0.85),
+      ];
+      fork.closures = { rows };
+    }
+    const closureMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.16, 0.3, 1, 6), M.bark, closureEntries.length,
+    );
+    closureMesh.name = 'bounded fork knitting pool';
+    closureMesh.castShadow = true;
+    closureMesh.receiveShadow = true;
+    closureMesh.frustumCulled = false;
+    scene.add(closureMesh);
+    this.forkClosureMesh = closureMesh;
+    this.forkClosureEntries = closureEntries;
+    this.forkTopologyStats = {
+      forks: this.forks.length,
+      routeVertices: routePositions.length / 3,
+      dividerInstances: dividerData.length,
+      closureCapacity: closureEntries.length,
+      commitDistance: 6,
+    };
+    this._writeForkClosures(0);
+  }
+
+  _writeForkClosures(dt) {
+    if (!this.forkClosureMesh) return;
+    let dirty = !this._forkClosuresWritten;
+    const matrix = this._forkClosureMatrix || (this._forkClosureMatrix = new THREE.Matrix4());
+    const quat = this._forkClosureQuat || (this._forkClosureQuat = new THREE.Quaternion());
+    const euler = this._forkClosureEuler || (this._forkClosureEuler = new THREE.Euler());
+    const pos = this._forkClosurePosition || (this._forkClosurePosition = new THREE.Vector3());
+    const scale = this._forkClosureScale || (this._forkClosureScale = new THREE.Vector3());
+    for (const fork of this.forks) {
+      if (!fork.closures) continue;
+      for (const row of fork.closures.rows) {
+        const previousT = row.t;
+        const targetChanged = row._writtenTarget !== row.target;
+        row.t += (row.target - row.t) * Math.min(1, dt * (row.target ? 4.1 : 7.5));
+        if (Math.abs(row.target - row.t) < 0.0001) row.t = row.target;
+        const rowDirty = !this._forkClosuresWritten || targetChanged
+          || Math.abs(row.t - previousT) > 0.000001;
+        row._writtenTarget = row.target;
+        if (!rowDirty) continue;
+        dirty = true;
+        // Collision grows out of the dirt with the trunks. There is never a
+        // chest-high invisible wall while the corresponding row is still
+        // underground, and a reset removes both in the same authored frame.
+        const visibleBody = smoothstep(0, 1, row.t);
+        const physicalRise = clamp((visibleBody - 0.02) / 0.98, 0, 1);
+        for (const collider of row.colliders) {
+          collider.max.y = collider.min.y
+            + (collider.forkClosedMaxY - collider.min.y) * physicalRise;
+          collider.forkClosureActive = row.target > 0 && physicalRise > 0.035;
+        }
+      }
+    }
+    // A converged closure is static scenery. Avoid rebuilding and uploading
+    // all 60 instance matrices at 120 Hz after its last visible movement.
+    if (!dirty) return;
+    for (let i = 0; i < this.forkClosureEntries.length; i++) {
+      const entry = this.forkClosureEntries[i];
+      const rise = smoothstep(0, 1, clamp((entry.row.t - entry.delay) / (1 - entry.delay), 0, 1));
+      quat.setFromEuler(euler.set((i % 3 - 1) * 0.035 * rise, entry.yaw, (i % 4 - 1.5) * 0.035 * rise));
+      pos.set(entry.p.x, entry.p.y - entry.h * 0.52 + entry.h * rise, entry.p.z);
+      matrix.compose(pos, quat, scale.set(1, entry.h, 1));
+      this.forkClosureMesh.setMatrixAt(i, matrix);
+    }
+    this.forkClosureMesh.instanceMatrix.needsUpdate = true;
+    this._forkClosuresWritten = true;
+  }
+
+  _buildForestStoryProps() {
+    const game = this.game;
+    const { world, scene, mats: M } = game;
+    const forkOne = this.forks[0];
+    const forkTwo = this.forks[1];
+    const searchers = this.optionalRopes?.find((line) => line.id === 'searchers-line');
+    const bellCopse = this.optionalRopes?.find((line) => line.id === 'bell-line');
+    const atRoute = (fork, side, s) => ({ p: this.forkRoutePoint(fork, side, s), forkId: fork.id, side, s });
+    const atSpine = (s, lat) => ({ p: this.posAt(s, lat), forkId: null, side: 0, s });
+    const anchors = [
+      { id: 'radio-chair', kind: 'radio', ...atRoute(forkOne, -1, 57.2), gain: 0.22 },
+      { id: 'stump-phone', kind: 'phone', ...atRoute(forkOne, 1, 57.6), gain: 0.2 },
+      { id: 'searchers-swing', kind: 'swing', p: searchers?.secretPos.clone() || this.posAt(75, 4.5), forkId: null, side: 1, s: 75, gain: 0.21 },
+      { id: 'ditch-crt', kind: 'crt', ...atSpine(91, -this.baseHalfW[91] * 0.62), gain: 0.17 },
+      { id: 'washer', kind: 'washer', ...atRoute(forkTwo, -1, 128.2), gain: 0.22 },
+      { id: 'refrigerator', kind: 'fridge', ...atRoute(forkTwo, 1, 129.4), gain: 0.17 },
+      { id: 'arena-generator', kind: 'generator', ...atSpine(144.2, this.baseHalfW[144] * 0.56), gain: 0.2 },
+      { id: 'copse-bell', kind: 'bell', p: bellCopse?.secretPos.clone() || this.posAt(181, -4.5), forkId: null, side: -1, s: 181, gain: 0.24 },
+    ];
+
+    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    const unitCylinder = new THREE.CylinderGeometry(0.5, 0.5, 1, 8);
+    const unitTorus = new THREE.TorusGeometry(0.5, 0.085, 6, 14);
+    const unitCone = new THREE.ConeGeometry(0.44, 0.7, 8, 1, true);
+    const props = [];
+    const addMesh = (parent, geometry, material, x, y, z, sx = 1, sy = 1, sz = 1, rotation = null) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.scale.set(sx, sy, sz);
+      if (rotation) mesh.rotation.set(rotation[0], rotation[1], rotation[2]);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+
+    for (let index = 0; index < anchors.length; index++) {
+      const spec = anchors[index];
+      const root = new THREE.Group();
+      root.name = `forest story prop: ${spec.id}`;
+      const ground = this.heightAt(spec.p.x, spec.p.z);
+      root.position.set(spec.p.x, ground, spec.p.z);
+      const sm = this.samples[clamp(Math.round(spec.s), 0, this.length - 1)];
+      root.rotation.y = Math.atan2(sm.tx, sm.tz) + (index % 2 ? -0.34 : 0.27);
+      const moving = new THREE.Group();
+      moving.name = `${spec.id} powered motion`;
+      moving.userData.noBatch = true;
+      root.add(moving);
+      const glowMat = new THREE.MeshStandardMaterial({
+        color: 0xaaa493,
+        emissive: 0xd8cba8,
+        emissiveIntensity: 0.62,
+        roughness: 0.66,
+        metalness: 0.08,
+      });
+      let targetY = 0.9;
+      let colliderHalf = 0.62;
+      let colliderTop = 1.75;
+
+      if (spec.kind === 'radio') {
+        // The chair is pointed away from the path. The radio occupies its seat
+        // as if the listener stood up and never returned.
+        addMesh(root, unitBox, M.woodDark, 0, 0.46, 0.12, 0.76, 0.1, 0.7);
+        for (const x of [-0.3, 0.3]) for (const z of [-0.16, 0.39]) {
+          addMesh(root, unitBox, M.woodDark, x, 0.23, z, 0.08, 0.48, 0.08, [z > 0 ? -0.12 : 0.08, 0, 0]);
+        }
+        addMesh(root, unitBox, M.woodDark, 0, 0.98, 0.43, 0.72, 0.88, 0.09, [-0.13, 0, 0]);
+        addMesh(root, unitBox, M.metal, 0, 0.75, 0.02, 0.56, 0.34, 0.3);
+        addMesh(root, unitBox, glowMat, 0, 0.77, -0.145, 0.31, 0.16, 0.018);
+        const dial = addMesh(moving, unitCylinder, M.metal, 0.2, 0.73, -0.18, 0.13, 0.05, 0.13, [Math.PI / 2, 0, 0]);
+        moving.userData.part = dial;
+      } else if (spec.kind === 'phone') {
+        addMesh(root, unitCylinder, M.bark, 0, 0.5, 0, 1.18, 1, 1.18);
+        addMesh(root, unitBox, M.metal, 0, 1.08, 0, 0.58, 0.22, 0.42, [-0.08, 0, 0]);
+        addMesh(root, unitCylinder, glowMat, 0, 1.2, -0.24, 0.21, 0.035, 0.21, [Math.PI / 2, 0, 0]);
+        addMesh(moving, unitBox, M.woodDark, 0, 1.36, -0.03, 0.72, 0.1, 0.12);
+        addMesh(moving, unitCylinder, M.woodDark, -0.34, 1.36, -0.03, 0.2, 0.18, 0.2, [0, 0, Math.PI / 2]);
+        addMesh(moving, unitCylinder, M.woodDark, 0.34, 1.36, -0.03, 0.2, 0.18, 0.2, [0, 0, Math.PI / 2]);
+        targetY = 1.25;
+      } else if (spec.kind === 'swing') {
+        colliderHalf = 1.12; colliderTop = 2.8; targetY = 1.45;
+        for (const x of [-0.95, 0.95]) {
+          addMesh(root, unitCylinder, M.bark, x, 1.35, 0, 0.14, 2.7, 0.14, [0, 0, x * 0.07]);
+        }
+        addMesh(root, unitCylinder, M.bark, 0, 2.68, 0, 0.14, 2.12, 0.14, [0, 0, Math.PI / 2]);
+        addMesh(moving, unitCylinder, M.curtain, -0.31, 1.93, 0, 0.035, 1.42, 0.035);
+        addMesh(moving, unitCylinder, M.curtain, 0.31, 1.93, 0, 0.035, 1.42, 0.035);
+        addMesh(moving, unitBox, M.woodDark, 0, 1.22, 0, 0.78, 0.1, 0.34);
+        moving.position.y = 1.46;
+        moving.children.forEach((child) => { child.position.y -= 1.46; });
+      } else if (spec.kind === 'washer') {
+        addMesh(root, unitBox, M.metal, 0, 0.72, 0, 1.02, 1.42, 0.86, [0, 0, 0.035]);
+        addMesh(root, unitTorus, M.metal, 0, 0.72, -0.46, 0.64, 0.64, 0.64, [Math.PI / 2, 0, 0]);
+        addMesh(moving, unitCylinder, glowMat, 0, 0.72, -0.48, 0.48, 0.055, 0.48, [Math.PI / 2, 0, 0]);
+        targetY = 0.78;
+      } else if (spec.kind === 'fridge') {
+        colliderHalf = 0.66; colliderTop = 2.25; targetY = 1.1;
+        addMesh(root, unitBox, M.metal, 0, 1.08, 0, 1.08, 2.16, 0.82, [0, 0, -0.025]);
+        addMesh(root, unitBox, M.woodDark, 0.38, 1.28, -0.44, 0.075, 0.72, 0.08);
+        addMesh(root, unitBox, M.woodDark, 0, 1.53, -0.43, 0.96, 0.035, 0.06);
+        addMesh(root, unitBox, glowMat, -0.34, 1.76, -0.44, 0.11, 0.05, 0.025);
+        addMesh(moving, unitBox, M.metal, 0, 0.23, 0.46, 0.62, 0.28, 0.16);
+      } else if (spec.kind === 'crt') {
+        addMesh(root, unitBox, M.woodDark, 0, 0.72, 0, 0.92, 0.78, 0.76, [-0.04, 0.16, 0.02]);
+        addMesh(root, unitBox, M.metal, 0, 0.23, 0, 0.64, 0.42, 0.52);
+        addMesh(moving, unitBox, glowMat, 0, 0.75, -0.395, 0.66, 0.5, 0.025);
+        addMesh(root, unitCylinder, M.metal, -0.18, 1.31, 0, 0.025, 0.64, 0.025, [0.18, 0, -0.35]);
+        addMesh(root, unitCylinder, M.metal, 0.18, 1.31, 0, 0.025, 0.64, 0.025, [-0.18, 0, 0.35]);
+      } else if (spec.kind === 'bell') {
+        colliderHalf = 0.82; colliderTop = 2.2; targetY = 1.42;
+        addMesh(root, unitCylinder, M.headstone, 0, 0.34, 0, 1.36, 0.68, 1.36);
+        addMesh(root, unitCylinder, M.bark, -0.64, 1.22, 0, 0.12, 1.85, 0.12);
+        addMesh(root, unitCylinder, M.bark, 0.64, 1.22, 0, 0.12, 1.85, 0.12);
+        addMesh(root, unitCylinder, M.bark, 0, 2.1, 0, 0.12, 1.45, 0.12, [0, 0, Math.PI / 2]);
+        addMesh(moving, unitCone, glowMat, 0, 1.68, 0, 0.58, 0.78, 0.58);
+        moving.position.y = 2.03;
+        moving.children.forEach((child) => { child.position.y -= 2.03; });
+      } else {
+        addMesh(root, unitBox, M.metal, 0, 0.58, 0, 1.18, 0.92, 0.78);
+        addMesh(root, unitBox, M.woodDark, 0, 0.19, 0, 1.42, 0.12, 1.0);
+        addMesh(root, unitBox, glowMat, -0.31, 0.83, -0.41, 0.26, 0.12, 0.03);
+        addMesh(moving, unitTorus, M.metal, 0.62, 0.53, 0, 0.72, 0.72, 0.72, [0, Math.PI / 2, 0]);
+      }
+
+      batchStaticGroup(root, spec.id);
+      scene.add(root);
+      const collider = world.addCollider(
+        root.position.x - colliderHalf, ground - 0.25, root.position.z - colliderHalf,
+        root.position.x + colliderHalf, ground + colliderTop, root.position.z + colliderHalf,
+        { skullPass: true, forestStoryProp: spec.id },
+      );
+      const targetPos = new THREE.Vector3(root.position.x, ground + targetY, root.position.z);
+      const state = {
+        ...spec,
+        index,
+        root,
+        moving,
+        glowMat,
+        collider,
+        targetPos,
+        audibleRadius: 34,
+        visibleReadRadius: 15,
+        audibleBeforeVisible: true,
+        silenced: false,
+        visualLevel: 1,
+        phase: index * 0.73,
+        loop: null,
+        target: null,
+        stopLoop() {
+          if (!this.loop) return;
+          this.loop.stop();
+          this.loop = null;
+        },
+        silence(at = this.targetPos) {
+          if (this.silenced) return false;
+          this.silenced = true;
+          this.stopLoop();
+          if (this.target) this.target.enabled = false;
+          game.flag(`forestStorySilenced:${this.id}`);
+          game.player.noise = 1;
+          game.audio.forestStoryBreak?.(this.kind, { pos: this.targetPos, gain: 0.88, verb: 0.58 });
+          game.audio.brushCrash({ pos: this.targetPos, gain: 0.42, rate: 0.63 });
+          game.impact('hurt', at || this.targetPos);
+          game.director?.forestNoise?.(this.targetPos, 1, 'appliance');
+          return true;
+        },
+      };
+      state.target = world.addFetchTarget({
+        id: `forestStory:${state.id}`,
+        pos: targetPos,
+        radius: state.kind === 'swing' ? 1.05 : 0.88,
+        onHit(skull, at) {
+          state.silence(at);
+          return 'return';
+        },
+      });
+      props.push(state);
+    }
+    this.storyProps = props;
+    this.storySoundStats = {
+      propCount: props.length,
+      continuousCap: 2,
+      hrtf: true,
+      deterministicAnchors: props.map((prop) => ({
+        id: prop.id, kind: prop.kind, s: prop.s, x: prop.targetPos.x, y: prop.targetPos.y, z: prop.targetPos.z,
+      })),
+    };
+  }
+
+  _stopForestStoryLoops() {
+    for (const prop of this.storyProps || []) prop.stopLoop();
+  }
+
+  _updateForestStoryProps(dt) {
+    const props = this.storyProps;
+    if (!props?.length) return;
+    const game = this.game;
+    const live = game.act === 'forest' && !game.dead && !game.terminal && !game.endingTail;
+    const playerPos = game.player.pos;
+    const candidates = [];
+    for (const prop of props) {
+      const fork = prop.forkId && this.forks.find((candidate) => candidate.id === prop.forkId);
+      const wrongCommittedBranch = !!(fork?.selected && fork.selected !== prop.side);
+      const behindSeal = prop.s <= this.sealS + 0.8;
+      const canSpeak = live && !prop.silenced && !wrongCommittedBranch && !behindSeal;
+      // A swept skull target obeys the same reachability law as its sound.
+      // Otherwise a held throw could collect a dead appliance through the
+      // newly knitted rejected mouth or from behind the cumulative seal.
+      if (!prop.silenced && prop.target) prop.target.enabled = canSpeak;
+      const targetVisual = canSpeak ? 1 : 0;
+      prop.visualLevel += (targetVisual - prop.visualLevel) * Math.min(1, dt * (targetVisual ? 3.6 : 7.5));
+      prop.glowMat.emissiveIntensity = 0.04 + prop.visualLevel * 0.58;
+      prop.phase += dt * (0.7 + prop.index * 0.035);
+      if (prop.kind === 'swing' || prop.kind === 'bell') {
+        prop.moving.rotation.z = Math.sin(prop.phase * (prop.kind === 'bell' ? 1.9 : 1.1)) * 0.16 * prop.visualLevel;
+      } else if (prop.kind === 'phone') {
+        prop.moving.rotation.z = Math.sin(prop.phase * 18) * 0.018 * prop.visualLevel;
+      } else if (prop.kind === 'fridge') {
+        prop.moving.position.x = Math.sin(prop.phase * 25) * 0.012 * prop.visualLevel;
+      } else if (prop.kind === 'crt') {
+        const screen = prop.moving.children[0];
+        if (screen) screen.scale.x = 0.66 * (0.985 + Math.sin(prop.phase * 31) * 0.015 * prop.visualLevel);
+      } else {
+        const part = prop.moving.children[0];
+        if (part) part.rotation.z += dt * (1.1 + prop.index * 0.13) * prop.visualLevel;
+      }
+
+      if (!canSpeak) {
+        prop.stopLoop();
+        continue;
+      }
+      const distance = Math.hypot(
+        playerPos.x - prop.targetPos.x,
+        (playerPos.y + 1.2) - prop.targetPos.y,
+        playerPos.z - prop.targetPos.z,
+      );
+      if (distance <= prop.audibleRadius) candidates.push({ prop, distance });
+      else prop.stopLoop();
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.prop.index - b.prop.index);
+    const desired = new Set(candidates.slice(0, 2).map((candidate) => candidate.prop));
+    for (const prop of props) {
+      if (!desired.has(prop)) prop.stopLoop();
+    }
+    if (!game.audio.ready) return;
+    for (const { prop } of candidates.slice(0, 2)) {
+      if (prop.loop) continue;
+      prop.loop = game.audio.forestStoryLoop?.(prop.kind, prop.targetPos, {
+        gain: prop.gain, ref: 8.5, roll: 1.12, verb: 0.38,
+      }) || null;
+    }
   }
 
   _buildSealPool() {
@@ -1558,7 +3330,44 @@ export class Forest {
     }
   }
 
+  syncBackDistrictCulling(force = null) {
+    const act = this.game.act;
+    const pastGate = force ?? (act === 'forest' || act === 'clearing'
+      || act === 'cave' || act === 'mirror'
+      || (act === 'graveyard' && !this.game.ossuary?.inOssuary
+        && this.game.player.pos.z > FOREST_GATE.z - 0.45));
+    if (pastGate === this.backDistrictCullActive) return;
+    this.backDistrictCullActive = pastGate;
+    if (pastGate) {
+      this.backDistrictVisibility.clear();
+      for (const root of this.backDistrictRoots) {
+        if (root.parent !== this.game.scene) continue;
+        this.backDistrictVisibility.set(root, root.visible);
+        root.visible = false;
+      }
+      return;
+    }
+    for (const [root, visible] of this.backDistrictVisibility) {
+      if (root.parent === this.game.scene) root.visible = visible;
+    }
+    this.backDistrictVisibility.clear();
+  }
+
   update(dt) {
+    this.syncBackDistrictCulling();
+    // Preserve a composed view through the now-open graveyard gate without
+    // rendering the entire 208m chapter from the house. The threshold is well
+    // before the act boundary, so there is no visible pop while crossing it.
+    const detailsVisible = this.game.act === 'forest'
+      || (this.game.act === 'graveyard' && this.game.player.pos.z > 31.5);
+    if (detailsVisible !== this._detailsVisible) {
+      this._detailsVisible = detailsVisible;
+      for (const root of this.detailRoots) {
+        root.visible = detailsVisible && this._detailBaseVisibility.get(root) !== false;
+      }
+    }
+    this._writeForkClosures(dt);
+    this._updateForestStoryProps(dt);
     const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
     this.sealAnim.forEach((a, i) => {
@@ -1613,13 +3422,6 @@ export class Forest {
     roots.scale.set(0.55, 1, 1);
     log.add(roots);
     // snapped limbs — they read as "you are not stepping over this"
-    for (let i = 0; i < 5; i++) {
-      const a = i * 1.7;
-      const lim = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.15, 1.5 + (i % 3) * 0.6, 5), M.bark);
-      lim.position.set(-2.4 + i * 1.35, LOG_R * 0.5, 0);
-      lim.rotation.set(Math.sin(a) * 0.7, a, 0.5 + Math.cos(a) * 0.8);
-      log.add(lim);
-    }
     log.position.set(fsm.x, LOG_R, fsm.z);
     log.rotation.set(0, Math.atan2(fsm.tx, -fsm.tz), 0.06);
     scene.add(log);
@@ -1634,6 +3436,89 @@ export class Forest {
     // Step it instead: a row of small boxes along the log's own axis, each one
     // tight because each one is short. Same wall, a tenth of the footprint.
     const px = -fsm.tz, pz = fsm.tx;                       // the log's long axis
+
+    // THE EATEN PATH's best forest lesson is visual: a blocked route should
+    // look knitted shut. Eighteen crossed branches make all three required
+    // hits physically legible. Each strike tears away one silhouette/collision
+    // layer instead of incrementing an invisible counter.
+    const branchCount = 18;
+    const branchGeo = new THREE.CylinderGeometry(0.075, 0.14, 1, 6);
+    const branchMesh = new THREE.InstancedMesh(branchGeo, M.bark, branchCount);
+    branchMesh.name = 'three-layer knitted fallen-tree branches';
+    branchMesh.castShadow = true;
+    branchMesh.frustumCulled = false;
+    scene.add(branchMesh);
+    const branchMtx = new THREE.Matrix4();
+    const branchQ = new THREE.Quaternion();
+    const branchPos = new THREE.Vector3();
+    const branchScale = new THREE.Vector3();
+    const branchDir = new THREE.Vector3();
+    const branchUp = new THREE.Vector3(0, 1, 0);
+    const branchPush = new THREE.Vector3(fsm.tx, 0, fsm.tz);
+    const branchLayerColliders = [[], [], []];
+    const branchLayers = [0, 0, 0];
+    const branchData = [];
+    for (let i = 0; i < branchCount; i++) {
+      const layer = Math.floor(i / 6);
+      const k = i % 6;
+      const u = -3.0 + k * 1.18 + (layer - 1) * 0.13;
+      const side = ((k + layer) & 1) ? -1 : 1;
+      const length = 2.0 + ((k * 7 + layer * 3) % 4) * 0.26;
+      const root = new THREE.Vector3(
+        fsm.x + px * u,
+        0.12 + layer * 0.42,
+        fsm.z + pz * u,
+      );
+      const dir = new THREE.Vector3(
+        fsm.tx * side * (0.72 + layer * 0.1) + px * ((k - 2.5) * 0.07),
+        0.42 + ((k + layer) % 3) * 0.16,
+        fsm.tz * side * (0.72 + layer * 0.1) + pz * ((k - 2.5) * 0.07),
+      ).normalize();
+      branchData.push({ layer, root, dir, length, phase: k * 0.37 + layer * 0.91 });
+
+      // The skull can cross these low branch volumes to hit the obstruction;
+      // the player's capsule cannot pretend the visible brush is empty.
+      if (layer < 2) {
+        const mid = root.clone().addScaledVector(dir, length * 0.42);
+        const hxB = Math.abs(dir.x) * length * 0.43 + 0.13;
+        const hzB = Math.abs(dir.z) * length * 0.43 + 0.13;
+        const c = world.addCollider(
+          mid.x - hxB, 0, mid.z - hzB,
+          mid.x + hxB, Math.max(0.88, mid.y + Math.abs(dir.y) * length * 0.5), mid.z + hzB,
+          { skullPass: true, fallenTreeLayer: layer },
+        );
+        branchLayerColliders[layer].push(c);
+      }
+    }
+    const writeBranches = (dt = 0) => {
+      if (dt > 0) {
+        for (let layer = 0; layer < branchLayers.length; layer++) {
+          if (branchLayers[layer] > 0) {
+            branchLayers[layer] = Math.min(1, branchLayers[layer] + dt * 2.25);
+          }
+        }
+      }
+      for (let i = 0; i < branchData.length; i++) {
+        const data = branchData[i];
+        const t = smoothstep(0, 1, branchLayers[data.layer]);
+        branchDir.copy(data.dir);
+        if (t > 0) {
+          branchDir.x += fsm.tx * (data.layer === 1 ? -0.7 : 0.55) * t;
+          branchDir.z += fsm.tz * (data.layer === 1 ? -0.7 : 0.55) * t;
+          branchDir.y -= 1.5 * t;
+          branchDir.normalize();
+        }
+        branchPos.copy(data.root)
+          .addScaledVector(data.dir, data.length * 0.5)
+          .addScaledVector(branchPush, Math.sin(data.phase) * t * 0.7);
+        branchPos.y -= t * (0.75 + data.layer * 0.32);
+        branchQ.setFromUnitVectors(branchUp, branchDir);
+        branchMtx.compose(branchPos, branchQ, branchScale.set(1, data.length, 1));
+        branchMesh.setMatrixAt(i, branchMtx);
+      }
+      branchMesh.instanceMatrix.needsUpdate = true;
+    };
+    writeBranches();
     const SEGS = 9, halfSeg = 3.6 / SEGS + 0.06, halfThick = 0.8;
     const hx = Math.abs(px) * halfSeg + Math.abs(fsm.tx) * halfThick;
     const hz = Math.abs(pz) * halfSeg + Math.abs(fsm.tz) * halfThick;
@@ -1645,20 +3530,45 @@ export class Forest {
     }
     let logHits = 0;
     // dt-driven roll (chamber law: no setTimeout anywhere in a beat)
-    const roll = { t: 1, from: 0, to: 0, dropFrom: 0, dropTo: 0, shove: 0 };
+    const roll = {
+      t: 1, from: 0, to: 0, dropFrom: 0, dropTo: 0, shove: 0,
+      side: 0, sideFrom: 0, sideTo: 0, clearPending: false, collidersCleared: false,
+      rootT: 1, rootFrom: 0, rootTo: 0,
+    };
     game.tickers.push((dt) => {
-      if (roll.t >= 1) return;
-      roll.t = Math.min(1, roll.t + dt * 2.6);
-      const e = 1 - (1 - roll.t) * (1 - roll.t) * (1 - roll.t);       // it settles, it doesn't snap
-      log.rotation.x = lerp(roll.from, roll.to, e);
-      log.position.y = lerp(roll.dropFrom, roll.dropTo, e);
-      log.position.x = fsm.x + -fsm.tz * Math.sin(roll.t * Math.PI) * roll.shove;
-      log.position.z = fsm.z + fsm.tx * Math.sin(roll.t * Math.PI) * roll.shove;
+      writeBranches(dt);
+      if (roll.rootT < 1) {
+        roll.rootT = Math.min(1, roll.rootT + dt * 2.0);
+        const r = smoothstep(0, 1, roll.rootT);
+        const tear = lerp(roll.rootFrom, roll.rootTo, r);
+        roots.rotation.z = tear * 0.62;
+        roots.position.y = 0.1 - tear * 0.45;
+        roots.scale.set(0.55 + tear * 0.16, 1 - tear * 0.35, 1 + tear * 0.08);
+      }
+      if (roll.t < 1) {
+        roll.t = Math.min(1, roll.t + dt * 2.6);
+        const e = 1 - (1 - roll.t) * (1 - roll.t) * (1 - roll.t);     // it settles, it doesn't snap
+        log.rotation.x = lerp(roll.from, roll.to, e);
+        log.position.y = lerp(roll.dropFrom, roll.dropTo, e);
+        roll.side = lerp(roll.sideFrom, roll.sideTo, e);
+        const side = roll.side + Math.sin(roll.t * Math.PI) * roll.shove;
+        log.position.x = fsm.x + px * side;
+        log.position.z = fsm.z + pz * side;
+        if (roll.clearPending && !roll.collidersCleared && Math.abs(roll.side) >= 4.95) {
+          roll.collidersCleared = true;
+          for (const c of logCols) c.max.y = c.min.y;
+          game.flag('treeCleared');
+        }
+      }
     });
-    world.addFetchTarget({
-      id: 'fallenTree', object: log, radius: 1.6,
+    const fallenTreeTarget = world.addFetchTarget({
+      id: 'fallenTree', object: log, radius: 2.55,
       onHit(skull, at) {
+        if (skull.mode !== 'outbound') return 'continue';
         logHits++;
+        const layer = Math.min(2, logHits - 1);
+        branchLayers[layer] = Math.max(branchLayers[layer], 0.001);
+        for (const c of branchLayerColliders[layer]) c.max.y = c.min.y;
         game.impact('hurt', at);
         audio.pop({ pos: log.position, gain: 0.32, rate: 0.7 });
         audio.creak({ pos: log.position, gain: 0.45, rate: 0.8 });   // wood complaining
@@ -1666,19 +3576,35 @@ export class Forest {
         roll.to = log.rotation.x + 0.55;                             // it ROLLS, visibly
         roll.dropFrom = log.position.y;
         roll.dropTo = Math.max(0.3, log.position.y - 0.14);
+        roll.sideFrom = roll.side;
+        roll.sideTo = roll.side;
         roll.shove = 0.16;
         roll.t = 0;
+        if (logHits === 2) {
+          roll.rootFrom = roll.rootTo;
+          roll.rootTo = 1;
+          roll.rootT = 0;
+          audio.brushCrash({ pos: roots.getWorldPosition(new THREE.Vector3()), gain: 0.46, rate: 0.72 });
+        }
         if (logHits >= 3) {
           this.enabled = false;
-          for (const c of logCols) c.max.y = c.min.y;
           roll.dropTo = 0.34;
           roll.to = log.rotation.x + 1.35;                           // the last one rolls it clear
-          game.flag('treeCleared');
+          // The torn root mass drags the bole lengthwise into the shoulder.
+          // Collision remains until its nearest visible end has actually
+          // cleared the capsule-wide route; there is never a walk-through log.
+          roll.sideTo = 5.65;
+          roll.clearPending = true;
           audio.brushCrash({ pos: log.position, gain: 0.7 });
         }
         return 'return';
       },
     });
+    game.fallenTreeSetpiece = {
+      log, bole, roots, branches: branchMesh, target: fallenTreeTarget,
+      colliders: logCols, roll, center: new THREE.Vector3(fsm.x, LOG_R, fsm.z),
+      get hits() { return logHits; },
+    };
 
     // the rope over the ravine
     const rs = this.ravineS();
@@ -1699,6 +3625,7 @@ export class Forest {
     const ravineRopeTarget = world.addFetchTarget({
       id: 'ravineRope', pos: this.ropeAnchor, radius: 1.1,
       onHit(skull) {
+        if (skull.mode !== 'outbound') return 'continue';
         // A bad release cannot spend the only crossing. The director disables
         // the target only once the player is grounded on the far side.
         if (game.player.swing) return 'return';

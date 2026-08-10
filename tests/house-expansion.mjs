@@ -89,6 +89,116 @@ try {
       <= boilerClearance.ceilingY - boilerClearance.clearance + 1e-5,
     'boiler flue and dark collar terminate below the basement ceiling plane', boilerClearance);
 
+  const wrongKeyThrow = await page.evaluate(() => {
+    const F = window.__FETCH, g = window.__game;
+    F.start();
+    F.teleport('house');
+    const door = g.world.doorById.bedroomDoor;
+    const target = g.world.fetchTargets.find((t) => t.id === 'bedroomLock');
+    const at = door.panel.getWorldPosition(g.player.pos.clone());
+    const oldRattle = g.audio.lockedRattle;
+    const oldImpact = g.impact;
+    let rattles = 0;
+    let impacts = 0;
+    g.audio.lockedRattle = () => { rattles++; };
+    g.impact = (kind) => { if (kind === 'locked') impacts++; };
+    const carry = g.skull.carry;
+    const mode = g.skull.mode;
+    g.skull.carry = null;
+    door.rattleT = 0;
+    g.skull.mode = 'outbound';
+    const outboundDirective = target.onHit(g.skull, at);
+    g.skull.mode = 'returning';
+    const returnDirective = target.onHit(g.skull, at);
+    g.skull.carry = carry;
+    g.skull.mode = mode;
+    g.audio.lockedRattle = oldRattle;
+    g.impact = oldImpact;
+    return {
+      outboundDirective,
+      returnDirective,
+      rattles,
+      impacts,
+      rattleT: door.rattleT,
+      locked: door.locked,
+      open: door.open,
+      targetEnabled: target.enabled,
+    };
+  });
+  report.diagnostics.wrongKeyThrow = wrongKeyThrow;
+  check(wrongKeyThrow.outboundDirective === 'return' && wrongKeyThrow.returnDirective === 'continue'
+      && wrongKeyThrow.rattles === 1
+      && wrongKeyThrow.impacts === 1 && wrongKeyThrow.rattleT > 0
+      && wrongKeyThrow.locked === 'bedroomKey' && !wrongKeyThrow.open
+      && wrongKeyThrow.targetEnabled,
+    'a no-key throw refuses once and its overlapping return leg adds no feedback storm', wrongKeyThrow);
+
+  const preRelayThrow = await page.evaluate(() => {
+    const F = window.__FETCH, g = window.__game;
+    F.teleport('house');
+    const target = g.voidDoorBeat.target;
+    const oldRattle = g.audio.lockedRattle;
+    const oldImpact = g.impact;
+    const oldMode = g.skull.mode;
+    let rattles = 0;
+    let impacts = 0;
+    g.audio.lockedRattle = () => { rattles++; };
+    g.impact = (kind) => { if (kind === 'locked') impacts++; };
+    g.flags.delete('voidDoorTried');
+    g.windowRelay.nudgeT = 0;
+    g.skull.mode = 'outbound';
+    const outboundDirective = target.onHit(g.skull, target.pos);
+    g.skull.mode = 'returning';
+    const returnDirective = target.onHit(g.skull, target.pos);
+    g.skull.mode = oldMode;
+    g.audio.lockedRattle = oldRattle;
+    g.impact = oldImpact;
+    return {
+      outboundDirective,
+      returnDirective,
+      rattles,
+      impacts,
+      targetEnabled: target.enabled,
+      open: g.voidDoorBeat.door.open,
+      tried: g.flags.has('voidDoorTried'),
+      nudge: g.windowRelay.nudgeT,
+    };
+  });
+  report.diagnostics.preRelayThrow = preRelayThrow;
+  check(preRelayThrow.outboundDirective === 'return' && preRelayThrow.returnDirective === 'continue'
+      && preRelayThrow.rattles === 1 && preRelayThrow.impacts === 1
+      && preRelayThrow.targetEnabled && !preRelayThrow.open
+      && preRelayThrow.tried && preRelayThrow.nudge > 0,
+    'a pre-relay door throw rattles once and the return leg passes cleanly', preRelayThrow);
+
+  const preRelayDoor = await page.evaluate(() => {
+    const F = window.__FETCH, g = window.__game;
+    F.start();
+    F.teleport('house');
+    const door = g.voidDoorBeat.door;
+    g.flags.delete('voidDoorTried');
+    g.windowRelay.nudgeT = 0;
+    const before = { open: door.open, target: door.target };
+    door.tryUse(g);
+    F.stepWith(0.12, {}, false);
+    return {
+      before,
+      after: { open: door.open, target: door.target, colliderY: [door.collider.min.y, door.collider.max.y] },
+      tried: g.flags.has('voidDoorTried'),
+      relay: g.flags.has('windowRelaySolved'),
+      voidDoorOpen: g.flags.has('voidDoorOpen'),
+      flameEnabled: g.voidDoorBeat.flameTarget.enabled,
+      relayNudge: g.windowRelay.nudgeT,
+    };
+  });
+  report.diagnostics.preRelayDoor = preRelayDoor;
+  check(!preRelayDoor.before.open && !preRelayDoor.after.open
+      && preRelayDoor.after.target === 0
+      && preRelayDoor.after.colliderY[1] > preRelayDoor.after.colliderY[0]
+      && preRelayDoor.tried && preRelayDoor.relayNudge > 0
+      && !preRelayDoor.relay && !preRelayDoor.voidDoorOpen && !preRelayDoor.flameEnabled,
+    'E cannot counterfeit an open void door before the required window relay', preRelayDoor);
+
   const windowResult = await page.evaluate(() => {
     const F = window.__FETCH, g = window.__game;
     F.start();

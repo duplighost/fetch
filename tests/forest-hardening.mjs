@@ -114,6 +114,14 @@ try {
       g.director.respawn();
       F.stepWith(0.1, {}, false);
       const start = f.project(g.player.pos.x, g.player.pos.z);
+      const startFork = f.forkAtS(start.s);
+      const startRouteSide = startFork
+        ? (startFork.selected || startFork.previewSide || startFork.defaultSide)
+        : 0;
+      const startRouteLat = startFork
+        ? startRouteSide * f.forkRouteOffset(startFork, start.s)
+        : 0;
+      const startRouteError = Math.abs(start.lat - startRouteLat);
       const startY = g.player.pos.y;
       let lowestY = startY;
       let pinnedFor = 0;
@@ -139,6 +147,9 @@ try {
       soak.push({
         requestedS: s,
         startS: +start.s.toFixed(2), startLat: +start.lat.toFixed(3), startY: +startY.toFixed(3),
+        startFork: startFork?.id || null,
+        startRouteLat: +startRouteLat.toFixed(3),
+        startRouteError: +startRouteError.toFixed(3),
         endS: +end.s.toFixed(2), progress: +(end.s - start.s).toFixed(2),
         lowestY: +lowestY.toFixed(3), pinnedFor: +pinnedFor.toFixed(2),
         nearestSeal: Number.isFinite(nearTree) ? +nearTree.toFixed(2) : null,
@@ -146,8 +157,8 @@ try {
       });
     }
     check(
-      'edge-biased death/respawn soak always starts clear and can move forward',
-      soak.every((r) => Math.abs(r.startLat) <= 0.35
+      'edge-biased death/respawn soak starts on the active authored route and can move forward',
+      soak.every((r) => r.startRouteError <= 0.35
         && r.lowestY > -3.5
         && r.progress > 3
         && r.pinnedFor < 0.8

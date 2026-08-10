@@ -126,6 +126,7 @@ export class Mirrors {
     this._activeCount = 0;
     this._inUpdate = false;
     this._pendingSize = 0;
+    this._disposed = false;
   }
 
   _makePool(budget, size) {
@@ -165,6 +166,7 @@ export class Mirrors {
   // Reallocate the RT pool at a new resolution (finale bumps 512 -> 1024).
   // Deferred if called mid-update — the pool is being rendered into.
   setSize(px) {
+    if (this._disposed) return;
     if (this._inUpdate) { this._pendingSize = px; return; }
     if (px === this.size) return;
     this.size = px;
@@ -176,6 +178,7 @@ export class Mirrors {
   // Choose panes worth reflecting this frame and render them into the pool.
   // Call BEFORE the main render; leaves the render target at null for it.
   update(scene, camera) {
+    if (this._disposed) return;
     if (this._pendingSize) { const s = this._pendingSize; this._pendingSize = 0; this.setSize(s); }
     this._inUpdate = true;
     camera.updateMatrixWorld();
@@ -271,11 +274,27 @@ export class Mirrors {
     const r = this.renderer;
     const prevTarget = r.getRenderTarget();
     scope.visible = false; // a pane must not appear in its own reflection
-    r.setRenderTarget(rt);
-    r.clear();
-    r.render(scene, vc);
-    r.setRenderTarget(prevTarget);
-    scope.visible = true;
+    try {
+      r.setRenderTarget(rt);
+      r.clear();
+      r.render(scene, vc);
+    } finally {
+      r.setRenderTarget(prevTarget);
+      scope.visible = true;
+    }
     return true;
+  }
+
+  dispose() {
+    if (this._disposed) return;
+    this._disposed = true;
+    this._pendingSize = 0;
+    this._activeCount = 0;
+    for (const m of this.mirrors) {
+      m.setActive(false);
+      m.material.uniforms.tDiffuse.value = null;
+    }
+    for (const rt of this.pool) rt.dispose();
+    this.pool.length = 0;
   }
 }

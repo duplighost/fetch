@@ -14,14 +14,15 @@ import { Finale } from './finale.js';
 import { buildHouse } from './house.js';
 import { buildOutside } from './outside.js';
 import { buildAtmosphere } from './atmosphere.js';
-import { LAYER_HELD } from './mirrors.js';
+import { LAYER_HELD, LAYER_DOUBLE } from './mirrors.js';
 
 const FIXED_DT = 1 / 120;
 const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const _impV = new THREE.Vector3();
-const VERSION = '0.1.0-wake';
+const VERSION = '0.5.0-intruder';
+const GORE_CAP = 64;
 
 // ------------------------------------------------------------------- input
 class InputState {
@@ -35,12 +36,67 @@ class InputState {
     this.testInput = null;      // harness override
   }
   clearKeys() {
+    // Focus loss cancels intent, not merely held state. A mousedown / E / Space
+    // edge can arrive between RAF and the next fixed step; preserving that edge
+    // would manufacture a throw, interaction or jump after the player has left
+    // the window. The only edge that survives is the physical release promised
+    // by an already-held throw (including an already-queued release).
+    const releaseThrow = this.throwHeld || this.pending.throwReleased;
     this.keys.clear();
-    // Losing focus is a physical mouse release, not permission to leave the
-    // skull hanging forever. Preserve the sacred press/hold/release grammar.
-    if (this.throwHeld) this.pending.throwReleased = true;
+    this.pending = {
+      throwPressed: false,
+      throwReleased: releaseThrow,
+      callTap: false,
+      interact: false,
+      jump: false,
+    };
     this.throwHeld = false;
     this.callHeld = false;
+    this.callDownAt = 0;
+    this.lookX = 0;
+    this.lookY = 0;
+  }
+  suspendForPause({ releaseHeld = false } = {}) {
+    // A pause is not a synthetic mouse-up. Keep the physical LMB state and any
+    // release that already happened, but discard movement/look and one-shot
+    // actions so Escape can never manufacture a delayed throw or interaction.
+    // If LMB is released while the pause screen is open, the ordinary mouseup
+    // handler records that promise and it lands on the first resumed step.
+    // A deliberate menu pause can preserve a physically held button because
+    // the global mouseup listener will still observe its release. Focus or
+    // visibility loss cannot make that promise: the release may happen in
+    // another window. Queue one safe release edge in that case so resuming can
+    // never resurrect a phantom held throw or anchored rope.
+    const releaseThrow = this.pending.throwReleased || (releaseHeld && this.throwHeld);
+    this.keys.clear();
+    this.pending = {
+      throwPressed: false,
+      throwReleased: releaseThrow,
+      callTap: false,
+      interact: false,
+      jump: false,
+    };
+    this.callHeld = false;
+    this.callDownAt = 0;
+    if (releaseHeld) this.throwHeld = false;
+    this.lookX = 0;
+    this.lookY = 0;
+  }
+  resetAll() {
+    // Restart-from-checkpoint owns a fresh control edge. Unlike focus loss,
+    // there is no live throw promise to preserve: respawn explicitly puts the
+    // skull in the hands and aborts any rope swing.
+    this.keys.clear();
+    this.pending = {
+      throwPressed: false,
+      throwReleased: false,
+      callTap: false,
+      interact: false,
+      jump: false,
+    };
+    this.throwHeld = false;
+    this.callHeld = false;
+    this.callDownAt = 0;
     this.lookX = 0;
     this.lookY = 0;
   }
@@ -80,6 +136,10 @@ class Game {
     this.bridgeStones = [];
     this.dead = false;
     this.started = false;
+    this.paused = false;
+    this.pauseReason = null;
+    this._pauseChangedAt = -Infinity;
+    this._pausedAnimations = [];
     this.time = 0;
     this.hitStop = 0;
     this._shake = 0;
@@ -89,12 +149,15 @@ class Game {
     this.snapBuffer = 0;
     this.lastCheckpoint = 'bedroom';
     this.checkpointPose = null;
-    this.gorePool = [];
+    this._basementExit = null;
+    this.endingTail = false;
+    this.terminal = false;
     this.goreGeo = new THREE.IcosahedronGeometry(0.08, 0);
     this.goreMat = new THREE.MeshStandardMaterial({ color: 0x3a3236, roughness: 0.75 });   // must read in the dark
 
     this._setupRenderer();
     this._setupScene();
+    this._buildGorePool();
 
     this.audio = new GameAudio();
     // ?mute=1: audio never initializes (every call no-ops pre-init) — the
@@ -106,7 +169,13 @@ class Game {
     this.enemies = new Enemies(this);
     this.director = new Director(this);
 
+    const houseRenderStart = this.scene.children.length;
     buildHouse(this);
+    // The house is one authored district even though its room kit produces
+    // many independent top-level roots. Keep the ownership boundary so the
+    // forest can retire that finished chapter when the player crosses the
+    // graveyard gate, including when they immediately look back.
+    this.houseRenderRoots = this.scene.children.slice(houseRenderStart);
     buildOutside(this);
     this.atmosphere = buildAtmosphere(this);
     this.finale = new Finale(this);
@@ -168,6 +237,7 @@ class Game {
 
     this._buildGrain();
     this._exposeDebug();
+    this._scheduleShaderWarmup();
   }
 
   // ---------------------------------------------------------------- setup
@@ -182,6 +252,8 @@ class Game {
     r.toneMappingExposure = 1.05;
     r.shadowMap.enabled = true;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.domElement.tabIndex = -1;
+    r.domElement.setAttribute('aria-label', 'FETCH game view');
     document.getElementById('app').appendChild(r.domElement);
     r.domElement.addEventListener('webglcontextlost', (e) => e.preventDefault());
     r.domElement.addEventListener('webglcontextrestored', () => this._dropQuality());
@@ -245,6 +317,238 @@ class Game {
     this.grainScene.add(quad);
   }
 
+  _buildGorePool() {
+    // Cosmetic fragments are a bounded effect, never a reason for combat to
+    // allocate meshes/vectors or splice arrays on the impact frame. Active
+    // slots stay packed at the front so one InstancedMesh draws the whole burst.
+    this.gorePool = Array.from({ length: GORE_CAP }, () => ({
+      pos: new THREE.Vector3(),
+      vel: new THREE.Vector3(),
+      scale: 1,
+      t: 0,
+    }));
+    this.goreMesh = new THREE.InstancedMesh(this.goreGeo, this.goreMat, GORE_CAP);
+    this.goreMesh.name = 'bounded impact fragment pool';
+    this.goreMesh.userData.fetchGorePool = true;
+    this.goreMesh.count = 0;
+    this.goreMesh.visible = false;
+    this.goreMesh.frustumCulled = false;
+    this.goreMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(this.goreMesh);
+    this._goreActive = 0;
+    this._goreEmitted = 0;
+    this._goreDropped = 0;
+    this._goreMatrix = new THREE.Matrix4();
+    this._goreQuaternion = new THREE.Quaternion();
+    this._goreScale = new THREE.Vector3();
+  }
+
+  _compileWarmVariant(scene, camera) {
+    if (typeof this.renderer.compileAsync === 'function') {
+      return this.renderer.compileAsync(scene, camera);
+    }
+    // Older WebGLRenderer builds still get the same boot-time program pass.
+    this.renderer.compile(scene, camera);
+    return null;
+  }
+
+  _scheduleShaderWarmup() {
+    const state = this.shaderWarmup = {
+      status: 'scheduled',
+      mode: typeof this.renderer.compileAsync === 'function' ? 'async' : 'sync',
+      variants: ['ordinary', 'hidden-threat', 'cave-lights', 'cave-threat', 'grain'],
+      errors: [],
+    };
+    // Deterministic suites exercise startup hundreds of times and do not need
+    // driver precompilation. The focused regression opts in with ?warmup=1.
+    if (TEST_MODE && !Q.has('warmup')) {
+      state.status = 'skipped';
+      state.reason = 'test-mode';
+      return;
+    }
+    const run = () => {
+      this._shaderWarmupCancel = null;
+      if (this.started || this.terminal) {
+        state.status = 'skipped';
+        state.reason = 'game-started';
+        return;
+      }
+      this._beginShaderWarmup(state);
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const handle = requestIdleCallback(run, { timeout: 1200 });
+      this._shaderWarmupCancel = () => {
+        if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle);
+      };
+    } else {
+      const handle = setTimeout(run, 350);
+      this._shaderWarmupCancel = () => clearTimeout(handle);
+    }
+  }
+
+  _cancelScheduledShaderWarmup() {
+    if (!this._shaderWarmupCancel) return;
+    this._shaderWarmupCancel();
+    this._shaderWarmupCancel = null;
+    this.shaderWarmup.status = 'skipped';
+    this.shaderWarmup.reason = 'game-started';
+  }
+
+  _beginShaderWarmup(state) {
+    // compileAsync still performs scene traversal synchronously. Never point it
+    // at FETCH's enormous assembled world: build a tiny scene that shares the
+    // exact materials from representative ordinary, hidden-threat and cave
+    // objects, then let the driver finish those programs in parallel.
+    state.status = 'pending';
+    state.startedAt = performance.now();
+    const jobs = [];
+    const compile = (scene, camera, label) => {
+      try {
+        const job = this._compileWarmVariant(scene, camera);
+        if (job && typeof job.then === 'function') {
+          jobs.push(Promise.resolve(job).catch((error) => {
+            state.errors.push(`${label}: ${error?.message || error}`);
+          }));
+        }
+      } catch (error) {
+        state.errors.push(`${label}: ${error?.message || error}`);
+      }
+    };
+    const warmScene = new THREE.Scene();
+    warmScene.fog = this.scene.fog;
+    warmScene.environment = this.scene.environment;
+    const warmCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 20);
+    warmCamera.layers.set(0);
+    warmScene.add(warmCamera);
+    const warmEntities = [];
+    const warmChoirLights = [];
+    const spawnSerial = this.enemies._spawnSerial;
+    const previousChoir = this.enemies.choir;
+    const hadSpawnLog = Object.prototype.hasOwnProperty.call(this, 'spawnLog');
+    const spawnLogLength = this.spawnLog?.length || 0;
+    try {
+      // Ordinary figures and the Drowned Choir are built on demand, so no boot
+      // scene object can stand in for their exact Lambert/custom programs. Make
+      // one bounded set, immediately remove every gameplay trace, and retain
+      // only its nine materials after compilation so later real spawns reuse
+      // the driver's programs instead of hitching on first sight.
+      for (const kind of ['walker', 'resident', 'kneeler']) {
+        warmEntities.push(this.enemies.spawn(
+          kind, this.player.pos.x, this.player.pos.z, 'dormant', this.player.pos.y + 1,
+        ));
+      }
+      if (!previousChoir) {
+        warmEntities.push(this.enemies.beginDrownedChoir({
+          pos: this.underfalls?.layout?.entrance || this.player.pos,
+          heardPos: this.player.pos,
+        }));
+      }
+    } catch (error) {
+      state.errors.push(`threat-setup: ${error?.message || error}`);
+    } finally {
+      for (const entity of warmEntities) {
+        const index = this.enemies.list.indexOf(entity);
+        if (index >= 0) this.enemies.list.splice(index, 1);
+        entity.loop?.stop?.();
+        entity.loop = null;
+        entity.mesh.removeFromParent();
+      }
+      this.enemies.choir = previousChoir || null;
+      this.enemies._spawnSerial = spawnSerial;
+      if (hadSpawnLog) this.spawnLog.length = spawnLogLength;
+      else delete this.spawnLog;
+    }
+    for (const entity of warmEntities) {
+      entity.mesh.visible = true;
+      if (entity.kind === 'choir') {
+        entity.mesh.traverse((object) => {
+          if (!object.isLight) return;
+          object.visible = false;
+          warmChoirLights.push(object);
+        });
+      }
+      warmScene.add(entity.mesh);
+    }
+    const addSharedClone = (object) => {
+      if (!object) return;
+      const clone = object.clone(true);
+      clone.visible = true;
+      warmScene.add(clone);
+    };
+    const sources = [
+      this.finale?.figure,
+      this.houseMirror?.double,
+      this.houseMirror?.echo,
+      this.underfalls?.displacement?.root,
+      this.underfalls?.pump?.group,
+      this.underfalls?.sluice?.group,
+      this.underfalls?.secret?.group,
+      ...(this.windowRelay?.visitor?.stages || []),
+    ];
+    const caveLights = new Set(this.underfalls?.lights || []);
+    const caveLightClones = [];
+    let skullLightClone = null;
+    try {
+      for (const source of sources) addSharedClone(source);
+
+      // A single live instance makes the pooled MeshStandardMaterial part of
+      // the representative scene without touching the shipping pool's count.
+      const warmGore = new THREE.InstancedMesh(this.goreGeo, this.goreMat, 1);
+      warmGore.setMatrixAt(0, new THREE.Matrix4());
+      warmGore.count = 1;
+      warmScene.add(warmGore);
+
+      // Clone the resident ordinary light rig. Shared materials receive the
+      // same light-count program keys without moving or exposing game objects.
+      this.scene.traverseVisible((object) => {
+        if (!object.isLight || caveLights.has(object)) return;
+        const clone = object.clone(false);
+        if (object === this.skullLight) skullLightClone = clone;
+        warmScene.add(clone);
+      });
+      for (const light of caveLights) {
+        const clone = light.clone(false);
+        clone.visible = false;
+        caveLightClones.push(clone);
+        warmScene.add(clone);
+      }
+
+      compile(warmScene, warmCamera, 'ordinary');
+      // Waterfall loss removes the skull and its world light before Underfalls
+      // and the finale. Compile that late-game reflection count separately.
+      if (skullLightClone) skullLightClone.visible = false;
+      warmCamera.layers.set(0);
+      warmCamera.layers.enable(LAYER_DOUBLE);
+      compile(warmScene, warmCamera, 'hidden-threat');
+      warmCamera.layers.set(0);
+      for (const light of caveLightClones) light.visible = true;
+      compile(warmScene, warmCamera, 'cave-lights');
+      for (const light of warmChoirLights) light.visible = true;
+      compile(warmScene, warmCamera, 'cave-threat');
+      compile(this.grainScene, this.grainCam, 'grain');
+    } catch (error) {
+      state.errors.push(`setup: ${error?.message || error}`);
+    }
+
+    const finish = () => {
+      const retainedMaterials = warmEntities.flatMap((entity) =>
+        entity.kind === 'choir'
+          ? (entity.mesh.userData.ownedMaterials || [])
+          : (entity.mesh.userData.mat ? [entity.mesh.userData.mat] : []));
+      if (this.terminal) {
+        for (const material of retainedMaterials) material.dispose();
+      } else {
+        this._shaderWarmMaterials = retainedMaterials;
+      }
+      warmScene.clear();
+      state.status = state.errors.length ? 'degraded' : 'ready';
+      state.completedAt = performance.now();
+      state.durationMs = state.completedAt - state.startedAt;
+    };
+    if (jobs.length) Promise.all(jobs).then(finish);
+    else finish();
+  }
+
   _dropQuality() {
     this.renderer.setPixelRatio(1);
     if (this.world.moon) this.world.moon.castShadow = false;
@@ -254,8 +558,8 @@ class Game {
   _wireInput() {
     const canvas = this.renderer.domElement;
     canvas.addEventListener('mousedown', (e) => {
-      if (!this.started || this.dead) return;
-      if (!TEST_MODE && document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+      if (!this.started || this.dead || this.paused) return;
+      if (!TEST_MODE && document.pointerLockElement !== canvas) { this._requestPointerLock(); return; }
       if (e.button === 0) { this.input.throwHeld = true; this.input.pending.throwPressed = true; }
       if (e.button === 2) { this.input.callHeld = true; this.input.callDownAt = performance.now(); }
     });
@@ -266,31 +570,66 @@ class Game {
       }
       if (e.button === 2) {
         this.input.callHeld = false;
+        if (this.paused) { this.input.callDownAt = 0; return; }
         // duration alone decides — never gate the recall on mouse motion
         if (performance.now() - this.input.callDownAt < 260) this.input.pending.callTap = true;
       }
     });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     document.addEventListener('mousemove', (e) => {
+      if (this.paused) return;
       if (!TEST_MODE && document.pointerLockElement !== canvas) return;
       this.input.lookX += e.movementX;
       this.input.lookY += e.movementY;
     });
     addEventListener('keydown', (e) => {
       if (e.repeat) return;
+      if (e.code === 'Escape' || e.code === 'KeyP') {
+        e.preventDefault();
+        const now = performance.now();
+        if (this.paused) {
+          // Chromium may report the pointer-lock loss and its Escape keydown in
+          // either order. Do not let one physical key both pause and resume.
+          if (now - this._pauseChangedAt > 160) this.resumeGame();
+        } else {
+          this.pauseGame('keyboard');
+        }
+        return;
+      }
+      if (this.paused) return;
+      if (this.dead || this.flags.has('ended') || this._basementExit) return;
       this.input.keys.add(e.code);
       if (e.code === 'Space') this.input.pending.jump = true;
       if (e.code === 'KeyE') this.input.pending.interact = true;
     });
     addEventListener('keyup', (e) => this.input.keys.delete(e.code));
-    addEventListener('blur', () => this.input.clearKeys());
+    addEventListener('blur', () => {
+      if (this._canPause()) this.pauseGame('focus-loss');
+      else this.input.clearKeys();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      if (this._canPause()) this.pauseGame('visibility');
+      else this.input.clearKeys();
+    });
     document.addEventListener('pointerlockchange', () => {
-      if (document.pointerLockElement !== canvas) this.input.clearKeys();
+      if (document.pointerLockElement === canvas) {
+        // A DOM button cannot honestly be mouse-clicked while Pointer Lock
+        // retargets every pointer event to the canvas. Hide that false
+        // affordance; Escape/P remain the immediate desktop pause controls.
+        this._syncPauseUi();
+        return;
+      }
+      // Pointer lock is a gameplay contract. Losing it is a pause, not a silent
+      // return-to-play state with dead mouse-look and manufactured releases.
+      if (this._canPause()) this.pauseGame('pointer-lock');
+      else if (!this.paused) this.input.clearKeys();
     });
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
+      if (this.paused) this.render();
     });
   }
 
@@ -298,36 +637,182 @@ class Game {
     this.el = {
       title: document.getElementById('title'),
       die: document.getElementById('die'),
+      pause: document.getElementById('pause'),
+      pauseButton: document.getElementById('pauseButton'),
       fade: document.getElementById('fade'),
       crosshair: document.getElementById('crosshair'),
       vignette: document.getElementById('vignette'),
       sr: document.getElementById('srState'),
     };
-    this.el.title.addEventListener('click', () => {
+    this.el.title.addEventListener('click', (event) => {
       if (this.flags.has('ended')) { location.reload(); return; }
-      this.startGame();
+      if (event.target.closest('[data-action="start"]')) this.startGame();
     });
     this.el.die.addEventListener('click', () => {
       this.el.die.classList.add('hidden');
       this.director.respawn();
       this.fadeIn(1.2);
-      if (!TEST_MODE) this.renderer.domElement.requestPointerLock();
+      this._syncPauseUi();
+      this._requestPointerLock();
     });
+    this.el.pauseButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.pauseGame('button');
+    });
+    this.el.pause.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]')?.dataset.action;
+      if (action === 'resume') this.resumeGame();
+      if (action === 'restart-checkpoint') this.restartFromCheckpoint();
+    });
+    this._syncPauseUi();
+  }
+
+  _canPause() {
+    return this.started && !this.dead && !this.flags.has('ended')
+      && !this.endingTail && !this.terminal;
+  }
+
+  _requestPointerLock() {
+    try { this.renderer.domElement.focus({ preventScroll: true }); } catch { /* detached canvas */ }
+    if (TEST_MODE || this.paused || this.dead || this.terminal) return;
+    try {
+      const pending = this.renderer.domElement.requestPointerLock?.();
+      pending?.catch?.(() => {});
+    } catch { /* unsupported or denied: the next canvas click can retry */ }
+  }
+
+  _pauseDocumentAnimations() {
+    this._pausedAnimations = [];
+    if (!document.getAnimations) return;
+    for (const animation of document.getAnimations()) {
+      if (animation.playState !== 'running' && animation.playState !== 'pending') continue;
+      const target = animation.effect?.target;
+      if (target && this.el.pause?.contains(target)) continue;
+      try { animation.pause(); this._pausedAnimations.push(animation); } catch { /* detached target */ }
+    }
+  }
+
+  _resumeDocumentAnimations() {
+    for (const animation of this._pausedAnimations) {
+      try { if (animation.playState === 'paused') animation.play(); } catch { /* detached target */ }
+    }
+    this._pausedAnimations.length = 0;
+  }
+
+  _setAudioPaused(paused) {
+    const ctx = this.audio?.ctx;
+    if (!ctx) return;
+    try {
+      const op = paused ? ctx.suspend?.() : ctx.resume?.();
+      Promise.resolve(op).catch(() => {}).finally(() => {
+        // A rapid Escape double-tap can reverse the desired state while the
+        // browser is still settling the first AudioContext promise. Reconcile
+        // once more from authoritative game state so sound cannot resume under
+        // a pause or remain muted after it.
+        const shouldSuspend = this.paused || this.terminal;
+        try {
+          const settle = shouldSuspend && ctx.state === 'running'
+            ? ctx.suspend?.()
+            : (!shouldSuspend && this.started && ctx.state === 'suspended' ? ctx.resume?.() : null);
+          settle?.catch?.(() => {});
+        } catch { /* browser audio policy owns the fallback */ }
+      });
+    } catch { /* browsers without a live AudioContext simply remain silent */ }
+  }
+
+  _syncPauseUi() {
+    if (!this.el) return;
+    const showPause = this.paused && this._canPause();
+    this.el.pause?.classList.toggle('hidden', !showPause);
+    if (this.el.pauseButton) {
+      const pointerLocked = document.pointerLockElement === this.renderer.domElement;
+      this.el.pauseButton.hidden = !this.started || this.paused || this.dead
+        || this.flags.has('ended') || this.endingTail || this.terminal
+        || (!TEST_MODE && pointerLocked);
+    }
+    document.body.dataset.paused = showPause ? '1' : '0';
+    this.el.crosshair?.setAttribute('aria-hidden', showPause ? 'true' : 'false');
+  }
+
+  pauseGame(reason = 'manual') {
+    const releaseHeld = reason === 'focus-loss' || reason === 'visibility';
+    if (this.paused) {
+      // Pointer-lock loss can arrive just before blur/visibilitychange. Let the
+      // later, stronger signal repair a mouse-up that the page may never see.
+      if (releaseHeld) this.input.suspendForPause({ releaseHeld: true });
+      return true;
+    }
+    if (!this._canPause()) return false;
+    this.paused = true;
+    this.pauseReason = reason;
+    this._pauseChangedAt = performance.now();
+    this.input.suspendForPause({ releaseHeld });
+    this._lastShakeDt = 0;
+    this.renderer.domElement.style.transform = '';
+    this._pauseDocumentAnimations();
+    this._setAudioPaused(true);
+    this._syncPauseUi();
+    if (!TEST_MODE && document.pointerLockElement === this.renderer.domElement) {
+      document.exitPointerLock?.();
+    }
+    requestAnimationFrame(() => {
+      this.el.pause?.querySelector('[data-action="resume"]')?.focus({ preventScroll: true });
+    });
+    return true;
+  }
+
+  _leavePause({ resumeAudio = true } = {}) {
+    if (!this.paused) return false;
+    this.paused = false;
+    this.pauseReason = null;
+    this._pauseChangedAt = performance.now();
+    this._resumeDocumentAnimations();
+    this._syncPauseUi();
+    if (resumeAudio) this._setAudioPaused(false);
+    return true;
+  }
+
+  resumeGame() {
+    if (!this.paused || !this._canPause()) return false;
+    this._leavePause({ resumeAudio: true });
+    this._requestPointerLock();
+    return true;
+  }
+
+  restartFromCheckpoint() {
+    if (!this.paused || this.terminal || this.flags.has('ended')) return false;
+    // Cancel an in-flight basement transaction before its global callback can
+    // pull a checkpoint restart forward into the graveyard a second later.
+    if (this._basementExit) {
+      this._basementExit.complete = true;
+      this._basementExit = null;
+    }
+    this.input.resetAll();
+    this.hitStop = 0;
+    this.snapBuffer = 0;
+    this.director.respawn();
+    this.el.die.classList.add('hidden');
+    this.fadeIn(0.7);
+    this._leavePause({ resumeAudio: true });
+    this._requestPointerLock();
+    return true;
   }
 
   startGame() {
     if (this.started) return;
+    this._cancelScheduledShaderWarmup();
     this.started = true;
     this.audio.init();
     this.el.title.classList.add('hidden');
     this.fadeIn(2.4);
     this.director.start();
-    if (!TEST_MODE) this.renderer.domElement.requestPointerLock();
+    this._syncPauseUi();
+    this._requestPointerLock();
   }
 
   // ------------------------------------------------------------- services
   flag(name) { this.flags.add(name); }
-  after(t, fn) { this.director.after(t, fn); }
+  after(t, fn, options) { this.director.after(t, fn, options); }
   checkpoint(act, pose = null) {
     const p = pose || this.player;
     const pos = p.pos || p;
@@ -379,14 +864,71 @@ class Game {
   gore(pos, n, speed = 20) {
     const k = 0.7 + clamp(speed / 40, 0, 1) * 0.8;   // harder hits burst harder
     for (let i = 0; i < n; i++) {
-      const m = new THREE.Mesh(this.goreGeo, this.goreMat);
-      m.scale.setScalar(0.65 + Math.random() * 0.7);
-      m.position.copy(pos);
-      m.position.y += 1;
-      const v = new THREE.Vector3((Math.random() - 0.5) * 7 * k, Math.random() * 6 * k, (Math.random() - 0.5) * 7 * k);
-      this.scene.add(m);
-      this.gorePool.push({ m, v, t: 1.6 });
+      if (this._goreActive >= GORE_CAP) {
+        this._goreDropped += n - i;
+        break;
+      }
+      const slot = this.gorePool[this._goreActive++];
+      slot.scale = 0.65 + Math.random() * 0.7;
+      slot.pos.copy(pos);
+      slot.pos.y += 1;
+      slot.vel.set(
+        (Math.random() - 0.5) * 7 * k,
+        Math.random() * 6 * k,
+        (Math.random() - 0.5) * 7 * k,
+      );
+      slot.t = 1.6;
+      this._goreMatrix.compose(
+        slot.pos,
+        this._goreQuaternion,
+        this._goreScale.setScalar(slot.scale),
+      );
+      this.goreMesh.setMatrixAt(this._goreActive - 1, this._goreMatrix);
+      this._goreEmitted++;
     }
+    this.goreMesh.count = this._goreActive;
+    this.goreMesh.visible = this._goreActive > 0;
+    this.goreMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  goreState() {
+    return {
+      capacity: GORE_CAP,
+      active: this._goreActive,
+      free: GORE_CAP - this._goreActive,
+      emitted: this._goreEmitted,
+      dropped: this._goreDropped,
+    };
+  }
+
+  _updateGore(dt) {
+    if (this._goreActive <= 0) return;
+    let goreIndex = 0;
+    while (goreIndex < this._goreActive) {
+      const g = this.gorePool[goreIndex];
+      g.t -= dt;
+      g.vel.y -= 9 * dt;
+      g.pos.addScaledVector(g.vel, dt);
+      if (g.pos.y < 0.04) { g.pos.y = 0.04; g.vel.multiplyScalar(0.4); g.vel.y = 0; }
+      if (g.t <= 0) {
+        const last = --this._goreActive;
+        if (goreIndex !== last) {
+          this.gorePool[goreIndex] = this.gorePool[last];
+          this.gorePool[last] = g;
+        }
+        continue;
+      }
+      this._goreMatrix.compose(
+        g.pos,
+        this._goreQuaternion,
+        this._goreScale.setScalar(g.scale),
+      );
+      this.goreMesh.setMatrixAt(goreIndex, this._goreMatrix);
+      goreIndex++;
+    }
+    this.goreMesh.count = this._goreActive;
+    this.goreMesh.visible = this._goreActive > 0;
+    this.goreMesh.instanceMatrix.needsUpdate = true;
   }
 
   detachBoard(b) {
@@ -401,17 +943,31 @@ class Game {
   }
 
   exitBasement() {
+    if (this.act === 'graveyard' || this._basementExit) return;
+    const transition = { complete: false };
+    this._basementExit = transition;
     this.fadeOut(1.2, () => {
+      if (transition.complete) return;
+      transition.complete = true;
+
+      // Opening the hatch is an irreversible physical act. If death landed in
+      // the same 1.2-second fade, reconcile the whole transaction atomically
+      // instead of leaving a spent hatch in a dead basement life.
+      this.dead = false;
+      this.player.frozen = false;
+      this.player.movementLocked = false;
+      this.el.die.classList.add('hidden');
       this.teleport('graveyard');
       this.fadeIn(1.6);
-    });
+      this._basementExit = null;
+    }, false, { global: true });
   }
 
-  fadeOut(dur, cb, slow) {
+  fadeOut(dur, cb, slow, options) {
     this.el.fade.classList.toggle('slow', !!slow);
     this.el.fade.style.transitionDuration = dur + 's';
     this.el.fade.style.opacity = 1;
-    if (cb) this.after(dur, cb);
+    if (cb) this.after(dur, cb, options);
   }
 
   fadeIn(dur) {
@@ -420,11 +976,16 @@ class Game {
   }
 
   showDeath() {
+    this._leavePause({ resumeAudio: true });
     this.el.die.classList.remove('hidden');
+    this._syncPauseUi();
     document.exitPointerLock && document.exitPointerLock();
   }
 
   showEnd() {
+    if (this.endingTail || this.terminal) return;
+    this._leavePause({ resumeAudio: true });
+    this.endingTail = true;
     this.flag('ended');
     // in the dark: the catch you know — and someone else's gasp
     // The catch lands at the hands; the wordless human inhale occupies a point
@@ -435,15 +996,36 @@ class Game {
     const catchPos = listener.clone().addScaledVector(forward, 0.09);
     const gaspPos = listener.clone().addScaledVector(forward, -0.42).addScaledVector(right, 0.22);
     this.audio.catchThud({ pos: catchPos, gain: 0.7 });
-    this.after(1.1, () => this.audio.gasp({ pos: gaspPos, gain: 0.72, verb: 0.78 }));
+    this.after(1.1, () => {
+      this.audio.gasp({ pos: gaspPos, gain: 0.72, verb: 0.78 });
+      // Give the stranger's breath its full audible body, then make "end" a
+      // real terminal state: no hidden simulation, reflection renders or audio
+      // beds continue underneath the title.
+      this.after(1.15, () => this._finishEnd(), { global: true });
+    }, { global: true });
     const t = this.el.title;
     t.querySelector('.keys').style.display = 'none';
     // The catch and the breath are the ending. Do not explain the image with a
     // model-authored epitaph; the only returning text surface is the title.
     t.querySelector('.tag').textContent = '';
     t.querySelector('.go').textContent = '';
+    t.classList.add('ending');
     t.classList.remove('hidden');
+    this._syncPauseUi();
     document.exitPointerLock && document.exitPointerLock();
+  }
+
+  _finishEnd() {
+    if (this.terminal) return;
+    this.enemies.clear();
+    this.audio.stopAll({ suspend: true });
+    this.finale?.mirrors?.dispose?.();
+    this.houseMirror?.dispose?.();
+    for (const material of this._shaderWarmMaterials || []) material.dispose();
+    this._shaderWarmMaterials = null;
+    this.tickers.length = 0;
+    this.terminal = true;
+    this._syncPauseUi();
   }
 
   teleport(act) {
@@ -480,6 +1062,7 @@ class Game {
 
   // ----------------------------------------------------------------- step
   step(dt, frame) {
+    if (this.terminal || this.paused) return;
     this.time += dt;
     const ctx = {
       playerVel: new THREE.Vector3(this.player.vel.x, this.player.fallV, this.player.vel.z),
@@ -499,12 +1082,13 @@ class Game {
 
     // input → skull verbs. Alex's grammar: press throws, hold keeps it out,
     // release brings it home. The button is the tether.
-    if (frame.throwPressed && this.skull.mode === 'held') this.skull.tryThrow(ctx);
+    const verbsLive = !this.dead && !this.flags.has('ended') && !this._basementExit;
+    if (verbsLive && frame.throwPressed && this.skull.mode === 'held') this.skull.tryThrow(ctx);
     // release ends an outbound throw AND lets go of a rope — one grammar, and
     // the anchored case is handled inside _updateAnchored so the swing and the
     // skull let go on the same frame
     if (frame.throwReleased && this.skull.mode === 'outbound') this.skull.beginReturn('snap');
-    if (frame.callTap) {
+    if (verbsLive && frame.callTap) {
       if (this.skull.mode === 'gone') this.director.onVoidCall();
       else this.snapBuffer = FEEL_PROFILE.snapBuffer;
     }
@@ -518,7 +1102,7 @@ class Game {
         this.snapBuffer = 0;
       } else this.snapBuffer -= dt;
     }
-    if (frame.interactPressed) this._interact();
+    if (verbsLive && frame.interactPressed) this._interact();
 
     this.player.update(dt, frame);
     this.world.update(dt);
@@ -531,13 +1115,7 @@ class Game {
     this.audio.update(dt, this.camera.position, this.camera);
 
     for (const t of this.tickers) t(dt, this.time);
-    for (const g of this.gorePool.slice()) {
-      g.t -= dt;
-      g.v.y -= 9 * dt;
-      g.m.position.addScaledVector(g.v, dt);
-      if (g.m.position.y < 0.04) { g.m.position.y = 0.04; g.v.multiplyScalar(0.4); g.v.y = 0; }
-      if (g.t <= 0) { this.scene.remove(g.m); this.gorePool.splice(this.gorePool.indexOf(g), 1); }
-    }
+    this._updateGore(dt);
     for (const st of this.bridgeStones) {
       if (st.userData.rise && st.position.y < 0.12) st.position.y = Math.min(0.12, st.position.y + dt * 0.7);
     }
@@ -562,6 +1140,10 @@ class Game {
       // mercy path: standing at a lock while the skull carries its key
       const doorMatch = this.world.doors.find((d) => 'door:' + d.id === inter.id && d.locked && this.skull.carry && this.skull.carry.id === d.locked);
       if (doorMatch) {
+        if (doorMatch.carriedUnlock) {
+          doorMatch.carriedUnlock();
+          return;
+        }
         const c = this.skull.dropCarry();
         c.mesh.visible = false;
         doorMatch.unlock(this);
@@ -638,7 +1220,7 @@ class Game {
     // negative delta into the FOV decay *adds* kick every render until the
     // perspective matrix crosses 180 degrees and the whole world turns into
     // an inverted fisheye/starburst. Clamp at both consumption and capture.
-    const rdt = clamp(this._lastShakeDt || 0.016, 0, 0.05);
+    const rdt = this.paused ? 0 : clamp(this._lastShakeDt || 0.016, 0, 0.05);
     if (this._impactLight && this._impactLight.intensity > 0.1)
       this._impactLight.intensity *= Math.exp(-rdt * 9);
     if (this._ringT > 0) {
@@ -656,7 +1238,7 @@ class Game {
     // applied for this frame only, removed after render
     let rkx = 0, rky = 0;
     const s2r = this._shake * this._shake;
-    if (!REDUCED_MOTION && s2r > 0.0001) {
+    if (!this.paused && !REDUCED_MOTION && s2r > 0.0001) {
       rkx = (Math.random() - 0.5) * s2r * 0.05;
       rky = (Math.random() - 0.5) * s2r * 0.04;
       this.camera.rotation.x += rkx;
@@ -715,7 +1297,7 @@ class Game {
     // camera shake as canvas transform
     this._shake = Math.max(0, this._shake - rdt * 2.8);
     const s = this._shake * this._shake;
-    this.renderer.domElement.style.transform = !REDUCED_MOTION && s > 0.0001
+    this.renderer.domElement.style.transform = !this.paused && !REDUCED_MOTION && s > 0.0001
       ? `translate(${(Math.random() - 0.5) * s * 14}px, ${(Math.random() - 0.5) * s * 10}px)` : '';
   }
 
@@ -724,11 +1306,23 @@ class Game {
     let last = performance.now();
     let acc = 0;
     const tick = (now) => {
-      requestAnimationFrame(tick);
+      if (this.terminal) return;
       const rawDt = clamp((now - last) / 1000, 0, 0.05);
       last = now;
       this._lastShakeDt = rawDt;
-      if (TEST_MODE && !this._selfStep) { this.render(); return; }
+      if (this.paused) {
+        // Drop wall time instead of accumulating a catch-up burst. The already
+        // rendered WebGL frame stays pinned under the DOM pause layer.
+        acc = 0;
+        this._lastShakeDt = 0;
+        if (!this.terminal) requestAnimationFrame(tick);
+        return;
+      }
+      if (TEST_MODE && !this._selfStep) {
+        this.render();
+        if (!this.terminal) requestAnimationFrame(tick);
+        return;
+      }
       if (this.hitStop > 0) {
         // living freeze: the sim holds its breath but the cosmetic layer
         // drifts — hands, shake decay, impact bloom. A held breath, not a
@@ -736,6 +1330,7 @@ class Game {
         this.hitStop -= rawDt;
         this.skull._updateHands(rawDt * 0.2);
         this.render();
+        if (!this.terminal) requestAnimationFrame(tick);
         return;
       }
       acc = Math.min(acc + rawDt, FIXED_DT * 10);
@@ -747,6 +1342,7 @@ class Game {
         acc -= FIXED_DT;
       }
       this.render();
+      if (!this.terminal) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   }
@@ -759,6 +1355,9 @@ class Game {
       feelProfile: FEEL_PROFILE,
       ready: true,
       start() { g.startGame(); return true; },
+      pause(reason = 'debug') { return g.pauseGame(reason); },
+      resume() { return g.resumeGame(); },
+      restartCheckpoint() { return g.restartFromCheckpoint(); },
       step(dt = 1 / 120, n = 1, render = true) {
         for (let i = 0; i < n; i++) g.step(dt, g.input.frame(i === 0));
         if (render) g.render();
@@ -782,6 +1381,8 @@ class Game {
       state() {
         return {
           act: g.act,
+          paused: g.paused,
+          pauseReason: g.pauseReason,
           pos: [+g.player.pos.x.toFixed(2), +g.player.pos.y.toFixed(2), +g.player.pos.z.toFixed(2)],
           yaw: +g.player.yaw.toFixed(3),
           pitch: +g.player.pitch.toFixed(3),

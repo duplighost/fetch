@@ -38,7 +38,7 @@ const AMBIENT_BY_ACT = {
   // see now". A little — so the forest comes back up, and the carried light
   // comes up with it rather than instead of it.
   bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.46,
-  forest: 0.54, clearing: 0.5, cave: 0.30, mirror: 0.6,
+  forest: 0.54, clearing: 0.68, cave: 0.30, mirror: 0.6,
 };
 const BACKGROUND_BY_ACT = {
   bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
@@ -63,6 +63,7 @@ export class Director {
     this.residentPressure = 0;
     this.arena = null;
     this.graveArena = null;
+    this.graveRitual = null;
     this.kneeler = null;
     this.stageGrown = 0;
     this._boxTh = null;
@@ -71,6 +72,10 @@ export class Director {
     this._scope = 0;
     this._caveEcology = null;
     this._mirrorTransition = false;
+    this._companyDebt = 0;
+    this._companyPending = 0;
+    this._chaser1 = null;          // null | 'scheduled' | 'spawned'
+    this._chaser2 = null;
   }
 
   after(t, fn, { global = false } = {}) {
@@ -89,7 +94,10 @@ export class Director {
     const g = this.game;
     if (g.act === act && !hard) return;
     const prev = g.act;
-    if (prev !== act) this._scope++;
+    if (prev !== act) {
+      this._cancelScheduledForestChasers();
+      this._scope++;
+    }
     if (prev === 'cave' && act !== 'cave') this._leaveCave(act);
     g.act = act;
     g.audio.setZone(act);
@@ -154,10 +162,25 @@ export class Director {
     g.checkpoint('graveyard');
     g.baseTension = 0.12;
     this.dread = 0.4;
-    if (g.flags.has('graveyardCleared')) {
-      if (g.graveyardGate) g.graveyardGate.openGate();
+    const resolved = g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared');
+    if (resolved) {
+      if (g.graveyardGate) {
+        g.graveyardGate.setRitualStage?.(3);
+        if (g.flags.has('graveyardCleared')) g.graveyardGate.openGate();
+      }
+      g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
+      if (g.flags.has('graveyardCleared') && g.ossuary) {
+        g.ossuary.solved = true;
+        g.ossuary.progress = 1;
+        g.ossuary.exitCollider.max.y = g.ossuary.exitCollider.min.y;
+      }
+      if (!this.graveRitual) this.graveRitual = { credits: new Set([0, 1, 2]), done: true, route: 'restored' };
+      else this.graveRitual.done = true;
+      if (!this.graveArena) this.graveArena = { wave: 3, pending: 0, t: 0, engaged: false, done: true, route: 'restored' };
+      else { this.graveArena.done = true; this.graveArena.pending = 0; }
       return;
     }
+    if (!this.graveRitual) this.graveRitual = { credits: new Set(), done: false, route: null };
     if (!this._graveSpawned) {
       this._graveSpawned = true;
       const dormant = g.enemies.spawn('walker', -14, 24, 'dormant');
@@ -180,18 +203,23 @@ export class Director {
     // The two Standing figures are graveyard pressure, not migrating forest
     // enemies. They keep circling the open gate until the player crosses it,
     // then remain behind instead of haunting unrelated acts.
-    g.enemies.clear((e) => e.gravePressure);
+    g.enemies.clear((e) => e.gravePressure || e.graveArena);
     g.checkpoint('forest');
     g.baseTension = 0.2;
     this.dread = 0.55;
+    this._companyDebt = 0;
+    this._companyPending = 0;
   }
 
   _enterClearing() {
     const g = this.game;
+    this._cancelForestArena('clearing');
     g.checkpoint('clearing');
     g.baseTension = 0;
     this.dread = 0;
     g.enemies.clear();
+    this.kneeler = null;
+    this._kneelerGrace = 0;
     // arm the waterfall; the skull begins asking
     for (const t of g.world.fetchTargets) if (t.id === 'waterfall') t.enabled = true;
     this._gesturing = true;
@@ -261,6 +289,13 @@ export class Director {
   }
 
   _leaveCave(reason = 'leave') {
+    // Cave isolation snapshots the exterior after the forest district culler
+    // has already retired the completed house and graveyard. Restore that
+    // snapshot before changing acts so Forest.update can then make the final,
+    // authoritative visibility decision in the same frame. Letting the cave
+    // ticker restore later would overwrite Forest's house/debug-teleport
+    // restoration with the stale, already-culled cave-entry snapshot.
+    this.game.underfalls?.visibility?.restore?.();
     this._caveEcology = null;
     this._mirrorTransition = reason === 'mirror';
     this.game.enemies.endDrownedChoir(reason);
@@ -528,7 +563,7 @@ export class Director {
   // ----------------------------------------------------------- graveyard
   _updateGraveyardArena(dt) {
     const g = this.game;
-    if (g.act !== 'graveyard' || g.flags.has('graveyardCleared')) return;
+    if (g.act !== 'graveyard' || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return;
 
     // The first half of the yard is readable dread: wreck, bodies, graves, and
     // the optional locket line. Crossing the central row commits the player to
@@ -596,21 +631,70 @@ export class Director {
       return;
     }
 
+    this._completeGraveyard('loud');
+  }
+
+  onGraveResonance(index, pos) {
+    const g = this.game;
+    if (g.act !== 'graveyard' || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
+    if (!this.graveRitual) this.graveRitual = { credits: new Set(), done: false, route: null };
+    const ritual = this.graveRitual;
+    if (ritual.done || ritual.credits.has(index)) return false;
+    ritual.credits.add(index);
+    g.resonantGraves?.[index]?.setCredited?.(true);
+    g.graveyardGate?.setRitualStage?.(ritual.credits.size);
+    g.enemies.wakeAll(pos.x, pos.z, 13);
+    g.audio.sting(0.24 + ritual.credits.size * 0.08);
+    if (ritual.credits.size >= 3) this._completeGraveyard('ritual');
+    return true;
+  }
+
+  _completeGraveyard(route) {
+    const g = this.game;
+    if (g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
+    const a = this.graveArena || (this.graveArena = {
+      wave: 0, pending: 0, t: 0, engaged: false, done: false,
+    });
     a.done = true;
-    g.flag('graveyardCleared');
+    a.pending = 0;
+    a.route = route;
+    if (!this.graveRitual) this.graveRitual = { credits: new Set(), done: false, route: null };
+    this.graveRitual.done = true;
+    this.graveRitual.route = route;
+    if (route === 'ritual') g.flag('funeralRite');
+    g.flag('graveyardResolved');
     g.baseTension = 0.1;
-    if (g.graveyardGate) g.graveyardGate.openGate();
-    g.audio.metalDrop({ pos: new THREE.Vector3(FOREST_GATE.x, 1.1, 42), gain: 0.9, rate: 0.72, verb: 0.7 });
+    if (g.graveyardGate) {
+      g.graveyardGate.setRitualStage?.(3);
+    }
+    g.ossuary?.unlock?.(route);
     g.audio.duck(0.2, 2.6);
-    g.checkpoint('graveyard');
+    // Resolution is irreversible, but its checkpoint sits at the route it
+    // actually opened rather than at whichever corpse happened to die last.
+    g.checkpoint('graveyard', {
+      x: -14.6, y: 0.08, z: 31.2, yaw: 0, pitch: 0,
+    });
+    return true;
   }
 
   // ---------------------------------------------------------------- forest
+  _cancelScheduledForestChasers() {
+    // A scoped beat disappears when its life/act scope changes. Only release a
+    // pending reservation: a chaser that actually spawned is a spent authored
+    // consequence and must not be duplicated on a later retry.
+    if (this._chaser1 === 'scheduled') this._chaser1 = null;
+    if (this._chaser2 === 'scheduled') this._chaser2 = null;
+  }
+
   _updateForestBeats(dt) {
     const g = this.game;
-    if (g.act !== 'forest') return;
+    if (g.act !== 'forest' || g.dead) return;
     const f = g.forest;
     if (!f) return;
+    // Loud forest play accumulates a bounded consequence, then genuinely
+    // forgives sustained quiet. The old lifetime counter never decremented.
+    this._companyDebt = Math.max(0, this._companyDebt - dt * 0.12);
+    this._kneelerGrace = Math.max(0, (this._kneelerGrace || 0) - dt);
 
     // The far-side checkpoint belongs to CROSSING the ravine, not to the launch
     // that got you there. It used to fire from inside the rope's arrival
@@ -619,7 +703,11 @@ export class Director {
     // actually past the gash, however they managed it.
     if (!this._ravineCrossed && g.flags.has('ropeLatched')) {
       const pr = f.project(g.player.pos.x, g.player.pos.z);
-      if (pr && pr.s >= f.ravineS() + 1 && g.player.grounded) {
+      // The mire surface itself is technically ground, so +1 used to spend the
+      // rope and snapshot a body that was still waist-deep in the hazard. Earn
+      // the irreversible checkpoint only on the firm far bank.
+      if (pr && pr.s >= f.ravineS() + 3.25 && g.player.grounded
+        && (f._mireDepth || 0) < 0.08) {
         this._ravineCrossed = true;
         if (g.ravineRopeTarget) g.ravineRopeTarget.enabled = false;
         g.checkpoint('forest');
@@ -627,28 +715,44 @@ export class Director {
     }
 
     if (g.flags.has('treeCleared') && !this._chaser1) {
-      this._chaser1 = true;
+      this._chaser1 = 'scheduled';
       this.after(6, () => {
+        if (g.act !== 'forest' || g.dead) {
+          if (this._chaser1 === 'scheduled') this._chaser1 = null;
+          return;
+        }
         const s = f.posAt(Math.min(f.length - 1, f._lastIdx + 26));
-        g.enemies.spawn('walker', s.x, s.z, 'stalk');
+        const chaser = g.enemies.spawn('walker', s.x, s.z, 'stalk');
+        chaser.forestChaser = 'tree-cleared';
+        this._chaser1 = 'spawned';
       });
     }
     if (g.flags.has('ropeLatched') && !this._chaser2) {
-      this._chaser2 = true;
+      this._chaser2 = 'scheduled';
       this.after(4, () => {
+        if (g.act !== 'forest' || g.dead) {
+          if (this._chaser2 === 'scheduled') this._chaser2 = null;
+          return;
+        }
         const s = f.posAt(Math.max(0, f._lastIdx - 8));
-        g.enemies.spawn('walker', s.x, s.z, 'wind');
+        const chaser = g.enemies.spawn('walker', s.x, s.z, 'wind');
+        chaser.forestChaser = 'rope-latched';
+        this._chaser2 = 'spawned';
       });
     }
     if (!this.arena && f._lastIdx > f.arenaS() - 10) this._startArena();
-    if (!this.kneeler && f._lastIdx > Math.floor(f.length * 0.85)) this._placeKneeler();
+    if (!this.kneeler && this._kneelerGrace <= 0
+      && f._lastIdx > Math.floor(f.length * 0.85)) this._placeKneeler();
   }
 
   _startArena() {
     const g = this.game;
     const f = g.forest;
     const center = f.posAt(f.arenaS());
-    this.arena = { center, wave: 0, alive: 0, t: 2.5, done: false };
+    this.arena = {
+      center, wave: 0, alive: 0, pending: 0, t: 2.5,
+      done: false, status: 'active', cancelReason: null,
+    };
     g.enemies.clear((e) => e.kind === 'walker');   // clean slate; the horde is authored
     // the skull screams. you didn't ask it to.
     g.audio.skullScream(g.camera.getWorldPosition(new THREE.Vector3()));
@@ -660,10 +764,13 @@ export class Director {
     const g = this.game;
     const a = this.arena;
     if (!a || a.done) return;
+    if (g.act !== 'forest') {
+      this._cancelForestArena('act-left');
+      return;
+    }
     // count only the arena's own: a dormant statue three acts away must never
     // hold the wave gate open
-    a.alive = g.enemies.list.filter((e) => e.kind === 'walker' &&
-      Math.hypot(e.pos.x - a.center.x, e.pos.z - a.center.z) < 32).length;
+    a.alive = g.enemies.list.filter((e) => e.forestArena && e.state !== 'dying').length;
     a.t -= dt;
     // clean wave breaks: the next wave waits for silence — waves that bleed
     // together converge 12-on-1 and read as unfair, not scary
@@ -677,8 +784,11 @@ export class Director {
         // staggered arrivals: a synchronized ring is a wall no one can fight;
         // a broken rhythm of approaching footsteps is beatable AND worse to hear
         this.after(i * (0.9 + Math.random() * 1.1), () => {
-          g.enemies.spawn('walker', a.center.x + Math.cos(ang) * r, a.center.z + Math.sin(ang) * r, 'chase');
-          a.pending--;
+          a.pending = Math.max(0, a.pending - 1);
+          if (g.act !== 'forest' || this.arena !== a || a.status !== 'active') return;
+          const e = g.enemies.spawn('walker', a.center.x + Math.cos(ang) * r,
+            a.center.z + Math.sin(ang) * r, 'chase');
+          e.forestArena = true;
         });
       }
       a.t = 14;
@@ -686,6 +796,7 @@ export class Director {
     }
     if (a.wave >= 3 && a.alive === 0 && !(a.pending > 0)) {
       a.done = true;
+      a.status = 'complete';
       g.baseTension = 0;
       g.skull.requestStage(4);
       this.stageGrown = 4;
@@ -698,10 +809,23 @@ export class Director {
     }
   }
 
+  _cancelForestArena(reason = 'cancelled') {
+    const a = this.arena;
+    if (!a || a.status === 'complete' || a.status === 'cancelled') return false;
+    a.done = true;
+    a.status = 'cancelled';
+    a.cancelReason = reason;
+    a.pending = 0;
+    this.game.enemies.clear((e) => e.forestArena);
+    return true;
+  }
+
   _placeKneeler() {
     const g = this.game;
     const f = g.forest;
-    const s = f.posAt(Math.floor(f.length * 0.93), 2.2);
+    const authoredS = Math.floor(f.length * 0.93);
+    const aheadS = Math.min(f.length - 4, Math.max(authoredS, f._lastIdx + 11));
+    const s = f.posAt(aheadS, 2.2);
     this.kneeler = g.enemies.spawn('kneeler', s.x, s.z, 'dormant');
     this.kneeler.mesh.rotation.x = 0.5;    // it kneels. do not wake it.
   }
@@ -710,14 +834,18 @@ export class Director {
     const g = this.game;
     if (!this.kneeler) return;
     const e = this.kneeler;
+    if (!g.enemies.list.includes(e)) {
+      this.kneeler = null;
+      return;
+    }
+    if (g.act !== 'forest') {
+      g.enemies.clear((x) => x === e);
+      this.kneeler = null;
+      return;
+    }
     const d = Math.hypot(e.pos.x - g.player.pos.x, e.pos.z - g.player.pos.z);
     if (e.state === 'dormant') {
       if (d < 16 && g.player.noise > 0.6) { e.state = 'wind'; e.windT = 0; g.audio.sting(0.9); }
-    } else if (g.act === 'clearing') {
-      // it will not enter the clearing. rule: the clearing is safe. (it is safe.)
-      g.audio.brushCrash({ pos: e.pos, gain: 0.9 });
-      g.enemies.clear((x) => x === this.kneeler);
-      this.kneeler = null;
     }
   }
 
@@ -840,22 +968,43 @@ export class Director {
 
   respawn() {
     const g = this.game;
+    this._cancelScheduledForestChasers();
     this._scope++;                         // cancel delayed events from the dead life
     g.dead = false;
     g.player.frozen = false;
     g.player.movementLocked = false;
+    g.player.noise = 0;
     g.fx.fear = 0;
     this._mirrorTransition = false;
     const saved = g.checkpointPose ? { ...g.checkpointPose } : null;
     const cp = saved?.act || g.lastCheckpoint || 'bedroom';
-    g.enemies.clear((e) => e !== this.kneeler);
+    g.enemies.clear();
+    this.kneeler = null;
     this.resident = null;
     if (this.arena && !this.arena.done) this.arena = null;
-    if (this.graveArena && !this.graveArena.done) {
+    this._companyDebt = 0;
+    this._companyPending = 0;
+    // The old live Kneeler was discarded, then recreated on the very first
+    // post-respawn frame inside its wake radius. Three seconds of authored
+    // quiet gives the player time to see, move, aim, or throw before the same
+    // encounter is allowed to exist again.
+    this._kneelerGrace = cp === 'forest' ? 3.25 : 0;
+    const graveResolved = g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared');
+    if (cp === 'graveyard' && !graveResolved) {
       this.graveArena = null;
+      this.graveRitual = null;
       this._graveSpawned = false;
       g.enemies.resetGraveClaims();
       if (g.graveyardGate) g.graveyardGate.reset();
+      for (const grave of g.resonantGraves || []) grave.reset?.();
+      for (const grave of g.destructibleGraves || []) grave.reset?.();
+      g.ossuary?.reset?.();
+    } else if (cp === 'graveyard' && graveResolved) {
+      if (this.graveArena) { this.graveArena.done = true; this.graveArena.pending = 0; }
+      if (this.graveRitual) this.graveRitual.done = true;
+      g.graveyardGate?.setRitualStage?.(3);
+      g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
+      if (g.flags.has('graveyardCleared')) g.graveyardGate?.openGate?.();
     }
     g.teleport(cp);
     if (saved && saved.act === cp) {
@@ -885,20 +1034,51 @@ export class Director {
     }
   }
 
+  forestNoise(pos, strength = 1, source = 'impact') {
+    const g = this.game;
+    const f = g.forest;
+    if (g.act !== 'forest' || !f || !pos
+      || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return false;
+
+    const loudness = clamp(strength, 0.05, 1.5);
+    const wasQuiet = this._companyDebt < 0.35;
+    this._companyDebt = Math.min(3, this._companyDebt + loudness);
+    // A world object is a real lure, not a disguised read of the player's live
+    // coordinate. Nearby sleepers turn toward the appliance/grave/impact that
+    // actually made the sound.
+    g.enemies.wakeAll(pos.x, pos.z, 14 + loudness * 20);
+
+    // During the authored horde, its own pressure budget remains sovereign.
+    // Elsewhere, one loud choice may invite company, with a strict active cap
+    // and genuine forgiveness after the debt has drained.
+    if (!wasQuiet || (this.arena && !this.arena.done)) return true;
+    const active = g.enemies.list.filter((x) => x.forestCompany && x.state !== 'dying').length;
+    if (active + this._companyPending >= 2) return true;
+    this._companyPending++;
+    const heard = f.project(pos.x, pos.z);
+    const heardS = heard?.s ?? f._lastIdx ?? 0;
+    const delay = source === 'pop' ? 3 : 2.25;
+    this.after(delay, () => {
+      this._companyPending = Math.max(0, this._companyPending - 1);
+      if (g.act !== 'forest' || (this.arena && !this.arena.done)) return;
+      const nowActive = g.enemies.list.filter((x) => x.forestCompany && x.state !== 'dying').length;
+      if (nowActive >= 2) return;
+      const spawnS = Math.min(f.length - 1, heardS + 12 + loudness * 8);
+      const at = f.posAt(spawnS, 1);
+      const invited = g.enemies.spawn('walker', at.x, at.z, 'chase');
+      invited.forestCompany = true;
+      invited.heardWorldPos = new THREE.Vector3(pos.x, pos.y ?? at.y, pos.z);
+    });
+    return true;
+  }
+
   onPop(e) {
     const g = this.game;
-    // outside the arena, a pop invites company — but the debt drains; it must
-    // never become a 1:1 treadmill that breeds forever
-    if (g.act === 'forest' && (!this.arena || this.arena.done)) {
-      this._company = (this._company || 0) + 1;
-      if (this._company <= 2) {
-        const f = g.forest;
-        this.after(3, () => {
-          const s = f.posAt(Math.min(f.length - 1, f._lastIdx + 20), 1);
-          g.enemies.spawn('walker', s.x, s.z, 'chase');
-        });
-      }
-    }
+    // A permanent kill is never free. Outdoors it feeds the same bounded noise
+    // economy as destructible sound props; inside the house it immediately
+    // tells the Resident that the player chose violence.
+    if (g.act === 'forest') this.forestNoise(e.pos, 1, 'pop');
+    else if (g.act === 'house') this.residentHeard(1);
     if (g.act === 'graveyard') g.enemies.wakeAll(e.pos.x, e.pos.z, 40);
   }
 

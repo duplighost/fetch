@@ -1,6 +1,6 @@
 {
   "name": "fetch",
-  "version": "0.2.0-codex",
+  "version": "0.5.0-intruder",
   "private": true,
   "type": "module",
   "scripts": {

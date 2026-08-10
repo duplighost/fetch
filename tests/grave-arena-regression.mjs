@@ -170,7 +170,7 @@ async function runSeed(seed) {
 
     let guard = 0;
     let lastWave = -1;
-    while (!g.flags.has('graveyardCleared') && !g.dead && guard < 260) {
+    while (!g.flags.has('graveyardResolved') && !g.dead && guard < 260) {
       guard++;
       const wave = g.director.graveArena?.wave ?? 0;
       if (wave !== lastWave) {
@@ -236,7 +236,7 @@ async function runSeed(seed) {
 
     return {
       seed: runSeedValue,
-      clear: g.flags.has('graveyardCleared'),
+      clear: g.flags.has('graveyardResolved'),
       dead: g.dead,
       wave: g.director.graveArena?.wave ?? 0,
       guard,
