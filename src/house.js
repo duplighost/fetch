@@ -1167,7 +1167,20 @@ function nurseryAct(game) {
   mobile.add(key);
   mobile.position.set(-10.4, F + 2.05, 4.6);   // hanging above the crib
   scene.add(mobile);
-  game.musicBox = { mesh: mobile, wound: 1, thing: null };
+  // The corner figure is a real gameplay object, but its first appearance is a
+  // dramatic threshold rather than an acceptable place to construct and upload
+  // geometry. Build one retained pool object with the house and let transition
+  // residency certify this exact mesh before the nursery can reveal it.
+  const cornerThing = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.3, 1.5, 4, 8),
+    new THREE.MeshLambertMaterial({ color: 0x0b0a10 }),
+  );
+  cornerThing.name = 'music-box corner figure';
+  cornerThing.position.set(-11.2, 4.6, 5.3);
+  cornerThing.scale.setScalar(0.001);
+  game.musicBox = {
+    mesh: mobile, wound: 1, thing: null, thingPool: cornerThing,
+  };
   game.tickers.push((dt) => { mobile.rotation.y += dt * (0.2 + game.musicBox.wound * 1.6); });
   world.addFetchTarget({
     id: 'mobile', object: mobile, radius: 0.7,

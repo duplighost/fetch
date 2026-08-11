@@ -808,6 +808,30 @@ export class Enemies {
     this._spawnSerial = 0;
     this._graveClaimRecovery = 0;
 
+    // Gameplay creates these actors at authored reveal edges. Their geometry
+    // kit is shared, but a shader-only synthetic compile does not upload that
+    // geometry or build the geometry/program binding state used by the first
+    // real draw. Keep one inert, never-parented representative of each family
+    // for the transition residency system to submit under its bounded current,
+    // future-district and reflection-target transactions. Spawned actors remain
+    // ordinary independent entities; the representatives only retain their
+    // shared buffers/programs and are never updated, heard or made visible.
+    this._gpuResidencyRoots = new Map();
+    for (const kind of ['walker', 'resident', 'kneeler', 'choir']) {
+      const root = kind === 'choir' ? makeDrownedChoir() : makeFigure(kind);
+      root.name = `future ${kind} GPU residency prototype`;
+      root.userData.fetchGpuResidencyPrototype = kind;
+      let renderableIndex = 0;
+      root.traverse((object) => {
+        if ((!object.isMesh && !object.isLine && !object.isPoints)
+            || !object.geometry || !object.material) return;
+        object.name ||= `future ${kind} ${object.type.toLowerCase()} ${renderableIndex}`;
+        renderableIndex++;
+      });
+      root.updateMatrixWorld(true);
+      this._gpuResidencyRoots.set(kind, root);
+    }
+
     // One dynamic instance pool owns every pop stain for this game lifecycle.
     // It deliberately survives ordinary death/respawn so the graveyard keeps
     // the player's history; resetStains() is the explicit full-reset boundary.
@@ -826,6 +850,24 @@ export class Enemies {
     this._stainQuaternion = new THREE.Quaternion();
     this._stainScale = new THREE.Vector3();
     this._stainEuler = new THREE.Euler();
+  }
+
+  gpuResidencyRoots(kinds = []) {
+    return [...new Set(kinds
+      .map((kind) => this._gpuResidencyRoots.get(kind))
+      .filter(Boolean))];
+  }
+
+  disposeGpuResidencyRoots() {
+    for (const [kind, root] of this._gpuResidencyRoots) {
+      if (kind === 'choir') {
+        for (const material of root.userData.ownedMaterials || []) material.dispose();
+      } else {
+        root.userData.mat?.dispose?.();
+      }
+      root.removeFromParent();
+    }
+    this._gpuResidencyRoots.clear();
   }
 
   stainState() {

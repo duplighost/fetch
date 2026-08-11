@@ -7,6 +7,9 @@
 // this gate is green.
 //
 // Runtime telemetry contract (currentGpuResidency):
+//   surfacePasses[]: generation, kind (default-surface-clear-fence),
+//     submit/max-poll/max-synchronous timings, dimensions, resource deltas,
+//     state/generation restoration, completion status, error
 //   bootstrapPasses[]: generation, kind (mesh-basic | instanced-basic | grain),
 //     durationMs, renderDurationMs, compileSubmitDurationMs,
 //     compileMaxSynchronousSliceMs, compileFinalizationDurationMs,
@@ -52,6 +55,46 @@ const round = (value) => Number.isFinite(value) ? +value.toFixed(3) : null;
 function validateGeneration(label, stage) {
   check(stage != null, `${label} Stage B capture exists`, stage);
   if (!stage) return;
+
+  const surface = (stage.surfacePasses || []).filter((entry) =>
+    entry.generation === stage.generation
+      && entry.kind === 'default-surface-clear-fence');
+  check(surface.length === 1,
+    `${label} full default-surface activation submits exactly once in generation ${stage.generation}`,
+    surface);
+  const surfaceEntry = surface[0];
+  check(surfaceEntry?.error == null
+      && surfaceEntry?.status === 'ready'
+      && surfaceEntry?.submitDurationMs < 100
+      && surfaceEntry?.maxPollDurationMs < 100
+      && surfaceEntry?.maxSynchronousSliceMs < 100
+      && surfaceEntry?.durationMs < 100,
+  `${label} default-surface clear/fence has only strict sub-100ms synchronous slices`,
+  surfaceEntry);
+  check(surfaceEntry?.width > 1 && surfaceEntry?.height > 1
+      && surfaceEntry?.polls > 0
+      && ['already-signaled', 'condition-satisfied'].includes(surfaceEntry?.completionStatus),
+  `${label} default-surface fence completes the full drawing buffer before certification`,
+  surfaceEntry);
+  check(surfaceEntry?.programDelta === 0
+      && surfaceEntry?.textureDelta === 0
+      && surfaceEntry?.geometryDelta === 0
+      && surfaceEntry?.stateRestored === true
+      && surfaceEntry?.generationStable === true,
+  `${label} default-surface activation is resource-neutral and transactionally restored`,
+  surfaceEntry);
+
+  const snapshots = (stage.snapshotPasses || []).filter((entry) =>
+    entry.generation === stage.generation && entry.kind === 'reduced-snapshot-census');
+  check(snapshots.length === 3
+      && snapshots[0]?.phase === 'current' && snapshots[0]?.complete === false
+      && snapshots[1]?.phase === 'owner-primary' && snapshots[1]?.complete === false
+      && snapshots[2]?.phase === 'owner-secondary' && snapshots[2]?.complete === true,
+  `${label} census has one current slice then two bounded future-owner slices`, snapshots);
+  check(snapshots.every((entry) => entry.error == null && entry.durationMs < 100
+      && Object.values(entry.phases || {}).every((duration) => duration < 100)),
+  `${label} census slices and every named internal phase are strictly sub-100ms`,
+  snapshots);
 
   const bootstrap = stage.bootstrapPasses || [];
   const relevantBootstrap = bootstrap.filter((entry) =>
@@ -146,6 +189,8 @@ function validateGeneration(label, stage) {
   });
   check(stage.bootstrapStatus == null || stage.bootstrapStatus === 'ready',
     `${label} tiny bootstrap reaches ready`, stage.bootstrapStatus);
+  check(stage.surfaceStatus === 'ready',
+    `${label} full default-surface bootstrap reaches ready`, stage.surfaceStatus);
 
   const frames = stage.frames || [];
   const allReducedFrames = frames.filter((frame) => frame.reducedDetail);
@@ -164,16 +209,30 @@ function validateGeneration(label, stage) {
   check(frames.every((frame) => frame.shielded === false),
     `${label} never enables the opaque shader transition shield`,
     frames.filter((frame) => frame.shielded));
-  check(frames.every((frame) => frame.renderMs <= 100),
-    `${label} every visible render stays at or below 100ms`, {
+  check(frames.some((frame) => frame.reducedBatchSubmitted)
+      && frames.some((frame) => frame.reducedBatchRevealed)
+      && frames.every((frame) => !frame.reducedBatchSubmitted
+        || frame.worldDrawCalls === 0)
+      && frames.every((frame) => !frame.reducedBatchRevealed
+        || (frame.revealedReducedObjects > 0 && frame.worldDrawCalls > 0)),
+  `${label} separates every hidden upload paint from its next physical reveal`, {
+    submitted: frames.filter((frame) => frame.reducedBatchSubmitted).length,
+    revealed: frames.filter((frame) => frame.reducedBatchRevealed).length,
+    violations: frames.filter((frame) => (frame.reducedBatchSubmitted && frame.worldDrawCalls > 0)
+      || (frame.reducedBatchRevealed
+        && !(frame.revealedReducedObjects > 0 && frame.worldDrawCalls > 0))),
+  });
+  check(frames.every((frame) => frame.renderMs < 100),
+    `${label} every visible render stays strictly below 100ms`, {
       maxRenderMs: Math.max(0, ...frames.map((frame) => frame.renderMs)),
-      slow: frames.filter((frame) => frame.renderMs > 100),
+      slow: frames.filter((frame) => frame.renderMs >= 100),
     });
-  check((stage.rafIntervals || []).every((duration) => duration <= 100),
-    `${label} every visible rAF interval stays at or below 100ms`, {
+  check((stage.rafIntervals || []).length > 0
+      && (stage.rafIntervals || []).every((duration) => duration < 100),
+    `${label} every visible rAF interval stays strictly below 100ms`, {
       maxRafMs: Math.max(0, ...(stage.rafIntervals || [])),
       slow: (stage.rafIntervalDetails || [])
-        .filter((entry) => entry.durationMs > 100),
+        .filter((entry) => entry.durationMs >= 100),
     });
   check(allReducedFrames.every((frame) => frame.visibleProgramDelta === 0
       && frame.visibleTextureDelta === 0 && frame.visibleGeometryDelta === 0),
@@ -186,7 +245,7 @@ function validateGeneration(label, stage) {
   for (const [index, batch] of batches.entries()) {
     const detail = { index, ...batch };
     check(batch.error == null && batch.programDelta === 0
-        && batch.textureDelta === 0 && batch.durationMs <= 100,
+        && batch.textureDelta === 0 && batch.durationMs < 100,
     `${label} hidden batch ${index + 1} is zero-program/texture and sub-100ms`, detail);
     check(batch.types?.lines === 0 && batch.types?.points === 0,
       `${label} hidden batch ${index + 1} omits decorative Line and Points fallbacks`,
@@ -194,6 +253,14 @@ function validateGeneration(label, stage) {
     check(Number.isFinite(batch.submittedObjects)
         && batch.submittedObjects === batch.objects,
     `${label} hidden batch ${index + 1} transient submission equals this batch, not accumulated silhouettes`,
+    detail);
+    check(Number.isFinite(batch.visibleObjects)
+        && Number.isFinite(batch.persistentObjectsAdded)
+        && Number.isFinite(batch.pendingPhysicalRevealObjects)
+        && batch.visibleObjects === batch.persistentObjectsAdded
+        && batch.physicalRevealDeferred === (batch.visibleObjects > 0)
+        && batch.pendingPhysicalRevealObjects === batch.persistentObjectsAdded,
+    `${label} hidden batch ${index + 1} defers newly committed physical clones by one paint`,
     detail);
     check(Number.isFinite(batch.geometryBytes)
         && Number.isFinite(batch.submittedElements),
@@ -270,6 +337,12 @@ try {
     const bootstrapFor = (generation) =>
       [...(g.currentGpuResidency?.bootstrapPasses || [])]
         .filter((entry) => entry.generation === generation);
+    const surfaceFor = (generation) =>
+      [...(g.currentGpuResidency?.surfacePasses || [])]
+        .filter((entry) => entry.generation === generation);
+    const hasSurface = (generation) => surfaceFor(generation)
+      .some((entry) => entry.kind === 'default-surface-clear-fence'
+        && entry.status === 'ready' && entry.error == null);
     const hasBootstrap = (generation, kind) => bootstrapFor(generation)
       .some((entry) => entry.kind === kind && entry.error == null);
     const batchesFor = () => [...(g.currentGpuResidency?.reducedPasses || [])]
@@ -281,6 +354,7 @@ try {
         && residency.reduced?.has(progress.key);
     };
     const stageReady = (generation, stageFrames) => reducedComplete()
+      && hasSurface(generation)
       && hasBootstrap(generation, 'mesh-basic')
       && hasBootstrap(generation, 'instanced-basic')
       && hasBootstrap(generation, 'grain')
@@ -367,6 +441,9 @@ try {
           renderMs: performance.now() - startedAt,
           worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
           reducedDetail: !!g.lastRender?.reducedDetail,
+          reducedBatchSubmitted: !!g.lastRender?.reducedBatchSubmitted,
+          reducedBatchRevealed: !!g.lastRender?.reducedBatchRevealed,
+          revealedReducedObjects: g.lastRender?.revealedReducedObjects || 0,
           shielded: !!g._shaderTransitionShield,
           visibleProgramDelta: g.lastRender?.visibleProgramDelta || 0,
           visibleTextureDelta: g.lastRender?.visibleTextureDelta || 0,
@@ -396,6 +473,10 @@ try {
         generation,
         bootstrapGeneration: g.currentGpuResidency?.bootstrapGeneration ?? null,
         bootstrapStatus: g.currentGpuResidency?.bootstrapStatus ?? null,
+        surfaceStatus: g.currentGpuResidency?.surfaceStatus ?? null,
+        surfacePasses: cloneValue(surfaceFor(generation)),
+        snapshotPasses: cloneValue((g.currentGpuResidency?.snapshotPasses || [])
+          .filter((entry) => entry.generation === generation)),
         bootstrapPasses: cloneValue(bootstrapFor(generation)),
         reducedPasses: cloneValue(batchesFor()),
         firstSilhouetteMs: firstSilhouette

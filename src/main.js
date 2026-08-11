@@ -186,10 +186,15 @@ class Game {
     this._setupScene();
     this._buildGrain();
     this._initCurrentGpuResidency();
+    // Submit the named full default-surface activation before the remaining CPU
+    // world is assembled. Its nonblocking fence can finish during construction,
+    // rather than competing with an immediate Wake click on the first game rAF.
+    if (!TEST_MODE || Q.has('warmup')) this._advanceReducedSurfaceBootstrap();
     // Start only the three Stage-B-owned signatures while the remaining
     // CPU world is assembled. Each captured WebGLProgram is polled directly so
     // the shared material cannot make one variant accidentally certify the
-    // other. The later 1x1 renders remain the sole residency certifications.
+    // other. A fenced full-surface clear and the later real renders remain the
+    // sole residency certifications; no unmeasured startup draw is hidden here.
     this._beginReducedBootstrapCompile('mesh-basic');
     this._beginReducedBootstrapCompile('instanced-basic');
     this._beginReducedBootstrapCompile('grain');
@@ -330,6 +335,10 @@ class Game {
       // this one, so its caches are fresh when the new generation is queued.
       this._webglGeneration++;
       this._resetCurrentGpuResidency?.('context-restored');
+      // Submit the nonblocking full-surface activation in the restore event's
+      // own named slice. Its fence can run before the next rAF instead of adding
+      // an otherwise empty bootstrap paint to the recovery path.
+      if (!TEST_MODE || Q.has('warmup')) this._advanceReducedSurfaceBootstrap?.();
       this._beginReducedBootstrapCompile?.('mesh-basic');
       this._beginReducedBootstrapCompile?.('instanced-basic');
       this._beginReducedBootstrapCompile?.('grain');
@@ -747,8 +756,23 @@ class Game {
     progress.queue.length = 0;
     progress.ownerQueue.length = 0;
     progress.deferredQueue.length = 0;
+    progress.exactQueue.length = 0;
+    progress.ownerExactQueue.length = 0;
+    progress.deferredExactQueue.length = 0;
+    progress.pendingReducedReveal.length = 0;
     progress.queued.clear();
+    progress.exactQueued.clear();
+    progress.ownerExactQueued.clear();
+    progress.deferredExactQueued.clear();
     progress.processed.clear();
+    progress.exactProcessed.clear();
+    progress.exactObjects.clear();
+    progress.exactFingerprints.clear();
+    progress.exactAllocationFingerprints.clear();
+    progress.exactResourceSeen.clear();
+    progress.exactGeometryFingerprints.clear();
+    progress.exactUniverse.clear();
+    progress.exactCovered.clear();
     progress.geometrySeen.clear();
     progress.geometryFingerprints.clear();
     progress.admissionSeen.clear();
@@ -769,10 +793,26 @@ class Game {
     progress.omittedReduced.clear();
     progress.ownerExactOnly.clear();
     progress.deferredExactOnly.clear();
+    progress.ownerExactUniverse.clear();
+    progress.ownerExactCovered.clear();
+    progress.deferredExactUniverse.clear();
+    progress.deferredExactCovered.clear();
+    progress.lastExactScanSignatures.clear();
     progress.cloneFailureEvents.length = 0;
   }
 
   _resetCurrentGpuResidency(reason = 'reset') {
+    const priorResidency = this.currentGpuResidency;
+    const priorFence = priorResidency?._surfaceFence;
+    if (priorFence) {
+      try {
+        const gl = this.renderer?.getContext?.();
+        if (gl && !gl.isContextLost?.()) gl.deleteSync?.(priorFence);
+      } catch {
+        // A lost context owns the stale sync object. Its driver resources are
+        // already gone, and the new generation must never touch that handle.
+      }
+    }
     this._clearReducedWorldProgress();
     this.currentGpuResidency = {
       generation: this._webglGeneration,
@@ -785,9 +825,14 @@ class Game {
       bootstrapGeneration: this._webglGeneration,
       bootstrapStatus: 'pending',
       bootstrapPasses: [],
+      surfaceStatus: 'pending',
+      surfacePasses: [],
+      snapshotPasses: [],
       bootstrapNext: 0,
       bootstrapCompiles: {},
       exactPasses: [],
+      exactPreloadPasses: [],
+      exactScanPasses: [],
       reducedPasses: [],
       ownerPasses: [],
       ownerUniverses: [],
@@ -795,6 +840,7 @@ class Game {
       skullWorldPasses: [],
       errors: [],
       maxExactMs: 0,
+      maxExactPreloadMs: 0,
       maxReducedPrimeMs: 0,
       maxOwnerMs: 0,
       reducedFrames: 0,
@@ -804,6 +850,10 @@ class Game {
       progressive: null,
       skullWorldReady: false,
     };
+    Object.defineProperties(this.currentGpuResidency, {
+      _surfaceFence: { value: null, writable: true, configurable: true },
+      _surfaceEntry: { value: null, writable: true, configurable: true },
+    });
   }
 
   _beginReducedBootstrapCompile(kind) {
@@ -1087,6 +1137,217 @@ class Game {
     return residency.bootstrapStatus === 'ready';
   }
 
+  _advanceReducedSurfaceBootstrap() {
+    const residency = this.currentGpuResidency;
+    const renderer = this.renderer;
+    const gl = renderer?.getContext?.();
+    if (!residency || residency.generation !== this._webglGeneration || !gl
+        || this.terminal || gl.isContextLost?.()) return null;
+    if (residency.surfaceStatus === 'ready' || residency.surfaceStatus === 'failed') return null;
+
+    const finish = (entry, error = null, sliceStartedAt = null) => {
+      const deleteStartedAt = performance.now();
+      try {
+        if (residency._surfaceFence && !gl.isContextLost?.()) {
+          gl.deleteSync(residency._surfaceFence);
+        }
+      } catch (caught) {
+        error ||= `fence deletion: ${caught?.message || caught}`;
+      }
+      entry.waitDurationMs = performance.now() - entry.submittedAt;
+      entry.error = error;
+      entry.status = error ? 'failed' : 'ready';
+      entry.generationStable = entry.generation === this._webglGeneration;
+      residency._surfaceFence = null;
+      residency._surfaceEntry = null;
+      residency.surfacePasses.push(entry);
+      residency.surfaceStatus = error ? 'failed' : 'ready';
+      if (error) residency.errors.push(`reduced bootstrap ${entry.kind}: ${error}`);
+      const completedAt = performance.now();
+      const completeSliceDurationMs = completedAt - (sliceStartedAt ?? deleteStartedAt);
+      entry.maxSynchronousSliceMs = Math.max(
+        entry.maxSynchronousSliceMs || 0,
+        completeSliceDurationMs,
+      );
+      if (sliceStartedAt === entry.submissionSliceStartedAt) {
+        entry.submitDurationMs = Math.max(entry.submitDurationMs, completeSliceDurationMs);
+      }
+      entry.durationMs = entry.maxSynchronousSliceMs;
+      entry.completedAt = completedAt;
+      return entry;
+    };
+
+    if (residency._surfaceFence && residency._surfaceEntry) {
+      const entry = residency._surfaceEntry;
+      const pollStartedAt = performance.now();
+      let result = null;
+      let pollError = null;
+      try {
+        result = gl.clientWaitSync(residency._surfaceFence, 0, 0);
+      } catch (caught) {
+        pollError = `fence poll: ${caught?.message || caught}`;
+      }
+      const pollDurationMs = performance.now() - pollStartedAt;
+      entry.polls++;
+      entry.maxPollDurationMs = Math.max(entry.maxPollDurationMs, pollDurationMs);
+      entry.maxSynchronousSliceMs = Math.max(entry.maxSynchronousSliceMs, pollDurationMs);
+      entry.lastWaitResult = result;
+      if (pollError) return finish(entry, pollError, pollStartedAt);
+      if (result === gl.WAIT_FAILED) {
+        return finish(entry, 'clientWaitSync returned WAIT_FAILED', pollStartedAt);
+      }
+      if (result === gl.TIMEOUT_EXPIRED) {
+        entry.maxSynchronousSliceMs = Math.max(
+          entry.maxSynchronousSliceMs,
+          performance.now() - pollStartedAt,
+        );
+        return null;
+      }
+      if (result !== gl.ALREADY_SIGNALED && result !== gl.CONDITION_SATISFIED) {
+        return finish(entry, `clientWaitSync returned unexpected status ${result}`, pollStartedAt);
+      }
+      entry.completionStatus = result === gl.ALREADY_SIGNALED
+        ? 'already-signaled' : 'condition-satisfied';
+      return finish(entry, null, pollStartedAt);
+    }
+
+    const submissionSliceStartedAt = performance.now();
+    const before = {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+    };
+    const entry = {
+      generation: this._webglGeneration,
+      kind: 'default-surface-clear-fence',
+      status: 'submitting',
+      submittedAt: performance.now(),
+      submissionSliceStartedAt,
+      rendererSubmitDurationMs: 0,
+      submitDurationMs: 0,
+      durationMs: 0,
+      waitDurationMs: 0,
+      polls: 0,
+      maxPollDurationMs: 0,
+      maxSynchronousSliceMs: 0,
+      width: 0,
+      height: 0,
+      programDelta: 0,
+      textureDelta: 0,
+      geometryDelta: 0,
+      stateRestored: false,
+      generationStable: true,
+      completionStatus: null,
+      lastWaitResult: null,
+      error: null,
+    };
+    const previousViewport = new THREE.Vector4();
+    const previousScissor = new THREE.Vector4();
+    const previousClearColor = new THREE.Color();
+    const drawingSize = new THREE.Vector2();
+    const logicalSize = new THREE.Vector2();
+    let previousTarget = null;
+    let previousScissorTest = false;
+    let previousClearAlpha = 1;
+    const previousAutoClear = renderer.autoClear;
+    const restoreErrors = [];
+    let sync = null;
+    let error = null;
+    const submittedAt = performance.now();
+    try {
+      if (typeof gl.fenceSync !== 'function' || typeof gl.clientWaitSync !== 'function') {
+        throw new Error('WebGL2 fenceSync/clientWaitSync unavailable');
+      }
+      previousTarget = renderer.getRenderTarget();
+      renderer.getViewport(previousViewport);
+      renderer.getScissor(previousScissor);
+      previousScissorTest = renderer.getScissorTest();
+      renderer.getClearColor(previousClearColor);
+      previousClearAlpha = renderer.getClearAlpha();
+      renderer.getDrawingBufferSize(drawingSize);
+      renderer.getSize(logicalSize);
+      entry.width = Math.max(1, Math.floor(drawingSize.x));
+      entry.height = Math.max(1, Math.floor(drawingSize.y));
+      entry.logicalWidth = Math.max(1, Math.floor(logicalSize.x));
+      entry.logicalHeight = Math.max(1, Math.floor(logicalSize.y));
+      renderer.setRenderTarget(null);
+      renderer.setViewport(0, 0, entry.logicalWidth, entry.logicalHeight);
+      renderer.setScissor(0, 0, entry.logicalWidth, entry.logicalHeight);
+      renderer.setScissorTest(true);
+      renderer.autoClear = true;
+      renderer.setClearColor(this._reducedWorldBackground, 1);
+      // Color and depth activate the complete default surface. Avoid the
+      // unnecessary stencil clear: Three r161 forces its write mask and would
+      // otherwise mutate state that this transaction does not own.
+      renderer.clear(true, true, false);
+      sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+      if (!sync) throw new Error('fenceSync returned null');
+      gl.flush();
+    } catch (caught) {
+      error = `surface submission: ${caught?.message || caught}`;
+    } finally {
+      try { renderer.setRenderTarget(previousTarget); }
+      catch (caught) { restoreErrors.push(`target: ${caught?.message || caught}`); }
+      try { renderer.setViewport(previousViewport); }
+      catch (caught) { restoreErrors.push(`viewport: ${caught?.message || caught}`); }
+      try { renderer.setScissor(previousScissor); }
+      catch (caught) { restoreErrors.push(`scissor: ${caught?.message || caught}`); }
+      try { renderer.setScissorTest(previousScissorTest); }
+      catch (caught) { restoreErrors.push(`scissor test: ${caught?.message || caught}`); }
+      renderer.autoClear = previousAutoClear;
+      try { renderer.setClearColor(previousClearColor, previousClearAlpha); }
+      catch (caught) { restoreErrors.push(`clear color: ${caught?.message || caught}`); }
+    }
+    entry.rendererSubmitDurationMs = performance.now() - submittedAt;
+    const after = {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+    };
+    entry.programDelta = after.programs - before.programs;
+    entry.textureDelta = after.textures - before.textures;
+    entry.geometryDelta = after.geometries - before.geometries;
+    const checkViewport = new THREE.Vector4();
+    const checkScissor = new THREE.Vector4();
+    const checkClearColor = new THREE.Color();
+    try {
+      renderer.getViewport(checkViewport);
+      renderer.getScissor(checkScissor);
+      renderer.getClearColor(checkClearColor);
+      if (renderer.getRenderTarget() !== previousTarget) restoreErrors.push('target mismatch');
+      if (!checkViewport.equals(previousViewport)) restoreErrors.push('viewport mismatch');
+      if (!checkScissor.equals(previousScissor)) restoreErrors.push('scissor mismatch');
+      if (renderer.getScissorTest() !== previousScissorTest) restoreErrors.push('scissor-test mismatch');
+      if (renderer.autoClear !== previousAutoClear) restoreErrors.push('autoClear mismatch');
+      if (!checkClearColor.equals(previousClearColor)
+          || renderer.getClearAlpha() !== previousClearAlpha) restoreErrors.push('clear-color mismatch');
+    } catch (caught) {
+      restoreErrors.push(`verification: ${caught?.message || caught}`);
+    }
+    entry.stateRestored = restoreErrors.length === 0;
+    if (restoreErrors.length) error ||= `state restoration: ${restoreErrors.join('; ')}`;
+    if (entry.programDelta || entry.textureDelta || entry.geometryDelta) {
+      error ||= `surface clear created resources P${entry.programDelta}/T${entry.textureDelta}/G${entry.geometryDelta}`;
+    }
+    entry.submitDurationMs = performance.now() - submissionSliceStartedAt;
+    entry.maxSynchronousSliceMs = entry.submitDurationMs;
+    if (error || !sync) {
+      residency._surfaceFence = sync;
+      residency._surfaceEntry = entry;
+      return finish(entry, error || 'surface fence was not created', submissionSliceStartedAt);
+    }
+    entry.status = 'waiting';
+    residency._surfaceFence = sync;
+    residency._surfaceEntry = entry;
+    residency.surfaceStatus = 'waiting';
+    entry.submitDurationMs = performance.now() - submissionSliceStartedAt;
+    entry.maxSynchronousSliceMs = Math.max(
+      entry.maxSynchronousSliceMs,
+      entry.submitDurationMs,
+    );
+    return null;
+  }
+
   _resumeShaderWarmupAfterBootstrap() {
     const state = this.shaderWarmup;
     const run = this._shaderWarmupRun;
@@ -1116,6 +1377,11 @@ class Game {
     if (residency.bootstrapStatus === 'ready' || residency.bootstrapStatus === 'failed') {
       return null;
     }
+    const surfaceEntry = this._advanceReducedSurfaceBootstrap();
+    if (residency.surfaceStatus !== 'ready') return surfaceEntry;
+    // The surface fence and the first real signature draw must settle on
+    // separate browser tasks. Their individual synchronous maxima remain named.
+    if (surfaceEntry) return surfaceEntry;
     const stages = ['mesh-basic', 'instanced-basic', 'grain'];
     const kind = stages[residency.bootstrapNext];
     if (!kind) {
@@ -1210,8 +1476,15 @@ class Game {
       scissorRead = true;
       previousScissorTest = renderer.getScissorTest();
       renderer.setRenderTarget(null);
-      renderer.setViewport(0, 0, 1, 1);
-      renderer.setScissor(0, 0, 1, 1);
+      const certificationSize = kind === 'mesh-basic'
+        ? renderer.getSize(new THREE.Vector2())
+        : new THREE.Vector2(1, 1);
+      renderer.setViewport(0, 0,
+        Math.max(1, Math.floor(certificationSize.x)),
+        Math.max(1, Math.floor(certificationSize.y)));
+      renderer.setScissor(0, 0,
+        Math.max(1, Math.floor(certificationSize.x)),
+        Math.max(1, Math.floor(certificationSize.y)));
       renderer.setScissorTest(true);
       renderer.autoClear = true;
       if (kind === 'grain') {
@@ -1351,8 +1624,23 @@ class Game {
       queue: [],
       ownerQueue: [],
       deferredQueue: [],
+      exactQueue: [],
+      ownerExactQueue: [],
+      deferredExactQueue: [],
+      pendingReducedReveal: [],
       queued: new Set(),
+      exactQueued: new Set(),
+      ownerExactQueued: new Set(),
+      deferredExactQueued: new Set(),
       processed: new Set(),
+      exactProcessed: new Set(),
+      exactObjects: new Map(),
+      exactFingerprints: new Map(),
+      exactAllocationFingerprints: new Map(),
+      exactResourceSeen: new Set(),
+      exactGeometryFingerprints: new Set(),
+      exactUniverse: new Set(),
+      exactCovered: new Set(),
       geometrySeen: new Set(),
       geometryFingerprints: new Set(),
       admissionSeen: new Set(),
@@ -1373,10 +1661,16 @@ class Game {
       omittedReduced: new Map(),
       ownerExactOnly: new Set(),
       deferredExactOnly: new Set(),
+      ownerExactUniverse: new Set(),
+      ownerExactCovered: new Set(),
+      deferredExactUniverse: new Set(),
+      deferredExactCovered: new Set(),
       cloneFailureEvents: [],
       batches: 0,
       complete: false,
       snapshotReady: false,
+      currentSnapshotReady: false,
+      snapshotPhase: 'current',
       refreshes: 0,
       criticalRefreshes: 0,
       ownerPromotionChecks: 0,
@@ -1385,6 +1679,12 @@ class Game {
       deferredPromotionChecks: 0,
       deferredPromotedObjects: 0,
       deferredRecorded: false,
+      ownerExactRecorded: false,
+      deferredExactRecorded: false,
+      exactRefreshes: 0,
+      exactInvalidations: 0,
+      exactShaderRevision: 0,
+      lastExactScanSignatures: new Map(),
       deferredLabel: null,
       blockedCritical: false,
       blockedReason: null,
@@ -1418,6 +1718,10 @@ class Game {
       // walk toward the gate cannot reveal an unregistered cold buffer.
       roots.push(...surfaceStatic,
         ...(this.houseRenderRoots || []), ...surfaceOutside, ...exteriorAtmosphere);
+      // Grave waves and the following forest create actors only when their
+      // authored beats fire. Retained inert representatives make their shared
+      // geometry/program bindings part of this finite future-surface universe.
+      roots.push(...(this.enemies?.gpuResidencyRoots?.(['walker', 'kneeler']) || []));
     } else if (priority === 'ossuary') {
       // The under-yard culler hides every exterior top-level root. Its route
       // group contains the complete shell/mechanism/hatch universe; preloading
@@ -1429,6 +1733,7 @@ class Game {
       roots.push(...surfaceStatic,
         ...(this.graveyardLookbackRoots || []), ...forest, ...clearing,
         ...exteriorAtmosphere);
+      roots.push(...(this.enemies?.gpuResidencyRoots?.(['walker', 'kneeler']) || []));
     } else if (priority === 'clearing') {
       // The authored look-back keeps the forest silhouette alive around the
       // oasis, plus the cheap grave gate/ground silhouette and every exterior
@@ -1438,6 +1743,7 @@ class Game {
         ...exteriorAtmosphere);
     } else if (priority === 'cave') {
       roots.push(...cave, ...(atmosphere.cave || []));
+      roots.push(...(this.enemies?.gpuResidencyRoots?.(['choir']) || []));
     }
     if (['graveyard', 'forest', 'clearing', 'cave'].includes(priority)) {
       roots.push(this.goreMesh, this.enemies?.stainPool,
@@ -1446,7 +1752,136 @@ class Game {
     return { label: priority, roots: [...new Set(roots.filter(Boolean))] };
   }
 
+  _exactResidencyEntryKey(object, {
+    critical = false,
+    preloadOwner = null,
+    preloadDeferred = null,
+    rig = 'world',
+  } = {}) {
+    // A WebGL binding state is keyed by both geometry and program. The same
+    // authored object can therefore need three honest certificates: its live
+    // default-framebuffer program, a future district program, and an owner
+    // render-target program. Keep those purposes distinct while the resource
+    // maps below still deduplicate their shared BufferAttributes.
+    const purpose = critical
+      ? 'critical'
+      : preloadOwner ? `owner:${preloadOwner}`
+        : preloadDeferred ? `deferred:${preloadDeferred}` : 'preload';
+    return `${purpose}:${rig}:${object?.uuid || 'missing'}`;
+  }
+
+  _exactPhysicalCandidate(object) {
+    if ((!object?.isMesh && !object?.isLine && !object?.isPoints)
+        || !object.geometry || !object.material
+        || (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0) return false;
+    let ancestor = object;
+    while (ancestor && ancestor !== this.scene) {
+      if (ancestor.visible === false) return false;
+      ancestor = ancestor.parent;
+    }
+    if (ancestor !== this.scene) return false;
+    // WebGLRenderer updates object geometry before it checks material.visible
+    // or reaches a zero-instance draw. Those cases own allocation residency
+    // even though they contribute no pixel.
+    return object.frustumCulled === false || this._reducedWorldFrustum.intersectsObject(object);
+  }
+
+  _queueExactRenderable(progress, object, {
+    critical = false,
+    preloadOnly = true,
+    preloadOwner = null,
+    preloadDeferred = null,
+    rig = 'world',
+  } = {}) {
+    if (!progress || (!object?.isMesh && !object?.isLine && !object?.isPoints)
+        || !object.geometry || !object.material) return false;
+    const key = this._exactResidencyEntryKey(object, {
+      critical, preloadOwner, preloadDeferred, rig,
+    });
+    let entry = progress.exactObjects.get(key);
+    if (!entry) {
+      object.getWorldPosition(this._reducedWorldCenter);
+      const name = `${object.name || ''}`.toLowerCase();
+      entry = {
+        key,
+        object,
+        rig,
+        critical: false,
+        preloadOnly: true,
+        preloadOwner: null,
+        preloadDeferred: null,
+        distance: Number.POSITIVE_INFINITY,
+        structural: 0,
+      };
+      progress.exactObjects.set(key, entry);
+    }
+    if (critical) {
+      entry.critical = true;
+      entry.preloadOnly = entry.preloadOnly && preloadOnly;
+      if (!preloadOnly) {
+        object.getWorldPosition(this._reducedWorldCenter);
+        entry.distance = this._reducedWorldCenter.distanceTo(this._reducedWorldCamera);
+        const name = `${object.name || ''}`.toLowerCase();
+        entry.structural = (/(?:wall|floor|ceiling|door|frame|ground|path|shell|rock|stair|rail|beam)/
+          .test(name) || object.receiveShadow) ? 1 : 0;
+      }
+      if (!progress.exactUniverse.has(key)) {
+        progress.exactUniverse.add(key);
+        progress.exactShaderRevision++;
+      }
+    }
+    if (preloadOwner) {
+      entry.preloadOwner ||= preloadOwner;
+      progress.ownerExactUniverse.add(key);
+    }
+    if (preloadDeferred) {
+      entry.preloadDeferred ||= preloadDeferred;
+      progress.deferredExactUniverse.add(key);
+    }
+    if (progress.exactProcessed.has(key)) return false;
+
+    const removeFrom = (queue, queuedSet) => {
+      const index = queue.findIndex((candidate) => candidate.key === key);
+      if (index >= 0) queue.splice(index, 1);
+      queuedSet.delete(key);
+    };
+    const targetQueue = entry.critical
+      ? progress.exactQueue
+      : entry.preloadDeferred ? progress.deferredExactQueue : progress.ownerExactQueue;
+    const targetSet = entry.critical
+      ? progress.exactQueued
+      : entry.preloadDeferred ? progress.deferredExactQueued : progress.ownerExactQueued;
+    if (!targetSet.has(key)) {
+      removeFrom(progress.exactQueue, progress.exactQueued);
+      removeFrom(progress.ownerExactQueue, progress.ownerExactQueued);
+      removeFrom(progress.deferredExactQueue, progress.deferredExactQueued);
+      targetQueue.push(entry);
+      targetSet.add(key);
+      return true;
+    }
+    return false;
+  }
+
+  _sortExactResidencyQueues(progress) {
+    progress.exactQueue.sort((left, right) => left.rig.localeCompare(right.rig)
+      || Number(left.preloadOnly) - Number(right.preloadOnly)
+      || right.structural - left.structural
+      || left.distance - right.distance
+      || left.key.localeCompare(right.key));
+    progress.ownerExactQueue.sort((left, right) => left.key.localeCompare(right.key));
+    progress.deferredExactQueue.sort((left, right) => left.key.localeCompare(right.key));
+  }
+
   _refreshReducedWorldQueue(progress) {
+    const snapshotStartedAt = performance.now();
+    const snapshotPhase = progress.snapshotPhase || 'current';
+    let phaseStartedAt = snapshotStartedAt;
+    const phases = {};
+    const markPhase = (name) => {
+      const now = performance.now();
+      phases[name] = now - phaseStartedAt;
+      phaseStartedAt = now;
+    };
     const camera = this.camera;
     const scene = this.scene;
     scene.updateMatrixWorld(true);
@@ -1457,7 +1892,32 @@ class Game {
     );
     this._reducedWorldFrustum.setFromProjectionMatrix(this._reducedWorldProjection);
     camera.getWorldPosition(this._reducedWorldCamera);
+    markPhase('matrix-and-frustum');
     let added = 0;
+    const recordSnapshotSlice = (phase, complete) => {
+      const durationMs = performance.now() - snapshotStartedAt;
+      const entry = {
+        generation: this._webglGeneration,
+        key: progress.key,
+        kind: 'reduced-snapshot-census',
+        phase,
+        slice: (progress.snapshotSlices || 0) + 1,
+        durationMs,
+        phases,
+        added,
+        reducedQueued: progress.queue.length,
+        ownerQueued: progress.ownerQueue.length,
+        deferredQueued: progress.deferredQueue.length,
+        exactQueued: progress.exactQueue.length,
+        ownerExactQueued: progress.ownerExactQueue.length,
+        deferredExactQueued: progress.deferredExactQueue.length,
+        complete,
+        error: null,
+      };
+      progress.snapshotSlices = entry.slice;
+      this.currentGpuResidency?.snapshotPasses?.push(entry);
+      return entry;
+    };
     const enqueue = (object, preloadOnly = false, preloadOwner = null,
       preloadDeferred = null) => {
       if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
@@ -1470,99 +1930,224 @@ class Game {
           || progress.queued.has(object.uuid)) return;
       if (!preloadOnly
           && (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0) return;
-      if (!preloadOnly && object.isInstancedMesh && object.count <= 0) return;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
-      if (!preloadOnly && !materials.some((material) => material?.visible !== false
-          && (!material.transparent || (material.opacity ?? 1) > 0.001))) return;
       if (!preloadOnly && object.frustumCulled !== false
           && !this._reducedWorldFrustum.intersectsObject(object)) return;
 
+      // Opacity zero does not stop Three from updating and submitting an exact
+      // renderable. Upload that real geometry through a transient reduced clone,
+      // but do not add a visibly false silhouette to the persistent fallback.
+      const materialHidden = !preloadOnly
+        && !materials.some((material) => material?.visible !== false);
+      const opacityHidden = !preloadOnly && !materials.some((material) =>
+        material?.visible !== false
+          && (!material.transparent || (material.opacity ?? 1) > 0.001));
+      const zeroInstanceHidden = !preloadOnly && object.isInstancedMesh && object.count <= 0;
+      const effectivePreloadOnly = preloadOnly || materialHidden
+        || opacityHidden || zeroInstanceHidden;
+
       object.getWorldPosition(this._reducedWorldCenter);
-      const distance = preloadOnly
+      const distance = effectivePreloadOnly
         ? Number.POSITIVE_INFINITY
         : this._reducedWorldCenter.distanceTo(this._reducedWorldCamera);
       const name = `${object.name || ''}`.toLowerCase();
-      const structural = !preloadOnly && /(?:wall|floor|ceiling|door|frame|ground|path|shell|rock|stair|rail|beam)/
+      const structural = !effectivePreloadOnly && /(?:wall|floor|ceiling|door|frame|ground|path|shell|rock|stair|rail|beam)/
         .test(name) || object.receiveShadow;
       const targetQueue = preloadOwner
         ? progress.ownerQueue : preloadDeferred ? progress.deferredQueue : progress.queue;
       targetQueue.push({
         object, distance, structural: structural ? 1 : 0,
-        preloadOnly, preloadOwner, preloadDeferred,
+        preloadOnly: effectivePreloadOnly, preloadOwner, preloadDeferred,
       });
       progress.queued.add(object.uuid);
       added++;
     };
-    scene.traverseVisible((object) => enqueue(object, false));
+    const priority = this._shaderWarmPriorityKey();
+    if (snapshotPhase === 'current') scene.traverseVisible((object) => {
+      enqueue(object, false);
+      if (this._exactPhysicalCandidate(object)) {
+        added += Number(this._queueExactRenderable(progress, object, {
+          critical: true,
+          preloadOnly: false,
+          rig: 'world',
+        }));
+      }
+    });
+    if (snapshotPhase === 'current') markPhase('current-visible-universe');
     // The held skull, its future anatomical stages and its separate invisible
     // tether are deliberately outside the physical-view traversal. They still
     // become WORLD content on a normal throw/growth edge, so upload their real
     // BufferGeometries through the same <=16-unique-geometry paint budget. The
     // preload clones are removed immediately after the hidden 1px submission
     // and never contaminate the playable silhouette.
-    this.skull?.hold?.traverse((object) => enqueue(object, true));
+    if (snapshotPhase === 'current') this.skull?.hold?.traverse((object) => {
+      enqueue(object, true);
+      added += Number(this._queueExactRenderable(progress, object, {
+        critical: true, preloadOnly: true, rig: 'held',
+      }));
+    });
+    if (snapshotPhase === 'current') markPhase('held-universe');
     // Context loss is legal while the skull is outbound, returning or anchored,
     // when root is no longer parented below `hold`. Queue every future stage
     // directly as well; UUID dedupe makes the held case free. Only a genuinely
     // sacrificed/gone skull has no later WORLD activation to protect.
-    if (this.skull?.mode !== 'gone') {
-      this.skull?.root?.traverse((object) => enqueue(object, true));
+    if (snapshotPhase === 'current' && this.skull?.mode !== 'gone') {
+      this.skull?.root?.traverse((object) => {
+        enqueue(object, true);
+        added += Number(this._queueExactRenderable(progress, object, {
+          critical: true, preloadOnly: true, rig: 'world',
+        }));
+      });
     }
-    enqueue(this.skull?.tether, true);
-    enqueue(this._impactRing, true);
-    enqueue(this.goreMesh, true);
-    enqueue(this.enemies?.stainPool, true);
+    const registerCriticalPreload = (object) => {
+      enqueue(object, true);
+      added += Number(this._queueExactRenderable(progress, object, {
+        critical: true, preloadOnly: true, rig: 'world',
+      }));
+    };
+    if (snapshotPhase === 'current') {
+      registerCriticalPreload(this.skull?.tether);
+      registerCriticalPreload(this._impactRing);
+      registerCriticalPreload(this.goreMesh);
+      registerCriticalPreload(this.enemies?.stainPool);
+      markPhase('dynamic-critical-universe');
+    }
+    const registerCriticalPreloadRoot = (root) => root?.traverse((object) => {
+      if ((object?.isMesh || object?.isLine || object?.isPoints)
+          && object.geometry && object.material) registerCriticalPreload(object);
+    });
+    if (snapshotPhase === 'current' && priority === 'house') {
+      // These exact objects can materialize during the house without a district
+      // transition: the nursery figure, its Walker, basement Walkers and the
+      // Resident. Certify their default-framebuffer mappings before those beats.
+      registerCriticalPreloadRoot(this.musicBox?.thingPool);
+      // The physical silver echo is revealed only after the mirror owner pass.
+      // It lives on layer 0, so certify its default-framebuffer mappings as
+      // well as its separate reflection-target mappings before pane activation.
+      registerCriticalPreloadRoot(this.houseMirror?.echo);
+      for (const root of this.enemies?.gpuResidencyRoots?.(['walker', 'resident']) || []) {
+        registerCriticalPreloadRoot(root);
+      }
+    }
+    if (snapshotPhase === 'current') {
+      markPhase('current-future-universe');
+      if (added) {
+        progress.queue.sort((a, b) => Number(a.preloadOnly) - Number(b.preloadOnly)
+          || b.structural - a.structural
+          || a.distance - b.distance
+          || a.object.uuid.localeCompare(b.object.uuid));
+        this._sortExactResidencyQueues(progress);
+      }
+      markPhase('current-stable-sorts');
+      progress.currentSnapshotReady = true;
+      progress.snapshotPhase = ['house', 'mirror'].includes(priority)
+        ? 'owner-primary' : 'deferred';
+      recordSnapshotSlice('current', false);
+      return added;
+    }
+    const dynamicOwnerRoots = [
+      this.skull?.root,
+      this.skull?.tether,
+      this._impactRing,
+      this.goreMesh,
+      this.enemies?.stainPool,
+    ];
     const registerOwnerRoot = (root, kind) => {
       root?.traverse((object) => {
         if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
           progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
           progress.ownerExactOnly.add(object.uuid);
-          return;
         }
-        if (!object?.isMesh || !object.geometry || !object.material) return;
-        progress.ownerUniverse.add(object.uuid);
-        const ownerObjects = kind === 'house' ? progress.ownerHouse : progress.ownerFinale;
-        const ownerGeometries = kind === 'house'
-          ? progress.ownerHouseGeometries : progress.ownerFinaleGeometries;
-        ownerObjects.add(object.uuid);
-        ownerGeometries.add(object.geometry.uuid);
-        enqueue(object, true, kind);
+        if ((object?.isMesh || object?.isLine || object?.isPoints)
+            && object.geometry && object.material) {
+          added += Number(this._queueExactRenderable(progress, object, {
+            preloadOnly: true, preloadOwner: kind, rig: 'world',
+          }));
+        }
+        if (object?.isMesh && !object.isLine && !object.isPoints
+            && object.geometry && object.material) {
+          progress.ownerUniverse.add(object.uuid);
+          const ownerObjects = kind === 'house' ? progress.ownerHouse : progress.ownerFinale;
+          const ownerGeometries = kind === 'house'
+            ? progress.ownerHouseGeometries : progress.ownerFinaleGeometries;
+          ownerObjects.add(object.uuid);
+          ownerGeometries.add(object.geometry.uuid);
+          enqueue(object, true, kind);
+        }
       });
     };
-    const priority = this._shaderWarmPriorityKey();
-    if (['house'].includes(priority)) {
-      for (const root of [
+    let ownerKind = null;
+    let ownerPrimaryRoots = [];
+    let ownerSecondaryRoots = [];
+    if (priority === 'house') {
+      ownerKind = 'house';
+      ownerPrimaryRoots = [
         ...(this.staticWorldRenderRoots || []),
         ...(this.houseRenderRoots || []),
+      ];
+      ownerSecondaryRoots = [
         ...(this.graveyardRenderRoots || []),
         this.atmosphere?.group,
         this.houseMirror?.double,
         this.houseMirror?.echo,
-      ]) registerOwnerRoot(root, 'house');
+        this.musicBox?.thingPool,
+        ...(this.enemies?.gpuResidencyRoots?.(['walker', 'resident']) || []),
+        ...dynamicOwnerRoots,
+      ];
     } else if (priority === 'mirror') {
-      for (const root of [
+      ownerKind = 'finale';
+      ownerPrimaryRoots = [
         ...(this.staticWorldRenderRoots || []),
         ...(this.finale?.warmRoots || []),
+      ];
+      ownerSecondaryRoots = [
         this.finale?.figure,
         this.finale?.figure?.userData?.exactHead,
-      ]) registerOwnerRoot(root, 'finale');
+        ...dynamicOwnerRoots,
+      ];
+    }
+    if (snapshotPhase === 'owner-primary') {
+      for (const root of ownerPrimaryRoots) registerOwnerRoot(root, ownerKind);
+      markPhase('owner-primary-universe');
+      progress.snapshotPhase = 'owner-secondary';
+      recordSnapshotSlice('owner-primary', false);
+      return added;
+    }
+    if (snapshotPhase === 'owner-secondary') {
+      for (const root of ownerSecondaryRoots) registerOwnerRoot(root, ownerKind);
+      markPhase('owner-secondary-universe');
     }
     const deferred = this._currentDeferredGpuRoots();
     progress.deferredLabel = deferred.label;
+    if (!deferred.label || deferred.roots.length === 0) {
+      // House and Finale have no future district universe in this progress
+      // object. Mark that empty scope complete once instead of appending an
+      // identical empty fingerprint scan on every steady render forever.
+      progress.deferredRecorded = true;
+      progress.deferredExactRecorded = true;
+    }
     const registerDeferredRoot = (root) => {
       root?.traverse((object) => {
         if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
           progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
           progress.deferredExactOnly.add(object.uuid);
-          return;
         }
-        if (!object?.isMesh || !object.geometry || !object.material) return;
-        progress.deferredUniverse.add(object.uuid);
-        progress.deferredGeometries.add(object.geometry.uuid);
-        enqueue(object, true, null, deferred.label);
+        if ((object?.isMesh || object?.isLine || object?.isPoints)
+            && object.geometry && object.material) {
+          added += Number(this._queueExactRenderable(progress, object, {
+            preloadOnly: true, preloadDeferred: deferred.label, rig: 'world',
+          }));
+        }
+        if (object?.isMesh && !object.isLine && !object.isPoints
+            && object.geometry && object.material) {
+          progress.deferredUniverse.add(object.uuid);
+          progress.deferredGeometries.add(object.geometry.uuid);
+          enqueue(object, true, null, deferred.label);
+        }
       });
     };
     for (const root of deferred.roots) registerDeferredRoot(root);
+    markPhase('deferred-universe');
     if (added) {
       // The first delivered silhouette is architecture at the player's feet and
       // eyeline, not a handful of distant particles. Stable UUID ordering keeps
@@ -1573,9 +2158,13 @@ class Game {
         || a.object.uuid.localeCompare(b.object.uuid));
       progress.ownerQueue.sort((a, b) => a.object.uuid.localeCompare(b.object.uuid));
       progress.deferredQueue.sort((a, b) => a.object.uuid.localeCompare(b.object.uuid));
+      this._sortExactResidencyQueues(progress);
     }
+    markPhase('stable-sorts');
     progress.refreshes++;
     progress.snapshotReady = true;
+    progress.snapshotPhase = 'complete';
+    recordSnapshotSlice(snapshotPhase, true);
     return added;
   }
 
@@ -1605,6 +2194,80 @@ class Game {
     return clone;
   }
 
+  _cloneExactRenderable(object, { preloadOnly = false } = {}) {
+    if ((!object?.isMesh && !object?.isLine && !object?.isPoints)
+        || !object.geometry || !object.material) return null;
+    let clone = null;
+    try {
+      if (object.isInstancedMesh) {
+        clone = new THREE.InstancedMesh(
+          object.geometry, object.material, Math.max(1, object.instanceMatrix?.count || 1),
+        );
+        clone.instanceMatrix = object.instanceMatrix;
+        clone.instanceColor = object.instanceColor;
+        clone.count = preloadOnly ? Math.max(1, object.count) : object.count;
+      } else if (object.isPoints) {
+        clone = new THREE.Points(object.geometry, object.material);
+      } else if (object.isLineSegments) {
+        clone = new THREE.LineSegments(object.geometry, object.material);
+      } else if (object.isLineLoop) {
+        clone = new THREE.LineLoop(object.geometry, object.material);
+      } else if (object.isLine) {
+        clone = new THREE.Line(object.geometry, object.material);
+      } else if (object.isSkinnedMesh) {
+        clone = object.clone(false);
+        clone.geometry = object.geometry;
+        clone.material = object.material;
+        clone.skeleton = object.skeleton;
+      } else {
+        clone = new THREE.Mesh(object.geometry, object.material);
+        if (object.morphTargetInfluences) {
+          clone.updateMorphTargets();
+          clone.morphTargetInfluences = object.morphTargetInfluences.slice();
+        }
+      }
+    } catch { return null; }
+    clone.name = `exact preload ${object.name || object.uuid}`;
+    clone.visible = true;
+    clone.frustumCulled = false;
+    clone.matrixAutoUpdate = false;
+    clone.matrix.copy(object.matrixWorld);
+    clone.matrixWorld.copy(object.matrixWorld);
+    clone.layers.set(0);
+    clone.castShadow = object.castShadow;
+    clone.receiveShadow = object.receiveShadow;
+    clone.renderOrder = object.renderOrder;
+    return clone;
+  }
+
+  _addExactResidencyLightRig(scene, rig = 'world') {
+    const lights = rig === 'held'
+      ? [
+          new THREE.PointLight(0xffffff, 0, 1, 2),
+          new THREE.PointLight(0xffffff, 0, 1, 2),
+        ]
+      : (() => {
+          const directional = new THREE.DirectionalLight(0xffffff, 0);
+          directional.castShadow = true;
+          directional.shadow.autoUpdate = false;
+          directional.shadow.needsUpdate = false;
+          return [
+            new THREE.AmbientLight(0xffffff, 0),
+            new THREE.HemisphereLight(0xffffff, 0x000000, 0),
+            directional,
+            new THREE.SpotLight(0xffffff, 0, 1, Math.PI / 3, 0, 2),
+            ...Array.from({ length: 16 }, () => new THREE.PointLight(0xffffff, 0, 1, 2)),
+          ];
+        })();
+    for (const light of lights) {
+      light.visible = true;
+      light.layers.set(0);
+      scene.add(light);
+      if (light.target) scene.add(light.target);
+    }
+    return lights.length;
+  }
+
   _updateReducedWorldFrustum() {
     this.scene.updateMatrixWorld(true);
     this.camera.updateMatrixWorld(true);
@@ -1619,29 +2282,30 @@ class Game {
   _reducedPhysicalCandidate(object) {
     if (!object?.isMesh || object.isLine || object.isPoints
         || !object.geometry || !object.material
-        || (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0
-        || (object.isInstancedMesh && object.count <= 0)) return false;
+        || (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0) return false;
     let ancestor = object;
     while (ancestor && ancestor !== this.scene) {
       if (ancestor.visible === false) return false;
       ancestor = ancestor.parent;
     }
     if (ancestor !== this.scene) return false;
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
-    if (!materials.some((material) => material?.visible !== false
-        && (!material.transparent || (material.opacity ?? 1) > 0.001))) return false;
     return object.frustumCulled === false || this._reducedWorldFrustum.intersectsObject(object);
   }
 
   _reducedPhysicalEntry(object, preloadOwner = null, preloadDeferred = null) {
     object.getWorldPosition(this._reducedWorldCenter);
     const name = `${object.name || ''}`.toLowerCase();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    const preloadOnly = (object.isInstancedMesh && object.count <= 0)
+      || !materials.some((material) => material?.visible !== false
+        && (!material.transparent || (material.opacity ?? 1) > 0.001));
     return {
       object,
-      distance: this._reducedWorldCenter.distanceTo(this._reducedWorldCamera),
-      structural: (/(?:wall|floor|ceiling|door|frame|ground|path|shell|rock|stair|rail|beam)/
+      distance: preloadOnly ? Number.POSITIVE_INFINITY
+        : this._reducedWorldCenter.distanceTo(this._reducedWorldCamera),
+      structural: !preloadOnly && (/(?:wall|floor|ceiling|door|frame|ground|path|shell|rock|stair|rail|beam)/
         .test(name) || object.receiveShadow) ? 1 : 0,
-      preloadOnly: false,
+      preloadOnly,
       preloadOwner,
       preloadDeferred,
     };
@@ -1659,6 +2323,11 @@ class Game {
     this._updateReducedWorldFrustum();
     let added = 0;
     this.scene.traverseVisible((object) => {
+      if (this._exactPhysicalCandidate(object)) {
+        this._queueExactRenderable(progress, object, {
+          critical: true, preloadOnly: false, rig: 'world',
+        });
+      }
       if (!this._reducedPhysicalCandidate(object) || progress.processed.has(object.uuid)) return;
       if (progress.queue.some((entry) => entry.object === object)) return;
       const ownerIndex = progress.ownerQueue.findIndex((entry) => entry.object === object);
@@ -1691,6 +2360,127 @@ class Game {
     }
     progress.criticalRefreshes++;
     return added;
+  }
+
+  _refreshExactResidencyQueue(progress, scope = 'critical') {
+    const residency = this.currentGpuResidency;
+    if (!progress || progress.key !== residency?.activeKey
+        || residency.generation !== this._webglGeneration) return null;
+    const startedAt = performance.now();
+    const universe = scope === 'owner'
+      ? progress.ownerExactUniverse
+      : scope === 'deferred' ? progress.deferredExactUniverse : progress.exactUniverse;
+    const covered = scope === 'owner'
+      ? progress.ownerExactCovered
+      : scope === 'deferred' ? progress.deferredExactCovered : progress.exactCovered;
+    const queue = scope === 'owner'
+      ? progress.ownerExactQueue
+      : scope === 'deferred' ? progress.deferredExactQueue : progress.exactQueue;
+    let added = 0;
+    let invalidated = 0;
+    const errors = [];
+
+    if (scope === 'critical') {
+      this._updateReducedWorldFrustum();
+      this.scene.traverseVisible((object) => {
+        if (!this._exactPhysicalCandidate(object)) return;
+        if (object.isLine || object.isPoints) {
+          progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
+        }
+        added += Number(this._queueExactRenderable(progress, object, {
+          critical: true, preloadOnly: false, rig: 'world',
+        }));
+      });
+    }
+
+    for (const key of [...universe]) {
+      const exact = progress.exactObjects.get(key);
+      const failed = scope === 'owner'
+        ? progress.failedOwners.has(key)
+        : scope === 'deferred' ? progress.failedDeferred.has(key)
+          : progress.failedObjects.has(key);
+      if (failed) {
+        errors.push(`${key}: exact preload previously failed permanently`);
+        continue;
+      }
+      if (!exact?.object) {
+        errors.push(`${key}: missing exact source object`);
+        continue;
+      }
+      const descriptor = this._describeReducedEntry(exact, progress, { exact: true });
+      if (descriptor.error) {
+        errors.push(`${key}: ${descriptor.error}`);
+        if (scope === 'critical') progress.failedObjects.add(key);
+        if (scope === 'owner') progress.failedOwners.add(key);
+        if (scope === 'deferred') progress.failedDeferred.add(key);
+        continue;
+      }
+      // Content versions may advance every gameplay frame for an already
+      // allocated dynamic buffer. Cold residency is invalidated only when the
+      // allocation/mapping/program identity changes; transaction-local version
+      // stability remains enforced by the exact batch itself below.
+      const committed = progress.exactAllocationFingerprints.get(key);
+      if (progress.exactProcessed.has(key)
+          && committed !== descriptor.allocationFingerprint) {
+        progress.exactProcessed.delete(key);
+        progress.exactCovered.delete(key);
+        progress.ownerExactCovered.delete(key);
+        progress.deferredExactCovered.delete(key);
+        progress.exactFingerprints.delete(key);
+        progress.exactAllocationFingerprints.delete(key);
+        if (scope === 'critical') progress.exactShaderRevision++;
+        invalidated++;
+        added += Number(this._queueExactRenderable(progress, exact.object, {
+          critical: exact.critical,
+          preloadOnly: exact.preloadOnly,
+          preloadOwner: exact.preloadOwner,
+          preloadDeferred: exact.preloadDeferred,
+          rig: exact.rig,
+        }));
+      } else if (!progress.exactProcessed.has(key)
+          && !progress.exactQueued.has(key)
+          && !progress.ownerExactQueued.has(key)
+          && !progress.deferredExactQueued.has(key)) {
+        added += Number(this._queueExactRenderable(progress, exact.object, {
+          critical: exact.critical,
+          preloadOnly: exact.preloadOnly,
+          preloadOwner: exact.preloadOwner,
+          preloadDeferred: exact.preloadDeferred,
+          rig: exact.rig,
+        }));
+      }
+    }
+    if (added || invalidated) this._sortExactResidencyQueues(progress);
+    progress.exactInvalidations += invalidated;
+    progress.exactRefreshes++;
+    const entry = {
+      generation: this._webglGeneration,
+      key: progress.key,
+      kind: `${scope}-exact-fingerprint-scan`,
+      scope,
+      universe: universe.size,
+      covered: covered.size,
+      queued: queue.length,
+      added,
+      invalidated,
+      durationMs: performance.now() - startedAt,
+      stable: errors.length === 0 && queue.length === 0 && covered.size === universe.size,
+      error: errors.length ? errors.join('; ') : null,
+    };
+    const signature = [
+      entry.universe, entry.covered, entry.queued, entry.added,
+      entry.invalidated, Number(entry.stable), entry.error || '',
+    ].join('|');
+    const previousSignature = progress.lastExactScanSignatures.get(scope);
+    entry.repeated = previousSignature === signature;
+    progress.lastExactScanSignatures.set(scope, signature);
+    if (!entry.repeated) {
+      residency.exactScanPasses.push(entry);
+      if (errors.length) {
+        residency.errors.push(...errors.map((error) => `exact ${scope}: ${error}`));
+      }
+    }
+    return entry;
   }
 
   _promoteVisibleOwnerQueue(progress) {
@@ -1750,17 +2540,49 @@ class Game {
   _currentPhysicalVariantReady() {
     const warmup = this.shaderWarmup;
     if (!warmup || warmup.status === 'skipped') return true;
+    const progress = this.currentGpuResidency?.progressive;
+    if (!progress || warmup.currentExactKey !== progress.key
+        || warmup.currentExactRevision !== progress.exactShaderRevision) return false;
     const priority = this._shaderWarmPriorityKey();
     const required = [this._shaderWarmRequiredVariant(priority)].filter(Boolean);
     if (this.skull?.mode === 'held'
         && priority !== 'cave' && priority !== 'mirror') required.push('held-view');
     const ready = warmup.readyVariants || [];
     required.push('grain');
+    required.push('current-view-exact');
     // A degraded generation may still contain a perfectly valid *different*
     // district. Never certify the live material pass merely because some
     // background job failed: keep the playable silhouette until this exact
     // district (and HELD pass, when present) is genuinely ready.
     return required.every((label) => ready.includes(label));
+  }
+
+  _ensureCurrentExactShaderWarmup(progress) {
+    const state = this.shaderWarmup;
+    if (!progress || !state || state.status === 'skipped'
+        || state.generation !== this._webglGeneration) return false;
+    const matches = state.currentExactKey === progress.key
+      && state.currentExactRevision === progress.exactShaderRevision
+      && state.readyVariants?.includes('current-view-exact');
+    if (matches) return true;
+    const identityMatches = state.currentExactKey === progress.key
+      && state.currentExactRevision === progress.exactShaderRevision;
+    // A scheduled/pending itinerary that has not reached current-view yet will
+    // capture the live revision when it does. Only retire a certificate that
+    // is already stale (or a pre-Wake itinerary that finished without one).
+    const hasCapturedCurrent = state.currentExactKey != null;
+    if (!hasCapturedCurrent && !['ready'].includes(state.status)) return false;
+    if (hasCapturedCurrent && identityMatches && state.status === 'pending') return false;
+    if (['invalidated', 'degraded'].includes(state.status)) return false;
+    state.readyVariants = (state.readyVariants || [])
+      .filter((label) => label !== 'current-view-exact');
+    this._shaderResidentVariants.delete('current-view-exact');
+    this._invalidateShaderWarmup(
+      `current-exact-revision:${progress.key}:${progress.exactShaderRevision}`,
+      { preserveResident: true, preserveTargets: true },
+    );
+    this._scheduleShaderWarmup();
+    return false;
   }
 
   _darkenMirrorConsumers() {
@@ -2336,6 +3158,7 @@ class Game {
 
     const durationMs = performance.now() - startedAt;
     const entry = {
+      generation: this._webglGeneration,
       key,
       kind,
       durationMs,
@@ -2423,24 +3246,41 @@ class Game {
       count, stride, source.usage ?? attribute.usage ?? 0,
       source.gpuType ?? attribute.gpuType ?? 0,
     ].join(':');
+    const allocationKey = [
+      this._webglGeneration, sourceId, arrayId,
+      array.constructor?.name || 'TypedArray', byteOffset, byteLength,
+      count, stride, source.usage ?? attribute.usage ?? 0,
+      source.gpuType ?? attribute.gpuType ?? 0,
+    ].join(':');
     const mappingKey = [
       key, itemSize, Number(attribute.offset || 0),
       Number(attribute.normalized), meshPerAttribute,
     ].join('@');
+    const allocationMappingKey = [
+      allocationKey, itemSize, Number(attribute.offset || 0),
+      Number(attribute.normalized), meshPerAttribute,
+    ].join('@');
     return {
-      role, key, mappingKey, byteLength, submitted, sourceId, version,
+      role, key, allocationKey, mappingKey, allocationMappingKey,
+      byteLength, submitted, sourceId, version,
       count, itemSize, stride, arrayType: array.constructor?.name || null,
     };
   }
 
-  _describeReducedEntry(entry, progress) {
+  _describeReducedEntry(entry, progress, { exact = false } = {}) {
     const object = entry?.object;
     const geometry = object?.geometry;
-    if (!object?.isMesh || object.isLine || object.isPoints || !geometry) {
-      return { error: 'only Mesh and InstancedMesh are legal reduced signatures' };
+    const renderable = object?.isMesh || object?.isLine || object?.isPoints;
+    if (!renderable || (!exact && (!object.isMesh || object.isLine || object.isPoints))
+        || !geometry) {
+      return { error: exact
+        ? 'only Mesh, Line, and Points are legal exact preload signatures'
+        : 'only Mesh and InstancedMesh are legal reduced signatures' };
     }
     const resources = [];
     const roles = [];
+    const materials = (Array.isArray(object.material) ? object.material : [object.material])
+      .filter(Boolean);
     const add = (attribute, role, submitted = true) => {
       const record = this._reducedResourceRecord(attribute, role, submitted);
       if (record.error) throw new Error(record.error);
@@ -2450,17 +3290,47 @@ class Game {
     try {
       if (geometry.index) add(geometry.index, 'index', true);
       for (const name of Object.keys(geometry.attributes || {}).sort()) {
-        add(geometry.attributes[name], `attribute:${name}`, name === 'position');
+        // WebGLGeometries.update uploads every geometry attribute before
+        // material visibility or shader attribute use is considered. Reduced
+        // clones therefore certify normals/UVs/etc. as honestly as position.
+        add(geometry.attributes[name], `attribute:${name}`, true);
       }
       for (const name of Object.keys(geometry.morphAttributes || {}).sort()) {
         const list = geometry.morphAttributes[name] || [];
         for (let index = 0; index < list.length; index++) {
-          add(list[index], `morph:${name}:${index}`, false);
+          add(list[index], `morph:${name}:${index}`, true);
         }
       }
       if (object.isInstancedMesh) {
         add(object.instanceMatrix, 'instanceMatrix');
-        if (object.instanceColor) add(object.instanceColor, 'instanceColor', false);
+        if (object.instanceColor) add(object.instanceColor, 'instanceColor', exact);
+      }
+      if (exact && object.isMesh && materials.some((material) => material.wireframe)) {
+        // r161 lazily derives and uploads a separate edge index for wireframe
+        // Mesh draws. It is not present in geometry.attributes, so charge a
+        // conservative Uint32 upper bound explicitly instead of letting the
+        // real driver allocation evade the byte/element caps.
+        const source = geometry.index || geometry.attributes?.position;
+        const sourceRecord = resources.find((resource) => resource.role
+          === (geometry.index ? 'index' : 'attribute:position'));
+        const sourceCount = Number(source?.count || 0);
+        const edgeIndexCount = Math.floor(sourceCount / 3) * 6;
+        const byteLength = edgeIndexCount * Uint32Array.BYTES_PER_ELEMENT;
+        const allocationKey = [
+          this._webglGeneration, 'derived-wireframe', geometry.uuid,
+          sourceRecord?.allocationKey || 'missing-source', byteLength,
+        ].join(':');
+        const key = [allocationKey, sourceRecord?.version || 0].join(':');
+        const record = {
+          role: 'derived:wireframe-index', key, allocationKey,
+          mappingKey: key, allocationMappingKey: allocationKey,
+          byteLength, submitted: true, sourceId: null,
+          version: sourceRecord?.version || 0, count: edgeIndexCount,
+          itemSize: 1, stride: 1, arrayType: 'Uint32Array-upper-bound',
+          derived: true, conservative: true,
+        };
+        resources.push(record);
+        roles.push(`${record.role}=${record.mappingKey}`);
       }
     } catch (caught) {
       return { error: caught?.message || String(caught) };
@@ -2500,7 +3370,9 @@ class Game {
         return { error: 'InstancedMesh count exceeds matrix/color capacity' };
       }
     }
-    const submittedElements = drawElements * effectiveInstances;
+    const wireframeMultiplier = exact && object.isMesh
+      && materials.some((material) => material.wireframe) ? 2 : 1;
+    const submittedElements = drawElements * effectiveInstances * wireframeMultiplier;
     if (!Number.isSafeInteger(submittedElements)) {
       return { error: 'submitted element count overflows a safe integer' };
     }
@@ -2521,28 +3393,70 @@ class Game {
       geometry.uuid, drawRangeKey, Number(geometry.morphTargetsRelative),
       ...roles.sort(),
     ].join('|');
+    const materialFingerprint = exact
+      ? materials
+          .map((material) => [
+            material.uuid, material.version || 0,
+            this._shaderWarmMaterialSignature(material),
+          ].join(':')).join('~~')
+      : 'reduced-basic';
+    const materialAllocationFingerprint = exact
+      ? materials
+          .map((material) => [
+            material.uuid, this._shaderWarmMaterialSignature(material),
+          ].join(':')).join('~~')
+      : 'reduced-basic';
     const objectFingerprint = [
-      object.uuid, geometryFingerprint, effectiveInstances,
+      entry.key || object.uuid, object.type, entry.rig || 'world', materialFingerprint,
+      geometryFingerprint, effectiveInstances,
       ...[...unique.values()].map((resource) =>
         `${resource.role}:${resource.key}:${Number(resource.submitted)}`).sort(),
     ].join('|');
+    const transactionFingerprint = [
+      entry.key || object.uuid, object.type, entry.rig || 'world',
+      materialAllocationFingerprint, geometryFingerprint, effectiveInstances,
+      ...[...unique.values()].map((resource) =>
+        `${resource.role}:${resource.key}:${Number(resource.submitted)}`).sort(),
+    ].join('|');
+    const allocationFingerprint = [
+      entry.key || object.uuid, object.type, entry.rig || 'world', materialAllocationFingerprint,
+      // Draw range and live instance count change what is submitted, not the
+      // GPU allocation or program-to-attribute mapping. Including them here
+      // made animated pools continuously revoke an otherwise valid residency
+      // certificate. Capacity/type/stride remain represented by the resource
+      // allocationMappingKeys below.
+      geometry.uuid, Number(geometry.morphTargetsRelative),
+      ...resources.map((resource) => [
+        resource.role, resource.allocationMappingKey, Number(resource.submitted),
+      ].join(':')).sort(),
+    ].join('|');
     return {
       object, geometry, resources: [...unique.values()],
-      geometryFingerprint, objectFingerprint,
+      geometryFingerprint, objectFingerprint, transactionFingerprint,
+      allocationFingerprint,
       referencedBytes, exactDeferredBytes,
       drawElements, effectiveInstances, submittedElements,
       displayName: object.name || `(unnamed ${object.type} ${object.uuid})`,
       type: object.type, objectUuid: object.uuid, geometryUuid: geometry.uuid,
+      exact, rig: entry.rig || 'world', entryKey: entry.key || object.uuid,
+      materialFingerprint,
     };
   }
 
   _submitReducedWorldBatch(progress, {
-    geometryBudget = 16,
+    // Eight real geometries leaves measured margin for the default-framebuffer
+    // draw and diagnostic hooks on older D3D11 hardware. Sixteen remains the
+    // hard admission ceiling asserted by the gates, not a target each
+    // transaction is obliged to fill.
+    geometryBudget = 8,
     objectBudget = 32,
     byteBudget = 512 * 1024,
     elementBudget = 16 * 1024,
     ownerOnly = false,
     deferredOnly = false,
+    exactOnly = false,
+    exactTarget = null,
+    exactOwner = null,
   } = {}) {
     const renderer = this.renderer;
     const camera = this.camera;
@@ -2552,14 +3466,35 @@ class Game {
         || !this._reducedBootstrapReady('mesh-basic')
         || !this._reducedBootstrapReady('instanced-basic')) return null;
 
-    const queue = ownerOnly
-      ? progress.ownerQueue : deferredOnly ? progress.deferredQueue : progress.queue;
+    const queue = exactOnly
+      ? (ownerOnly ? progress.ownerExactQueue
+        : deferredOnly ? progress.deferredExactQueue : progress.exactQueue)
+      : (ownerOnly ? progress.ownerQueue
+        : deferredOnly ? progress.deferredQueue : progress.queue);
+    const queuedSet = exactOnly
+      ? (ownerOnly ? progress.ownerExactQueued
+        : deferredOnly ? progress.deferredExactQueued : progress.exactQueued)
+      : progress.queued;
+    const committedResourceSet = exactOnly
+      ? progress.exactResourceSeen : progress.admissionSeen;
     if (!ownerOnly && !deferredOnly && progress.blockedCritical) return null;
     if (!queue.length) return null;
+    const exactRig = exactOnly ? queue[0].rig : null;
+    const exactTargetPool = exactOwner === 'house'
+      ? this.houseMirror?.pool : exactOwner === 'finale' ? this.finale?.mirrors : null;
+    const exactTargetIdentity = exactTargetPool ? {
+      poolRef: exactTargetPool.pool,
+      poolEpoch: exactTargetPool.poolEpoch,
+      poolSignature: this._renderTargetPoolIdentity(exactTargetPool.pool, exactTargetPool),
+      targetRef: exactTarget,
+      targetUuid: exactTarget?.texture?.uuid || null,
+    } : null;
     const batchScene = new THREE.Scene();
-    batchScene.name = 'transient reduced batch ' + progress.key;
+    batchScene.name = `${exactOnly ? 'transient exact preload' : 'transient reduced batch'} ${progress.key}`;
     batchScene.background = this._reducedWorldBackground;
     batchScene.fog = this.scene.fog;
+    batchScene.environment = exactOnly ? this.scene.environment : null;
+    const exactLights = exactOnly ? this._addExactResidencyLightRig(batchScene, exactRig) : 0;
     const stagedEntries = [];
     const stagedResourceKeys = new Set();
     const stagedGeometryKeys = new Set();
@@ -2577,9 +3512,14 @@ class Game {
     let deferredPreloadGeometries = 0;
     let oversize = null;
     let stagingFailure = null;
+    const materialStates = new Map();
 
     const rollbackStaging = () => {
       for (const staged of stagedEntries) staged.clone.removeFromParent();
+      for (const [material, state] of materialStates) {
+        material.visible = state.visible;
+        material.side = state.side;
+      }
       while (batchScene.children.length) {
         batchScene.remove(batchScene.children[batchScene.children.length - 1]);
       }
@@ -2593,23 +3533,27 @@ class Game {
         type: next.object.type,
         owner: next.preloadOwner || null,
         deferred: next.preloadDeferred || null,
+        exact: exactOnly,
+        rig: next.rig || null,
         attempt: next.cloneFailures,
         permanent,
       };
       progress.cloneFailureEvents.push(failure);
       if (permanent) {
+        const failureKey = exactOnly ? next.key : next.object.uuid;
         if (ownerOnly || deferredOnly) {
           queue.splice(queueIndex, 1);
-          progress.queued.delete(next.object.uuid);
+          queuedSet.delete(exactOnly ? next.key : next.object.uuid);
         }
         if (!ownerOnly && !deferredOnly) {
-          progress.failedObjects.add(next.object.uuid);
+          progress.failedObjects.add(failureKey);
           progress.blockedCritical = true;
-          progress.blockedReason = 'clone:' + next.object.uuid;
+          progress.blockedReason = 'clone:' + failureKey;
         }
-        if (next.preloadOwner) progress.failedOwners.add(next.object.uuid);
-        if (next.preloadDeferred) progress.failedDeferred.add(next.object.uuid);
-        residency.errors.push('reduced clone failed permanently: ' + next.object.uuid);
+        if (next.preloadOwner) progress.failedOwners.add(failureKey);
+        if (next.preloadDeferred) progress.failedDeferred.add(failureKey);
+        residency.errors.push(`${exactOnly ? 'exact' : 'reduced'} clone failed permanently: `
+          + (exactOnly ? next.key : next.object.uuid));
       }
       return failure;
     };
@@ -2617,7 +3561,8 @@ class Game {
     for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
       if (stagedEntries.length >= objectBudget) break;
       const next = queue[queueIndex];
-      const descriptor = this._describeReducedEntry(next, progress);
+      if (exactOnly && next.rig !== exactRig) break;
+      const descriptor = this._describeReducedEntry(next, progress, { exact: exactOnly });
       if (descriptor.error) {
         stagingFailure = {
           object: next.object?.name || next.object?.uuid || '(unknown)',
@@ -2627,25 +3572,26 @@ class Game {
           permanent: true,
           accounting: true,
         };
+        const failureKey = exactOnly ? next.key : next.object.uuid;
         if (!ownerOnly && !deferredOnly) {
-          progress.failedObjects.add(next.object.uuid);
+          progress.failedObjects.add(failureKey);
           progress.blockedCritical = true;
-          progress.blockedReason = 'accounting:' + (next.object?.uuid || 'unknown');
+          progress.blockedReason = 'accounting:' + failureKey;
         } else {
           // Hidden consumers fail closed, but a permanently uncountable entry
           // must not spin the same full-frame queue forever. Quarantine only
           // that owner/deferred entry; its failed set still prevents readiness.
           queue.splice(queueIndex, 1);
-          progress.queued.delete(next.object.uuid);
+          queuedSet.delete(exactOnly ? next.key : next.object.uuid);
         }
-        if (next.preloadOwner) progress.failedOwners.add(next.object.uuid);
-        if (next.preloadDeferred) progress.failedDeferred.add(next.object.uuid);
-        residency.errors.push('reduced accounting blocked: '
-          + (next.object?.uuid || 'unknown') + ': ' + descriptor.error);
+        if (next.preloadOwner) progress.failedOwners.add(failureKey);
+        if (next.preloadDeferred) progress.failedDeferred.add(failureKey);
+        residency.errors.push(`${exactOnly ? 'exact' : 'reduced'} accounting blocked: `
+          + (exactOnly ? next.key : (next.object?.uuid || 'unknown')) + ': ' + descriptor.error);
         break;
       }
       const newResources = descriptor.resources.filter((resource) =>
-        !progress.admissionSeen.has(resource.key) && !stagedResourceKeys.has(resource.key));
+        !committedResourceSet.has(resource.key) && !stagedResourceKeys.has(resource.key));
       const nextAdmissionBytes = newResources
         .reduce((total, resource) => total + resource.byteLength, 0);
       const nextSubmittedResourceBytes = newResources
@@ -2686,21 +3632,33 @@ class Game {
         };
       }
 
-      const clone = this._cloneReducedRenderable(next.object, {
-        preloadOnly: next.preloadOnly,
-      });
+      const clone = exactOnly
+        ? this._cloneExactRenderable(next.object, { preloadOnly: next.preloadOnly })
+        : this._cloneReducedRenderable(next.object, { preloadOnly: next.preloadOnly });
       if (!clone) {
         stagingFailure = cloneFailure(next, queueIndex);
         break;
       }
       batchScene.add(clone);
+      if (exactOnly) {
+        const materials = Array.isArray(clone.material) ? clone.material : [clone.material];
+        for (const material of materials.filter(Boolean)) {
+          if (!materialStates.has(material)) {
+            materialStates.set(material, {
+              visible: material.visible,
+              side: material.side,
+            });
+          }
+          material.visible = true;
+        }
+      }
       const staged = {
         next,
         clone,
         descriptor,
         newResources,
         newGeometry,
-        fingerprint: descriptor.objectFingerprint,
+        transactionFingerprint: descriptor.transactionFingerprint,
       };
       stagedEntries.push(staged);
       for (const resource of newResources) stagedResourceKeys.add(resource.key);
@@ -2711,7 +3669,9 @@ class Game {
       exactDeferredBytes += nextExactDeferredBytes;
       submittedElements += descriptor.submittedElements;
       maxGeometryBytes = Math.max(maxGeometryBytes, nextAdmissionBytes);
-      types.meshes++;
+      if (clone.isPoints) types.points++;
+      else if (clone.isLine) types.lines++;
+      else types.meshes++;
       if (next.preloadOnly) {
         preloadObjects++;
         if (next.preloadOwner) ownerPreloadObjects++;
@@ -2742,7 +3702,7 @@ class Game {
     }
     if (!stagedEntries.length) return null;
 
-    const submittedObjects = batchScene.children.length;
+    const submittedObjects = exactOnly ? stagedEntries.length : batchScene.children.length;
     const persistentObjectsBefore = progress.scene.children.length;
     const startedAt = performance.now();
     const identityProgramsBefore = this._gpuIdentityProgramSnapshot();
@@ -2771,7 +3731,7 @@ class Game {
       renderer.getScissor(previousScissor);
       scissorRead = true;
       previousScissorTest = renderer.getScissorTest();
-      renderer.setRenderTarget(null);
+      renderer.setRenderTarget(exactOnly ? exactTarget : null);
       renderer.setViewport(0, 0, 1, 1);
       renderer.setScissor(0, 0, 1, 1);
       renderer.setScissorTest(true);
@@ -2785,6 +3745,10 @@ class Game {
       error = caught;
     } finally {
       camera.layers.mask = previousMask;
+      for (const [material, state] of materialStates) {
+        material.visible = state.visible;
+        material.side = state.side;
+      }
       if (targetRead) {
         let restored = false;
         let lastError = null;
@@ -2826,6 +3790,18 @@ class Game {
       }
       if (renderer.autoClear !== previousAutoClear) restoreErrors.push('autoClear mismatch');
       if (camera.layers.mask !== previousMask) restoreErrors.push('camera-mask mismatch');
+      if ([...materialStates].some(([material, state]) =>
+        material.visible !== state.visible || material.side !== state.side)) {
+        restoreErrors.push('material-state mismatch');
+      }
+      if (exactTargetIdentity && (exactTargetPool?.pool !== exactTargetIdentity.poolRef
+          || exactTargetPool?.poolEpoch !== exactTargetIdentity.poolEpoch
+          || this._renderTargetPoolIdentity(exactTargetPool.pool, exactTargetPool)
+            !== exactTargetIdentity.poolSignature
+          || exactTargetPool.pool?.[0] !== exactTargetIdentity.targetRef
+          || exactTargetIdentity.targetRef?.texture?.uuid !== exactTargetIdentity.targetUuid)) {
+        restoreErrors.push(`${exactOwner} exact target identity changed during transaction`);
+      }
     } catch (caught) {
       restoreErrors.push('verification: ' + (caught?.message || caught));
     }
@@ -2835,8 +3811,12 @@ class Game {
     const queuePrefixStable = stagedEntries.every((staged, index) =>
       queue[index] === staged.next);
     const fingerprintsStable = stagedEntries.every((staged) => {
-      const current = this._describeReducedEntry(staged.next, progress);
-      return !current.error && current.objectFingerprint === staged.fingerprint;
+      const current = this._describeReducedEntry(
+        staged.next, progress, { exact: exactOnly },
+      );
+      staged.committedDescriptor = current;
+      return !current.error
+        && current.transactionFingerprint === staged.transactionFingerprint;
     });
     if (!generationStable) restoreErrors.push('generation/key changed during transaction');
     if (!queuePrefixStable) restoreErrors.push('queue prefix changed during transaction');
@@ -2844,14 +3824,22 @@ class Game {
 
     const durationMs = performance.now() - startedAt;
     const entry = {
+      generation: this._webglGeneration,
       key: progress.key,
-      kind: ownerOnly ? 'owner-preload-batch'
-        : deferredOnly ? 'deferred-preload-batch' : 'reduced-batch',
+      kind: exactOnly
+        ? (ownerOnly ? 'owner-exact-preload-batch'
+          : deferredOnly ? 'deferred-exact-preload-batch' : 'current-exact-preload-batch')
+        : (ownerOnly ? 'owner-preload-batch'
+          : deferredOnly ? 'deferred-preload-batch' : 'reduced-batch'),
       batch: ++progress.batches,
       objects: stagedEntries.length,
       submittedObjects,
       geometries: stagedGeometryKeys.size,
       types,
+      rig: exactRig,
+      lights: exactLights,
+      targetOwner: exactOwner,
+      targetUuid: exactTargetIdentity?.targetUuid || null,
       preloadObjects,
       ownerPreloadObjects,
       ownerPreloadGeometries,
@@ -2864,7 +3852,7 @@ class Game {
       maxGeometryBytes,
       vertices: submittedElements,
       submittedElements,
-      visibleObjects: stagedEntries.length - preloadObjects,
+      visibleObjects: exactOnly ? 0 : stagedEntries.length - preloadObjects,
       physicalReady: residency.physical.has(progress.key),
       oversize,
       isolatedOversize: !!oversize,
@@ -2895,53 +3883,131 @@ class Game {
           preloadOnly: !!next.preloadOnly,
           preloadOwner: next.preloadOwner || null,
           preloadDeferred: next.preloadDeferred || null,
+          exact: exactOnly,
+          rig: next.rig || null,
+          entryKey: next.key || null,
         })),
       };
     }
-    residency.reducedPasses.push(entry);
-    residency.maxReducedPrimeMs = Math.max(residency.maxReducedPrimeMs, durationMs);
+    (exactOnly ? residency.exactPreloadPasses : residency.reducedPasses).push(entry);
+    if (exactOnly) {
+      residency.maxExactPreloadMs = Math.max(residency.maxExactPreloadMs || 0, durationMs);
+    } else residency.maxReducedPrimeMs = Math.max(residency.maxReducedPrimeMs, durationMs);
     if (entry.error) {
       rollbackStaging();
-      residency.errors.push('reduced:' + progress.key + ': ' + entry.error);
+      const attempts = stagedEntries.map(({ next }) => {
+        next.transactionFailures = (next.transactionFailures || 0) + 1;
+        return next.transactionFailures;
+      });
+      const attempt = Math.max(0, ...attempts);
+      const permanentEntries = stagedEntries.filter(({ next }) =>
+        next.transactionFailures >= 3);
+      const permanent = permanentEntries.length > 0;
+      entry.transactionFailure = {
+        attempt,
+        permanent,
+        sources: stagedEntries.map(({ next, descriptor }) => ({
+          key: exactOnly ? next.key : next.object.uuid,
+          object: descriptor.displayName,
+          objectUuid: descriptor.objectUuid,
+          geometryUuid: descriptor.geometryUuid,
+          attempt: next.transactionFailures,
+          permanent: next.transactionFailures >= 3,
+        })),
+      };
+      if (attempt === 1 || permanent) {
+        residency.errors.push(`${exactOnly ? 'exact-preload' : 'reduced'}:${progress.key}: `
+          + entry.error);
+      }
+      if (permanent) {
+        for (const { next } of permanentEntries) {
+          const failureKey = exactOnly ? next.key : next.object.uuid;
+          if (ownerOnly) progress.failedOwners.add(failureKey);
+          else if (deferredOnly) progress.failedDeferred.add(failureKey);
+          else progress.failedObjects.add(failureKey);
+          queuedSet.delete(failureKey);
+        }
+        if (ownerOnly || deferredOnly) {
+          const permanentSet = new Set(permanentEntries.map(({ next }) => next));
+          for (let index = queue.length - 1; index >= 0; index--) {
+            if (permanentSet.has(queue[index])) queue.splice(index, 1);
+          }
+        }
+        else {
+          progress.blockedCritical = true;
+          progress.blockedReason = `transaction:${exactOnly
+            ? permanentEntries[0]?.next?.key
+            : permanentEntries[0]?.next?.object?.uuid}`;
+        }
+      }
       entry.rollbackReason = entry.error;
       return null;
     }
 
     let persistentObjectsAdded = 0;
     for (const staged of stagedEntries) {
-      const { next, clone, descriptor } = staged;
-      if (next.preloadOnly) clone.removeFromParent();
+      const { next, clone } = staged;
+      const descriptor = staged.committedDescriptor || staged.descriptor;
+      if (exactOnly || next.preloadOnly) clone.removeFromParent();
       else {
+        // Do not consume a just-submitted buffer in the same JavaScript task.
+        // The next residency pass reveals this exact committed clone after one
+        // browser paint boundary, while preserving progressive accumulation.
+        clone.visible = false;
         progress.scene.add(clone);
+        progress.pendingReducedReveal.push(clone);
         persistentObjectsAdded++;
       }
-      progress.processed.add(next.object.uuid);
-      progress.objectFingerprints.set(next.object.uuid, descriptor.objectFingerprint);
-      progress.geometrySeen.add(descriptor.geometryUuid);
-      progress.geometryFingerprints.add(descriptor.geometryFingerprint);
-      for (const resource of descriptor.resources) {
-        progress.admissionSeen.add(resource.key);
-        if (resource.submitted) progress.resourceSeen.add(resource.key);
-      }
-      if (progress.ownerUniverse.has(next.object.uuid)) {
-        progress.ownerCovered.add(next.object.uuid);
-      }
-      if (progress.deferredUniverse.has(next.object.uuid)) {
-        progress.deferredCovered.add(next.object.uuid);
+      if (exactOnly) {
+        progress.exactProcessed.add(next.key);
+        progress.exactFingerprints.set(next.key, descriptor.objectFingerprint);
+        progress.exactAllocationFingerprints.set(next.key, descriptor.allocationFingerprint);
+        progress.exactGeometryFingerprints.add(descriptor.geometryFingerprint);
+        for (const resource of descriptor.resources) {
+          if (resource.submitted) progress.exactResourceSeen.add(resource.key);
+        }
+        if (progress.exactUniverse.has(next.key)) progress.exactCovered.add(next.key);
+        if (progress.ownerExactUniverse.has(next.key)) progress.ownerExactCovered.add(next.key);
+        if (progress.deferredExactUniverse.has(next.key)) progress.deferredExactCovered.add(next.key);
+        progress.exactQueued.delete(next.key);
+        progress.ownerExactQueued.delete(next.key);
+        progress.deferredExactQueued.delete(next.key);
+      } else {
+        progress.processed.add(next.object.uuid);
+        progress.objectFingerprints.set(next.object.uuid, descriptor.objectFingerprint);
+        progress.geometrySeen.add(descriptor.geometryUuid);
+        progress.geometryFingerprints.add(descriptor.geometryFingerprint);
+        for (const resource of descriptor.resources) {
+          progress.admissionSeen.add(resource.key);
+          if (resource.submitted) progress.resourceSeen.add(resource.key);
+        }
+        if (progress.ownerUniverse.has(next.object.uuid)) {
+          progress.ownerCovered.add(next.object.uuid);
+        }
+        if (progress.deferredUniverse.has(next.object.uuid)) {
+          progress.deferredCovered.add(next.object.uuid);
+        }
       }
     }
     queue.splice(0, stagedEntries.length);
     entry.persistentObjectsAdded = persistentObjectsAdded;
     entry.persistentObjectsAfter = progress.scene.children.length;
+    entry.physicalRevealDeferred = persistentObjectsAdded > 0;
+    entry.pendingPhysicalRevealObjects = progress.pendingReducedReveal.length;
     entry.committed = true;
     return entry;
   }
   _recordOwnerGpuUniverse(progress) {
     const residency = this.currentGpuResidency;
     if (!progress || !progress.ownerUniverse.size || progress.ownerRecorded
-        || progress.ownerQueue.length
+        || progress.ownerQueue.length || progress.ownerExactQueue.length
         || progress.failedOwners.size
-        || progress.ownerCovered.size !== progress.ownerUniverse.size) return false;
+        || progress.ownerCovered.size !== progress.ownerUniverse.size
+        || progress.ownerExactCovered.size !== progress.ownerExactUniverse.size) return false;
+    const exactMembers = [...new Set([...progress.ownerExactUniverse]
+      .map((key) => progress.exactObjects.get(key)?.object?.uuid).filter(Boolean))].sort();
+    const exactCoveredMembers = [...new Set([...progress.ownerExactCovered]
+      .map((key) => progress.exactObjects.get(key)?.object?.uuid).filter(Boolean))].sort();
     residency.ownerUniverses.push({
       key: progress.key,
       total: progress.ownerUniverse.size,
@@ -2952,6 +4018,10 @@ class Game {
       finaleGeometries: progress.ownerFinaleGeometries.size,
       exactOnlyDecorative: progress.ownerExactOnly.size,
       exactOnlyMembers: [...progress.ownerExactOnly].sort(),
+      exactTotal: exactMembers.length,
+      exactCovered: exactCoveredMembers.length,
+      exactMembers,
+      exactCoveredMembers,
       batches: progress.batches,
       members: [...progress.ownerUniverse].sort(),
       coveredMembers: [...progress.ownerCovered].sort(),
@@ -2962,6 +4032,7 @@ class Game {
       cloneFailureEvents: [...progress.cloneFailureEvents],
     });
     progress.ownerRecorded = true;
+    progress.ownerExactRecorded = true;
     return true;
   }
 
@@ -2969,8 +4040,14 @@ class Game {
     const residency = this.currentGpuResidency;
     if (!progress || !progress.deferredLabel || !progress.deferredUniverse.size
         || progress.deferredRecorded
-        || progress.deferredQueue.length || progress.failedDeferred.size
-        || progress.deferredCovered.size !== progress.deferredUniverse.size) return false;
+        || progress.deferredQueue.length || progress.deferredExactQueue.length
+        || progress.failedDeferred.size
+        || progress.deferredCovered.size !== progress.deferredUniverse.size
+        || progress.deferredExactCovered.size !== progress.deferredExactUniverse.size) return false;
+    const exactMembers = [...new Set([...progress.deferredExactUniverse]
+      .map((key) => progress.exactObjects.get(key)?.object?.uuid).filter(Boolean))].sort();
+    const exactCoveredMembers = [...new Set([...progress.deferredExactCovered]
+      .map((key) => progress.exactObjects.get(key)?.object?.uuid).filter(Boolean))].sort();
     residency.deferredUniverses.push({
       key: progress.key,
       label: progress.deferredLabel,
@@ -2979,6 +4056,10 @@ class Game {
       geometries: progress.deferredGeometries.size,
       exactOnlyDecorative: progress.deferredExactOnly.size,
       exactOnlyMembers: [...progress.deferredExactOnly].sort(),
+      exactTotal: exactMembers.length,
+      exactCovered: exactCoveredMembers.length,
+      exactMembers,
+      exactCoveredMembers,
       members: [...progress.deferredUniverse].sort(),
       coveredMembers: [...progress.deferredCovered].sort(),
       promotionChecks: progress.deferredPromotionChecks,
@@ -2987,7 +4068,49 @@ class Game {
         .filter((event) => event.deferred),
     });
     progress.deferredRecorded = true;
+    progress.deferredExactRecorded = true;
     return true;
+  }
+
+  _deferredExactGpuPrerequisitesReady(progress) {
+    const ready = this.shaderWarmup?.readyVariants || [];
+    const requirements = {
+      graveyard: ['ordinary', 'house-world', 'forest', 'clearing'],
+      ossuary: ['ossuary'],
+      forest: ['forest', 'clearing'],
+      clearing: ['forest', 'clearing'],
+      cave: ['cave-lights', 'cave-threat'],
+    }[progress?.deferredLabel] || [];
+    return requirements.every((label) => ready.includes(label));
+  }
+
+  _ownerExactGpuPrerequisitesReady(kind) {
+    const ready = this.shaderWarmup?.readyVariants || [];
+    if (kind === 'house') {
+      const target = this._houseMirrorTargetWarmState;
+      const pool = this.houseMirror?.pool;
+      const liveTarget = pool?.pool?.[0];
+      return ready.includes('house-world') && ready.includes('house-reflection')
+        && ready.includes('house-mirror-target')
+        && target?.generation === this._webglGeneration && target.status === 'ready'
+        && target.poolRef === pool?.pool && target.poolEpoch === pool?.poolEpoch
+        && target.poolSignature === this._renderTargetPoolIdentity(pool?.pool, pool)
+        && target.targetRef === liveTarget
+        && target.targetUuid === liveTarget?.texture?.uuid;
+    }
+    const target = this.finale?._targetWarmState;
+    const pool = this.finale?.mirrors;
+    return ready.includes('finale-world') && ready.includes('reflection-target')
+      && target?.generation === this._webglGeneration && target.status === 'ready'
+      && target.poolRef === pool?.pool && target.poolEpoch === pool?.poolEpoch
+      && target.poolSignature === this._renderTargetPoolIdentity(pool?.pool, pool)
+      && pool?.pool?.[0]?.texture?.uuid != null;
+  }
+
+  _ownerExactGpuTarget(kind) {
+    return kind === 'house'
+      ? this.houseMirror?.pool?.pool?.[0] || null
+      : this.finale?.mirrors?.pool?.[0] || null;
   }
 
   _prepareCurrentGpuResidency() {
@@ -3001,13 +4124,6 @@ class Game {
     }
     const residency = this.currentGpuResidency;
     const key = this._currentGpuResidencyKey();
-    // A bootstrap submission already owns this paint. Do not stack a real
-    // geometry upload behind it, and never draw the fallback before both Basic
-    // signatures are resident in this WebGL generation.
-    if (this._bootstrapAdvancedThisRender || !this._reducedBootstrapReady('mesh-basic')
-        || !this._reducedBootstrapReady('instanced-basic')) {
-      return { full: false, key, bootstrapPending: true };
-    }
     if (residency.activeKey !== key) {
       this._clearReducedWorldProgress();
       residency.reduced.delete(residency.activeKey);
@@ -3017,12 +4133,47 @@ class Game {
     }
     const progress = residency.progressive || (residency.progressive =
       this._makeReducedWorldProgress(key));
-    // Snapshot the exact currently visible set once at the district/generation
-    // edge. Rewalking and re-sorting the whole assembled scene on every reduced
-    // paint would turn a short transition upload into a new render-loop tax.
-    if (!progress.snapshotReady) this._refreshReducedWorldQueue(progress);
+    // A reduced batch's 1x1 transaction proves and commits its buffers/VAO, but
+    // the clones stay invisible for the remainder of that paint. Reveal exactly
+    // that committed prefix now, one browser task later, while the next hidden
+    // prefix may upload behind the already-resident silhouette.
+    let revealedReducedObjects = 0;
+    if (progress.pendingReducedReveal.length) {
+      revealedReducedObjects = progress.pendingReducedReveal.length;
+      for (const clone of progress.pendingReducedReveal) clone.visible = true;
+      progress.pendingReducedReveal.length = 0;
+    }
+    // Census the current physical universe first. The larger future owner scope
+    // is a separate named task and can overlap the following resident-prefix
+    // reveal, so Wake never waits for mirror geometry it cannot yet see.
+    if (!progress.currentSnapshotReady) {
+      this._refreshReducedWorldQueue(progress);
+      return { full: false, key, snapshotProgress: true };
+    }
+    // A bootstrap submission already owns this paint. CPU census work above is
+    // independent and bounded, but never stack a real geometry upload behind a
+    // bootstrap render or draw fallback geometry before both Basic signatures
+    // are resident in this WebGL generation.
+    if (this._bootstrapAdvancedThisRender || !this._reducedBootstrapReady('mesh-basic')
+        || !this._reducedBootstrapReady('instanced-basic')) {
+      return { full: false, key, bootstrapPending: true };
+    }
+    if (revealedReducedObjects > 0) {
+      // This paint consumes only the prefix whose hidden upload completed on the
+      // previous paint. Nothing else shares the first physical consumption; the
+      // future-owner census begins only after this silhouette is on screen.
+      progress.hasPhysicalSilhouette = true;
+      this._darkenMirrorConsumers();
+      return {
+        full: false,
+        key,
+        justReducedReveal: true,
+        revealedReducedObjects,
+      };
+    }
     if (residency.physical.has(key)
-        && (progress.ownerQueue.length || progress.deferredQueue.length)) {
+        && (progress.ownerQueue.length || progress.deferredQueue.length
+          || progress.ownerExactQueue.length || progress.deferredExactQueue.length)) {
       // Input remains live while a pane or district universe drains. If a turn or step
       // brings one of those not-yet-uploaded objects into the physical frustum,
       // promote it to the critical queue and briefly use the accumulated
@@ -3031,6 +4182,12 @@ class Game {
       const promoted = this._promoteVisibleOwnerQueue(progress)
         + this._promoteVisibleDeferredQueue(progress);
       if (promoted) {
+        residency.physical.delete(key);
+        residency.reduced.delete(key);
+        progress.complete = false;
+      }
+      const exactScan = this._refreshExactResidencyQueue(progress, 'critical');
+      if (exactScan?.queued || exactScan?.error || !exactScan?.stable) {
         residency.physical.delete(key);
         residency.reduced.delete(key);
         progress.complete = false;
@@ -3044,14 +4201,47 @@ class Game {
       // transition wait for either queue.
       let ownerEntry = null;
       let deferredEntry = null;
+      let ownerExactEntry = null;
+      let deferredExactEntry = null;
       if (progress.deferredQueue.length) {
         deferredEntry = this._submitReducedWorldBatch(progress, { deferredOnly: true });
       } else if (progress.ownerQueue.length) {
         this._darkenMirrorConsumers();
         ownerEntry = this._submitReducedWorldBatch(progress, { ownerOnly: true });
+      } else if (progress.deferredExactQueue.length
+          && this._deferredExactGpuPrerequisitesReady(progress)) {
+        deferredExactEntry = this._submitReducedWorldBatch(progress, {
+          deferredOnly: true, exactOnly: true,
+        });
+      } else if (progress.ownerExactQueue.length) {
+        const ownerKind = progress.ownerExactQueue[0]?.preloadOwner;
+        if (ownerKind && this._ownerExactGpuPrerequisitesReady(ownerKind)) {
+          this._darkenMirrorConsumers();
+          ownerExactEntry = this._submitReducedWorldBatch(progress, {
+            ownerOnly: true,
+            exactOnly: true,
+            exactOwner: ownerKind,
+            exactTarget: this._ownerExactGpuTarget(ownerKind),
+          });
+        }
       }
-      if (!progress.deferredQueue.length) this._recordDeferredGpuUniverse(progress);
-      if (!progress.ownerQueue.length) this._recordOwnerGpuUniverse(progress);
+      if (!progress.deferredQueue.length && !progress.deferredExactQueue.length
+          && !progress.deferredRecorded
+          && progress.failedDeferred.size === 0
+          && this._deferredExactGpuPrerequisitesReady(progress)) {
+        const scan = this._refreshExactResidencyQueue(progress, 'deferred');
+        if (scan?.stable) this._recordDeferredGpuUniverse(progress);
+      }
+      if (!progress.ownerQueue.length && !progress.ownerExactQueue.length
+          && !progress.ownerRecorded && progress.failedOwners.size === 0) {
+        const ownerKind = [...progress.ownerExactUniverse]
+          .map((entryKey) => progress.exactObjects.get(entryKey)?.preloadOwner)
+          .find(Boolean);
+        if (ownerKind && this._ownerExactGpuPrerequisitesReady(ownerKind)) {
+          const scan = this._refreshExactResidencyQueue(progress, 'owner');
+          if (scan?.stable) this._recordOwnerGpuUniverse(progress);
+        }
+      }
       return {
         full: true,
         key,
@@ -3059,16 +4249,29 @@ class Game {
         ownerEntry,
         deferredProgress: !!deferredEntry,
         deferredEntry,
+        ownerExactProgress: !!ownerExactEntry,
+        ownerExactEntry,
+        deferredExactProgress: !!deferredExactEntry,
+        deferredExactEntry,
       };
     }
 
     this._darkenMirrorConsumers();
+    if (!progress.snapshotReady && progress.hasPhysicalSilhouette) {
+      this._refreshReducedWorldQueue(progress);
+      return { full: false, key, snapshotProgress: true };
+    }
     if (progress.queue.length) {
       const entry = this._submitReducedWorldBatch(progress);
       if (!entry) return { full: false, key };
-      progress.complete = progress.queue.length === 0;
+      progress.complete = progress.queue.length === 0
+        && progress.pendingReducedReveal.length === 0;
       if (progress.complete) residency.reduced.add(key);
       return { full: false, key, justReduced: true, entry };
+    }
+    if (!progress.snapshotReady) {
+      this._refreshReducedWorldQueue(progress);
+      return { full: false, key, snapshotProgress: true };
     }
     // The player may have turned while the preceding paint-sized batches ran.
     // Re-snapshot only at the empty-queue boundary; any newly visible object is
@@ -3077,7 +4280,8 @@ class Game {
     if (this._refreshCriticalWorldQueue(progress) > 0) {
       const entry = this._submitReducedWorldBatch(progress);
       if (!entry) return { full: false, key };
-      progress.complete = progress.queue.length === 0;
+      progress.complete = progress.queue.length === 0
+        && progress.pendingReducedReveal.length === 0;
       return { full: false, key, justReduced: true, entry, refreshedView: true };
     }
     progress.complete = true;
@@ -3089,15 +4293,34 @@ class Game {
       return { full: false, key, cloneFailure: true };
     }
 
-    if (this._currentPhysicalVariantReady()) {
-      const priority = this._shaderWarmPriorityKey();
-      const includeHeld = this.skull?.mode === 'held'
-        && priority !== 'cave' && priority !== 'mirror';
-      const entry = this._submitExactCurrentPass({ key, includeHeld });
-      if (entry) {
-        residency.physical.add(key);
-        return { full: true, key, justCertified: true, entry };
-      }
+    // Register the live exact set before trusting a shader certificate. The
+    // player can turn while reduced batches drain; Line/Points or a custom
+    // material entering the frustum must revise current-view readiness before
+    // any real exact preload is allowed to submit it.
+    const precompileExactScan = this._refreshExactResidencyQueue(progress, 'critical');
+    this._ensureCurrentExactShaderWarmup(progress);
+    if (!this._currentPhysicalVariantReady()) {
+      return { full: false, key, exactScan: precompileExactScan };
+    }
+    if (progress.exactQueue.length) {
+      const entry = this._submitReducedWorldBatch(progress, { exactOnly: true });
+      return { full: false, key, justExactPreload: !!entry, exactPreloadEntry: entry };
+    }
+    const exactScan = this._refreshExactResidencyQueue(progress, 'critical');
+    if (!exactScan?.stable || exactScan.error || progress.exactQueue.length) {
+      return { full: false, key, exactScan };
+    }
+    const priority = this._shaderWarmPriorityKey();
+    const includeHeld = this.skull?.mode === 'held'
+      && priority !== 'cave' && priority !== 'mirror';
+    const entry = this._submitExactCurrentPass({ key, includeHeld });
+    if (entry) {
+      residency.physical.add(key);
+      // The hidden exact certificate can itself be a substantial bounded pass.
+      // Keep this paint on the already-built Basic silhouette; the next paint
+      // sees `physical` and delivers the first full exact frame. Never stack the
+      // certification render and production render into one >100ms operation.
+      return { full: false, key, justCertified: true, entry, exactScan };
     }
     return { full: false, key };
   }
@@ -3158,9 +4381,11 @@ class Game {
     const ready = warmup?.readyVariants || [];
     const progress = this.currentGpuResidency?.progressive;
     if (!progress || progress.key !== this.currentGpuResidency?.activeKey
-        || progress.ownerQueue.length || !progress.ownerRecorded
+        || progress.ownerQueue.length || progress.ownerExactQueue.length
+        || !progress.ownerRecorded || !progress.ownerExactRecorded
         || progress.failedOwners.size
-        || progress.ownerCovered.size !== progress.ownerUniverse.size) return false;
+        || progress.ownerCovered.size !== progress.ownerUniverse.size
+        || progress.ownerExactCovered.size !== progress.ownerExactUniverse.size) return false;
     if (kind === 'house' && progress.ownerHouse.size === 0) return false;
     if (kind === 'finale' && progress.ownerFinale.size === 0) return false;
     if (kind === 'house') {
@@ -3295,6 +4520,7 @@ class Game {
 
     const durationMs = performance.now() - startedAt;
     const entry = {
+      generation: this._webglGeneration,
       key,
       kind,
       durationMs,
@@ -3315,13 +4541,160 @@ class Game {
     return { ready: true, candidate: true, key, justCertified: true, entry };
   }
 
-  _compileWarmVariant(scene, camera) {
-    if (typeof this.renderer.compileAsync === 'function') {
-      return this.renderer.compileAsync(scene, camera);
+  _compileWarmVariant(scene, camera, targetScene = scene, isCurrent = () => true) {
+    const renderer = this.renderer;
+    const generation = this._webglGeneration;
+    const submittedAt = performance.now();
+    const submittedMaterials = new Set();
+    scene.traverse((object) => {
+      if (!object?.material) return;
+      for (const material of Array.isArray(object.material)
+        ? object.material : [object.material]) {
+        if (material) submittedMaterials.add(material);
+      }
+    });
+    const wrappersFor = (material) => {
+      const properties = renderer.properties?.get?.(material);
+      const wrappers = [];
+      const add = (candidate) => {
+        const wrapper = candidate?.isReady && candidate?.program
+          ? candidate
+          : candidate?.program?.isReady && candidate.program?.program
+            ? candidate.program : null;
+        if (wrapper && !wrappers.includes(wrapper)) wrappers.push(wrapper);
+      };
+      add(properties?.currentProgram);
+      const associated = properties?.programs;
+      if (associated instanceof Map) {
+        for (const value of associated.values()) add(value);
+      } else if (Array.isArray(associated)) {
+        for (const value of associated) add(value);
+      } else if (associated && typeof associated === 'object') {
+        for (const value of Object.values(associated)) add(value);
+      }
+      return wrappers;
+    };
+    const beforePrograms = new Map([...submittedMaterials]
+      .map((material) => [material, new Set(wrappersFor(material))]));
+    const submittedSides = new Map([...submittedMaterials]
+      .map((material) => [material, material.side]));
+    if (!isCurrent()) {
+      return Promise.resolve({
+        generation, programs: 0, invalidated: true,
+        rendererCompileDurationMs: 0, programCaptureDurationMs: 0,
+        submitDurationMs: performance.now() - submittedAt,
+        readinessPolls: 0, maxReadinessPollDurationMs: 0,
+        finalizationDurationMs: 0,
+        maxSynchronousSliceMs: performance.now() - submittedAt,
+        identities: [],
+      });
     }
-    // Older WebGLRenderer builds still get the same boot-time program pass.
-    this.renderer.compile(scene, camera);
-    return null;
+    const rendererCompileAt = performance.now();
+    let compiledMaterials;
+    try {
+      compiledMaterials = renderer.compile(scene, camera, targetScene);
+    } finally {
+      // r161 temporarily mutates transparent DoubleSide materials for its
+      // BackSide/FrontSide pair. A driver/compiler exception must never leak
+      // that internal state into the live shared material.
+      for (const [material, side] of submittedSides) material.side = side;
+    }
+    const rendererCompileEndedAt = performance.now();
+    for (const material of compiledMaterials || []) submittedMaterials.add(material);
+    const programs = [];
+    const seenPrograms = new Set();
+    for (const material of submittedMaterials) {
+      const before = beforePrograms.get(material) || new Set();
+      const properties = renderer.properties?.get?.(material);
+      const currentProgram = properties?.currentProgram;
+      const associated = wrappersFor(material);
+      for (const program of associated) {
+        // r161 emits both BackSide and FrontSide programs for transparent
+        // DoubleSide materials, then leaves only the latter in currentProgram.
+        // Capture every newly associated wrapper, the final current wrapper,
+        // and any older wrapper whose driver completion is still pending.
+        if (program !== currentProgram && before.has(program) && program.isReady()) continue;
+        if (!seenPrograms.has(program)) {
+          seenPrograms.add(program);
+          programs.push(program);
+        }
+      }
+    }
+    const submittedAtEnd = performance.now();
+    const result = {
+      generation,
+      programs: programs.length,
+      rendererCompileDurationMs: rendererCompileEndedAt - rendererCompileAt,
+      programCaptureDurationMs: submittedAtEnd - rendererCompileEndedAt,
+      submitDurationMs: submittedAtEnd - submittedAt,
+      readinessPolls: 0,
+      maxReadinessPollDurationMs: 0,
+      finalizationDurationMs: 0,
+      maxSynchronousSliceMs: submittedAtEnd - submittedAt,
+      identities: programs.map((program) => ({
+        id: program.id ?? null,
+        cacheKey: `${program.cacheKey || ''}`,
+      })),
+    };
+    if (!programs.length) return Promise.resolve(result);
+
+    // Native compileAsync polls material.currentProgram. Overlapping signatures
+    // commonly share a material, and transparent DoubleSide compilation owns
+    // two wrappers. Poll this complete immutable captured set instead.
+    return new Promise((resolve, reject) => {
+      const poll = () => {
+        if (!isCurrent() || generation !== this._webglGeneration
+            || renderer.getContext()?.isContextLost?.()) {
+          resolve({ ...result, invalidated: true });
+          return;
+        }
+        const pollAt = performance.now();
+        result.readinessPolls++;
+        try {
+          if (!programs.every((program) => program.isReady() === true)) {
+            const pollMs = performance.now() - pollAt;
+            result.maxReadinessPollDurationMs = Math.max(
+              result.maxReadinessPollDurationMs, pollMs,
+            );
+            result.maxSynchronousSliceMs = Math.max(result.maxSynchronousSliceMs, pollMs);
+            setTimeout(poll, 10);
+            return;
+          }
+          const finalizeAt = performance.now();
+          if (!isCurrent()) {
+            resolve({ ...result, invalidated: true });
+            return;
+          }
+          const gl = renderer.getContext();
+          const debug = renderer.debug;
+          const previousShaderErrorCheck = debug?.checkShaderErrors;
+          if (debug) debug.checkShaderErrors = false;
+          try {
+            for (const program of programs) {
+              if (!gl.getProgramParameter(program.program, gl.LINK_STATUS)) {
+                throw new Error(`warm WebGLProgram ${program.id ?? 'unknown'} failed link status`);
+              }
+              program.getUniforms();
+              program.getAttributes();
+            }
+          } finally {
+            if (debug) debug.checkShaderErrors = previousShaderErrorCheck;
+          }
+          result.finalizationDurationMs = performance.now() - finalizeAt;
+          const pollMs = performance.now() - pollAt;
+          result.maxReadinessPollDurationMs = Math.max(
+            result.maxReadinessPollDurationMs, pollMs,
+          );
+          result.maxSynchronousSliceMs = Math.max(
+            result.maxSynchronousSliceMs, result.finalizationDurationMs, pollMs,
+          );
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      };
+      setTimeout(poll, 0);
+    });
   }
 
   _shaderWarmMaterialSignature(material) {
@@ -3385,7 +4758,7 @@ class Game {
     if ((!object?.isMesh && !object?.isLine && !object?.isPoints)
         || !object.geometry || !object.material) return null;
     const materials = Array.isArray(object.material) ? object.material : [object.material];
-    if (!materials.some((material) => material && material.visible !== false)) return null;
+    if (!materials.some(Boolean)) return null;
     const attributes = object.geometry.attributes || {};
     const shaderGeometry = [
       attributes.color ? `color:${attributes.color.itemSize}` : 'color:0',
@@ -3484,6 +4857,11 @@ class Game {
     take('finale-room', finaleRoots.filter((root) => root !== this.finale?.figure));
     take('finale-figure', [this.finale?.figure]);
     take('house', this.houseRenderRoots || []);
+    take('music-box-figure', [this.musicBox?.thingPool]);
+    take('future-walker', this.enemies?.gpuResidencyRoots?.(['walker']) || []);
+    take('future-resident', this.enemies?.gpuResidencyRoots?.(['resident']) || []);
+    take('future-kneeler', this.enemies?.gpuResidencyRoots?.(['kneeler']) || []);
+    take('future-choir', this.enemies?.gpuResidencyRoots?.(['choir']) || []);
     // The tether is a separate scene root and first becomes visible on the
     // throw edge. Treat it as part of the skull's WORLD/P16 registry so that
     // edge never owns its first LineBasic program or BufferGeometry upload.
@@ -3497,6 +4875,15 @@ class Game {
       this.houseMirror?.echo,
       ...(this.windowRelay?.visitor?.stages || []),
     ]);
+    // Current-view is a certificate, not a chapter ownership bucket. Keep its
+    // roots independent of `claimed`: a clearing-owned Points root can be in
+    // the bedroom frustum long before the chronological clearing compile.
+    // `_beginShaderWarmup` refreshes this list again at execution time.
+    const currentRoots = [...new Set([
+      ...(this.currentGpuResidency?.progressive?.exactObjects?.values() || []),
+    ].filter((entry) => entry.critical && entry.rig === 'world')
+      .map((entry) => entry.object).filter(Boolean))];
+    if (currentRoots.length) batches.push({ label: 'current-view', roots: currentRoots });
     for (const entry of extraRoots) take(entry.label, [entry.root]);
     return batches;
   }
@@ -3513,11 +4900,15 @@ class Game {
     const state = this.shaderWarmup = {
       status: 'scheduled',
       generation: this._webglGeneration,
-      mode: typeof this.renderer.compileAsync === 'function' ? 'async' : 'sync',
+      mode: 'captured-program-readiness',
       variants: ['ordinary', 'ossuary', 'hidden-threat', 'cave-lights', 'cave-threat', 'grain'],
       errors: [],
       recoveryRound: this._shaderWarmupRecoveryRound || 0,
-      carriedReadyVariants: [...this._shaderResidentVariants],
+      // Current-view readiness is keyed below to a physical residency
+      // key/revision. A bare label is never transferable to a replacement
+      // itinerary, even within the same WebGL generation.
+      carriedReadyVariants: [...this._shaderResidentVariants]
+        .filter((label) => label !== 'current-view-exact'),
       maxShieldDurationMs: this._shaderMaxShieldDurationMs || 0,
     };
     // Deterministic suites exercise startup hundreds of times and do not need
@@ -3605,7 +4996,7 @@ class Game {
   _scheduleRecoverableShaderRetry(state) {
     if (!state || state !== this.shaderWarmup || state.status !== 'degraded'
         || state.generation !== this._webglGeneration || this.terminal) return false;
-    const recoverable = state.errors.some((error) => /(?:house-mirror-target|house-reflection|finale-reflection|finale-reflection runtime|reflection-target|house-world|ordinary|ossuary|forest|clearing|cave-lights|cave-threat|finale-world|held-view|target:)/i.test(error));
+    const recoverable = state.errors.some((error) => /(?:house-mirror-target|house-reflection|finale-reflection|finale-reflection runtime|reflection-target|house-world|ordinary|ossuary|forest|clearing|cave-lights|cave-threat|finale-world|held-view|current-view-exact|grain|target:)/i.test(error));
     if (!recoverable || state.recoveryRound >= 2 || state.recoveryScheduled) return false;
     state.recoveryScheduled = true;
     const generation = state.generation;
@@ -3786,6 +5177,12 @@ class Game {
     // itinerary. Completed program labels stay resident; physical buffers are
     // owned separately by currentGpuResidency's exact live-scene submissions.
     state.readyVariants = [...(state.carriedReadyVariants || [])];
+    state.currentExactKey = null;
+    state.currentExactRevision = null;
+    state.currentExactUniverse = 0;
+    state.currentExactRoots = 0;
+    state.currentExactRepresentatives = 0;
+    state.currentExactStatus = 'awaiting-progress';
     // `compileAsync` still traverses and creates each program synchronously.
     // Launch exactly one signature per paint; current play never waits behind
     // this background queue, so there is no reason to spend four programs from
@@ -3804,7 +5201,7 @@ class Game {
     let resolveInvalidation;
     const invalidation = new Promise((resolve) => { resolveInvalidation = resolve; });
     const taskCancels = new Set();
-    const isCurrent = () => !invalidated
+    const isCurrent = () => !this.terminal && !invalidated
       && state === this.shaderWarmup
       && generation === this._webglGeneration;
     state._invalidate = (reason = 'invalidated') => {
@@ -3892,7 +5289,7 @@ class Game {
           scheduledAs: idle ? 'idle' : 'paint',
           error: error?.message || `${error}`,
         });
-        return true;
+        return false;
       }
     };
 
@@ -3968,7 +5365,7 @@ class Game {
       return census;
     };
     const jobs = [];
-    const launchCompile = (scene, camera, label) => {
+    const launchCompile = (scene, camera, label, targetScene = scene) => {
       state.compileJobsInFlight++;
       state.compileInFlightLabel = label;
       const launchedAt = performance.now();
@@ -3990,16 +5387,32 @@ class Game {
         if (!state.compileJobsInFlight) state.compileInFlightLabel = null;
       };
       try {
-        const job = this._compileWarmVariant(scene, camera);
-        const tracked = Promise.resolve(job).catch((error) => {
-          if (isCurrent()) state.errors.push(`${label}: ${error?.message || error}`);
+        const job = this._compileWarmVariant(scene, camera, targetScene, isCurrent);
+        const tracked = Promise.resolve(job).then((detail) => {
+          if (detail && typeof detail === 'object') {
+            jobEntry.programs = detail.programs;
+            jobEntry.rendererCompileDurationMs = detail.rendererCompileDurationMs;
+            jobEntry.programCaptureDurationMs = detail.programCaptureDurationMs;
+            jobEntry.submitDurationMs = detail.submitDurationMs;
+            jobEntry.readinessPolls = detail.readinessPolls;
+            jobEntry.maxReadinessPollDurationMs = detail.maxReadinessPollDurationMs;
+            jobEntry.finalizationDurationMs = detail.finalizationDurationMs;
+            jobEntry.maxSynchronousSliceMs = detail.maxSynchronousSliceMs;
+            jobEntry.programIdentities = detail.identities;
+            jobEntry.invalidated = detail.invalidated === true;
+          }
+          return detail?.invalidated !== true;
+        }).catch((error) => {
+          jobEntry.error = error?.message || `${error}`;
+          if (isCurrent()) state.errors.push(`${label}: ${jobEntry.error}`);
+          return false;
         }).finally(settle);
         jobs.push(tracked);
         return tracked;
       } catch (error) {
         settle();
         if (isCurrent()) state.errors.push(`${label}: ${error?.message || error}`);
-        return Promise.resolve();
+        return Promise.resolve(false);
       }
     };
     const markVariantReady = (label) => {
@@ -4026,9 +5439,8 @@ class Game {
       state.variantLights[label] = lights;
       state.variantLightTypes[label] = visibleLightCensus(scene, camera);
       if (state.readyVariants.includes(label)) return isCurrent();
-      const errorCount = state.errors.length;
       const batchSize = state.variantBatchSize;
-      const batches = Math.max(1, Math.ceil(representatives.length / batchSize));
+      const batches = Math.ceil(representatives.length / batchSize);
       const sceneRepresentatives = scene === reflectionScene
         ? reflectionRepresentatives
         : scene === heldScene ? heldRepresentatives : warmRepresentatives;
@@ -4038,12 +5450,18 @@ class Game {
         const begin = batchIndex * batchSize;
         const end = Math.min(representatives.length, begin + batchSize);
         const ok = await runSlice('compile', `${label}:${batchIndex + 1}/${batches}`, () => {
-          // The selected array is a district subset. Hide the complete owning
-          // representative scene first; otherwise a rep excluded from this
-          // variant can remain visible from the previous batch and silently
-          // turn a one-program slice back into a whole-world compile.
+          // Three r161 compile() traverses every object regardless of visible.
+          // Physically isolate this one-signature batch as the compile root and
+          // pass the complete owning scene only as targetScene for its exact
+          // environment/fog/light census.
           for (const representative of sceneRepresentatives) representative.visible = false;
-          for (let i = begin; i < end; i++) representatives[i].visible = true;
+          const compileScene = new THREE.Scene();
+          const isolated = representatives.slice(begin, end);
+          for (const representative of isolated) {
+            representative.removeFromParent();
+            representative.visible = true;
+            compileScene.add(representative);
+          }
           let previousTarget = null;
           let targetRead = !target;
           let compileError = null;
@@ -4053,10 +5471,17 @@ class Game {
               targetRead = true;
               this.renderer.setRenderTarget(target);
             }
-            batchJob = launchCompile(scene, camera, `${label}:${batchIndex + 1}`);
+            batchJob = launchCompile(
+              compileScene, camera, `${label}:${batchIndex + 1}`, scene,
+            );
           } catch (error) {
             compileError = error;
           } finally {
+            for (const representative of isolated) {
+              representative.removeFromParent();
+              representative.visible = false;
+              scene.add(representative);
+            }
             if (target && targetRead) {
               let restored = false;
               let restoreError = null;
@@ -4095,10 +5520,13 @@ class Game {
       // group; the old per-signature await turned a background queue into the
       // sum of every driver completion time.
       if (variantJobs.length) {
-        await Promise.race([Promise.all(variantJobs), invalidation]);
+        const outcomes = await Promise.race([Promise.all(variantJobs), invalidation]);
         if (!isCurrent()) return false;
+        if (!Array.isArray(outcomes) || outcomes.some((outcome) => outcome !== true)) {
+          return false;
+        }
       }
-      if (state.errors.length === errorCount) markVariantReady(label);
+      markVariantReady(label);
       return isCurrent();
     };
     const textureIsResident = (texture) =>
@@ -4463,16 +5891,16 @@ class Game {
 
     const compileGrainVariant = async () => {
       if (state.readyVariants.includes('grain')) return isCurrent();
-      const errorCount = state.errors.length;
       let grainJob = Promise.resolve();
       const ok = await runSlice('compile', 'grain', () => {
         grainJob = launchCompile(this.grainScene, this.grainCam, 'grain');
         return { representatives: 1, lights: 0 };
       }, { idle: true });
       if (!ok || !isCurrent()) return false;
-      await Promise.race([grainJob, invalidation]);
+      const outcome = await Promise.race([grainJob, invalidation]);
       if (!isCurrent()) return false;
-      if (state.errors.length === errorCount) markVariantReady('grain');
+      if (outcome !== true) return false;
+      markVariantReady('grain');
       return isCurrent();
     };
 
@@ -4576,10 +6004,14 @@ class Game {
         if (!await discover('atmosphere', rootsByLabel.get('atmosphere'))) return;
         if (!await discover('skull', rootsByLabel.get('skull'), { reflection: true })) return;
         if (!await discover('dynamic', rootsByLabel.get('dynamic'))) return;
+        if (!await discover('music-box-figure', rootsByLabel.get('music-box-figure'))) return;
+        if (!await discover('future-walker', rootsByLabel.get('future-walker'))) return;
+        if (!await discover('future-resident', rootsByLabel.get('future-resident'))) return;
         if (!await warmPendingTextures('priority-house')) return;
         if (!await compileVariant('house-world', fixedWorldRig, {
           representatives: repsFor(
             'static-world', 'house', 'house-mirror', 'grave', 'atmosphere', 'skull', 'dynamic',
+            'music-box-figure', 'future-walker', 'future-resident',
           ).filter((representative) => !coreRepresentativeSet.has(representative)),
         })) return;
       } else if (priority === 'graveyard' || priority === 'ossuary') {
@@ -4656,6 +6088,43 @@ class Game {
           lightCount: state.reflectionLights,
         })) return;
       }
+      const currentProgress = this.currentGpuResidency?.progressive;
+      if (currentProgress?.key === this.currentGpuResidency?.activeKey) {
+        const currentKey = currentProgress.key;
+        const currentRevision = currentProgress.exactShaderRevision;
+        const currentRoots = [...new Set([...currentProgress.exactObjects.values()]
+          .filter((entry) => entry.critical && entry.rig === 'world')
+          .map((entry) => entry.object).filter(Boolean))];
+        state.currentExactKey = currentKey;
+        state.currentExactRevision = currentRevision;
+        state.currentExactUniverse = currentProgress.exactUniverse.size;
+        state.currentExactRoots = currentRoots.length;
+        state.currentExactStatus = 'discovering';
+        if (!await discover('current-view', currentRoots)) return;
+        if (!await warmPendingTextures('current-view')) return;
+        const currentRepresentatives = [...new Set(currentRoots.map((object) =>
+          warmSignatures.get(this._shaderWarmObjectSignature(object))).filter(Boolean))];
+        state.currentExactRepresentatives = currentRepresentatives.length;
+        state.currentExactStatus = 'compiling';
+        if (!await compileVariant('current-view-exact', fixedWorldRig, {
+          representatives: currentRepresentatives,
+        })) return;
+        const liveProgress = this.currentGpuResidency?.progressive;
+        if (liveProgress?.key !== currentKey
+            || liveProgress.exactShaderRevision !== currentRevision) {
+          state.currentExactStatus = 'stale';
+          state.readyVariants = state.readyVariants
+            .filter((label) => label !== 'current-view-exact');
+          this._shaderResidentVariants.delete('current-view-exact');
+          this._invalidateShaderWarmup(
+            `current-view-changed:${currentKey}:${currentRevision}`,
+            { preserveResident: true, preserveTargets: true },
+          );
+          this._scheduleShaderWarmup();
+          return;
+        }
+        state.currentExactStatus = 'ready';
+      }
       const houseTargetReady = await warmHouseMirrorTarget();
       if (!await discover('static-world', rootsByLabel.get('static-world'), { reflection: true })) return;
       if (!await discover('house-mirror', rootsByLabel.get('house-mirror'))) return;
@@ -4668,10 +6137,14 @@ class Game {
       if (!await discover('atmosphere', rootsByLabel.get('atmosphere'))) return;
       if (!await discover('skull', rootsByLabel.get('skull'), { reflection: true })) return;
       if (!await discover('dynamic', rootsByLabel.get('dynamic'))) return;
+      if (!await discover('music-box-figure', rootsByLabel.get('music-box-figure'))) return;
+      if (!await discover('future-walker', rootsByLabel.get('future-walker'))) return;
+      if (!await discover('future-resident', rootsByLabel.get('future-resident'))) return;
       if (!await warmPendingTextures('house')) return;
       if (!await compileVariant('house-world', fixedWorldRig, {
         representatives: repsFor(
           'static-world', 'house', 'house-mirror', 'grave', 'atmosphere', 'skull', 'dynamic',
+          'music-box-figure', 'future-walker', 'future-resident',
         ).filter((representative) => !coreRepresentativeSet.has(representative)),
       })) return;
       if (houseTargetReady) {
@@ -4690,6 +6163,7 @@ class Game {
           target: reflectionTarget,
           representatives: repsFor(
             'static-world', 'house', 'house-mirror', 'grave', 'atmosphere', 'skull', 'dynamic',
+            'music-box-figure', 'future-walker', 'future-resident',
           ),
         })) return;
       }
@@ -5311,7 +6785,13 @@ class Game {
 
   _finishEnd() {
     if (this.terminal) return;
+    // Terminal is a real lifecycle boundary. Cancel every asynchronous shader,
+    // texture and target task before disposing anything it may still reference,
+    // and make any already-entered frame refuse a post-step render.
+    this.terminal = true;
+    this._invalidateShaderWarmup('terminal');
     this.enemies.clear();
+    this.enemies.disposeGpuResidencyRoots?.();
     this.audio.stopAll({ suspend: true });
     this.finale?.mirrors?.dispose?.();
     this.houseMirror?.dispose?.();
@@ -5321,7 +6801,6 @@ class Game {
     this._reducedLineMaterial?.dispose?.();
     this._reducedPointsMaterial?.dispose?.();
     this.tickers.length = 0;
-    this.terminal = true;
     this._syncPauseUi();
   }
 
@@ -5594,6 +7073,7 @@ class Game {
   }
 
   render() {
+    if (this.terminal) return;
     const firstBootRender = this.bootTiming.firstRenderStartedAt == null;
     if (firstBootRender) this.bootTiming.firstRenderStartedAt = performance.now();
     // embedded panes / headless report sizes late — self-correct every frame (chamber fix)
@@ -5607,8 +7087,9 @@ class Game {
     this._bootstrapAdvancedThisRender = !!bootstrapEntry;
     if (!this.started) {
       // The DOM title has already received two paint boundaries before Game is
-      // constructed. Its WebGL work is limited to one tiny Stage-B signature;
-      // the assembled house, held pass and shadow rig remain untouched.
+      // constructed. Its WebGL work is limited to one named Stage-B surface or
+      // signature slice; the assembled house, held pass and shadow rig remain
+      // untouched.
       this.lastRender = {
         drawCalls: 0, triangles: 0,
         worldDrawCalls: 0, worldTriangles: 0,
@@ -5621,6 +7102,7 @@ class Game {
       return;
     }
     this._syncShaderBallast();
+    this._reprioritizeShaderWarmup(this._shaderWarmPriorityKey());
     // impact fx breathe every rendered frame — including inside hit-stop
     // Cosmetic time must never run backwards. A freshly resumed or automated
     // browser can occasionally deliver a stale RAF timestamp; feeding that
@@ -5666,7 +7148,14 @@ class Game {
     // district keeps rendering. Retaining every frame for every *future* variant
     // turned a hitch fix into seconds of frozen imagery. Submission pauses only
     // when the current act would consume a signature that is not resident yet.
-    const skipGpuSubmission = districtShaderShielded;
+    // The hidden exact certificate is itself the one bounded GPU submission for
+    // this paint. Preserve the already-presented reduced canvas and submit the
+    // first full exact frame on the following paint; drawing even the reduced
+    // silhouette here stacked two honest sub-100ms passes into one >100ms rAF.
+    const skipGpuSubmission = districtShaderShielded
+      || !!residencyPass.justCertified
+      || !!residencyPass.justReduced
+      || !!residencyPass.snapshotProgress;
     let visibleBefore = {
       programs: this.renderer.info.programs?.length || 0,
       textures: this.renderer.info.memory.textures,
@@ -5680,7 +7169,8 @@ class Game {
     // Panes are already dark from _prepareCurrentGpuResidency and may certify on
     // the following paint.
     if (!skipGpuSubmission && !reducedDetail && !residencyPass.justCertified
-        && !residencyPass.ownerProgress && !residencyPass.deferredProgress) {
+        && !residencyPass.ownerProgress && !residencyPass.deferredProgress
+        && !residencyPass.ownerExactProgress && !residencyPass.deferredExactProgress) {
       if (this.houseMirror) {
         // Broad deterministic suites intentionally skip the expensive GPU pass;
         // preserve the original gameplay path there. Shipping async generations
@@ -5788,6 +7278,12 @@ class Game {
       reducedDetail,
       ownerProgress: !!residencyPass.ownerProgress,
       deferredProgress: !!residencyPass.deferredProgress,
+      ownerExactProgress: !!residencyPass.ownerExactProgress,
+      deferredExactProgress: !!residencyPass.deferredExactProgress,
+      reducedBatchSubmitted: !!residencyPass.justReduced,
+      reducedBatchRevealed: !!residencyPass.justReducedReveal,
+      revealedReducedObjects: residencyPass.revealedReducedObjects || 0,
+      snapshotProgress: !!residencyPass.snapshotProgress,
       residencyKey: residencyPass.key,
       visibleProgramDelta: 0,
       visibleTextureDelta: 0,
@@ -5897,7 +7393,7 @@ class Game {
         first = false;
         acc -= FIXED_DT;
       }
-      this.render();
+      if (!this.terminal) this.render();
       if (!this.terminal) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -5909,7 +7405,13 @@ class Game {
     const api = {
       version: VERSION,
       feelProfile: FEEL_PROFILE,
-      ready: true,
+      get ready() {
+        // Deterministic no-warmup suites retain their immediate boot contract.
+        // Shipping and focused GPU gates become ready only after the three
+        // explicitly measured fallback signatures and surface transaction have
+        // completed, so Wake cannot race a title-idle driver task.
+        return g.shaderWarmup?.status === 'skipped' || g._reducedBootstrapReady();
+      },
       start() { g.startGame(); return true; },
       pause(reason = 'debug') { return g.pauseGame(reason); },
       resume() { return g.resumeGame(); },

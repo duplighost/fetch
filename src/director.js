@@ -501,9 +501,8 @@ export class Director {
     } else if (inNursery) {
       // while the box is silent, something in the corner is taller than it was
       if (!mb.thing) {
-        const m = new THREE.Mesh(
-          new THREE.CapsuleGeometry(0.3, 1.5, 4, 8),
-          new THREE.MeshLambertMaterial({ color: 0x0b0a10 }));
+        const m = mb.thingPool;
+        if (!m) return;
         m.position.set(-11.2, 4.6, 5.3);
         m.scale.setScalar(0.001);
         g.scene.add(m);

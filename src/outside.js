@@ -4873,7 +4873,9 @@ export function buildClearing(game) {
   const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
     color: 0xcfe8d8, size: 0.06, transparent: true, opacity: 0.7, sizeAttenuation: true,
   }));
-  motes.frustumCulled = false;
+  motes.name = 'clearing pale glow-motes';
+  moteGeo.computeBoundingSphere();
+  motes.frustumCulled = true;
   scene.add(motes);
   game.tickers.push((dt, t) => { motes.position.y = Math.sin(t * 0.5) * 0.3; });
 
