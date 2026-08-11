@@ -339,22 +339,28 @@ export class Mirrors {
     catch (error) { this._recordFailure(error, 'read-pane-target'); return false; }
     const scopeWasVisible = scope.visible;
     let failure = null;
+    let failurePhase = 'bind-pane-target';
     let rendered = false;
     scope.visible = false; // a pane must not appear in its own reflection
     try {
       r.setRenderTarget(rt);
+      failurePhase = 'clear-pane-target';
       r.clear();
+      failurePhase = 'render-pane';
       r.render(scene, vc);
       rendered = true;
     } catch (error) {
       failure = error;
     } finally {
       try { r.setRenderTarget(prevTarget); }
-      catch (error) { failure ||= error; }
+      catch (error) {
+        failure = error;
+        failurePhase = 'restore-pane-target';
+      }
       scope.visible = scopeWasVisible;
     }
     if (failure) {
-      this._recordFailure(failure, rendered ? 'restore-pane-target' : 'render-pane');
+      this._recordFailure(failure, failurePhase);
       return false;
     }
     return rendered;

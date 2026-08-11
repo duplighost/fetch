@@ -98,8 +98,15 @@ export class Director {
       this._cancelScheduledForestChasers();
       this._scope++;
     }
+    const leavingMirror = prev === 'mirror' && act !== 'mirror';
+    if (leavingMirror) g.finale?.leave?.();
     if (prev === 'cave' && act !== 'cave') this._leaveCave(act);
     g.act = act;
+    // Finale restores the visibility snapshot it inherited from the forest
+    // boundary before this assignment. Re-evaluate that boundary against the
+    // destination act now so a same-page QA/respawn transition cannot leave
+    // the completed world hidden behind the mirror room.
+    if (leavingMirror) g.forest?.syncBackDistrictCulling?.(null, { reapply: true });
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
     g.ambientTarget = AMBIENT_BY_ACT[act] ?? 1;

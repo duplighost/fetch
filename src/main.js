@@ -2029,6 +2029,20 @@ class Game {
         registerCriticalPreloadRoot(root);
       }
     }
+    if (snapshotPhase === 'current' && priority === 'mirror') {
+      // The Finale's authored room includes initially hidden fracture/debris
+      // meshes that become physical as the walls close. Owner preload certifies
+      // those exact objects against the reflection target, but that VAO is not
+      // transferable to the default framebuffer's program. Certify the finite
+      // late-room universe here before the first full physical reveal so a turn
+      // or pressure beat cannot create a binding state on a visible frame.
+      for (const root of this.finale?.warmRoots || []) {
+        // The reflected figure (including its exact skull) is LAYER_DOUBLE-only.
+        // Its shipping binding belongs solely to the owner/reflection-target lane;
+        // forcing a layer-0 clone here would manufacture a nonshipping signature.
+        if (root !== this.finale?.figure) registerCriticalPreloadRoot(root);
+      }
+    }
     if (snapshotPhase === 'current') {
       markPhase('current-future-universe');
       if (added) {
@@ -4176,8 +4190,37 @@ class Game {
     const residency = this.currentGpuResidency;
     const key = this._currentGpuResidencyKey();
     if (residency.activeKey !== key) {
+      const previousKey = residency.activeKey;
+      const retiredOwners = [...residency.owners];
+      const destinationPhysicalWasResident = residency.physical.has(key);
+      const destinationReducedWasResident = residency.reduced.has(key);
       this._clearReducedWorldProgress();
-      residency.reduced.delete(residency.activeKey);
+      // `progressive` owns the fingerprints that made both of these set
+      // memberships true. Once that proof object is discarded, a certificate
+      // from an earlier visit to the destination act is no longer sufficient:
+      // Finale isolation, story-created actors, and restored visibility can all
+      // change the geometry/program-to-VAO universe without changing the
+      // generation or render-target UUIDs. Re-earn the destination physical and
+      // owner certificates through the existing bounded hidden transactions.
+      residency.reduced.delete(previousKey);
+      residency.reduced.delete(key);
+      residency.physical.delete(key);
+      residency.owners.clear();
+      const destinationPhysicalRetired = !residency.physical.has(key);
+      const destinationReducedRetired = !residency.reduced.has(key);
+      if (GPU_IDENTITY_TRACE) {
+        residency.keyTransitions ||= [];
+        residency.keyTransitions.push({
+          generation: this._webglGeneration,
+          previousKey,
+          key,
+          retiredOwners,
+          destinationPhysicalWasResident,
+          destinationReducedWasResident,
+          destinationPhysicalRetired,
+          destinationReducedRetired,
+        });
+      }
       residency.activeKey = key;
       residency.activeSince = performance.now();
       residency.progressive = this._makeReducedWorldProgress(key);
@@ -4691,8 +4734,10 @@ class Game {
     // two wrappers. Poll this complete immutable captured set instead.
     return new Promise((resolve, reject) => {
       const poll = () => {
-        if (!isCurrent() || generation !== this._webglGeneration
-            || renderer.getContext()?.isContextLost?.()) {
+        const contextUnavailable = this.terminal
+          || generation !== this._webglGeneration
+          || renderer.getContext()?.isContextLost?.();
+        if (contextUnavailable) {
           resolve({ ...result, invalidated: true });
           return;
         }
@@ -4710,7 +4755,17 @@ class Game {
           }
           const finalizeAt = performance.now();
           if (!isCurrent()) {
-            resolve({ ...result, invalidated: true });
+            // A same-generation itinerary can be reprioritized after this GL
+            // program was submitted, but browser shader compilation cannot be
+            // cancelled. Keep its generation-wide slot until every captured
+            // wrapper reports ready; otherwise a replacement itinerary can
+            // overlap the stale driver job while telemetry falsely reports one.
+            const pollMs = performance.now() - pollAt;
+            result.maxReadinessPollDurationMs = Math.max(
+              result.maxReadinessPollDurationMs, pollMs,
+            );
+            result.maxSynchronousSliceMs = Math.max(result.maxSynchronousSliceMs, pollMs);
+            resolve({ ...result, invalidated: true, drainedAfterInvalidation: true });
             return;
           }
           const gl = renderer.getContext();
@@ -5236,7 +5291,11 @@ class Game {
     // this background queue, so there is no reason to spend four programs from
     // one player's frame merely to make an offline itinerary finish sooner.
     state.variantBatchSize = 1;
+    state.compileConcurrencyLimit = 1;
     state.compileJobsInFlight = 0;
+    state.maxCompileJobsInFlight = 0;
+    state.compileSlotWaits = 0;
+    state.maxCompileSlotWaitMs = 0;
     state.compileJobs = [];
     state.renderShieldFrames = 0;
     // A restored context has no resident programs at all. Remember the live
@@ -5245,6 +5304,19 @@ class Game {
     // house/grave/forest compile before a single cave pixel returned.
     state.priorityAct = this._shaderWarmPriorityKey();
     const generation = state.generation;
+    let compileActivity = this._shaderCompileActivity;
+    if (!compileActivity || compileActivity.generation !== generation) {
+      compileActivity = {
+        generation,
+        active: 0,
+        peak: 0,
+        waiters: new Set(),
+        jobs: [],
+      };
+      this._shaderCompileActivity = compileActivity;
+    }
+    state.generationCompileJobsInFlight = compileActivity.active;
+    state.generationMaxCompileJobsInFlight = compileActivity.peak;
     let invalidated = false;
     let resolveInvalidation;
     const invalidation = new Promise((resolve) => { resolveInvalidation = resolve; });
@@ -5259,6 +5331,28 @@ class Game {
       state.reason = reason;
       for (const cancel of [...taskCancels]) cancel();
       resolveInvalidation(reason);
+    };
+    const waitForCompileSlot = async () => {
+      while (isCurrent() && compileActivity.active >= state.compileConcurrencyLimit) {
+        state.compileSlotWaits++;
+        const waitStartedAt = performance.now();
+        let wake = null;
+        const available = new Promise((resolve) => {
+          wake = resolve;
+          compileActivity.waiters.add(resolve);
+        });
+        const released = await Promise.race([
+          available.then(() => true),
+          invalidation.then(() => false),
+        ]);
+        compileActivity.waiters.delete(wake);
+        state.maxCompileSlotWaitMs = Math.max(
+          state.maxCompileSlotWaitMs,
+          performance.now() - waitStartedAt,
+        );
+        if (!released || !isCurrent()) return false;
+      }
+      return isCurrent();
     };
 
     const nextPaintTask = () => new Promise((resolve) => {
@@ -5414,11 +5508,23 @@ class Game {
     };
     const jobs = [];
     const launchCompile = (scene, camera, label, targetScene = scene) => {
+      if (compileActivity.active >= state.compileConcurrencyLimit) {
+        throw new Error(`shader compile slot unavailable for ${label}`);
+      }
       state.compileJobsInFlight++;
+      state.maxCompileJobsInFlight = Math.max(
+        state.maxCompileJobsInFlight, state.compileJobsInFlight,
+      );
+      compileActivity.active++;
+      compileActivity.peak = Math.max(compileActivity.peak, compileActivity.active);
+      state.generationCompileJobsInFlight = compileActivity.active;
+      state.generationMaxCompileJobsInFlight = compileActivity.peak;
       state.compileInFlightLabel = label;
       const launchedAt = performance.now();
       const jobEntry = {
         label,
+        generationAtMs: launchedAt,
+        generationSettledAt: null,
         atMs: launchedAt - state.startedAt,
         settledMs: null,
         durationMs: null,
@@ -5427,12 +5533,19 @@ class Game {
           .map((object) => object.userData.shaderWarmSource),
       };
       state.compileJobs.push(jobEntry);
+      compileActivity.jobs.push(jobEntry);
       const settle = () => {
         const settledAt = performance.now();
+        jobEntry.generationSettledAt = settledAt;
         jobEntry.settledMs = settledAt - state.startedAt;
         jobEntry.durationMs = settledAt - launchedAt;
         state.compileJobsInFlight = Math.max(0, state.compileJobsInFlight - 1);
         if (!state.compileJobsInFlight) state.compileInFlightLabel = null;
+        compileActivity.active = Math.max(0, compileActivity.active - 1);
+        state.generationCompileJobsInFlight = compileActivity.active;
+        state.generationMaxCompileJobsInFlight = compileActivity.peak;
+        for (const wake of [...compileActivity.waiters]) wake();
+        compileActivity.waiters.clear();
       };
       try {
         const job = this._compileWarmVariant(scene, camera, targetScene, isCurrent);
@@ -5448,6 +5561,7 @@ class Game {
             jobEntry.maxSynchronousSliceMs = detail.maxSynchronousSliceMs;
             jobEntry.programIdentities = detail.identities;
             jobEntry.invalidated = detail.invalidated === true;
+            jobEntry.drainedAfterInvalidation = detail.drainedAfterInvalidation === true;
           }
           return detail?.invalidated !== true;
         }).catch((error) => {
@@ -5493,8 +5607,8 @@ class Game {
       const sceneRepresentatives = scene === reflectionScene
         ? reflectionRepresentatives
         : scene === heldScene ? heldRepresentatives : warmRepresentatives;
-      const variantJobs = [];
       for (let batchIndex = 0; batchIndex < batches; batchIndex++) {
+        if (!await waitForCompileSlot()) return false;
         let batchJob = Promise.resolve();
         const begin = batchIndex * batchSize;
         const end = Math.min(representatives.length, begin + batchSize);
@@ -5561,19 +5675,14 @@ class Game {
           };
         }, { idle: true });
         if (!ok) return false;
-        variantJobs.push(batchJob);
+        // KHR_parallel_shader_compile keeps this one signature's driver work
+        // asynchronous relative to play. Do not overlap unrelated signatures:
+        // seven pending D3D11 jobs repeatedly forced an otherwise resident
+        // Cave frame past 100ms. The next idle paint launches only after this
+        // captured program set is ready (or the itinerary is invalidated).
+        const outcome = await Promise.race([batchJob, invalidation]);
         if (!isCurrent()) return false;
-      }
-      // KHR_parallel_shader_compile is useful only if jobs are actually allowed
-      // to overlap. Launch one signature per paint, then await the tranche as a
-      // group; the old per-signature await turned a background queue into the
-      // sum of every driver completion time.
-      if (variantJobs.length) {
-        const outcomes = await Promise.race([Promise.all(variantJobs), invalidation]);
-        if (!isCurrent()) return false;
-        if (!Array.isArray(outcomes) || outcomes.some((outcome) => outcome !== true)) {
-          return false;
-        }
+        if (outcome !== true) return false;
       }
       if (!deferReady) markVariantReady(label);
       return isCurrent();
@@ -5940,6 +6049,7 @@ class Game {
 
     const compileGrainVariant = async () => {
       if (state.readyVariants.includes('grain')) return isCurrent();
+      if (!await waitForCompileSlot()) return false;
       let grainJob = Promise.resolve();
       const ok = await runSlice('compile', 'grain', () => {
         grainJob = launchCompile(this.grainScene, this.grainCam, 'grain');
@@ -6359,6 +6469,8 @@ class Game {
       state.texturesDiscovered = textureSources.size;
       state.pendingTextures = [...textureSources]
         .filter((texture) => !textureIsResident(texture)).length;
+      state.generationCompileJobsInFlight = compileActivity.active;
+      state.generationMaxCompileJobsInFlight = compileActivity.peak;
       state.completedAt = performance.now();
       state.durationMs = state.completedAt - state.startedAt;
       this.finale?.completeContextRewarm?.(generation);

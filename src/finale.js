@@ -221,6 +221,11 @@ export class Finale {
       writes: 0,
       allHidden: false,
       durationMs: 0,
+      restoreRuns: 0,
+      restoreRoots: 0,
+      restoreWrites: 0,
+      restoreDurationMs: 0,
+      savedAfterRestore: 0,
     };
     // A restored WebGL context has no resident mirror programs or FBO storage,
     // even though the JS-side Finale object is still active. Keep the panes as
@@ -1101,14 +1106,60 @@ export class Finale {
     return state;
   }
 
+  leave() {
+    const g = this.game;
+    const startedAt = performance.now();
+    this.active = false;
+    this.phase = 'idle';
+    this._contextRewarming = false;
+    this._contextRewarmGeneration = -1;
+    this._handPressure = 0;
+    this._wallPressure.fill(0);
+    this._restoreEmptyHands(1);
+    g.player.frozen = false;
+    g.baseTension = 0;
+    g.audio.setTension(0);
+    if (this._recallActive) {
+      g.audio.skullMoanStop();
+      this._recallActive = false;
+    }
+    this.mirrors._darkenAll();
+    this.figure.visible = false;
+
+    let roots = 0;
+    let writes = 0;
+    for (const [root, visible] of this._visibilityIsolationSaved) {
+      if (root.parent !== g.scene) continue;
+      roots++;
+      if (root.visible !== visible) {
+        root.visible = visible;
+        writes++;
+      }
+    }
+    this._visibilityIsolationSaved.clear();
+    const state = this.visibilityIsolation;
+    state.active = false;
+    state.allHidden = false;
+    state.restoreRuns++;
+    state.restoreRoots = roots;
+    state.restoreWrites = writes;
+    state.restoreDurationMs = performance.now() - startedAt;
+    state.savedAfterRestore = this._visibilityIsolationSaved.size;
+    return state;
+  }
+
   begin() {
     const g = this.game;
     // Underfalls restores the pre-cave scene transaction before this call. The
-    // forest culler may already believe its back-district boundary is active,
-    // so force its visibility writes once, then hide every completed surface
-    // root behind an explicit Finale lifecycle boundary. Without this step the
-    // real mirror cameras traversed the restored moon, graveyard, and forest;
-    // the first pane became an accidental global prime and a visual leak.
+    // production Director already does this at the hatch edge, but the public
+    // QA teleport reaches begin directly. Make that ordering intrinsic and
+    // idempotent so neither path can replay the cave snapshot after isolation.
+    g.underfalls?.visibility?.restore?.();
+    // The forest culler may already believe its back-district boundary is
+    // active, so force its visibility writes once, then hide every completed
+    // surface root behind an explicit Finale lifecycle boundary. Without this
+    // step the real mirror cameras traversed the restored moon, graveyard, and
+    // forest; the first pane became an accidental global prime and visual leak.
     g.forest?.syncBackDistrictCulling?.(true, { reapply: true });
     this._isolateFinishedDistricts();
     this.active = true;
@@ -1128,6 +1179,13 @@ export class Finale {
     this._dresserSnap = false;
     this.poses = [];
     this._mountExactSkull();
+    // Finale's authored law is irreversible: the carried skull was surrendered
+    // at the waterfall, while only its reflected double remains here. The
+    // production route already arrives in `gone`; enforce the same invariant in
+    // direct QA/respawn entry so it cannot retain the live skull's world lights
+    // beside their DOUBLE-layer clone and accidentally create a non-shipping
+    // P17 reflection signature.
+    if (g.skull?.mode !== 'gone') g.skull?.vanish?.();
 
     for (const o of this.resetProps) {
       o.position.copy(o.userData.homePosition);

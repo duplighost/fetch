@@ -91,6 +91,11 @@ try {
     return { rows, successful };
   });
   for (const row of results.rows) {
+    const expectedPhase = {
+      bind: 'bind-pane-target',
+      render: 'render-pane',
+      restore: 'restore-pane-target',
+    }[row.fault];
     check(row.escaped == null && row.result === false && row.thrown,
       `${row.fault} fault is contained and reported as a failed reflection`, row);
     check(row.inUpdate === false && row.targetRestored,
@@ -98,7 +103,8 @@ try {
     check(row.scopeVisible === true && row.active === false && row.textureNull === true,
       `${row.fault} fault restores scope and leaves safe dark glass`, row);
     check(row.reports.length >= 1
-        && row.reports.every((entry) => entry.message.includes('injected')),
+        && row.reports.every((entry) => entry.message.includes('injected'))
+        && row.reports[0]?.phase === expectedPhase,
       `${row.fault} fault reaches the bounded owner recovery callback`, row.reports);
   }
   check(results.successful.result === true && results.successful.active === true

@@ -42,6 +42,27 @@ const round = (value) => Number.isFinite(value) ? +value.toFixed(3) : null;
 const sorted = (values) => [...(values || [])].sort();
 const equalSorted = (left, right) =>
   JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+const compileIntervalProof = (jobs) => {
+  const ordered = [...(jobs || [])]
+    .filter((job) => Number.isFinite(job.atMs) && Number.isFinite(job.settledMs))
+    .sort((left, right) => left.atMs - right.atMs || left.settledMs - right.settledMs);
+  const overlaps = [];
+  let latestSettlement = null;
+  for (const job of ordered) {
+    if (latestSettlement && job.atMs < latestSettlement.settledMs) {
+      overlaps.push({
+        previous: latestSettlement.label,
+        previousSettledMs: latestSettlement.settledMs,
+        label: job.label,
+        atMs: job.atMs,
+      });
+    }
+    if (!latestSettlement || job.settledMs > latestSettlement.settledMs) {
+      latestSettlement = job;
+    }
+  }
+  return { completeIntervals: ordered.length, overlaps };
+};
 const exactP16 = (census) => census?.total === 20
   && census?.byType?.AmbientLight === 1
   && census?.byType?.HemisphereLight === 1
@@ -296,6 +317,51 @@ function validatePhysical(label, stage, expectedAct) {
   `${label} every recorded shader operation has a strict sub-100ms synchronous slice`,
   stage.shader.operations.filter((entry) => entry.error != null
     || entry.invalidated === true || !(entry.maxSynchronousSliceMs < 100)));
+  const compileJobs = stage.shader.jobs || [];
+  const intervalProof = compileIntervalProof(compileJobs);
+  const generationJobs = stage.shader.generationJobs || [];
+  const generationIntervalProof = compileIntervalProof(generationJobs.map((job) => ({
+    ...job, atMs: job.generationAtMs, settledMs: job.generationSettledAt,
+  })));
+  check(compileJobs.length > 0
+      && stage.shader.compileJobCount === compileJobs.length
+      && stage.shader.compileConcurrencyLimit === 1
+      && Number.isInteger(stage.shader.maxCompileJobsInFlight)
+      && stage.shader.maxCompileJobsInFlight === 1
+      && stage.shader.compileJobsInFlight === 0
+      && Number.isInteger(stage.shader.generationMaxCompileJobsInFlight)
+      && stage.shader.generationMaxCompileJobsInFlight === 1
+      && stage.shader.generationCompileJobsInFlight === 0
+      && compileJobs.every((job) => job.error == null && job.invalidated === false
+        && Number.isFinite(job.atMs) && Number.isFinite(job.settledMs)
+        && Number.isFinite(job.durationMs) && job.settledMs >= job.atMs
+        && job.durationMs >= 0)
+      && intervalProof.completeIntervals === compileJobs.length
+      && intervalProof.overlaps.length === 0
+      && generationJobs.length === stage.shader.generationCompileJobCount
+      && generationJobs.length >= compileJobs.length
+      && generationJobs.every((job) => job.error == null
+        && Number.isFinite(job.generationAtMs)
+        && Number.isFinite(job.generationSettledAt)
+        && job.generationSettledAt >= job.generationAtMs
+        && (job.invalidated === false || job.drainedAfterInvalidation === true))
+      && generationIntervalProof.completeIntervals === generationJobs.length
+      && generationIntervalProof.overlaps.length === 0,
+  `${label} proves one-at-a-time shader backpressure with independently non-overlapping jobs`, {
+    compileJobCount: stage.shader.compileJobCount,
+    compileConcurrencyLimit: stage.shader.compileConcurrencyLimit,
+    maxCompileJobsInFlight: stage.shader.maxCompileJobsInFlight,
+    generationMaxCompileJobsInFlight: stage.shader.generationMaxCompileJobsInFlight,
+    finalStateJobsInFlight: stage.shader.compileJobsInFlight,
+    finalGenerationJobsInFlight: stage.shader.generationCompileJobsInFlight,
+    compileSlotWaits: stage.shader.compileSlotWaits,
+    maxCompileSlotWaitMs: stage.shader.maxCompileSlotWaitMs,
+    intervalProof,
+    generationCompileJobCount: stage.shader.generationCompileJobCount,
+    generationIntervalProof,
+    incompleteOrFailedJobs: compileJobs.filter((job) => job.error != null
+      || job.invalidated !== false || !Number.isFinite(job.settledMs)),
+  });
   check(stage.residencyErrors.length === 0,
     `${label} residency telemetry has zero errors`, stage.residencyErrors);
   check(stage.productionSummaryOperations.every((entry) =>
@@ -497,6 +563,8 @@ try {
         shieldedFrames: 0, visibleResourceFrames: [], samples: [],
         glByPhase: {}, exactCertificateFrameId: null, firstFullFrameId: null,
         ownerCertificateFrameId: null, firstPaneFrameId: null,
+        timeToExactCertificateMs: null, timeToFirstFullMs: null,
+        timeToOwnerCertificateMs: null, timeToFirstPaneMs: null,
         exactCertificateGl: makeGl(), firstFullGl: makeGl(),
         ownerCertificateGl: makeGl(), firstPaneGl: makeGl(),
       };
@@ -768,6 +836,38 @@ try {
         row.visibleProgramDelta = g.lastRender?.visibleProgramDelta || 0;
         row.visibleTextureDelta = g.lastRender?.visibleTextureDelta || 0;
         row.visibleGeometryDelta = g.lastRender?.visibleGeometryDelta || 0;
+        row.reducedBatchSubmitted = !!g.lastRender?.reducedBatchSubmitted;
+        row.reducedBatchRevealed = !!g.lastRender?.reducedBatchRevealed;
+        row.revealedReducedObjects = g.lastRender?.revealedReducedObjects || 0;
+        row.snapshotProgress = !!g.lastRender?.snapshotProgress;
+        row.reducedSceneObjects = live?.progressive?.scene?.children?.length || 0;
+        row.pendingReducedRevealObjects = live?.progressive?.pendingReducedReveal?.length || 0;
+        const lastReducedPass = (row.reducedBatchRevealed || row.renderMs >= 100)
+          ? live?.reducedPasses?.at(-1) : null;
+        row.lastReducedPass = lastReducedPass ? {
+          kind: lastReducedPass.kind,
+          batch: lastReducedPass.batch,
+          objects: lastReducedPass.objects,
+          visibleObjects: lastReducedPass.visibleObjects,
+          persistentObjectsAdded: lastReducedPass.persistentObjectsAdded,
+          physicalRevealDeferred: lastReducedPass.physicalRevealDeferred,
+          durationMs: lastReducedPass.durationMs,
+        } : null;
+        row.shaderStatus = g.shaderWarmup?.status || null;
+        row.shaderCompileJobsInFlight = g.shaderWarmup?.compileJobsInFlight || 0;
+        row.shaderCompileInFlightLabel = g.shaderWarmup?.compileInFlightLabel || null;
+        // Keep the normal rAF sampler O(1). Enumerating a 600-job itinerary on
+        // every paint can manufacture the very frame/GC stall this gate owns.
+        row.shaderCompileOutstandingLabels = row.renderMs >= 100
+          ? (g.shaderWarmup?.compileJobs || [])
+            .filter((entry) => !Number.isFinite(entry.settledMs))
+            .map((entry) => entry.label)
+          : [];
+        row.shaderMaxCompileJobsInFlight = g.shaderWarmup?.maxCompileJobsInFlight ?? null;
+        row.shaderGenerationCompileJobsInFlight = g._shaderCompileActivity?.active ?? null;
+        row.shaderGenerationMaxCompileJobsInFlight = g._shaderCompileActivity?.peak ?? null;
+        row.shaderCurrentExactStatus = g.shaderWarmup?.currentExactStatus || null;
+        row.shaderPendingTextures = g.shaderWarmup?.pendingTextures || 0;
         row.rawProgramDelta = after.programs - before.programs;
         row.rawTextureDelta = after.textures - before.textures;
         row.rawGeometryDelta = after.geometries - before.geometries;
@@ -790,6 +890,7 @@ try {
           }
           if (row.exactPassDelta > 0) {
             stage.exactCertificateFrameId = row.frameId;
+            stage.timeToExactCertificateMs = performance.now() - stage.startedAt;
             stage.exactCertificateGl = clone(row.phases['exact-certificate'] || makeGl());
           }
           if (stage.exactCertificateFrameId != null && stage.firstFullFrameId == null
@@ -797,15 +898,18 @@ try {
               && row.act === stage.expectedAct && row.worldDrawCalls > 0
               && !row.reducedDetail) {
             stage.firstFullFrameId = row.frameId;
+            stage.timeToFirstFullMs = performance.now() - stage.startedAt;
             stage.firstFullGl = clone(row.phases['visible-render'] || makeGl());
           }
           if (row.ownerPassDelta > 0) {
             stage.ownerCertificateFrameId = row.frameId;
+            stage.timeToOwnerCertificateMs = performance.now() - stage.startedAt;
             stage.ownerCertificateGl = clone(row.phases['finale-owner-certificate'] || makeGl());
           }
           if (stage.ownerCertificateFrameId != null && stage.firstPaneFrameId == null
               && row.frameId > stage.ownerCertificateFrameId && row.panesActive > 0) {
             stage.firstPaneFrameId = row.frameId;
+            stage.timeToFirstPaneMs = performance.now() - stage.startedAt;
             stage.firstPaneGl = clone(row.phases['visible-render'] || makeGl());
           }
           if (stage.samples.length < 6 || row.exactPassDelta || row.ownerPassDelta
@@ -820,7 +924,24 @@ try {
     const waitFor = async (predicate, label, timeout = 120000) => {
       const deadline = performance.now() + timeout;
       while (!predicate() && performance.now() < deadline) await frame();
-      if (!predicate()) throw new Error(`Stage C context timeout: ${label}`);
+      if (!predicate()) {
+        const warm = g.shaderWarmup;
+        const outstanding = (warm?.compileJobs || [])
+          .filter((entry) => !Number.isFinite(entry.settledMs))
+          .map((entry) => ({ label: entry.label, atMs: entry.atMs }));
+        throw new Error(`Stage C context timeout: ${label} -- ${JSON.stringify({
+          shaderStatus: warm?.status || null,
+          elapsedWarmupMs: Number.isFinite(warm?.startedAt)
+            ? performance.now() - warm.startedAt : null,
+          compileJobsInFlight: warm?.compileJobsInFlight ?? null,
+          maxCompileJobsInFlight: warm?.maxCompileJobsInFlight ?? null,
+          generationCompileJobsInFlight: warm?.generationCompileJobsInFlight ?? null,
+          generationMaxCompileJobsInFlight: warm?.generationMaxCompileJobsInFlight ?? null,
+          settledJobs: (warm?.compileJobs || []).length - outstanding.length,
+          totalJobs: (warm?.compileJobs || []).length,
+          outstanding: outstanding.slice(0, 12),
+        })}`);
+      }
     };
     const contextEvent = (name, action) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`missing ${name}`)), 20000);
@@ -936,6 +1057,7 @@ try {
     const summarizeShader = () => ({
       status: g.shaderWarmup?.status,
       generation: g.shaderWarmup?.generation ?? null,
+      startedAt: g.shaderWarmup?.startedAt ?? null,
       readyVariants: [...(g.shaderWarmup?.readyVariants || [])],
       carriedReadyVariants: [...(g.shaderWarmup?.carriedReadyVariants || [])],
       currentExactKey: g.shaderWarmup?.currentExactKey || null,
@@ -945,10 +1067,43 @@ try {
       currentExactRoots: g.shaderWarmup?.currentExactRoots ?? null,
       currentExactRepresentatives: g.shaderWarmup?.currentExactRepresentatives ?? null,
       compileJobsInFlight: g.shaderWarmup?.compileJobsInFlight ?? null,
+      compileConcurrencyLimit: g.shaderWarmup?.compileConcurrencyLimit ?? null,
+      maxCompileJobsInFlight: g.shaderWarmup?.maxCompileJobsInFlight ?? null,
+      generationCompileJobsInFlight:
+        g.shaderWarmup?.generationCompileJobsInFlight ?? null,
+      generationMaxCompileJobsInFlight:
+        g.shaderWarmup?.generationMaxCompileJobsInFlight ?? null,
+      compileSlotWaits: g.shaderWarmup?.compileSlotWaits ?? null,
+      maxCompileSlotWaitMs: g.shaderWarmup?.maxCompileSlotWaitMs ?? null,
+      compileJobCount: g.shaderWarmup?.compileJobs?.length || 0,
+      generationCompileJobCount: g._shaderCompileActivity?.jobs?.length || 0,
       pendingTextures: g.shaderWarmup?.pendingTextures ?? null,
       completedAt: g.shaderWarmup?.completedAt ?? null,
       durationMs: g.shaderWarmup?.durationMs ?? null,
       errors: [...(g.shaderWarmup?.errors || [])],
+      jobs: (g.shaderWarmup?.compileJobs || []).map((entry) => ({
+        label: entry.label,
+        source: entry.source || [],
+        programs: entry.programs ?? null,
+        programIdentities: (entry.programIdentities || []).map((program) => ({
+          id: program.id ?? null,
+          cacheKey: program.cacheKey || '',
+        })),
+        atMs: entry.atMs ?? null,
+        settledMs: entry.settledMs ?? null,
+        durationMs: entry.durationMs ?? null,
+        invalidated: entry.invalidated === true,
+        drainedAfterInvalidation: entry.drainedAfterInvalidation === true,
+        error: entry.error || null,
+      })),
+      generationJobs: (g._shaderCompileActivity?.jobs || []).map((entry) => ({
+        label: entry.label,
+        generationAtMs: entry.generationAtMs ?? null,
+        generationSettledAt: entry.generationSettledAt ?? null,
+        invalidated: entry.invalidated === true,
+        drainedAfterInvalidation: entry.drainedAfterInvalidation === true,
+        error: entry.error || null,
+      })),
       operations: (g.shaderWarmup?.compileJobs || []).map((entry) => ({
         label: entry.label, error: entry.error || null,
         invalidated: !!entry.invalidated,
