@@ -2072,7 +2072,14 @@ class Game {
             ? progress.ownerHouseGeometries : progress.ownerFinaleGeometries;
           ownerObjects.add(object.uuid);
           ownerGeometries.add(object.geometry.uuid);
-          enqueue(object, true, kind);
+          // Owner census deliberately runs after the first physical silhouette.
+          // A current-view Mesh may therefore already own a committed reduced
+          // transaction before it joins this later universe. Carry that exact
+          // generation-local proof forward; queued is monotonic UUID dedupe and
+          // must not strand a second copy in an empty owner queue.
+          if (progress.processed.has(object.uuid)) {
+            progress.ownerCovered.add(object.uuid);
+          } else enqueue(object, true, kind);
         }
       });
     };
@@ -2142,7 +2149,9 @@ class Game {
             && object.geometry && object.material) {
           progress.deferredUniverse.add(object.uuid);
           progress.deferredGeometries.add(object.geometry.uuid);
-          enqueue(object, true, null, deferred.label);
+          if (progress.processed.has(object.uuid)) {
+            progress.deferredCovered.add(object.uuid);
+          } else enqueue(object, true, null, deferred.label);
         }
       });
     };
@@ -2415,6 +2424,19 @@ class Game {
         if (scope === 'deferred') progress.failedDeferred.add(key);
         continue;
       }
+      // A current-view compile can span several paints before any exact entry
+      // is committed. Track the live allocation/program signature from the
+      // first scan onward so a shader-affecting material or geometry mutation
+      // cannot leave that in-flight compile looking current merely because the
+      // entry has not reached exactProcessed yet.
+      let criticalSignatureChanged = false;
+      if (scope === 'critical') {
+        const observed = exact.observedCriticalAllocationFingerprint;
+        criticalSignatureChanged = observed != null
+          && observed !== descriptor.allocationFingerprint;
+        exact.observedCriticalAllocationFingerprint = descriptor.allocationFingerprint;
+        if (criticalSignatureChanged) progress.exactShaderRevision++;
+      }
       // Content versions may advance every gameplay frame for an already
       // allocated dynamic buffer. Cold residency is invalidated only when the
       // allocation/mapping/program identity changes; transaction-local version
@@ -2428,7 +2450,9 @@ class Game {
         progress.deferredExactCovered.delete(key);
         progress.exactFingerprints.delete(key);
         progress.exactAllocationFingerprints.delete(key);
-        if (scope === 'critical') progress.exactShaderRevision++;
+        if (scope === 'critical' && !criticalSignatureChanged) {
+          progress.exactShaderRevision++;
+        }
         invalidated++;
         added += Number(this._queueExactRenderable(progress, exact.object, {
           critical: exact.critical,
@@ -2709,6 +2733,14 @@ class Game {
     if (!GPU_IDENTITY_TRACE || !beforePrograms) return null;
     const allPrograms = [...(this.renderer?.info?.programs || [])];
     const fresh = allPrograms.filter((program) => !beforePrograms.has(program));
+    if (fresh.length === 0) {
+      return {
+        count: 0,
+        programs: [],
+        ownerTraversalSkipped: true,
+        lights: this._gpuIdentityLightCensus(camera),
+      };
+    }
     const freshSet = new Set(fresh);
     const owners = new Map(fresh.map((program) => [program, []]));
     const seenObjects = new Set();
@@ -2761,6 +2793,7 @@ class Game {
     }
     return {
       count: fresh.length,
+      ownerTraversalSkipped: false,
       programs: fresh.map((program) => ({
         id: program.id ?? null,
         name: program.name || null,
@@ -2893,6 +2926,7 @@ class Game {
     }
 
     const attributesApi = this.renderer.attributes;
+    const attributeApiAvailable = typeof attributesApi?.get === 'function';
     const bufferIds = new WeakMap();
     let nextBufferId = 1;
     const bufferId = (buffer) => {
@@ -2916,7 +2950,17 @@ class Game {
         geometryPropertyKeys: Object.keys(geometryProperties || {}).sort(),
       };
     };
-    const snapshot = () => new Map(attributeRows.map((row) => [row.key, attributeState(row)]));
+    const snapshot = (rows) => new Map(rows.map((row) => [row.key, attributeState(row)]));
+    // Bundled r161 does not expose renderer.attributes publicly, so the former
+    // trace paid thousands of guaranteed-null lookups before and after every
+    // subpass. When the API does exist, one complete baseline identifies the
+    // only rows that can become newly resident; subsequent boundaries need to
+    // revisit only that frozen subset. GL buffer hooks below remain the primary
+    // allocation/update evidence in either case.
+    const baseline = attributeApiAvailable ? snapshot(attributeRows) : new Map();
+    const initiallyUnresidentRows = attributeApiAvailable
+      ? attributeRows.filter((row) => baseline.get(row.key)?.resident === false)
+      : [];
     const stateChanged = (before, after) => JSON.stringify(before) !== JSON.stringify(after);
     const gl = this.renderer.getContext();
     const originalBufferData = gl.bufferData;
@@ -2955,14 +2999,14 @@ class Game {
     return {
       begin(label) {
         phase = label;
-        phaseBefore = snapshot();
+        phaseBefore = snapshot(initiallyUnresidentRows);
         phaseUploadStart = uploads.length;
       },
       end(label = phase) {
         if (!phaseBefore) return;
-        const after = snapshot();
+        const after = snapshot(initiallyUnresidentRows);
         const changed = [];
-        for (const row of attributeRows) {
+        for (const row of initiallyUnresidentRows) {
           const beforeState = phaseBefore.get(row.key);
           const afterState = after.get(row.key);
           if (!stateChanged(beforeState, afterState)) continue;
@@ -2971,8 +3015,9 @@ class Game {
         }
         subpasses.push({
           label,
-          attributeApiAvailable: !!attributesApi?.get,
+          attributeApiAvailable,
           bufferHooksInstalled: wrapped,
+          recheckedAttributes: initiallyUnresidentRows.length,
           changed: changed.slice(0, 160),
           uploads: uploads.slice(phaseUploadStart),
         });
@@ -2991,7 +3036,11 @@ class Game {
         objects: objects.size,
         attributes: attributeRows.length,
         arrays: arrayOwners.size,
-        attributeApiAvailable: !!attributesApi?.get,
+        attributeApiAvailable,
+        baselineResident: attributeApiAvailable
+          ? attributeRows.length - initiallyUnresidentRows.length : null,
+        initiallyUnresident: attributeApiAvailable
+          ? initiallyUnresidentRows.length : null,
         bufferHooksInstalled: wrapped,
       },
     };
@@ -4574,8 +4623,6 @@ class Game {
       }
       return wrappers;
     };
-    const beforePrograms = new Map([...submittedMaterials]
-      .map((material) => [material, new Set(wrappersFor(material))]));
     const submittedSides = new Map([...submittedMaterials]
       .map((material) => [material, material.side]));
     if (!isCurrent()) {
@@ -4604,22 +4651,24 @@ class Game {
     const programs = [];
     const seenPrograms = new Set();
     for (const material of submittedMaterials) {
-      const before = beforePrograms.get(material) || new Set();
-      const properties = renderer.properties?.get?.(material);
-      const currentProgram = properties?.currentProgram;
       const associated = wrappersFor(material);
       for (const program of associated) {
         // r161 emits both BackSide and FrontSide programs for transparent
         // DoubleSide materials, then leaves only the latter in currentProgram.
-        // Capture every newly associated wrapper, the final current wrapper,
-        // and any older wrapper whose driver completion is still pending.
-        if (program !== currentProgram && before.has(program) && program.isReady()) continue;
+        // A prior invalidated job may also have reached driver readiness before
+        // it could materialize reflection. Capture every associated wrapper;
+        // getUniforms/getAttributes are idempotent and readiness alone is not a
+        // certificate that reflection was already paid.
         if (!seenPrograms.has(program)) {
           seenPrograms.add(program);
           programs.push(program);
         }
       }
     }
+    const identities = programs.map((program) => ({
+      id: program.id ?? null,
+      cacheKey: `${program.cacheKey || ''}`,
+    }));
     const submittedAtEnd = performance.now();
     const result = {
       generation,
@@ -4631,10 +4680,7 @@ class Game {
       maxReadinessPollDurationMs: 0,
       finalizationDurationMs: 0,
       maxSynchronousSliceMs: submittedAtEnd - submittedAt,
-      identities: programs.map((program) => ({
-        id: program.id ?? null,
-        cacheKey: `${program.cacheKey || ''}`,
-      })),
+      identities,
     };
     if (!programs.length) return Promise.resolve(result);
 
@@ -4996,7 +5042,7 @@ class Game {
   _scheduleRecoverableShaderRetry(state) {
     if (!state || state !== this.shaderWarmup || state.status !== 'degraded'
         || state.generation !== this._webglGeneration || this.terminal) return false;
-    const recoverable = state.errors.some((error) => /(?:house-mirror-target|house-reflection|finale-reflection|finale-reflection runtime|reflection-target|house-world|ordinary|ossuary|forest|clearing|cave-lights|cave-threat|finale-world|held-view|current-view-exact|grain|target:)/i.test(error));
+    const recoverable = state.errors.some((error) => /(?:house-mirror-target|house-reflection|finale-reflection|finale-reflection runtime|reflection-target|house-world|ordinary|ossuary|forest|clearing|cave-lights|cave-threat|finale-world|held-view|current-view|grain|target:)/i.test(error));
     if (!recoverable || state.recoveryRound >= 2 || state.recoveryScheduled) return false;
     state.recoveryScheduled = true;
     const generation = state.generation;
@@ -5428,6 +5474,7 @@ class Game {
       representatives = warmRepresentatives,
       target = null,
       lightCount = null,
+      deferReady = false,
     } = {}) => {
       // A current-district priority pass may have already certified this exact
       // variant. Do not repeat it later merely because the full background
@@ -5526,7 +5573,7 @@ class Game {
           return false;
         }
       }
-      markVariantReady(label);
+      if (!deferReady) markVariantReady(label);
       return isCurrent();
     };
     const textureIsResident = (texture) =>
@@ -6088,6 +6135,20 @@ class Game {
           lightCount: state.reflectionLights,
         })) return;
       }
+      const currentExactSignature = (progress) => {
+        const entries = [...(progress?.exactObjects?.values?.() || [])]
+          .filter((entry) => entry.critical && entry.rig === 'world' && entry.object);
+        const parts = [];
+        for (const entry of entries) {
+          const descriptor = this._describeReducedEntry(entry, progress, { exact: true });
+          if (descriptor.error) {
+            throw new Error(`${entry.key}: ${descriptor.error}`);
+          }
+          parts.push(`${entry.key}\u001f${descriptor.allocationFingerprint}`);
+        }
+        parts.sort();
+        return { value: parts.join('\u001e'), entries: parts.length };
+      };
       const currentProgress = this.currentGpuResidency?.progressive;
       if (currentProgress?.key === this.currentGpuResidency?.activeKey) {
         const currentKey = currentProgress.key;
@@ -6100,6 +6161,13 @@ class Game {
         state.currentExactUniverse = currentProgress.exactUniverse.size;
         state.currentExactRoots = currentRoots.length;
         state.currentExactStatus = 'discovering';
+        let currentSignature = null;
+        if (!await runSlice('setup', 'signature:current-view:pre', () => {
+          const snapshot = currentExactSignature(currentProgress);
+          currentSignature = snapshot.value;
+          state.currentExactSignatureEntries = snapshot.entries;
+          return { entries: snapshot.entries };
+        })) return;
         if (!await discover('current-view', currentRoots)) return;
         if (!await warmPendingTextures('current-view')) return;
         const currentRepresentatives = [...new Set(currentRoots.map((object) =>
@@ -6108,10 +6176,19 @@ class Game {
         state.currentExactStatus = 'compiling';
         if (!await compileVariant('current-view-exact', fixedWorldRig, {
           representatives: currentRepresentatives,
+          deferReady: true,
+        })) return;
+        let liveSignature = null;
+        if (!await runSlice('setup', 'signature:current-view:post', () => {
+          const snapshot = currentExactSignature(this.currentGpuResidency?.progressive);
+          liveSignature = snapshot.value;
+          state.currentExactLiveSignatureEntries = snapshot.entries;
+          return { entries: snapshot.entries };
         })) return;
         const liveProgress = this.currentGpuResidency?.progressive;
         if (liveProgress?.key !== currentKey
-            || liveProgress.exactShaderRevision !== currentRevision) {
+            || liveProgress.exactShaderRevision !== currentRevision
+            || liveSignature !== currentSignature) {
           state.currentExactStatus = 'stale';
           state.readyVariants = state.readyVariants
             .filter((label) => label !== 'current-view-exact');
@@ -6123,6 +6200,7 @@ class Game {
           this._scheduleShaderWarmup();
           return;
         }
+        markVariantReady('current-view-exact');
         state.currentExactStatus = 'ready';
       }
       const houseTargetReady = await warmHouseMirrorTarget();

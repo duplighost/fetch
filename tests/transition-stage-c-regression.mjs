@@ -192,6 +192,7 @@ function validateStage(label, stage) {
   for (const entry of exactPasses) {
     const programSubpasses = entry.identity?.subpasses || [];
     const geometrySubpasses = entry.identity?.geometrySubpasses || [];
+    const geometryTrace = entry.identity?.geometryTrace || null;
     const requiredSubpasses = ['grain', 'held', 'world'];
     check(entry.error == null && entry.durationMs < 100
         && entry.programDelta === 0 && entry.textureDelta === 0
@@ -201,10 +202,25 @@ function validateStage(label, stage) {
       subpass.programDelta === 0 && subpass.textureDelta === 0
         && subpass.geometryDelta === 0
         && subpass.programIdentity?.count === 0
+        && subpass.programIdentity?.ownerTraversalSkipped === true
         && (subpass.programIdentity?.programs || []).length === 0),
     `${label} every exact program subpass creates nothing`, programSubpasses);
+    check(geometryTrace?.objects > 0 && geometryTrace?.attributes > 0
+        && geometryTrace?.arrays > 0 && geometryTrace?.bufferHooksInstalled === true
+        && (geometryTrace.attributeApiAvailable === false
+          ? geometryTrace.baselineResident == null
+            && geometryTrace.initiallyUnresident == null
+          : geometryTrace.baselineResident >= 0
+            && geometryTrace.initiallyUnresident >= 0
+            && geometryTrace.baselineResident + geometryTrace.initiallyUnresident
+              === geometryTrace.attributes),
+    `${label} geometry certificate traces a nonempty candidate universe honestly`,
+    geometryTrace);
     check(geometrySubpasses.length > 0 && geometrySubpasses.every((subpass) =>
       subpass.bufferHooksInstalled === true
+        && (subpass.changed || []).length === 0
+        && subpass.recheckedAttributes === (geometryTrace?.attributeApiAvailable
+          ? geometryTrace.initiallyUnresident : 0)
         && (subpass.uploads || []).every((upload) => upload.method !== 'bufferData')),
     `${label} every exact geometry subpass performs zero cold bufferData`,
     geometrySubpasses);
@@ -267,7 +283,8 @@ function validateStage(label, stage) {
   check(ownerPass?.rendered === true && ownerPass?.error == null
       && ownerPass?.durationMs < 100 && ownerPass?.programDelta === 0
       && ownerPass?.textureDelta === 0 && ownerPass?.geometryDelta === 0
-      && ownerPass?.identity?.programIdentity?.count === 0,
+      && ownerPass?.identity?.programIdentity?.count === 0
+      && ownerPass?.identity?.programIdentity?.ownerTraversalSkipped === true,
   `${label} house owner certificate is zero-allocation and strictly sub-100ms`, ownerPass);
   const ownerFrame = stage.frames.find((frame) => frame.ownerPassRange[1]
     > frame.ownerPassRange[0]);
@@ -326,6 +343,20 @@ function validateStage(label, stage) {
   }
   const targetSlices = stage.shader.setupSlices.filter((entry) =>
     /^house-mirror-target:/.test(entry.label || ''));
+  check(stage.shader.setupSlices.length > 0
+      && stage.shader.setupSlices.every((entry) => entry.error == null && entry.ms < 100),
+  `${label} every shader setup slice is named and strictly sub-100ms`,
+  stage.shader.setupSlices);
+  check(stage.shader.textureSlices.every((entry) => entry.error == null && entry.ms < 100),
+    `${label} every texture upload slice is named and strictly sub-100ms`,
+    stage.shader.textureSlices);
+  const currentSignatureSlices = stage.shader.setupSlices.filter((entry) =>
+    /^signature:current-view:(?:pre|post)$/.test(entry.label || ''));
+  check(['signature:current-view:pre', 'signature:current-view:post'].every((name) =>
+    currentSignatureSlices.some((entry) => entry.label === name))
+      && currentSignatureSlices.every((entry) => entry.error == null && entry.ms < 100),
+  `${label} current exact signature is revalidated in bounded pre/post slices`,
+  currentSignatureSlices);
   check(targetSlices.length > 0
       && targetSlices.every((entry) => entry.error == null && entry.ms < 100),
   `${label} house render-target setup is named and strictly sub-100ms`, targetSlices);
@@ -336,6 +367,10 @@ function validateStage(label, stage) {
       && stage.shader.currentExactRevision === stage.currentCoverage.exactShaderRevision
       && stage.shader.currentExactStatus === 'ready'
       && stage.shader.currentExactUniverse === stage.currentCoverage.exactUniverse
+      && stage.shader.currentExactSignatureEntries
+        === stage.currentCoverage.worldSignatureUniverse
+      && stage.shader.currentExactLiveSignatureEntries
+        === stage.currentCoverage.worldSignatureUniverse
       && stage.shader.currentExactRoots > 0
       && stage.shader.currentExactRepresentatives > 0,
   `${label} shader readiness is keyed to this exact physical universe`, stage.shader);
@@ -388,10 +423,16 @@ try {
     const F = window.__FETCH;
     const cloneValue = (value) => JSON.parse(JSON.stringify(value));
     const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
-    const waitFor = async (predicate, label, timeout = 120000) => {
+    const waitFor = async (predicate, label, timeout = 120000, diagnostic = null) => {
       const deadline = performance.now() + timeout;
       while (!predicate() && performance.now() < deadline) await frame();
-      if (!predicate()) throw new Error(`Stage C timed out waiting for ${label}`);
+      if (!predicate()) {
+        let detail = null;
+        try { detail = diagnostic?.() ?? null; }
+        catch (error) { detail = { diagnosticError: error?.message || `${error}` }; }
+        throw new Error(`Stage C timed out waiting for ${label}`
+          + (detail == null ? '' : `: ${JSON.stringify(detail)}`));
+      }
     };
     const stats = () => ({
       programs: g.renderer.info.programs?.length || 0,
@@ -784,6 +825,97 @@ try {
           && entry.kind === 'house' && entry.error == null)
         && hasExactFrame && hasOwnerFrame && hasLaterPane;
     };
+    const generationDiagnostic = (generation, expectedStage) => {
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const warmup = g.shaderWarmup;
+      const recentFrames = frames.filter((entry) => entry.generation === generation
+        && entry.stage === expectedStage).slice(-8).map((entry) => ({
+        frameId: entry.frameId,
+        renderMs: entry.renderMs,
+        reducedDetail: entry.reducedDetail,
+        worldDrawCalls: entry.worldDrawCalls,
+        paneActive: entry.paneActive,
+        exactPreloadKinds: entry.exactPreloadKinds,
+        exactPassRange: entry.exactPassRange,
+        ownerPassRange: entry.ownerPassRange,
+      }));
+      return {
+        generation,
+        liveGeneration: g._webglGeneration,
+        residencyGeneration: residency?.generation,
+        activeKey: residency?.activeKey,
+        physical: progress ? residency.physical.has(progress.key) : false,
+        progress: progress ? {
+          key: progress.key,
+          complete: progress.complete,
+          exactShaderRevision: progress.exactShaderRevision,
+          queue: progress.queue.length,
+          pendingReducedReveal: progress.pendingReducedReveal.length,
+          exactQueue: progress.exactQueue.length,
+          ownerQueue: progress.ownerQueue.length,
+          ownerExactQueue: progress.ownerExactQueue.length,
+          exactUniverse: progress.exactUniverse.size,
+          exactCovered: progress.exactCovered.size,
+          ownerUniverse: progress.ownerUniverse.size,
+          ownerCovered: progress.ownerCovered.size,
+          ownerExactUniverse: progress.ownerExactUniverse.size,
+          ownerExactCovered: progress.ownerExactCovered.size,
+          ownerRecorded: progress.ownerRecorded,
+          ownerExactRecorded: progress.ownerExactRecorded,
+          blockedCritical: progress.blockedCritical,
+          blockedReason: progress.blockedReason,
+          failedObjects: [...progress.failedObjects],
+          failedOwners: [...progress.failedOwners],
+          ownerUncovered: [...progress.ownerUniverse]
+            .filter((uuid) => !progress.ownerCovered.has(uuid))
+            .slice(0, 32).map((uuid) => {
+              const object = g.scene.getObjectByProperty('uuid', uuid);
+              return {
+                uuid,
+                name: object?.name || null,
+                type: object?.type || null,
+                processed: progress.processed.has(uuid),
+                queued: progress.queued.has(uuid),
+              };
+            }),
+        } : null,
+        warmup: warmup ? {
+          status: warmup.status,
+          reason: warmup.reason,
+          currentExactKey: warmup.currentExactKey,
+          currentExactRevision: warmup.currentExactRevision,
+          currentExactStatus: warmup.currentExactStatus,
+          readyVariants: warmup.readyVariants,
+          compileJobsInFlight: warmup.compileJobsInFlight,
+          compileInFlightLabel: warmup.compileInFlightLabel,
+          errors: warmup.errors,
+        } : null,
+        exactPasses: (residency?.exactPasses || []).slice(-4).map((entry) => ({
+          generation: entry.generation,
+          key: entry.key,
+          rendered: entry.rendered,
+          durationMs: entry.durationMs,
+          programDelta: entry.programDelta,
+          textureDelta: entry.textureDelta,
+          geometryDelta: entry.geometryDelta,
+          error: entry.error,
+        })),
+        ownerPasses: (residency?.ownerPasses || []).slice(-4).map((entry) => ({
+          generation: entry.generation,
+          kind: entry.kind,
+          key: entry.key,
+          rendered: entry.rendered,
+          durationMs: entry.durationMs,
+          programDelta: entry.programDelta,
+          textureDelta: entry.textureDelta,
+          geometryDelta: entry.geometryDelta,
+          error: entry.error,
+        })),
+        residencyErrors: residency?.errors?.slice(-12) || [],
+        recentFrames,
+      };
+    };
 
     const futureHouseReveals = new Map();
     const auditFutureHouseReveal = (generation) => {
@@ -941,6 +1073,9 @@ try {
           exactQueue: progress.exactQueue.length,
           exactUniverse: progress.exactUniverse.size,
           exactCovered: progress.exactCovered.size,
+          worldSignatureUniverse: [...progress.exactUniverse]
+            .map((key) => progress.exactObjects.get(key))
+            .filter((entry) => entry?.critical && entry.rig === 'world').length,
           exactUniverseKeys: currentKeys,
           committedSourceKeys: currentSourceKeys,
           allCommitted,
@@ -961,10 +1096,14 @@ try {
           currentExactUniverse: g.shaderWarmup?.currentExactUniverse ?? null,
           currentExactRoots: g.shaderWarmup?.currentExactRoots ?? null,
           currentExactRepresentatives: g.shaderWarmup?.currentExactRepresentatives ?? null,
+          currentExactSignatureEntries: g.shaderWarmup?.currentExactSignatureEntries ?? null,
+          currentExactLiveSignatureEntries:
+            g.shaderWarmup?.currentExactLiveSignatureEntries ?? null,
           currentExactStatus: g.shaderWarmup?.currentExactStatus || null,
           compileJobs: g.shaderWarmup?.compileJobs || [],
           compileSlices: g.shaderWarmup?.compileSlices || [],
           setupSlices: g.shaderWarmup?.setupSlices || [],
+          textureSlices: g.shaderWarmup?.textureSlices || [],
           errors: g.shaderWarmup?.errors || [],
         },
         glTrace: {
@@ -1004,8 +1143,9 @@ try {
       F.teleport('house');
       if (g.skull.mode !== 'held') g.skull.holdNow();
       positionForMirror();
-       await waitFor(() => generationReady(initialGeneration, 'initial'),
-        'initial exact house, owner certificate, and pane reveal');
+      await waitFor(() => generationReady(initialGeneration, 'initial'),
+        'initial exact house, owner certificate, and pane reveal', 120000,
+        () => generationDiagnostic(initialGeneration, 'initial'));
       auditFutureHouseReveal(initialGeneration);
       await frame();
       const initialEndedAt = performance.now();
@@ -1031,7 +1171,8 @@ try {
         if (g.skull.mode !== 'held') g.skull.holdNow();
         positionForMirror();
         await waitFor(() => generationReady(restoredGeneration, 'restored'),
-          'restored exact house, owner certificate, and pane reveal');
+          'restored exact house, owner certificate, and pane reveal', 120000,
+          () => generationDiagnostic(restoredGeneration, 'restored'));
         auditFutureHouseReveal(restoredGeneration);
         await frame();
         const restoredEndedAt = performance.now();

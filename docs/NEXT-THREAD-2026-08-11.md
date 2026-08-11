@@ -10,15 +10,10 @@ Read this file completely before changing source. Then read the repository `AGEN
 - The branch is `codex/fetch-polish-20260810`.
 - The preserved overhaul checkpoint is `0e9767dd7e5eb679ddd32030c5f6571a3fba7721` (`Checkpoint FETCH full-route polish and GPU residency diagnosis`).
 - The independently verified Stage B checkpoint is `15dd96cba12410c593bbe006d2d677bb92363146` (`fix: bound transition GPU residency`).
+- The later verified Stage B follow-up and recoverable Stage C work checkpoint is `af315572098ce506c5bbee7a6e1ffcab249aa4ab` (`checkpoint: certify stage b and preserve stage c work`). Stage C source and its focused regression are present at this checkpoint, but Stage C runtime acceptance has not yet been earned.
 - The checkpoint was based on `c6b486e723f1f265d6aecb3d7ee7c52f454e957e`.
 - The overhaul checkpoint contains the large gameplay, route, visual, lifecycle, test, and renderer overhaul described below: 40 files changed, 17,544 insertions, and 594 deletions relative to that base.
-- The Stage B source and focused regression are committed. Before this ledger's own documentation checkpoint, the remaining working-tree state is:
-
-  ```text
-  ?? docs/NEXT-THREAD-2026-08-11.md
-  ```
-
-- This ledger is intentional. Do not reset, discard, reconstruct, or checkout over it.
+- The latest Stage B source, focused regression, Stage C implementation work, and focused Stage C regression are committed. The tree was clean immediately after `af315572098ce506c5bbee7a6e1ffcab249aa4ab`; later changes must be inspected and preserved normally.
 - Historical hashes before the Stage B repair were:
   - `src/main.js`: `922AD0B2FC01CBAF411AB754D66D8022ED1AD6F28650F232828B4365841385DB`
   - `tests/transition-stage-b-regression.mjs`: `F03E08C9B8EC3FEDE326239978C024933E570185B369F2F407FF014F27346D30`
@@ -192,7 +187,7 @@ The current verified short artifact is:
 
 SHA-256:
 
-`303A7340CC17BA60E825A980641574728BDBE6BE6253E30E78A43B55B13E1BAC`
+`59687530185AA73B5719DBE0E7BBB2AAA55A188315F89BD7F7D16AB9EE034276`
 
 The focused command completed with zero failures and zero browser errors on system Chrome using real ANGLE D3D11:
 
@@ -206,25 +201,30 @@ renderer:         ANGLE / NVIDIA GeForce GTX 980M / Direct3D11
 
 Key generation-zero measurements:
 
-- Wake click: 2.0 ms
-- first initial silhouette: 39.1 ms
-- initial max visible render/rAF: 35.7/99.9 ms
-- Mesh/Instanced/grain bootstrap: 4.6/1.1/1.4 ms
+- Wake click: 1.1 ms
+- first initial silhouette: 84.1 ms
+- initial max visible render/rAF: 36.3/66.7 ms
+- default-surface activation: 0.9 ms maximum synchronous slice
+- Mesh/Instanced/grain bootstrap: 5.3/1.2/1.0 ms
+- current/owner-primary/owner-secondary census: 32.2/35.7/19.9 ms
 - visible resource deltas: `+0/+0/+0`
 - zero shielded frames
 - Line/Points omitted
 - grain separation correct
-- 41 hidden reduced batches, maximum 3.1 ms
+- 66 bounded reduced batches, maximum 2.2 ms
 - ordinary caps green
 - isolated oversize resources named and unstacked
 - every batch committed with render state, generation, resource fingerprints, and queue prefix stable
+- hidden upload and physical reveal occur on separate paints
 
 Key restored-generation measurements:
 
-- first restored silhouette: 81.5 ms
-- restored max visible render/rAF: 10.8/16.9 ms
-- Mesh/Instanced/grain bootstrap: 1.7/0.7/0.6 ms
-- 41 hidden reduced batches, maximum 2.4 ms
+- first restored silhouette: 94.3 ms
+- restored max visible render/rAF: 59.7/49.9 ms
+- default-surface activation: 0.7 ms maximum synchronous slice
+- Mesh/Instanced/grain bootstrap: 1.7/1.6/0.8 ms
+- current/owner-primary/owner-secondary census: 16.5/59.3/18.0 ms
+- 66 bounded reduced batches, maximum 3.7 ms
 - visible resource deltas: `+0/+0/+0`
 - zero shielded frames and zero browser errors
 
@@ -242,7 +242,7 @@ The bounded command was:
 node tests/transition-stage-b-regression.mjs
 ```
 
-The complete artifact was inspected; source and regression syntax, staged diff whitespace, process postflight, and disk space passed; checkpoint `15dd96cba12410c593bbe006d2d677bb92363146` records the result. This checkpoint is not a release.
+The complete latest artifact was inspected; source and regression syntax, staged diff whitespace, process postflight, and disk space passed; follow-up checkpoint `af315572098ce506c5bbee7a6e1ffcab249aa4ab` records the current Stage B result and preserves the Stage C work in progress. This checkpoint is not a release.
 
 ### Gate C — current-view and exact residency
 
@@ -267,6 +267,23 @@ After Stage B is green:
 7. Prove exact-only Line/Points programs and buffers resident before first exact physical/owner reveal. Stage B intentionally does not prove them.
 8. Do not run the monolithic transition suite until the short Stage C gates are green.
 9. Once short gates are green, checkpoint, run the complete transition/context matrix, repair every genuine red without weakening thresholds, and rerun until green.
+
+#### Gate C1 verified checkpoint evidence
+
+The focused current-house/owner gate is green on both generation zero and a real `WEBGL_lose_context` restoration:
+
+```text
+command:          node tests/transition-stage-c-regression.mjs
+result:           STAGE C EXACT RESIDENCY REGRESSION PASSED
+failures:         0
+browser errors:   0
+renderer:         ANGLE / NVIDIA GeForce GTX 980M / Direct3D11
+artifact SHA-256: 27FBE982B5E18C0845AA150E34782A40D98F3046B91FD23770FBEFC2946542C9
+```
+
+The complete 34,633,388-byte artifact was inspected. Generation zero/restored maxima were 63.7/60.3 ms render and 66.7/66.6 ms rAF. Exact physical certificates were 30.2/25.1 ms with `+0/+0/+0`; house-owner certificates were 11.4/10.0 ms with `+0/+0/+0`. All 574 exact-preload transactions committed cleanly under 2.9 ms, with no cold programs or textures. Current exact coverage was 669/669 in both generations, including six named Line/Points entries. House reduced ownership was 1,498/1,498; exact ownership was 1,518/1,518 with 20 exact-only decorative members. Shader setup, texture, compile, readiness, and finalization slices were all below 14 ms and error-free. The real music-box pool, Walker, and Resident production reveal paths submitted on the default framebuffer with zero cold resource or VAO work.
+
+This closes only the immediate Wake/current-house/house-owner lane. Cave, active Finale, gone-skull P16, target replacement, live FBO fault recovery, action edges, and district promotion still require their own short gates before the monolithic transition matrix.
 
 ### Freeze and version the release candidate
 
