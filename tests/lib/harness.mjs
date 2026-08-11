@@ -60,16 +60,18 @@ export async function ensureServer() {
   throw new Error(`server failed to start on ${PORT}: ${output.trim()}`);
 }
 
-export async function launchBrowser() {
+export async function launchBrowser({ allowAutoplay = true } = {}) {
+  const args = [
+    '--no-first-run', '--no-default-browser-check',
+    '--enable-webgl', '--ignore-gpu-blocklist',
+    '--enable-gpu-rasterization', '--use-angle=d3d11',
+    '--mute-audio',
+  ];
+  if (allowAutoplay) args.push('--autoplay-policy=no-user-gesture-required');
   return chromium().launch({
     executablePath: CHROME,
     headless: true,
-    args: [
-      '--no-first-run', '--no-default-browser-check',
-      '--enable-webgl', '--ignore-gpu-blocklist',
-      '--enable-gpu-rasterization', '--use-angle=d3d11',
-      '--mute-audio', '--autoplay-policy=no-user-gesture-required',
-    ],
+    args,
   });
 }
 

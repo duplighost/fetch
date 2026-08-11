@@ -33,7 +33,7 @@ const BOOT_MODULE_AT = performance.now();
 let BOOT_TITLE_INTERACTIVE_AT = null;
 let BOOT_TITLE_PAINT_OPPORTUNITY_AT = null;
 const _impV = new THREE.Vector3();
-const VERSION = '0.5.0-intruder';
+const VERSION = '0.6.0-broken-promise';
 const GORE_CAP = 64;
 
 // ------------------------------------------------------------------- input
@@ -206,6 +206,7 @@ class Game {
     // headless gate wedges inside native WebAudio under arena load; the sim
     // doesn't need ears, and real browsers keep the full soundscape.
     if (Q.has('mute')) this.audio.init = () => {};
+    else this.audio.prepare();
     this.world = new World(this.scene, this.mats);
     this.player = new Player(this.camera, this.world, this.audio);
     this.enemies = new Enemies(this);
@@ -1857,9 +1858,20 @@ class Game {
       ? progress.exactQueued
       : entry.preloadDeferred ? progress.deferredExactQueued : progress.ownerExactQueued;
     if (!targetSet.has(key)) {
-      removeFrom(progress.exactQueue, progress.exactQueued);
-      removeFrom(progress.ownerExactQueue, progress.ownerExactQueued);
-      removeFrom(progress.deferredExactQueue, progress.deferredExactQueued);
+      // Most admissions are genuinely new purpose-keyed entries. Do not linearly
+      // scan all three growing queues for a key their membership sets already
+      // prove is absent; House owner census can add thousands of exact entries
+      // in one bounded snapshot. A rare purpose migration still removes the key
+      // from the one queue that actually owns it before appending to the target.
+      if (progress.exactQueued.has(key)) {
+        removeFrom(progress.exactQueue, progress.exactQueued);
+      }
+      if (progress.ownerExactQueued.has(key)) {
+        removeFrom(progress.ownerExactQueue, progress.ownerExactQueued);
+      }
+      if (progress.deferredExactQueued.has(key)) {
+        removeFrom(progress.deferredExactQueue, progress.deferredExactQueued);
+      }
       targetQueue.push(entry);
       targetSet.add(key);
       return true;
@@ -4114,7 +4126,11 @@ class Game {
           if (ownerOnly) progress.failedOwners.add(failureKey);
           else if (deferredOnly) progress.failedDeferred.add(failureKey);
           else progress.failedObjects.add(failureKey);
-          queuedSet.delete(failureKey);
+          // Owner/deferred failures are removed below and therefore relinquish
+          // queue membership. A critical permanent failure deliberately remains
+          // at the blocked prefix; keep its Set membership coherent so a later
+          // census cannot append a duplicate copy behind the blocker.
+          if (ownerOnly || deferredOnly) queuedSet.delete(failureKey);
         }
         if (ownerOnly || deferredOnly) {
           const permanentSet = new Set(permanentEntries.map(({ next }) => next));
@@ -4304,7 +4320,7 @@ class Game {
       : this.finale?.mirrors?.pool?.[0] || null;
   }
 
-  _prepareCurrentGpuResidency() {
+  _prepareCurrentGpuResidency({ bootstrapReadyAtRenderStart = false } = {}) {
     const warmup = this.shaderWarmup;
     if (!this.started || !warmup || warmup.status === 'skipped') {
       return { full: true, key: 'unmanaged' };
@@ -4368,9 +4384,21 @@ class Game {
     // Census the current physical universe first. The larger future owner scope
     // is a separate named task and can overlap the following resident-prefix
     // reveal, so Wake never waits for mirror geometry it cannot yet see.
+    let currentSnapshotProgress = false;
     if (!progress.currentSnapshotReady) {
       this._refreshReducedWorldQueue(progress);
-      return { full: false, key, snapshotProgress: true };
+      currentSnapshotProgress = true;
+      // When the complete fallback bootstrap was already resident before this
+      // render began, the CPU-only current census and first hidden reduced
+      // upload can safely share one bounded paint. The upload still remains
+      // invisible until the following browser task. This removes a blank Wake
+      // boundary without ever consuming a buffer in the task that created it.
+      // A bootstrap that merely finalized during this render is deliberately
+      // ineligible; its own program-reflection slice still owns the paint.
+      if (!progress.currentSnapshotReady || !bootstrapReadyAtRenderStart
+          || !progress.queue.length) {
+        return { full: false, key, snapshotProgress: true };
+      }
     }
     // A bootstrap submission already owns this paint. CPU census work above is
     // independent and bounded, but never stack a real geometry upload behind a
@@ -4378,7 +4406,10 @@ class Game {
     // are resident in this WebGL generation.
     if (this._bootstrapAdvancedThisRender || !this._reducedBootstrapReady('mesh-basic')
         || !this._reducedBootstrapReady('instanced-basic')) {
-      return { full: false, key, bootstrapPending: true };
+      return {
+        full: false, key, bootstrapPending: true,
+        snapshotProgress: currentSnapshotProgress,
+      };
     }
     if (revealedReducedObjects > 0) {
       // This paint consumes only the prefix whose hidden upload completed on the
@@ -4552,11 +4583,14 @@ class Game {
     }
     if (progress.queue.length) {
       const entry = this._submitReducedWorldBatch(progress);
-      if (!entry) return { full: false, key };
+      if (!entry) return { full: false, key, snapshotProgress: currentSnapshotProgress };
       progress.complete = progress.queue.length === 0
         && progress.pendingReducedReveal.length === 0;
       if (progress.complete) residency.reduced.add(key);
-      return { full: false, key, justReduced: true, entry };
+      return {
+        full: false, key, justReduced: true, entry,
+        snapshotProgress: currentSnapshotProgress,
+      };
     }
     if (!progress.snapshotReady) {
       this._refreshReducedWorldQueue(progress);
@@ -5489,6 +5523,12 @@ class Game {
     state.currentExactUniverse = 0;
     state.currentExactRoots = 0;
     state.currentExactRepresentatives = 0;
+    state.currentExactSignatureEntries = 0;
+    state.currentExactLiveSignatureEntries = 0;
+    state.currentExactSignatureSlices = 0;
+    state.currentExactLiveSignatureSlices = 0;
+    state.currentExactSignatureSliceLimit = 360;
+    state.currentExactSignatureMaxSliceEntries = 0;
     state.currentExactStatus = 'awaiting-progress';
     // `compileAsync` still traverses and creates each program synchronously.
     // Launch exactly one signature per paint; current play never waits behind
@@ -6456,19 +6496,106 @@ class Game {
           lightCount: state.reflectionLights,
         })) return;
       }
-      const currentExactSignature = (progress) => {
-        const entries = [...(progress?.exactObjects?.values?.() || [])]
-          .filter((entry) => entry.critical && entry.rig === 'world' && entry.object);
-        const parts = [];
-        for (const entry of entries) {
-          const descriptor = this._describeReducedEntry(entry, progress, { exact: true });
-          if (descriptor.error) {
-            throw new Error(`${entry.key}: ${descriptor.error}`);
-          }
-          parts.push(`${entry.key}\u001f${descriptor.allocationFingerprint}`);
+      const currentExactProgressMatches = (progress, key, revision) => {
+        const residency = this.currentGpuResidency;
+        return isCurrent() && residency?.generation === generation
+          && residency.activeKey === key && residency.progressive === progress
+          && progress?.key === key && progress.exactShaderRevision === revision;
+      };
+      const currentExactSignature = async (progress, {
+        phase, key, revision, baseline = null,
+      }) => {
+        if (!currentExactProgressMatches(progress, key, revision)
+            || typeof progress.exactObjects?.values !== 'function') {
+          return { stale: true, entries: 0, slices: 0, fingerprints: null, equal: false };
         }
-        parts.sort();
-        return { value: parts.join('\u001e'), entries: parts.length };
+        // Preserve the old exact, order-independent fingerprint equality without
+        // rebuilding and sorting one giant string in a single task. `exactObjects`
+        // is keyed by entry.key, so equality of the complete key->allocation map
+        // is exactly equality of the former sorted key/fingerprint rows.
+        const fingerprints = baseline ? null : new Map();
+        const iterator = progress.exactObjects.values();
+        let complete = false;
+        let stale = false;
+        let equal = true;
+        let signatureEntries = 0;
+        let slices = 0;
+        let snapshotEntries = null;
+        let remainingEntries = null;
+        while (!complete && isCurrent()) {
+          const ok = await runSlice('setup', `signature:current-view:${phase}`, () => {
+            const slice = slices + 1;
+            if (!currentExactProgressMatches(progress, key, revision)) {
+              stale = true;
+              return {
+                phase, slice, entries: 0, signatureEntries: 0,
+                totalSignatureEntries: signatureEntries,
+                complete: false, stale: true, key, revision,
+              };
+            }
+            // Freeze the iterator's finite admission count at the first slice.
+            // Later owner/deferred census may append noncritical purpose keys to
+            // the same Map without revising the current exact shader universe;
+            // an atomic pre/post snapshot would not absorb those later inserts.
+            if (snapshotEntries == null) {
+              snapshotEntries = progress.exactObjects.size;
+              remainingEntries = snapshotEntries;
+            }
+            let entries = 0;
+            let included = 0;
+            while (entries < state.currentExactSignatureSliceLimit && remainingEntries > 0) {
+              const next = iterator.next();
+              if (next.done) {
+                complete = true;
+                remainingEntries = 0;
+                break;
+              }
+              entries++;
+              remainingEntries--;
+              const entry = next.value;
+              if (!entry?.critical || entry.rig !== 'world' || !entry.object) continue;
+              const descriptor = this._describeReducedEntry(entry, progress, { exact: true });
+              if (descriptor.error) throw new Error(`${entry.key}: ${descriptor.error}`);
+              included++;
+              signatureEntries++;
+              if (baseline) {
+                if (!baseline.has(entry.key)
+                    || baseline.get(entry.key) !== descriptor.allocationFingerprint) {
+                  equal = false;
+                }
+              } else {
+                fingerprints.set(entry.key, descriptor.allocationFingerprint);
+              }
+            }
+            if (remainingEntries === 0) complete = true;
+            state.currentExactSignatureMaxSliceEntries = Math.max(
+              state.currentExactSignatureMaxSliceEntries, entries,
+            );
+            return {
+              phase, slice, entries, signatureEntries: included,
+              totalSignatureEntries: signatureEntries,
+              entryLimit: state.currentExactSignatureSliceLimit,
+              snapshotEntries, remainingEntries,
+              complete, stale: false, key, revision,
+            };
+          });
+          if (!ok) return null;
+          slices++;
+          if (stale) {
+            return { stale: true, entries: signatureEntries, slices, fingerprints, equal: false };
+          }
+        }
+        if (!isCurrent()) return null;
+        if (!currentExactProgressMatches(progress, key, revision)) {
+          return { stale: true, entries: signatureEntries, slices, fingerprints, equal: false };
+        }
+        return {
+          stale: false,
+          entries: signatureEntries,
+          slices,
+          fingerprints,
+          equal: baseline ? equal && signatureEntries === baseline.size : true,
+        };
       };
       const currentProgress = this.currentGpuResidency?.progressive;
       if (currentProgress?.key === this.currentGpuResidency?.activeKey) {
@@ -6482,13 +6609,28 @@ class Game {
         state.currentExactUniverse = currentProgress.exactUniverse.size;
         state.currentExactRoots = currentRoots.length;
         state.currentExactStatus = 'discovering';
-        let currentSignature = null;
-        if (!await runSlice('setup', 'signature:current-view:pre', () => {
-          const snapshot = currentExactSignature(currentProgress);
-          currentSignature = snapshot.value;
-          state.currentExactSignatureEntries = snapshot.entries;
-          return { entries: snapshot.entries };
-        })) return;
+        const restartStaleCurrentExact = () => {
+          if (!isCurrent()) return;
+          state.currentExactStatus = 'stale';
+          state.readyVariants = state.readyVariants
+            .filter((label) => label !== 'current-view-exact');
+          this._shaderResidentVariants.delete('current-view-exact');
+          this._invalidateShaderWarmup(
+            `current-view-changed:${currentKey}:${currentRevision}`,
+            { preserveResident: true, preserveTargets: true },
+          );
+          this._scheduleShaderWarmup();
+        };
+        const currentSignature = await currentExactSignature(currentProgress, {
+          phase: 'pre', key: currentKey, revision: currentRevision,
+        });
+        if (!currentSignature) return;
+        if (currentSignature.stale) {
+          restartStaleCurrentExact();
+          return;
+        }
+        state.currentExactSignatureEntries = currentSignature.entries;
+        state.currentExactSignatureSlices = currentSignature.slices;
         if (!await discover('current-view', currentRoots)) return;
         if (!await warmPendingTextures('current-view')) return;
         const currentRepresentatives = [...new Set(currentRoots.map((object) =>
@@ -6499,26 +6641,19 @@ class Game {
           representatives: currentRepresentatives,
           deferReady: true,
         })) return;
-        let liveSignature = null;
-        if (!await runSlice('setup', 'signature:current-view:post', () => {
-          const snapshot = currentExactSignature(this.currentGpuResidency?.progressive);
-          liveSignature = snapshot.value;
-          state.currentExactLiveSignatureEntries = snapshot.entries;
-          return { entries: snapshot.entries };
-        })) return;
+        const liveSignature = await currentExactSignature(currentProgress, {
+          phase: 'post', key: currentKey, revision: currentRevision,
+          baseline: currentSignature.fingerprints,
+        });
+        if (!liveSignature) return;
+        state.currentExactLiveSignatureEntries = liveSignature.entries;
+        state.currentExactLiveSignatureSlices = liveSignature.slices;
         const liveProgress = this.currentGpuResidency?.progressive;
-        if (liveProgress?.key !== currentKey
+        if (liveSignature.stale || !liveSignature.equal
+            || liveProgress !== currentProgress || liveProgress?.key !== currentKey
             || liveProgress.exactShaderRevision !== currentRevision
-            || liveSignature !== currentSignature) {
-          state.currentExactStatus = 'stale';
-          state.readyVariants = state.readyVariants
-            .filter((label) => label !== 'current-view-exact');
-          this._shaderResidentVariants.delete('current-view-exact');
-          this._invalidateShaderWarmup(
-            `current-view-changed:${currentKey}:${currentRevision}`,
-            { preserveResident: true, preserveTargets: true },
-          );
-          this._scheduleShaderWarmup();
+            || this.currentGpuResidency?.activeKey !== currentKey) {
+          restartStaleCurrentExact();
           return;
         }
         markVariantReady('current-view-exact');
@@ -6946,12 +7081,17 @@ class Game {
     // live movement. castShadow stays true, preserving the fixed program key.
     if (!this.world?.moon?.shadow?.map) this.world?.retireMoonShadowPrime?.();
     this.started = true;
-    // Return control from the Wake Up handler immediately. A microtask still
-    // shares the activating browser task, so WebAudio receives the user gesture
-    // without letting context/graph construction make the button feel ignored.
-    queueMicrotask(() => {
-      if (this.started && !this.terminal) this.audio.init();
-    });
+    // The native context was prepared while the title loaded. Resume it and
+    // build the tiny silent graph now, before pointer lock can consume the
+    // activation; all PCM work still begins only after a delivered paint.
+    if (!this.terminal) {
+      try { this.audio.init(); }
+      catch (error) {
+        // Audio is essential atmosphere, but a browser WebAudio failure cannot
+        // consume Wake and leave the title covering a game that never started.
+        this.audio._failStartupBake?.(error);
+      }
+    }
     this.el.title.classList.add('hidden');
     // requestIdleCallback is allowed to wait 1.2 seconds. Once play begins,
     // advance that scheduled work to the next task (never this click task), so
@@ -7487,6 +7627,11 @@ class Game {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
     }
+    // Snapshot this before advancing: an async bootstrap program may become
+    // ready and finalize in `_advanceReducedBootstrap()` while returning no
+    // render entry. Such a finalization still owns this paint and must not be
+    // stacked with the first reduced-world upload.
+    const bootstrapReadyAtRenderStart = this._reducedBootstrapReady();
     const bootstrapEntry = this._advanceReducedBootstrap();
     this._bootstrapAdvancedThisRender = !!bootstrapEntry;
     if (!this.started) {
@@ -7545,7 +7690,9 @@ class Game {
       this.camera.rotation.y += rky;
     }
     this._updateWindowAimAffordance(rdt);
-    const residencyPass = this._prepareCurrentGpuResidency();
+    const residencyPass = this._prepareCurrentGpuResidency({
+      bootstrapReadyAtRenderStart,
+    });
     const reducedDetail = !residencyPass.full;
     const districtShaderShielded = this._shaderDistrictRenderShielded();
     this._syncShaderTransitionShield(districtShaderShielded);

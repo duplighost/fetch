@@ -133,10 +133,12 @@ try {
       puzzleId: g.skull.anchor?.puzzleId, attempts: g.incinerator.qualifiedThrows,
     };
     F.stepWith(1 / 120, { throwReleased: true }, false);
+    const releaseEdgeMode = g.skull.mode;
     F.stepWith(0.08, {}, false);
     const afterRelease = {
       offered: g.incinerator.offered, refused: g.incinerator.refused,
       key: g.incinerator.key.visible, mode: g.skull.mode,
+      releaseEdgeMode,
       target: g.world.fetchTargets.find((t) => t.id === 'firebox').enabled,
       attempts: g.incinerator.qualifiedThrows,
     };
@@ -155,7 +157,9 @@ try {
       && !releaseRetry.beforeRelease.key && releaseRetry.beforeRelease.mode === 'anchored'
       && releaseRetry.beforeRelease.puzzleId === 'incineratorOffer'
       && !releaseRetry.afterRelease.offered && !releaseRetry.afterRelease.refused
-      && !releaseRetry.afterRelease.key && releaseRetry.afterRelease.mode === 'returning'
+      && !releaseRetry.afterRelease.key
+      && releaseRetry.afterRelease.releaseEdgeMode === 'returning'
+      && ['returning', 'held'].includes(releaseRetry.afterRelease.mode)
       && releaseRetry.afterRelease.target,
     'releasing an unfinished furnace hold immediately returns the skull and visibly rearms the same attempt',
     releaseRetry);

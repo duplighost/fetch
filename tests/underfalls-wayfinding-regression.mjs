@@ -200,6 +200,13 @@ try {
     );
     g.player.pos.set(prior.x, U.groundAt(prior.x, prior.z), prior.z);
     g.player._sync(0);
+    // The production raycaster is intentionally lazy, and this call also
+    // refreshes the camera world matrix after the sim-only player move.
+    g._crosshairTarget();
+    // This test deliberately advances simulation without a render. Refresh
+    // the newly revealed cave objects once so raycasts use their authored
+    // world transforms rather than constructor-time matrices.
+    g.scene.updateMatrixWorld(true);
     const rayOrigin = g.camera.getWorldPosition(g.player.pos.clone());
     const rayTarget = U.hatch.group.position.clone();
     rayTarget.y += 2.72;
@@ -626,7 +633,9 @@ try {
       F.stepWith(0.25, {}, true);
     }, index);
     const path = shotPath(`${name}.png`);
-    await page.screenshot({ path });
+    const dataUrl = await page.evaluate(() =>
+      window.__game.renderer.domElement.toDataURL('image/png'));
+    writeFileSync(path, Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'));
     report.shots.push(path);
   }
 

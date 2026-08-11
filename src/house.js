@@ -3395,7 +3395,10 @@ function buildSculleryCrawler(game) {
       crawler.entered = true;
       game.flag('sculleryCrawlerEntered');
     }
-    if (crawler.entered && !crawler.vanished) {
+    // A committed proximity recoil owns the encounter's terminal path. Do not
+    // let the ordinary look-away timer race it after a death/resume boundary.
+    if (crawler.entered && !crawler.vanished
+        && !crawler.resolving && !crawler.resolved) {
       // Entry owns a full watched tableau before the apparition is permitted
       // to leave. It can only disappear behind a genuine look-away; the wet
       // hand/floor proof remains, so no indefinite walk-through mannequin is

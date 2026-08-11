@@ -84,16 +84,17 @@ node tests/window-relay-lifecycle-regression.mjs  # 10 relay lifecycle checks
 node tests/dead-flight-interaction-regression.mjs # 6 dead-state interaction checks
 node tests/mirror-failure-regression.mjs          # 6 fail-closed/recovery checks
 node tests/flame-transfer-perf-regression.mjs     # normal/restored guest + pilot paths
+node tests/audio-startup-regression.mjs           # live WebAudio Wake slicing/idempotence/teardown
 node tests/transition-warmup-regression.mjs       # D3D11 first-use/context-loss matrix
 node tests/render-perf.mjs                        # real GPU render budgets
 node tests/district-culling-regression.mjs        # district ownership/draw budget
 ```
 
-The flame-transfer, transition, render-performance, and district-culling gates
-are real-GPU evidence. Run browser/GPU gates serially on system Chrome with
-D3D11, close every test-owned browser, and record the final counts from the
-frozen source. Historical green JSON or screenshots from an earlier working
-edit do not certify the release candidate.
+The flame-transfer, audio-startup, transition, render-performance, and
+district-culling gates are real-browser/GPU evidence. Run browser/GPU gates
+serially on system Chrome with D3D11, close every test-owned browser, and record
+the final counts from the frozen source. Historical green JSON or screenshots
+from an earlier working edit do not certify the release candidate.
 
 Environment traps (hard-won — do not relearn):
 - The playthrough runs muted (`?test=1&mute=1`); native WebAudio wedges

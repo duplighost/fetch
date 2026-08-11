@@ -1,7 +1,9 @@
-// Cold first-entry hitch gate for FETCH's exact shipped renderer path.
-// Two fresh D3D11 contexts cover both adversarial timing and the settled path:
-//   1) Wake immediately, then take the fastest debug story-order entries.
-//   2) Wake immediately, prove warmup is state-pure, then profile every seam.
+// Broad composition gate for FETCH's exact shipped renderer path.
+// Focused Stage-C gates own legal action edges, deterministic cold district
+// probes, and exhaustive owner identity. This matrix keeps the cross-system
+// pressure that only the whole itinerary can provide: immediate Wake races,
+// every story-order seam, warmup purity, context loss in house/cave/Finale,
+// mirror failure containment, and the long Underfalls simulation tail.
 import { writeFileSync } from 'node:fs';
 import {
   ensureServer, launchBrowser, openPage, URL_BASE, resultsPath,
@@ -26,9 +28,6 @@ const report = {
   purity: null,
   settled: [],
   caveTail: null,
-  verbChurn: null,
-  continuousView: null,
-  deferredDistricts: null,
   browserErrors: [],
 };
 const check = (condition, message, detail = null) => {
@@ -52,6 +51,59 @@ const exactP16LightCensus = (types) => types?.total === 20
   && types.spotShadows === 0
   && types.pointShadows === 0
   && types.totalShadows === 1;
+const boundedResidencyTransaction = (entry) => {
+  if (!entry || entry.objects < 1 || entry.geometries < 0) return false;
+  const withinOrdinaryCaps = entry.objects <= 32 && entry.geometries <= 16
+    && entry.geometryBytes <= 512 * 1024 && entry.submittedElements <= 16 * 1024;
+  const isolatedOversize = entry.isolatedOversize === true
+    && entry.objects === 1 && entry.geometries === 1
+    && typeof entry.oversize?.reason === 'string' && entry.oversize.reason.length > 0;
+  return withinOrdinaryCaps || isolatedOversize;
+};
+const validExactPreload = (entry) => boundedResidencyTransaction(entry)
+  && entry.error == null && entry.committed === true && entry.stateRestored === true
+  && entry.generationStable === true && entry.fingerprintsStable === true
+  && entry.queuePrefixStable === true && entry.programDelta === 0
+  && entry.textureDelta === 0 && entry.geometryDelta >= 0
+  && entry.geometryDelta <= entry.geometries
+  && entry.programSelectionObjects === entry.objects
+  && entry.programSelectionDurationMs < 100 && entry.durationMs < 100
+  && ((entry.rig === 'held' && entry.lights === 2)
+    || (entry.rig === 'world' && entry.lights === 20));
+const validUniverseFinalizerAttempt = (entry) => entry?.error == null
+  && entry.scanDurationMs < 100 && entry.recordDurationMs < 100
+  && entry.durationMs < 100 && typeof entry.recorded === 'boolean';
+const finalizerGroupKey = (entry) => [
+  entry?.generation, entry?.key, entry?.scope, entry?.kind,
+].join('|');
+const convergedUniverseFinalizers = (entries) => {
+  if (!Array.isArray(entries) || entries.length === 0
+      || !entries.every(validUniverseFinalizerAttempt)) return false;
+  const groups = new Map();
+  for (const entry of entries) {
+    const key = finalizerGroupKey(entry);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  }
+  return [...groups.values()].every((attempts) =>
+    attempts.at(-1)?.recorded === true
+      && attempts.filter((entry) => entry.recorded).length === 1);
+};
+const finalizerAttemptsOwnZeroDrawFrames = (entries, frames) =>
+  Array.isArray(entries) && Array.isArray(frames)
+  && entries.length === frames.length
+  && frames.every((frame) => validUniverseFinalizerAttempt(frame)
+    && Number.isInteger(frame.frameId) && frame.frameId > 0
+    && frame.renderMs < 100 && frame.worldDrawCalls === 0 && frame.drawCalls === 0
+    && frame.generation === frame.renderGeneration
+    && frame.key === frame.renderKey);
+const finalizersOwnZeroDrawFrames = (entries, frames) =>
+  finalizerAttemptsOwnZeroDrawFrames(entries, frames)
+  && convergedUniverseFinalizers(entries);
+const matchingFinalizerFrames = (entries, frames) => {
+  const keys = new Set((entries || []).map(finalizerGroupKey));
+  return (frames || []).filter((entry) => keys.has(finalizerGroupKey(entry)));
+};
 
 async function ready(page) {
   await page.waitForFunction(
@@ -67,17 +119,66 @@ async function runImmediateRace(browser) {
   const value = await page.evaluate(async ({ seams }) => {
     const g = window.__game, F = window.__FETCH;
     const intervals = [];
+    const slowObserved = [];
     const renders = [];
+    // Start-to-start includes the preceding render's own duration. Keep it for
+    // diagnosis, especially across Wake's first hidden upload, but gate the
+    // independently owned render, idle, completion and observed intervals.
+    const renderCadence = (rows) => ({
+      renderCount: rows.length,
+      maxRenderStartIntervalMs: Math.max(0, ...rows.slice(1)
+        .map((row, index) => row.startedAt - rows[index].startedAt)),
+      maxInterRenderIdleMs: Math.max(0, ...rows.slice(1)
+        .map((row, index) => row.startedAt - rows[index].completedAt)),
+      maxRenderCompletionIntervalMs: Math.max(0, ...rows.slice(1)
+        .map((row, index) => row.completedAt - rows[index].completedAt)),
+    });
+    const orderingErrors = [];
+    const finalizerFrames = [];
+    const seenFinalizers = new WeakSet();
+    let frameSerial = 0;
+    let lastCompletedRender = null;
     let wakeAt = null;
     let previous = null;
     let sampling = true;
-    const raf = (timestamp) => {
-      if (previous != null) intervals.push(timestamp - previous);
-      previous = timestamp;
-      if (sampling) requestAnimationFrame(raf);
+    const raf = () => {
+      if (!sampling) return;
+      const observedAt = performance.now();
+      const completed = lastCompletedRender;
+      if (completed) {
+        if (previous) {
+          const ordered = completed.frameId > previous.frameId
+            && completed.completedAt <= observedAt
+            && previous.completedAt <= previous.observedAt;
+          if (ordered) {
+            const durationMs = observedAt - previous.observedAt;
+            intervals.push(durationMs);
+            if (durationMs >= 80 && slowObserved.length < 16) {
+              slowObserved.push({
+                durationMs,
+                previous: {
+                  frameId: previous.frameId,
+                  startedAt: previous.startedAt,
+                  completedAt: previous.completedAt,
+                  observedAt: previous.observedAt,
+                },
+                current: {
+                  frameId: completed.frameId,
+                  startedAt: completed.startedAt,
+                  completedAt: completed.completedAt,
+                  observedAt,
+                },
+              });
+            }
+          }
+          else if (orderingErrors.length < 16) {
+            orderingErrors.push({ previous, current: { ...completed, observedAt } });
+          }
+        }
+        previous = { ...completed, observedAt };
+      }
+      requestAnimationFrame(raf);
     };
-    requestAnimationFrame(raf);
-    await new Promise((resolve) => requestAnimationFrame(resolve));
 
     const realRender = g.render;
     g.render = function raceRender(...args) {
@@ -87,10 +188,15 @@ async function runImmediateRace(browser) {
       const startedAt = performance.now();
       try { return realRender.apply(this, args); }
       finally {
-        renders.push({
+        const completedAt = performance.now();
+        const row = {
+          frameId: ++frameSerial,
           act: g.act,
-          atMs: performance.now(),
-          ms: performance.now() - startedAt,
+          generation: g._webglGeneration,
+          startedAt,
+          completedAt,
+          atMs: completedAt,
+          ms: completedAt - startedAt,
           beforePrograms,
           afterPrograms: g.renderer.info.programs?.length ?? 0,
           beforeTextures,
@@ -98,15 +204,42 @@ async function runImmediateRace(browser) {
           beforeGeometries,
           afterGeometries: g.renderer.info.memory.geometries,
           drawCalls: g.lastRender?.drawCalls || 0,
+          worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
           shielded: !!g._shaderTransitionShield,
           reducedDetail: !!g.lastRender?.reducedDetail,
           residencyKey: g.lastRender?.residencyKey || null,
+          bootstrapKind: g.lastRender?.bootstrapKind || null,
+          snapshotProgress: !!g.lastRender?.snapshotProgress,
+          reducedBatchSubmitted: !!g.lastRender?.reducedBatchSubmitted,
+          reducedBatchRevealed: !!g.lastRender?.reducedBatchRevealed,
+          ownerProgress: !!g.lastRender?.ownerProgress,
+          deferredProgress: !!g.lastRender?.deferredProgress,
+          ownerExactProgress: !!g.lastRender?.ownerExactProgress,
+          deferredExactProgress: !!g.lastRender?.deferredExactProgress,
           visibleProgramDelta: g.lastRender?.visibleProgramDelta || 0,
           visibleTextureDelta: g.lastRender?.visibleTextureDelta || 0,
           visibleGeometryDelta: g.lastRender?.visibleGeometryDelta || 0,
-        });
+        };
+        renders.push(row);
+        lastCompletedRender = row;
+        for (const entry of g.currentGpuResidency?.universeFinalizePasses || []) {
+          if (seenFinalizers.has(entry)) continue;
+          seenFinalizers.add(entry);
+          finalizerFrames.push({
+            ...entry,
+            frameId: row.frameId,
+            renderGeneration: row.generation,
+            renderKey: g.currentGpuResidency?.progressive?.key || null,
+            renderMs: row.ms,
+            worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
+            drawCalls: g.lastRender?.drawCalls || 0,
+            reducedDetail: !!g.lastRender?.reducedDetail,
+          });
+        }
       }
     };
+    requestAnimationFrame(raf);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     const warmupBeforeStart = g.shaderWarmup.status;
     const startAt = performance.now();
     wakeAt = startAt;
@@ -114,6 +247,7 @@ async function runImmediateRace(browser) {
     const startMs = performance.now() - startAt;
     g._selfStep = true;
     g.teleport('house');
+    if (g.act !== 'house') throw new Error(`immediate Wake landed in ${g.act}, not house`);
     const countPointLights = () => {
       let count = 0;
       g.scene.traverse((object) => { if (object.isPointLight) count++; });
@@ -121,6 +255,7 @@ async function runImmediateRace(browser) {
     };
     const impactRenderIndex = renders.length;
     const impactIntervalIndex = intervals.length;
+    const impactSlowObservedIndex = slowObserved.length;
     const impactBefore = {
       pointLights: countPointLights(),
       sceneChildren: g.scene.children.length,
@@ -130,11 +265,20 @@ async function runImmediateRace(browser) {
       bootPrime: g._impactRing?.userData?.bootPrime ?? null,
     };
     g.impact('locked', g.player.pos.clone().setY(g.player.pos.y + 1));
+    const impactActivation = {
+      ringVisible: !!g._impactRing?.visible,
+      bootPrime: !!g._impactRing?.userData?.bootPrime,
+      ringT: g._ringT,
+      ringIn: !!g._ringIn,
+      lightIntensity: g._impactLight?.intensity || 0,
+      hitStop: g.hitStop || 0,
+    };
     for (let i = 0; i < 5; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
     const impactRenders = renders.slice(impactRenderIndex);
     const impactIntervals = intervals.slice(impactIntervalIndex);
     const firstImpact = {
       before: impactBefore,
+      activation: impactActivation,
       after: {
         pointLights: countPointLights(),
         sceneChildren: g.scene.children.length,
@@ -145,6 +289,9 @@ async function runImmediateRace(browser) {
       },
       maxRafMs: Math.max(0, ...impactIntervals),
       maxRenderMs: Math.max(0, ...impactRenders.map((entry) => entry.ms)),
+      ...renderCadence(impactRenders),
+      renderRows: impactRenders,
+      slowObserved: slowObserved.slice(impactSlowObservedIndex),
       visibleRenderProgramDelta: Math.max(0, ...impactRenders.map((entry) =>
         entry.visibleProgramDelta)),
       visibleRenderTextureDelta: Math.max(0, ...impactRenders.map((entry) =>
@@ -156,22 +303,24 @@ async function runImmediateRace(browser) {
     const earlyPriorityKeys = [];
     for (const earlyAct of ['bedroom', 'house', 'basement']) {
       F.teleport(earlyAct);
+      if (g.act !== earlyAct) throw new Error(`early priority teleport landed in ${g.act}, not ${earlyAct}`);
       earlyPriorityKeys.push(g._shaderWarmPriorityKey());
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
     F.teleport('house');
+    if (g.act !== 'house') throw new Error(`early priority return landed in ${g.act}, not house`);
     const earlyHousePriority = {
       keys: earlyPriorityKeys,
       restarts: (g._shaderWarmPriorityChanges || 0) - earlyPriorityBefore,
     };
     const fullHouseDeadline = wakeAt + 600;
-    while (!renders.some((entry) => entry.atMs >= wakeAt && entry.drawCalls > 0
+    while (!renders.some((entry) => entry.atMs >= wakeAt && entry.worldDrawCalls > 0
         && !entry.reducedDetail) && performance.now() < fullHouseDeadline) {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
     const houseRenders = renders.filter((entry) => entry.atMs >= wakeAt);
-    const firstHouseWorld = houseRenders.find((entry) => entry.drawCalls > 0) || null;
-    const firstHouseFull = houseRenders.find((entry) => entry.drawCalls > 0
+    const firstHouseWorld = houseRenders.find((entry) => entry.worldDrawCalls > 0) || null;
+    const firstHouseFull = houseRenders.find((entry) => entry.worldDrawCalls > 0
       && !entry.reducedDetail) || null;
     const houseLights = [];
     g.scene.traverseVisible((object) => {
@@ -201,14 +350,17 @@ async function runImmediateRace(browser) {
       ),
     };
     const transitions = [];
+    // These impossible-fast transitions install authored post-story state as a
+    // renderer fixture. They do not claim that the player earned the state;
+    // the focused dynamics gate owns the real waterfall, catch, and district
+    // traversal paths.
     for (const [name, act] of seams) {
       if (act === 'cave' && !g.flags.has('waterfallTaken')) {
         g.director.waterfallTaken();
         g.skull.vanish();
       }
-      const renderIndex = renders.length;
-      const intervalIndex = intervals.length;
       await new Promise((resolve) => requestAnimationFrame(resolve));
+      const renderIndex = renders.length;
       const at = performance.now();
       if (act === 'ossuary') {
         const ossuary = g.ossuary;
@@ -228,27 +380,67 @@ async function runImmediateRace(browser) {
         F.stepWith(1 / 120, {}, false);
         if (!ossuary.inOssuary) throw new Error('physical ossuary entry did not cross');
       } else F.teleport(act);
+      if (act === 'ossuary') {
+        if (g.act !== 'graveyard' || !g.ossuary.inOssuary) {
+          throw new Error(`physical ossuary race landed in ${g.act} without ossuary ownership`);
+        }
+      } else if (g.act !== act) {
+        throw new Error(`${name} race landed in ${g.act}, not ${act}`);
+      }
       const transitionMs = performance.now() - at;
+      const expectedGeneration = g._webglGeneration;
+      const expectedKey = g._currentGpuResidencyKey();
+      const seamIntervals = [];
+      const seamOrderingErrors = [];
+      let previousSeamFrame = null;
+      const destinationRenders = () => renders.slice(renderIndex).filter((entry) =>
+        entry.startedAt >= at && entry.generation === expectedGeneration
+          && entry.residencyKey === expectedKey);
       // Attack faster than human traversal, but wait up to the explicit brief
       // shield budget so a seam cannot pass merely because all eight sampled
       // frames were opaque. Ordinary gameplay should reveal much earlier.
       let sampledFrames = 0;
       const revealDeadline = performance.now() + 600;
       while (sampledFrames < 8
-          || (!renders.slice(renderIndex).some((entry) => entry.drawCalls > 0)
+          || (!destinationRenders().some((entry) => entry.worldDrawCalls > 0)
             && performance.now() < revealDeadline)) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
+        const observedAt = performance.now();
+        const completed = lastCompletedRender;
+        const ordered = completed && completed.startedAt >= at
+          && completed.completedAt <= observedAt
+          && completed.generation === expectedGeneration
+          && completed.residencyKey === expectedKey
+          && (!previousSeamFrame || completed.frameId > previousSeamFrame.frameId
+            && previousSeamFrame.completedAt <= previousSeamFrame.observedAt);
+        if (ordered) {
+          if (previousSeamFrame) {
+            seamIntervals.push(observedAt - previousSeamFrame.observedAt);
+          }
+          previousSeamFrame = { ...completed, observedAt };
+        } else if (seamOrderingErrors.length < 16) {
+          seamOrderingErrors.push({
+            previous: previousSeamFrame,
+            current: completed,
+            observedAt,
+            expectedGeneration,
+            expectedKey,
+          });
+        }
         sampledFrames++;
       }
-      const seamRenders = renders.slice(renderIndex);
-      const seamIntervals = intervals.slice(intervalIndex);
-      const firstWorld = seamRenders.find((entry) => entry.drawCalls > 0) || null;
+      const seamRenders = destinationRenders();
+      const firstWorld = seamRenders.find((entry) => entry.worldDrawCalls > 0) || null;
       const firstShield = seamRenders.find((entry) => entry.shielded) || null;
       const firstUnshieldAfter = firstShield
         ? seamRenders.find((entry) => !entry.shielded && entry.atMs >= firstShield.atMs)
         : null;
       transitions.push({
         name,
+        expectedGeneration,
+        expectedKey,
+        orderingErrors: seamOrderingErrors,
+        rafIntervals: seamIntervals.length,
         transitionMs,
         maxRafMs: Math.max(0, ...seamIntervals),
         p95RafMs: (() => {
@@ -256,6 +448,7 @@ async function runImmediateRace(browser) {
           return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1))] || 0;
         })(),
         maxRenderMs: Math.max(0, ...seamRenders.map((entry) => entry.ms)),
+        ...renderCadence(seamRenders),
         firstWorldMs: firstWorld ? firstWorld.atMs - at : null,
         worldSubmitted: !!firstWorld,
         shieldFrames: seamRenders.filter((entry) => entry.shielded).length,
@@ -272,14 +465,27 @@ async function runImmediateRace(browser) {
         textures: g.renderer.info.memory.textures,
         warmupStatus: g.shaderWarmup.status,
         targetsWarmed: g.finale._targetWarmState?.warmed || 0,
+        cleanupMs: 0,
       });
       if (act === 'ossuary') {
-        g.ossuary.inOssuary = false;
-        F.stepWith(0.03, {}, false);
+        const cleanupStartedAt = performance.now();
+        for (let index = 0; index < 15 && g.ossuary.portalCooldown > 0; index++) {
+          F.stepWith(0.04, {}, false);
+        }
+        g.player.pos.set(g.ossuary.origin.x, g.ossuary.origin.floor,
+          g.ossuary.origin.z + 0.2);
+        g.player.vel.set(0, 0, 0);
+        g.player.fallV = 0;
+        g.player.grounded = true;
+        g.player._sync(0);
+        F.stepWith(1 / 120, {}, false);
+        if (g.ossuary.inOssuary || g.ossuary.root.visible) {
+          throw new Error('physical ossuary backtrack did not restore the graveyard');
+        }
+        transitions.at(-1).cleanupMs = performance.now() - cleanupStartedAt;
       }
     }
     const returnRenderIndex = renders.length;
-    const returnIntervalIndex = intervals.length;
     const returnRestartCount = g._shaderWarmPriorityChanges || 0;
     const returnResidentBefore = [
       ...(g.currentGpuResidency?.physical || []),
@@ -287,21 +493,56 @@ async function runImmediateRace(browser) {
     ].some((key) => key.includes(':forest:forest'));
     const returnAt = performance.now();
     F.teleport('forest');
+    if (g.act !== 'forest') throw new Error(`rapid return landed in ${g.act}, not forest`);
+    const returnGeneration = g._webglGeneration;
+    const returnKey = g._currentGpuResidencyKey();
+    const returnIntervals = [];
+    const returnOrderingErrors = [];
+    let previousReturnFrame = null;
+    const destinationReturnRenders = () => renders.slice(returnRenderIndex)
+      .filter((entry) => entry.startedAt >= returnAt
+        && entry.generation === returnGeneration && entry.residencyKey === returnKey);
     let returnSamples = 0;
     const returnDeadline = performance.now() + 600;
     while (returnSamples < 8
-        || (!renders.slice(returnRenderIndex).some((entry) => entry.drawCalls > 0)
+        || (!destinationReturnRenders().some((entry) => entry.worldDrawCalls > 0)
           && performance.now() < returnDeadline)) {
       await new Promise((resolve) => requestAnimationFrame(resolve));
+      const observedAt = performance.now();
+      const completed = lastCompletedRender;
+      const ordered = completed && completed.startedAt >= returnAt
+        && completed.completedAt <= observedAt
+        && completed.generation === returnGeneration
+        && completed.residencyKey === returnKey
+        && (!previousReturnFrame || completed.frameId > previousReturnFrame.frameId
+          && previousReturnFrame.completedAt <= previousReturnFrame.observedAt);
+      if (ordered) {
+        if (previousReturnFrame) {
+          returnIntervals.push(observedAt - previousReturnFrame.observedAt);
+        }
+        previousReturnFrame = { ...completed, observedAt };
+      } else if (returnOrderingErrors.length < 16) {
+        returnOrderingErrors.push({
+          previous: previousReturnFrame,
+          current: completed,
+          observedAt,
+          expectedGeneration: returnGeneration,
+          expectedKey: returnKey,
+        });
+      }
       returnSamples++;
     }
-    const returnRenders = renders.slice(returnRenderIndex);
+    const returnRenders = destinationReturnRenders();
     const residentReturn = {
       residentBefore: returnResidentBefore,
+      expectedGeneration: returnGeneration,
+      expectedKey: returnKey,
+      orderingErrors: returnOrderingErrors,
+      rafIntervals: returnIntervals.length,
       restarts: (g._shaderWarmPriorityChanges || 0) - returnRestartCount,
-      worldSubmitted: returnRenders.some((entry) => entry.drawCalls > 0),
+      worldSubmitted: returnRenders.some((entry) => entry.worldDrawCalls > 0),
       firstWorldMs: (() => {
-        const first = returnRenders.find((entry) => entry.drawCalls > 0);
+        const first = returnRenders.find((entry) => entry.worldDrawCalls > 0);
         return first ? first.atMs - returnAt : null;
       })(),
       visibleProgramDelta: Math.max(0, ...returnRenders.map((entry) =>
@@ -310,24 +551,29 @@ async function runImmediateRace(browser) {
         entry.visibleTextureDelta)),
       visibleGeometryDelta: Math.max(0, ...returnRenders.map((entry) =>
         entry.visibleGeometryDelta)),
-      maxRafMs: Math.max(0, ...intervals.slice(returnIntervalIndex)),
+      maxRafMs: Math.max(0, ...returnIntervals),
+      ...renderCadence(returnRenders),
     };
     sampling = false;
-    g.render = realRender;
     await new Promise((resolve) => requestAnimationFrame(resolve));
+    g.render = realRender;
     const postWakeRenders = renders.filter((entry) => entry.atMs >= wakeAt);
-    const firstWorld = postWakeRenders.find((entry) => entry.drawCalls > 0) || null;
+    const firstWorld = postWakeRenders.find((entry) => entry.worldDrawCalls > 0) || null;
     const paint = Object.fromEntries(performance.getEntriesByType('paint')
       .map((entry) => [entry.name, entry.startTime]));
     return {
       warmupBeforeStart,
       startMs,
       maxRafMs: Math.max(0, ...intervals),
+      rafIntervals: intervals.length,
+      orderingErrors,
+      slowObserved,
       p95RafMs: (() => {
         const sorted = [...intervals].sort((a, b) => a - b);
         return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * 0.95) - 1))] || 0;
       })(),
       maxRenderMs: Math.max(0, ...renders.map((entry) => entry.ms)),
+      ...renderCadence(renders),
       wakeToFirstWorldMs: firstWorld ? firstWorld.atMs - wakeAt : null,
       firstWorld,
       bootTiming: { ...g.bootTiming },
@@ -359,16 +605,28 @@ async function runImmediateRace(browser) {
       warmup: { ...g.shaderWarmup },
       residency: {
         generation: g.currentGpuResidency?.generation,
+        activeKey: g.currentGpuResidency?.activeKey || null,
+        progressiveKey: g.currentGpuResidency?.progressive?.key || null,
+        bootstrapStatus: g.currentGpuResidency?.bootstrapStatus || null,
+        surfaceStatus: g.currentGpuResidency?.surfaceStatus || null,
+        bootstrapNext: g.currentGpuResidency?.bootstrapNext ?? null,
+        bootstrapPasses: [...(g.currentGpuResidency?.bootstrapPasses || [])],
+        surfacePasses: [...(g.currentGpuResidency?.surfacePasses || [])],
+        snapshotPasses: [...(g.currentGpuResidency?.snapshotPasses || [])],
         physical: [...(g.currentGpuResidency?.physical || [])],
         reduced: [...(g.currentGpuResidency?.reduced || [])],
         owners: [...(g.currentGpuResidency?.owners || [])],
         exactPasses: [...(g.currentGpuResidency?.exactPasses || [])],
+        exactPreloadPasses: [...(g.currentGpuResidency?.exactPreloadPasses || [])],
         reducedPasses: [...(g.currentGpuResidency?.reducedPasses || [])],
         ownerPasses: [...(g.currentGpuResidency?.ownerPasses || [])],
         ownerUniverses: [...(g.currentGpuResidency?.ownerUniverses || [])],
         deferredUniverses: [...(g.currentGpuResidency?.deferredUniverses || [])],
+        universeFinalizePasses: [...(g.currentGpuResidency?.universeFinalizePasses || [])],
+        finalizerFrames,
         skullWorldPasses: [...(g.currentGpuResidency?.skullWorldPasses || [])],
         maxExactMs: g.currentGpuResidency?.maxExactMs || 0,
+        maxExactPreloadMs: g.currentGpuResidency?.maxExactPreloadMs || 0,
         maxReducedPrimeMs: g.currentGpuResidency?.maxReducedPrimeMs || 0,
         maxOwnerMs: g.currentGpuResidency?.maxOwnerMs || 0,
         reducedFrames: g.currentGpuResidency?.reducedFrames || 0,
@@ -380,22 +638,6 @@ async function runImmediateRace(browser) {
   }, { seams: SEAMS });
   report.browserErrors.push(...opened.errors.map((error) => `race: ${error}`));
   await page.close();
-  value.startMs = round(value.startMs);
-  value.maxRafMs = round(value.maxRafMs);
-  value.p95RafMs = round(value.p95RafMs);
-  value.maxRenderMs = round(value.maxRenderMs);
-  value.wakeToFirstWorldMs = round(value.wakeToFirstWorldMs);
-  value.maxShieldDurationMs = round(value.maxShieldDurationMs);
-  value.wakeHouse.wakeToFirstWorldMs = round(value.wakeHouse.wakeToFirstWorldMs);
-  value.wakeHouse.wakeToFirstFullMs = round(value.wakeHouse.wakeToFirstFullMs);
-  value.wakeHouse.maxShieldDurationMs = round(value.wakeHouse.maxShieldDurationMs);
-  for (const key of ['maxRafMs', 'maxRenderMs']) value.firstImpact[key] = round(value.firstImpact[key]);
-  for (const seam of value.transitions) {
-    for (const key of [
-      'transitionMs', 'maxRafMs', 'p95RafMs', 'maxRenderMs', 'firstWorldMs',
-      'shieldDurationMs',
-    ]) seam[key] = round(seam[key]);
-  }
   return value;
 }
 
@@ -496,9 +738,10 @@ async function runContinuousViewResidency(browser) {
     const intervals = [];
     let previousRaf = null;
     let sampling = true;
-    const sampleRaf = (timestamp) => {
-      if (previousRaf != null) intervals.push(timestamp - previousRaf);
-      previousRaf = timestamp;
+    const sampleRaf = () => {
+      const observedAt = performance.now();
+      if (previousRaf != null) intervals.push(observedAt - previousRaf);
+      previousRaf = observedAt;
       if (sampling) requestAnimationFrame(sampleRaf);
     };
     requestAnimationFrame(sampleRaf);
@@ -930,9 +1173,10 @@ async function runDeferredDistrictResidency(browser) {
       const intervals = [];
       let previousRaf = null;
       let sampling = true;
-      const sampleRaf = (timestamp) => {
-        if (previousRaf != null) intervals.push(timestamp - previousRaf);
-        previousRaf = timestamp;
+      const sampleRaf = () => {
+        const observedAt = performance.now();
+        if (previousRaf != null) intervals.push(observedAt - previousRaf);
+        previousRaf = observedAt;
         if (sampling) requestAnimationFrame(sampleRaf);
       };
       requestAnimationFrame(sampleRaf);
@@ -1288,67 +1532,300 @@ async function runPurityAndSettled(browser) {
         } : null,
       };
     };
-    const collectRenderableIds = (roots) => {
-      const ids = new Set();
-      for (const root of roots) root?.traverse((object) => {
-        if ((object.isMesh || object.isLine || object.isPoints)
-            && object.geometry && object.material) ids.add(object.uuid);
-      });
-      return [...ids].sort();
-    };
     const intervals = [];
+    const purityRenders = [];
+    const orderingErrors = [];
+    const finalizerFrames = [];
+    const seenFinalizers = new WeakSet();
+    let frameSerial = 0;
+    let lastCompletedRender = null;
+    const realRender = g.render;
+    g.render = function measuredPurityRender(...args) {
+      const renderStartedAt = performance.now();
+      try { return realRender.apply(this, args); }
+      finally {
+        const renderCompletedAt = performance.now();
+        const row = {
+          frameId: ++frameSerial,
+          generation: g._webglGeneration,
+          key: g.currentGpuResidency?.progressive?.key || null,
+          startedAt: renderStartedAt,
+          completedAt: renderCompletedAt,
+          ms: renderCompletedAt - renderStartedAt,
+        };
+        purityRenders.push(row);
+        lastCompletedRender = row;
+        for (const entry of g.currentGpuResidency?.universeFinalizePasses || []) {
+          if (seenFinalizers.has(entry)) continue;
+          seenFinalizers.add(entry);
+          finalizerFrames.push({
+            ...entry,
+            frameId: row.frameId,
+            renderGeneration: row.generation,
+            renderKey: row.key,
+            renderMs: row.ms,
+            worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
+            drawCalls: g.lastRender?.drawCalls || 0,
+            reducedDetail: !!g.lastRender?.reducedDetail,
+          });
+        }
+      }
+    };
     let previous = null;
     let sampling = true;
-    const raf = (timestamp) => {
-      if (previous != null) intervals.push(timestamp - previous);
-      previous = timestamp;
-      if (sampling) requestAnimationFrame(raf);
+    const raf = () => {
+      if (!sampling) return;
+      const observedAt = performance.now();
+      const completed = lastCompletedRender;
+      if (completed) {
+        if (previous) {
+          const ordered = completed.frameId > previous.frameId
+            && completed.completedAt <= observedAt
+            && previous.completedAt <= previous.observedAt;
+          if (ordered) intervals.push(observedAt - previous.observedAt);
+          else if (orderingErrors.length < 16) {
+            orderingErrors.push({ previous, current: { ...completed, observedAt } });
+          }
+        }
+        previous = { ...completed, observedAt };
+      }
+      requestAnimationFrame(raf);
     };
     requestAnimationFrame(raf);
     await new Promise((resolve) => requestAnimationFrame(resolve));
     const beforeSkullResidency = skullResidencyState();
+    const audioPreparation = {
+      contextExists: !!g.audio.ctx,
+      contextState: g.audio.ctx?.state || null,
+      graphInitialized: !!g.audio._graphInitialized,
+      masterExists: !!g.audio.master,
+      startupSourcesStarted: !!g.audio._startupSourcesStarted,
+      ready: g.audio.ready,
+      status: g.audio.startupBake?.status || null,
+      prepareCalls: g.audio.startupBake?.prepareCalls ?? null,
+      contextPrepareStartedAt: g.audio.startupBake?.contextPrepareStartedAt ?? null,
+      contextPrepareReadyAt: g.audio.startupBake?.contextPrepareReadyAt ?? null,
+      contextCreatedAt: g.audio.startupBake?.contextCreatedAt ?? null,
+      contextPrepareMs: g.audio.startupBake?.contextPrepareMs ?? null,
+      contextPrepareError: g.audio.startupBake?.contextPrepareError ?? null,
+    };
+    const audioInitCalls = [];
+    const realAudioInit = g.audio.init;
+    g.audio.init = function measuredAudioInit(...args) {
+      const audioStartedAt = performance.now();
+      try { return realAudioInit.apply(this, args); }
+      finally {
+        const audioCompletedAt = performance.now();
+        audioInitCalls.push({
+          startedAt: audioStartedAt,
+          completedAt: audioCompletedAt,
+          durationMs: audioCompletedAt - audioStartedAt,
+        });
+      }
+    };
+    // Keep deterministic gameplay time frozen before the Wake transaction.
+    // Test-mode rAF still renders every frame, so audio/GPU background work is
+    // measured without advancing Director timers, enemy age or story state.
+    g._selfStep = false;
     const startedAt = performance.now();
     F.start();
     const startMs = performance.now() - startedAt;
-    // startGame deliberately initializes WebAudio in a user-gesture microtask.
-    // Purity begins after that authored startup transaction, not before it, so
-    // the shader compiler cannot be blamed for the expected false -> true edge.
+    // startGame synchronously resumes the prepared context and initializes the
+    // silent graph before pointer lock. This continuation still precedes every
+    // post-paint PCM slice.
     await Promise.resolve();
-    // Keep deterministic gameplay time frozen while the asynchronous compiler
-    // runs. Test-mode rAF still renders every frame, so this isolates warmup
-    // purity from ordinary Director timers, enemy age and story progression.
-    g._selfStep = false;
+    const wakeTaskMs = performance.now() - startedAt;
+    g.audio.init = realAudioInit;
     const afterStart = state();
-    const deadline = performance.now() + 90000;
-    while (['scheduled', 'pending'].includes(g.shaderWarmup.status) && performance.now() < deadline) {
+    const compactAudioStartup = () => {
+      const startup = g.audio.startupBake;
+      return startup ? {
+        status: startup.status,
+        prepareCalls: startup.prepareCalls,
+        initCalls: startup.initCalls,
+        resumeCalls: startup.resumeCalls,
+        contextPrepareStartedAt: startup.contextPrepareStartedAt,
+        contextPrepareReadyAt: startup.contextPrepareReadyAt,
+        contextPrepareMs: startup.contextPrepareMs,
+        contextPrepareError: startup.contextPrepareError,
+        requestedAt: startup.requestedAt,
+        contextCreatedAt: startup.contextCreatedAt,
+        startedAt: startup.startedAt,
+        readyAt: startup.readyAt,
+        durationMs: startup.durationMs,
+        totalLatencyMs: startup.totalLatencyMs,
+        sliceBudgetMs: startup.sliceBudgetMs,
+        primitiveLimit: startup.primitiveLimit,
+        pcmChunkSamples: startup.pcmChunkSamples,
+        sliceTelemetryLimit: startup.sliceTelemetryLimit,
+        slices: (startup.slices || []).map((slice) => ({
+          index: slice.index,
+          scheduler: slice.scheduler,
+          durationMs: slice.durationMs,
+          primitiveCount: slice.primitiveCount,
+          maxPrimitiveMs: slice.maxPrimitiveMs,
+          labels: [...(slice.labels || [])],
+          remaining: slice.remaining,
+        })),
+        maxSliceMs: startup.maxSliceMs,
+        maxPrimitiveMs: startup.maxPrimitiveMs,
+        completed: startup.completed,
+        totalPrimitives: startup.totalPrimitives,
+        pending: startup.pending,
+        droppedSlices: startup.droppedSlices,
+        scheduler: startup.scheduler,
+        contextState: startup.contextState,
+        resumeError: startup.resumeError,
+        cancelReason: startup.cancelReason,
+        error: startup.error,
+      } : null;
+    };
+    const audioProgressSignature = () => {
+      const startup = g.audio.startupBake;
+      const lastSlice = startup?.slices?.at(-1);
+      return JSON.stringify([
+        g.audio.ready, startup?.status, startup?.initCalls,
+        startup?.slices?.length, startup?.completed, startup?.totalPrimitives,
+        startup?.pending, startup?.droppedSlices, startup?.scheduler,
+        lastSlice?.index, lastSlice?.labels?.join('|'), lastSlice?.remaining,
+        startup?.cancelReason, startup?.error,
+      ]);
+    };
+    const audioHardDeadline = performance.now() + 5000;
+    let audioProgressDeadline = performance.now() + 1000;
+    let audioSignature = audioProgressSignature();
+    while (!g.audio.ready && performance.now() < audioHardDeadline) {
+      const startup = g.audio.startupBake;
+      if (!startup || ['failed', 'cancelled'].includes(startup.status)) {
+        throw new Error(`purity audio startup entered a terminal state: ${JSON.stringify(compactAudioStartup())}`);
+      }
+      const nextSignature = audioProgressSignature();
+      if (nextSignature !== audioSignature) {
+        audioSignature = nextSignature;
+        audioProgressDeadline = performance.now() + 1000;
+      } else if (performance.now() >= audioProgressDeadline) {
+        throw new Error(`purity audio startup made no progress: ${JSON.stringify(compactAudioStartup())}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (!g.audio.ready || g.audio.startupBake?.status !== 'ready') {
+      throw new Error(`purity audio startup exceeded 5s: ${JSON.stringify(compactAudioStartup())}`);
+    }
+    const afterAudio = state();
+    const audioStartup = compactAudioStartup();
+    const audioResources = {
+      startupSourcesStarted: !!g.audio._startupSourcesStarted,
+      contextSampleRate: g.audio.ctx?.sampleRate || 0,
+      impulseBuffers: Object.fromEntries(Object.entries(g.audio._convolvers || {})
+        .map(([kind, convolver]) => [kind, convolver.buffer ? {
+          channels: convolver.buffer.numberOfChannels,
+          length: convolver.buffer.length,
+          sampleRate: convolver.buffer.sampleRate,
+        } : null])),
+      noiseSamples: g.audio._noiseBuf?.length || 0,
+      cricketSamples: g.audio._crickLoop?.length || 0,
+      woodSteps: g.audio._steps?.wood?.length || 0,
+      stoneSteps: g.audio._steps?.stone?.length || 0,
+      dirtSteps: g.audio._steps?.dirt?.length || 0,
+      leafSteps: g.audio._steps?.leaves?.length || 0,
+    };
+    const warmupGeneration = g._webglGeneration;
+    const warmupProgressSignature = () => {
+      const shader = g.shaderWarmup;
+      const activity = g._shaderCompileActivity;
+      const lastJob = shader?.compileJobs?.at(-1);
+      return JSON.stringify([
+        g._webglGeneration, shader?.generation, shader?.status, shader?.reason,
+        shader?.recoveryRound, shader?.recoveryScheduled,
+        shader?.setupSlices?.length, shader?.compileSlices?.length,
+        shader?.textureSlices?.length, shader?.compileJobs?.length,
+        shader?.compileInFlightLabel, shader?.compileJobsInFlight,
+        lastJob?.label, lastJob?.settledMs, lastJob?.error,
+        activity?.generation, activity?.active,
+        shader?.currentExactKey, shader?.currentExactRevision,
+        shader?.currentExactStatus, (shader?.readyVariants || []).join('|'),
+      ]);
+    };
+    const warmupHardDeadline = performance.now() + 240000;
+    let warmupProgressDeadline = performance.now() + 30000;
+    let warmupSignature = warmupProgressSignature();
+    while (g.shaderWarmup?.status !== 'ready'
+        && performance.now() < warmupHardDeadline) {
+      const shader = g.shaderWarmup;
+      if (!shader || g._webglGeneration !== warmupGeneration
+          || shader.generation !== warmupGeneration || shader.status === 'invalidated'
+          || shader.status === 'skipped'
+          || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
+        throw new Error(`purity shader warmup entered a terminal state: ${JSON.stringify({
+          generation: g._webglGeneration,
+          status: shader?.status || null,
+          shaderGeneration: shader?.generation ?? null,
+          reason: shader?.reason || null,
+          errors: [...(shader?.errors || [])],
+        })}`);
+      }
+      const nextSignature = warmupProgressSignature();
+      if (nextSignature !== warmupSignature) {
+        warmupSignature = nextSignature;
+        warmupProgressDeadline = performance.now() + 30000;
+      } else if (performance.now() >= warmupProgressDeadline) {
+        throw new Error(`purity shader warmup made no progress: ${warmupSignature}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (g.shaderWarmup?.status !== 'ready') {
+      throw new Error(`purity shader warmup exceeded 240s: ${warmupProgressSignature()}`);
     }
     // Mirror-universe uploads are explicitly non-blocking for the physical
     // room. Let the background phase finish so its complete membership can be
     // inspected without conflating that wait with Wake/first-world timing.
+    const ownerComplete = () => {
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const key = g._currentGpuResidencyKey();
+      return residency?.generation === g._webglGeneration
+        && residency.activeKey === key && progress?.key === key
+        && progress.ownerQueue.length === 0 && progress.ownerExactQueue.length === 0
+        && progress.ownerRecorded && progress.ownerExactRecorded
+        && !progress.ownerFinalizeBlocked
+        && (residency.ownerUniverses || []).some((entry) => entry.key === key && entry.house > 0)
+        && (residency.universeFinalizePasses || []).some((entry) =>
+          entry.key === key && entry.scope === 'owner' && entry.recorded && entry.error == null);
+    };
     const ownerDeadline = performance.now() + 30000;
-    while (!(g.currentGpuResidency?.ownerUniverses || []).some((entry) => entry.house > 0)
-        && performance.now() < ownerDeadline) {
+    while (!ownerComplete() && performance.now() < ownerDeadline) {
       await new Promise((resolve) => requestAnimationFrame(resolve));
     }
+    if (!ownerComplete()) throw new Error('house owner universe did not finalize cleanly');
     const afterWarm = state();
     sampling = false;
     await new Promise((resolve) => requestAnimationFrame(resolve));
+    g.render = realRender;
     return {
       startMs,
+      wakeTaskMs,
+      audioInitCalls,
+      audioPreparation,
       afterStart,
+      afterAudio,
       afterWarm,
+      audioStartup,
+      audioResources,
       beforeSkullResidency,
       afterSkullResidency: skullResidencyState(),
-      expectedHouseOwnerMembers: collectRenderableIds([
-        ...(g.staticWorldRenderRoots || []),
-        ...(g.houseRenderRoots || []),
-        ...(g.graveyardRenderRoots || []),
-        g.atmosphere?.group,
-        g.houseMirror?.double,
-        g.houseMirror?.echo,
-      ]),
       intervals,
+      timing: {
+        renderCount: purityRenders.length,
+        rafIntervals: intervals.length,
+        orderingErrors,
+        maxRenderMs: Math.max(0, ...purityRenders.map((row) => row.ms)),
+        maxRenderStartIntervalMs: Math.max(0, ...purityRenders.slice(1)
+          .map((row, index) => row.startedAt - purityRenders[index].startedAt)),
+        maxInterRenderIdleMs: Math.max(0, ...purityRenders.slice(1)
+          .map((row, index) => row.startedAt - purityRenders[index].completedAt)),
+        maxRenderCompletionIntervalMs: Math.max(0, ...purityRenders.slice(1)
+          .map((row, index) => row.completedAt - purityRenders[index].completedAt)),
+      },
       warmup: { ...g.shaderWarmup },
       targetWarm: g.finale._targetWarmState ? {
         status: g.finale._targetWarmState.status,
@@ -1361,15 +1838,35 @@ async function runPurityAndSettled(browser) {
         reduced: [...(g.currentGpuResidency?.reduced || [])],
         owners: [...(g.currentGpuResidency?.owners || [])],
         exactPasses: [...(g.currentGpuResidency?.exactPasses || [])],
+        exactPreloadPasses: [...(g.currentGpuResidency?.exactPreloadPasses || [])],
         reducedPasses: [...(g.currentGpuResidency?.reducedPasses || [])],
         ownerPasses: [...(g.currentGpuResidency?.ownerPasses || [])],
         ownerUniverses: [...(g.currentGpuResidency?.ownerUniverses || [])],
+        universeFinalizePasses: [...(g.currentGpuResidency?.universeFinalizePasses || [])],
+        finalizerFrames,
         skullWorldPasses: [...(g.currentGpuResidency?.skullWorldPasses || [])],
         maxExactMs: g.currentGpuResidency?.maxExactMs || 0,
+        maxExactPreloadMs: g.currentGpuResidency?.maxExactPreloadMs || 0,
         maxReducedPrimeMs: g.currentGpuResidency?.maxReducedPrimeMs || 0,
         maxOwnerMs: g.currentGpuResidency?.maxOwnerMs || 0,
         ownerFullFrames: g.currentGpuResidency?.ownerFullFrames || 0,
         deferredFullFrames: g.currentGpuResidency?.deferredFullFrames || 0,
+        progress: (() => {
+          const progress = g.currentGpuResidency?.progressive;
+          return progress ? {
+            key: progress.key,
+            ownerQueue: progress.ownerQueue.length,
+            ownerExactQueue: progress.ownerExactQueue.length,
+            deferredQueue: progress.deferredQueue.length,
+            deferredExactQueue: progress.deferredExactQueue.length,
+            ownerRecorded: !!progress.ownerRecorded,
+            ownerExactRecorded: !!progress.ownerExactRecorded,
+            deferredRecorded: !!progress.deferredRecorded,
+            deferredExactRecorded: !!progress.deferredExactRecorded,
+            ownerFinalizeBlocked: !!progress.ownerFinalizeBlocked,
+            deferredFinalizeBlocked: !!progress.deferredFinalizeBlocked,
+          } : null;
+        })(),
         errors: [...(g.currentGpuResidency?.errors || [])],
       },
     };
@@ -1380,11 +1877,23 @@ async function runPurityAndSettled(browser) {
     const g = window.__game;
     g._selfStep = false;
     g.teleport('house');
+    if (g.act !== 'house') throw new Error(`settled setup landed in ${g.act}, not house`);
   });
   for (const [name, act] of SEAMS) {
     const seam = await page.evaluate(async ({ name, act }) => {
       const g = window.__game, F = window.__FETCH;
       const intervals = [], renders = [], steps = [];
+      const orderingErrors = [];
+      let frameSerial = 0;
+      const renderCadence = (rows) => ({
+        renderCount: rows.length,
+        maxRenderStartIntervalMs: Math.max(0, ...rows.slice(1)
+          .map((row, index) => row.startedAt - rows[index].startedAt)),
+        maxInterRenderIdleMs: Math.max(0, ...rows.slice(1)
+          .map((row, index) => row.startedAt - rows[index].completedAt)),
+        maxRenderCompletionIntervalMs: Math.max(0, ...rows.slice(1)
+          .map((row, index) => row.completedAt - rows[index].completedAt)),
+      });
       const realRender = g.render, realStep = g.step;
       const before = {
         act: g.act,
@@ -1393,20 +1902,64 @@ async function runPurityAndSettled(browser) {
         geometries: g.renderer.info.memory.geometries,
       };
       g.render = function measuredRender(...args) {
-        const at = performance.now();
+        const residencyBefore = g.currentGpuResidency;
+        const passCountsBefore = {
+          reduced: residencyBefore?.reducedPasses?.length || 0,
+          exact: residencyBefore?.exactPasses?.length || 0,
+          exactPreload: residencyBefore?.exactPreloadPasses?.length || 0,
+          owner: residencyBefore?.ownerPasses?.length || 0,
+          finalizer: residencyBefore?.universeFinalizePasses?.length || 0,
+        };
+        const startedAt = performance.now();
         try { return realRender.apply(this, args); }
         finally {
-          renders.push({
-            atMs: performance.now(),
-            ms: performance.now() - at,
+          const completedAt = performance.now();
+          const residencyAfter = g.currentGpuResidency;
+          const row = {
+            frameId: ++frameSerial,
+            generation: g._webglGeneration,
+            startedAt,
+            completedAt,
+            atMs: completedAt,
+            ms: completedAt - startedAt,
             drawCalls: g.lastRender?.drawCalls || 0,
+            worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
             shielded: !!g._shaderTransitionShield,
             reducedDetail: !!g.lastRender?.reducedDetail,
             residencyKey: g.lastRender?.residencyKey || null,
+            snapshotProgress: !!g.lastRender?.snapshotProgress,
+            reducedBatchSubmitted: !!g.lastRender?.reducedBatchSubmitted,
+            reducedBatchRevealed: !!g.lastRender?.reducedBatchRevealed,
+            ownerProgress: !!g.lastRender?.ownerProgress,
+            deferredProgress: !!g.lastRender?.deferredProgress,
+            ownerExactProgress: !!g.lastRender?.ownerExactProgress,
+            deferredExactProgress: !!g.lastRender?.deferredExactProgress,
+            reducedPassesAdded: Math.max(0,
+              (residencyAfter?.reducedPasses?.length || 0) - passCountsBefore.reduced),
+            exactPassesAdded: Math.max(0,
+              (residencyAfter?.exactPasses?.length || 0) - passCountsBefore.exact),
+            exactPreloadPassesAdded: Math.max(0,
+              (residencyAfter?.exactPreloadPasses?.length || 0) - passCountsBefore.exactPreload),
+            ownerPassesAdded: Math.max(0,
+              (residencyAfter?.ownerPasses?.length || 0) - passCountsBefore.owner),
+            finalizerPassesAdded: Math.max(0,
+              (residencyAfter?.universeFinalizePasses?.length || 0)
+                - passCountsBefore.finalizer),
             visibleProgramDelta: g.lastRender?.visibleProgramDelta || 0,
             visibleTextureDelta: g.lastRender?.visibleTextureDelta || 0,
             visibleGeometryDelta: g.lastRender?.visibleGeometryDelta || 0,
-          });
+          };
+          const namedHiddenPhase = row.worldDrawCalls === 0 && row.drawCalls === 0
+            && (row.snapshotProgress || row.reducedBatchSubmitted
+              || row.reducedBatchRevealed || row.ownerProgress || row.deferredProgress
+              || row.ownerExactProgress || row.deferredExactProgress
+              || row.reducedPassesAdded > 0 || row.exactPassesAdded > 0
+              || row.exactPreloadPassesAdded > 0 || row.ownerPassesAdded > 0
+              || row.finalizerPassesAdded > 0);
+          row.lookPhase = row.worldDrawCalls > 0
+            ? (row.reducedDetail ? 'reduced-reveal' : 'exact-visible')
+            : namedHiddenPhase ? 'hidden-residency' : 'unowned-zero-draw';
+          renders.push(row);
         }
       };
       g.step = function measuredStep(...args) {
@@ -1414,6 +1967,8 @@ async function runPurityAndSettled(browser) {
         try { return realStep.apply(this, args); }
         finally { steps.push(performance.now() - at); }
       };
+      // Synthetic post-story renderer fixture; legal path proof lives in the
+      // focused Stage-C dynamics gate.
       if (act === 'cave' && !g.flags.has('waterfallTaken')) {
         g.director.waterfallTaken();
         g.skull.vanish();
@@ -1441,30 +1996,82 @@ async function runPurityAndSettled(browser) {
         F.teleport(act);
         F.stepWith(0.05, {}, false);
       }
+      if (act === 'ossuary') {
+        if (g.act !== 'graveyard' || !g.ossuary.inOssuary) {
+          throw new Error(`settled ossuary seam landed in ${g.act} without ossuary ownership`);
+        }
+      } else if (g.act !== act) {
+        throw new Error(`${name} settled seam landed in ${g.act}, not ${act}`);
+      }
       const transitionMs = performance.now() - transitionAt;
+      const expectedKey = g._currentGpuResidencyKey();
+      const expectedGeneration = g._webglGeneration;
       let previous = null;
-      await new Promise((resolve) => {
-        const sample = (timestamp) => {
-          if (previous != null) intervals.push(timestamp - previous);
-          previous = timestamp;
-          if (intervals.length >= 70) resolve();
-          else requestAnimationFrame(sample);
-        };
-        requestAnimationFrame(sample);
-      });
+      const observeCompletedFrame = (observedAt, scope) => {
+        const completed = renders.at(-1) || null;
+        const ordered = completed
+          && completed.completedAt <= observedAt
+          && completed.generation === expectedGeneration
+          && completed.residencyKey === expectedKey
+          && (!previous || completed.frameId > previous.frameId
+            && previous.completedAt <= previous.observedAt);
+        if (!ordered) {
+          orderingErrors.push({ scope, previous, current: completed, observedAt,
+            expectedGeneration, expectedKey });
+          return;
+        }
+        if (previous) intervals.push(observedAt - previous.observedAt);
+        previous = { ...completed, observedAt };
+      };
+      const settledDeadline = performance.now() + 120000;
+      const exactPhysicalReady = () => {
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        return residency?.generation === g._webglGeneration
+          && residency.activeKey === expectedKey && progress?.key === expectedKey
+          && residency.physical.has(expectedKey)
+          && !g.lastRender?.reducedDetail && (g.lastRender?.worldDrawCalls || 0) > 0;
+      };
+      while ((intervals.length < 8 || !exactPhysicalReady())
+          && performance.now() < settledDeadline) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const observedAt = performance.now();
+        observeCompletedFrame(observedAt, 'settle');
+      }
+      if (!exactPhysicalReady()) {
+        throw new Error(`${name} did not reach an exact physical world before timeout`);
+      }
       const originalView = { yaw: g.player.yaw, pitch: g.player.pitch };
       const sweepFrames = [];
       const sweepIntervals = [];
-      let previousSweep = null;
+      let previousSweep = previous;
       for (let turn = 0; turn < 4; turn++) {
+        const priorFrameId = renders.at(-1)?.frameId || 0;
+        const lookAppliedAt = performance.now();
         g.player.yaw = originalView.yaw + turn * Math.PI / 2;
         g.player.pitch = originalView.pitch;
         g.player._sync(0);
-        const renderStart = renders.length;
-        const timestamp = await new Promise((resolve) => requestAnimationFrame(resolve));
-        if (previousSweep != null) sweepIntervals.push(timestamp - previousSweep);
-        previousSweep = timestamp;
-        sweepFrames.push(renders[renderStart] || null);
+        let completed = null;
+        let observedAt = null;
+        const freshDeadline = performance.now() + 2000;
+        while (!completed && performance.now() < freshDeadline) {
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+          observedAt = performance.now();
+          const candidate = renders.at(-1) || null;
+          if (candidate?.frameId > priorFrameId && candidate.startedAt >= lookAppliedAt
+              && candidate.completedAt <= observedAt
+              && candidate.generation === expectedGeneration
+              && candidate.residencyKey === expectedKey) completed = candidate;
+        }
+        const ordered = completed && completed.frameId > (previousSweep?.frameId || 0)
+          && completed.completedAt <= observedAt;
+        if (!ordered) orderingErrors.push({ scope: 'sweep', previous: previousSweep,
+          current: completed, observedAt, expectedGeneration, expectedKey });
+        else {
+          if (previousSweep) sweepIntervals.push(observedAt - previousSweep.observedAt);
+          previousSweep = { ...completed, observedAt };
+        }
+        sweepFrames.push(completed ? { ...completed, lookTurn: turn, lookAppliedAt } : null);
       }
       g.player.yaw = originalView.yaw;
       g.player.pitch = originalView.pitch;
@@ -1501,23 +2108,44 @@ async function runPurityAndSettled(browser) {
           )).map((light) => ({ name: light.name, intensity: light.intensity,
             type: light.type, castShadow: light.castShadow })),
       };
+      let cleanupMs = 0;
       if (act === 'ossuary') {
-        g.ossuary.inOssuary = false;
-        F.stepWith(0.03, {}, false);
+        const cleanupStartedAt = performance.now();
+        for (let index = 0; index < 15 && g.ossuary.portalCooldown > 0; index++) {
+          F.stepWith(0.04, {}, false);
+        }
+        g.player.pos.set(g.ossuary.origin.x, g.ossuary.origin.floor,
+          g.ossuary.origin.z + 0.2);
+        g.player.vel.set(0, 0, 0);
+        g.player.fallV = 0;
+        g.player.grounded = true;
+        g.player._sync(0);
+        F.stepWith(1 / 120, {}, false);
+        if (g.ossuary.inOssuary || g.ossuary.root.visible) {
+          throw new Error('settled ossuary backtrack did not restore the graveyard');
+        }
+        cleanupMs = performance.now() - cleanupStartedAt;
       }
       return {
         name,
+        expectedGeneration,
+        expectedKey,
         before,
         after,
         transitionMs,
+        cleanupMs,
+        orderingErrors,
         maxRafMs: Math.max(...intervals),
         intervals,
         maxRenderMs: Math.max(...renders.map((entry) => entry.ms)),
+        ...renderCadence(renders.filter((entry) => entry.atMs >= transitionAt)),
         firstWorldMs: (() => {
-          const first = renders.find((entry) => entry.atMs >= transitionAt && entry.drawCalls > 0);
+          const first = renders.find((entry) => entry.atMs >= transitionAt
+            && entry.worldDrawCalls > 0);
           return first ? first.atMs - transitionAt : null;
         })(),
-        worldSubmitted: renders.some((entry) => entry.atMs >= transitionAt && entry.drawCalls > 0),
+        worldSubmitted: renders.some((entry) => entry.atMs >= transitionAt
+          && entry.worldDrawCalls > 0),
         shieldFrames: renders.filter((entry) => entry.atMs >= transitionAt && entry.shielded).length,
         reducedFrames: renders.filter((entry) => entry.atMs >= transitionAt && entry.reducedDetail).length,
         maxVisibleProgramDelta: Math.max(0, ...renders
@@ -1536,21 +2164,17 @@ async function runPurityAndSettled(browser) {
     }, { name, act });
     seam.p95RafMs = percentile(seam.intervals, 0.95);
     delete seam.intervals;
-    for (const key of [
-      'transitionMs', 'maxRafMs', 'p95RafMs', 'maxRenderMs', 'maxStepMs', 'firstWorldMs',
-      'sweepMaxRafMs',
-    ]) {
-      seam[key] = round(seam[key]);
-    }
-    for (const frame of seam.sweepFrames || []) if (frame) frame.ms = round(frame.ms);
     settled.push(seam);
   }
   const caveTail = await page.evaluate(async () => {
     const g = window.__game, F = window.__FETCH;
     g._selfStep = false;
+    // Enter the authored post-sacrifice state directly because this lane owns
+    // only the 2,400-step cave update tail, not progression legality.
     if (!g.flags.has('waterfallTaken')) g.director.waterfallTaken();
     g.skull.vanish();
     F.teleport('cave');
+    if (g.act !== 'cave') throw new Error(`cave-tail fixture landed in ${g.act}, not cave`);
     F.stepWith(0.05, {}, false);
     // Isolate the district's steady 120 Hz path. Threat construction has its
     // own focused suite; this loop is specifically the culler/wayfinding/room
@@ -1669,205 +2293,6 @@ async function runPurityAndSettled(browser) {
       heapEndGrowth: heapBefore == null || heapAfter == null ? null : heapAfter - heapBefore,
     };
   });
-  for (const key of ['maxStepMs', 'p95StepMs', 'p99StepMs']) caveTail[key] = round(caveTail[key]);
-  // Verb ownership must be measured in a fresh legal pre-waterfall world. The
-  // settled route has already sacrificed the skull; reattaching it there would
-  // create an impossible P18 light rig and attribute that harness-only compile
-  // cliff to throw, flame, key and mirror gameplay.
-  const verbOpened = await openPage(browser, report.url);
-  const verbPage = verbOpened.page;
-  await ready(verbPage);
-  const verbChurn = await verbPage.evaluate(async () => {
-    const g = window.__game, F = window.__FETCH;
-    const lightCensus = (camera) => {
-      const out = {
-        AmbientLight: 0, HemisphereLight: 0, DirectionalLight: 0,
-        SpotLight: 0, PointLight: 0, total: 0,
-        directionalShadows: 0, spotShadows: 0, pointShadows: 0, totalShadows: 0,
-      };
-      g.scene.traverseVisible((object) => {
-        if (!object.isLight || !object.layers.test(camera.layers)
-            || !(object.type in out)) return;
-        out[object.type]++;
-        out.total++;
-        if (!object.castShadow) return;
-        out.totalShadows++;
-        if (object.isDirectionalLight) out.directionalShadows++;
-        else if (object.isSpotLight) out.spotShadows++;
-        else if (object.isPointLight) out.pointShadows++;
-      });
-      return out;
-    };
-    const collectRenderableIds = (roots) => {
-      const ids = new Set();
-      for (const root of roots) root?.traverse((object) => {
-        if ((object.isMesh || object.isLine || object.isPoints)
-            && object.geometry && object.material) ids.add(object.uuid);
-      });
-      return [...ids].sort();
-    };
-    F.start();
-    g._selfStep = false;
-    F.teleport('house');
-    g.skull.holdNow();
-    g.houseMirror.awakened = false;
-    const residencyDeadline = performance.now() + 90000;
-    while (performance.now() < residencyDeadline) {
-      const residency = g.currentGpuResidency;
-      const progress = residency?.progressive;
-      if (g.shaderWarmup?.status === 'ready'
-          && residency?.physical?.has(g._currentGpuResidencyKey())
-          && progress?.ownerRecorded && progress.ownerQueue.length === 0
-          && !g.lastRender?.reducedDetail) break;
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-    const residency = g.currentGpuResidency;
-    const progress = residency?.progressive;
-    if (g.shaderWarmup?.status !== 'ready'
-        || !residency?.physical?.has(g._currentGpuResidencyKey())
-        || !progress?.ownerRecorded || progress.ownerQueue.length
-        || g.lastRender?.reducedDetail) {
-      throw new Error('fresh legal verb page did not reach settled house residency');
-    }
-
-    const renders = [];
-    const intervals = [];
-    let previous = null;
-    let sampling = true;
-    const sample = (timestamp) => {
-      if (previous != null) intervals.push(timestamp - previous);
-      previous = timestamp;
-      if (sampling) requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-    const realRender = g.render;
-    g.render = function measuredVerbRender(...args) {
-      const at = performance.now();
-      const result = realRender.apply(this, args);
-      renders.push({
-        at: performance.now(),
-        ms: performance.now() - at,
-        reducedDetail: !!g.lastRender?.reducedDetail,
-        programDelta: g.lastRender?.visibleProgramDelta || 0,
-        textureDelta: g.lastRender?.visibleTextureDelta || 0,
-        geometryDelta: g.lastRender?.visibleGeometryDelta || 0,
-        paneActive: !!g.houseMirror?.pane?.active,
-        ownerPasses: g.currentGpuResidency?.ownerPasses?.length || 0,
-      });
-      return result;
-    };
-    const measure = async (label, action, frames = 6) => {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-      const renderIndex = renders.length;
-      const intervalIndex = intervals.length;
-      const exactBefore = g.currentGpuResidency?.exactPasses?.length || 0;
-      const ownerBefore = g.currentGpuResidency?.ownerPasses?.length || 0;
-      action();
-      for (let i = 0; i < frames; i++) {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-      }
-      const sampleRenders = renders.slice(renderIndex);
-      g._syncShaderBallast();
-      return {
-        label,
-        exactBefore,
-        exactAfter: g.currentGpuResidency?.exactPasses?.length || 0,
-        ownerBefore,
-        ownerAfter: g.currentGpuResidency?.ownerPasses?.length || 0,
-        maxRafMs: Math.max(0, ...intervals.slice(intervalIndex)),
-        maxRenderMs: Math.max(0, ...sampleRenders.map((entry) => entry.ms)),
-        maxVisibleProgramDelta: Math.max(0, ...sampleRenders.map((entry) => entry.programDelta)),
-        maxVisibleTextureDelta: Math.max(0, ...sampleRenders.map((entry) => entry.textureDelta)),
-        maxVisibleGeometryDelta: Math.max(0, ...sampleRenders.map((entry) => entry.geometryDelta)),
-        reducedFrames: sampleRenders.filter((entry) => entry.reducedDetail).length,
-        firstFrame: sampleRenders[0] || null,
-        firstPaneFrame: sampleRenders.find((entry) => entry.paneActive) || null,
-        ownerPasses: [...(g.currentGpuResidency?.ownerPasses || [])].slice(ownerBefore),
-        reflectionLightCensus: g.houseMirror?.pane?.active
-          ? lightCensus(g.houseMirror.pool._vcam) : null,
-      };
-    };
-
-    const cases = [];
-    cases.push(await measure('first-throw', () => {
-      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
-      F.stepWith(0.12, { throwHeld: true }, false);
-    }));
-    cases.push(await measure('catch-return', () => {
-      F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
-      for (let i = 0; i < 300 && g.skull.mode !== 'held'; i++) {
-        F.stepWith(1 / 120, {}, false);
-      }
-      if (g.skull.mode !== 'held') g.skull.holdNow();
-    }));
-
-    const keyTarget = g.world.fetchTargets.find((target) => target.id === 'treeKey');
-    cases.push(await measure('bedroom-key-carry', () => {
-      if (!keyTarget?.object) throw new Error('treeKey target missing');
-      keyTarget.onHit.call(keyTarget, g.skull);
-      g.skull.holdNow();
-    }));
-    const droppedKey = g.skull.dropCarry();
-    if (droppedKey?.mesh) droppedKey.mesh.visible = false;
-
-    cases.push(await measure('flame-absorb', () => {
-      const source = g.flameCircuit?.sources?.[0];
-      if (!source || !g.flameCircuit.absorb(g.skull, source)) {
-        throw new Error('flame source could not be absorbed');
-      }
-      for (let i = 0; i < 90; i++) F.stepWith(1 / 120, {}, false);
-    }, 8));
-
-    cases.push(await measure('offscreen-stage-evolution', () => {
-      const wasVisible = g.skull.root.visible;
-      g.skull.root.visible = false;
-      g.skull.setStage(Math.min(5, g.skull.stage + 1));
-      g.skull.root.visible = wasVisible;
-    }));
-
-    cases.push(await measure('awakened-mirror-approach', () => {
-      g.houseMirror.awakened = true;
-      g.player.pos.set(g.houseMirror.pos.x + 2.1, 0, g.houseMirror.pos.z);
-      g.player.yaw = Math.PI / 2;
-      g.player.pitch = 0;
-      g.player.vel.set(0, 0, 0);
-      g.player._sync(0);
-    }, 8));
-    cases.push(await measure('awakened-mirror-motion', () => {
-      const mirror = g.houseMirror.pos;
-      g.player.pos.set(mirror.x + 1.7, 0, mirror.z + 1.1);
-      const dx = mirror.x - g.player.pos.x;
-      const dz = mirror.z - g.player.pos.z;
-      g.player.yaw = Math.atan2(-dx, -dz);
-      g.player.pitch = -0.04;
-      g.player.vel.set(0, 0, 0);
-      g.player._sync(0);
-    }, 8));
-
-    sampling = false;
-    g.render = realRender;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    return {
-      cases,
-      residencyErrors: [...(g.currentGpuResidency?.errors || [])],
-      ownerUniverses: [...(g.currentGpuResidency?.ownerUniverses || [])],
-      expectedHouseOwnerMembers: collectRenderableIds([
-        ...(g.staticWorldRenderRoots || []),
-        ...(g.houseRenderRoots || []),
-        ...(g.graveyardRenderRoots || []),
-        g.atmosphere?.group,
-        g.houseMirror?.double,
-        g.houseMirror?.echo,
-      ]),
-    };
-  });
-  for (const entry of verbChurn.cases) {
-    entry.maxRafMs = round(entry.maxRafMs);
-    entry.maxRenderMs = round(entry.maxRenderMs);
-    for (const owner of entry.ownerPasses || []) owner.durationMs = round(owner.durationMs);
-  }
-  report.browserErrors.push(...verbOpened.errors.map((error) => `fresh-verbs: ${error}`));
-  await verbPage.close();
   const gl = await page.evaluate(() => {
     const context = window.__game.renderer.getContext();
     const info = context.getExtension('WEBGL_debug_renderer_info');
@@ -1877,7 +2302,7 @@ async function runPurityAndSettled(browser) {
   });
   report.browserErrors.push(...opened.errors.map((error) => `settled: ${error}`));
   await page.close();
-  return { purity, settled, caveTail, verbChurn, renderer: gl };
+  return { purity, settled, caveTail, renderer: gl };
 }
 
 async function runContextRecovery(browser) {
@@ -1890,12 +2315,18 @@ async function runContextRecovery(browser) {
     const lose = gl.getExtension('WEBGL_lose_context');
     if (!lose) return { supported: false };
     const canvas = g.renderer.domElement;
-    const waitFor = async (predicate, label, timeout = 90000) => {
+    const waitFor = async (predicate, label, timeout = 90000, onTimeout = null) => {
       const deadline = performance.now() + timeout;
       while (!predicate() && performance.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      if (!predicate()) throw new Error(`context recovery timed out: ${label}`);
+      if (!predicate()) {
+        let detail = null;
+        try { detail = onTimeout?.() ?? null; }
+        catch (error) { detail = { snapshotError: error?.message || `${error}` }; }
+        const suffix = detail == null ? '' : `\n${JSON.stringify(detail)}`;
+        throw new Error(`context recovery timed out: ${label}${suffix}`);
+      }
     };
     const contextEvent = (name, action) => new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`missing ${name}`)), 20000);
@@ -1931,14 +2362,6 @@ async function runContextRecovery(browser) {
         else if (object.isPointLight) out.pointShadows++;
       });
       return out;
-    };
-    const collectRenderableIds = (roots) => {
-      const ids = new Set();
-      for (const root of roots) root?.traverse((object) => {
-        if ((object.isMesh || object.isLine || object.isPoints)
-            && object.geometry && object.material) ids.add(object.uuid);
-      });
-      return [...ids].sort();
     };
     // This evaluator owns a separate browser closure from the settled/purity
     // probe above. Keep the outbound-skull snapshot local so context recovery
@@ -2030,6 +2453,10 @@ async function runContextRecovery(browser) {
     });
     const stages = [mark('initial-scheduled')];
     const restoreProbes = [];
+    const finalizerFrames = [];
+    const seenFinalizers = new WeakSet();
+    let frameSerial = 0;
+    let lastCompletedRender = null;
     let activeRestoreProbe = null;
     const originalGameRender = g.render;
     g.render = function measuredRestoreWorld(...args) {
@@ -2037,12 +2464,19 @@ async function runContextRecovery(browser) {
       const beforePrograms = g.renderer.info.programs?.length || 0;
       const beforeTextures = g.renderer.info.memory.textures;
       const beforeGeometries = g.renderer.info.memory.geometries;
-      const rendered = originalGameRender.apply(this, args);
-      if (activeRestoreProbe?.restoredAt != null) {
-        activeRestoreProbe.frames.push({
+      const ownerPassCountBefore = g.currentGpuResidency?.ownerPasses?.length || 0;
+      let rendered;
+      try { rendered = originalGameRender.apply(this, args); }
+      finally {
+        const completedAt = performance.now();
+        const row = {
+          frameId: ++frameSerial,
           at,
-          ms: performance.now() - at,
+          completedAt,
+          ms: completedAt - at,
           act: g.act,
+          generation: g._webglGeneration,
+          key: g.currentGpuResidency?.progressive?.key || null,
           drawCalls: g.lastRender?.drawCalls || 0,
           worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
           shielded: !!g._shaderTransitionShield,
@@ -2060,24 +2494,89 @@ async function runContextRecovery(browser) {
           rawProgramDelta: (g.renderer.info.programs?.length || 0) - beforePrograms,
           rawTextureDelta: g.renderer.info.memory.textures - beforeTextures,
           rawGeometryDelta: g.renderer.info.memory.geometries - beforeGeometries,
-        });
+          ownerPassesAdded: [...(g.currentGpuResidency?.ownerPasses || [])]
+            .slice(ownerPassCountBefore),
+          houseMirrorActive: !!g.houseMirror?.active,
+          housePaneActive: !!g.houseMirror?.pane?.active,
+          finalePanesActive: g.finale?.panes?.filter((pane) => pane.active).length || 0,
+        };
+        lastCompletedRender = row;
+        if (activeRestoreProbe?.restoredAt != null) activeRestoreProbe.frames.push(row);
+        for (const entry of g.currentGpuResidency?.universeFinalizePasses || []) {
+          if (seenFinalizers.has(entry)) continue;
+          seenFinalizers.add(entry);
+          finalizerFrames.push({
+            ...entry,
+            frameId: row.frameId,
+            renderGeneration: row.generation,
+            renderKey: row.key,
+            renderMs: row.ms,
+            worldDrawCalls: row.worldDrawCalls,
+            drawCalls: row.drawCalls,
+            reducedDetail: row.reducedDetail,
+          });
+        }
       }
       return rendered;
     };
+    const sampleOwnedFrames = async ({ count, label, generation, key = null }) => {
+      const frames = [];
+      const orderingErrors = [];
+      const observedIntervals = [];
+      let previous = null;
+      for (let index = 0; index < count; index++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const observedAt = performance.now();
+        const completed = lastCompletedRender;
+        const ordered = completed
+          && completed.completedAt <= observedAt
+          && completed.generation === generation
+          && (key == null || completed.key === key)
+          && (!previous || completed.frameId > previous.frameId
+            && previous.completedAt <= previous.observedAt);
+        if (!ordered) orderingErrors.push({ label, index, generation, key,
+          previous, current: completed, observedAt });
+        else {
+          if (previous) observedIntervals.push(observedAt - previous.observedAt);
+          previous = { ...completed, observedAt };
+          frames.push(previous);
+        }
+      }
+      return {
+        label,
+        generation,
+        key,
+        frames,
+        orderingErrors,
+        observedIntervals: observedIntervals.length,
+        maxObservedIntervalMs: Math.max(0, ...observedIntervals),
+        maxRenderMs: Math.max(0, ...frames.map((frame) => frame.ms)),
+        maxRenderStartIntervalMs: Math.max(0, ...frames.slice(1)
+          .map((frame, index) => frame.at - frames[index].at)),
+        maxInterRenderIdleMs: Math.max(0, ...frames.slice(1)
+          .map((frame, index) => frame.at - frames[index].completedAt)),
+        maxRenderCompletionIntervalMs: Math.max(0, ...frames.slice(1)
+          .map((frame, index) => frame.completedAt - frames[index].completedAt)),
+      };
+    };
     const beginRestoreProbe = (label) => {
-      const probe = { label, restoredAt: null, frames: [] };
+      const probe = { label, restoredAt: null, generation: null, key: null, frames: [] };
       restoreProbes.push(probe);
       activeRestoreProbe = probe;
       return probe;
     };
-    const markRestored = (probe) => { probe.restoredAt = performance.now(); };
+    const markRestored = (probe) => {
+      probe.restoredAt = performance.now();
+      probe.generation = g._webglGeneration;
+      probe.key = g._currentGpuResidencyKey();
+    };
     const waitForRestoreReveal = async (probe) => {
       await waitFor(() => probe.frames.some((frame) =>
         frame.at >= probe.restoredAt && frame.worldDrawCalls > 0 && !frame.shielded),
       `${probe.label} first restored world`, 20000);
       probe.playableAt = performance.now();
     };
-    const waitForRestoreExact = async (probe) => {
+    const waitForRestoreExact = async (probe, { keepActive = false } = {}) => {
       await waitFor(() => probe.frames.some((frame) =>
         frame.at >= probe.restoredAt && frame.worldDrawCalls > 0
           && !frame.shielded && !frame.reducedDetail),
@@ -2089,12 +2588,373 @@ async function runContextRecovery(browser) {
         emberVisible: !!g.flameCircuit?.embers?.[0]?.group?.visible,
         sparkVisible: !!g.flameCircuit?.transferSparks?.[0]?.visible,
       };
-      if (activeRestoreProbe === probe) activeRestoreProbe = null;
+      if (!keepActive && activeRestoreProbe === probe) activeRestoreProbe = null;
+    };
+    const compactWarmEntries = (entries) => (entries || []).slice(-8).map((entry) => ({
+      label: entry.label || null,
+      kind: entry.kind || null,
+      phase: entry.phase || null,
+      status: entry.status || null,
+      generation: entry.generation ?? null,
+      key: entry.key || null,
+      atMs: entry.atMs ?? null,
+      settledMs: entry.settledMs ?? null,
+      durationMs: entry.durationMs ?? entry.ms ?? null,
+      submitDurationMs: entry.submitDurationMs ?? null,
+      renderDurationMs: entry.renderDurationMs ?? null,
+      maxSynchronousSliceMs: entry.maxSynchronousSliceMs ?? null,
+      invalidated: entry.invalidated ?? null,
+      drainedAfterInvalidation: entry.drainedAfterInvalidation ?? null,
+      complete: entry.complete ?? null,
+      recorded: entry.recorded ?? null,
+      error: entry.error || null,
+    }));
+    const targetSnapshot = (target) => target ? {
+      status: target.status || null,
+      generation: target.generation ?? null,
+      warmed: target.warmed ?? null,
+      budget: target.budget ?? null,
+      attempts: Array.isArray(target.attempts) ? target.attempts.slice(-8) : target.attempts ?? null,
+      failed: target.failed ?? null,
+      failedTargets: [...(target.failedTargets || [])],
+      errors: [...(target.errors || [])],
+      maxSliceMs: target.maxSliceMs ?? null,
+    } : null;
+    const contextTimeoutSnapshot = (probe) => {
+      const shader = g.shaderWarmup || null;
+      const residency = g.currentGpuResidency || null;
+      const progress = residency?.progressive || null;
+      const expectedKey = g._currentGpuResidencyKey?.() || null;
+      const compileActivity = g._shaderCompileActivity || null;
+      return {
+        now: performance.now(),
+        contextLost: !!gl.isContextLost?.(),
+        generation: g._webglGeneration,
+        frameSerial,
+        shader: shader ? {
+          status: shader.status || null,
+          generation: shader.generation ?? null,
+          reason: shader.reason || null,
+          startedAt: shader.startedAt ?? null,
+          completedAt: shader.completedAt ?? null,
+          errors: [...(shader.errors || [])],
+          recoveryRound: shader.recoveryRound ?? null,
+          recoveryScheduled: !!shader.recoveryScheduled,
+          bootstrapResumeScheduled: !!shader.bootstrapResumeScheduled,
+          readyVariants: [...(shader.readyVariants || [])],
+          carriedReadyVariants: [...(shader.carriedReadyVariants || [])],
+          currentExactKey: shader.currentExactKey || null,
+          currentExactRevision: shader.currentExactRevision ?? null,
+          currentExactUniverse: shader.currentExactUniverse ?? null,
+          currentExactStatus: shader.currentExactStatus || null,
+          compileInFlightLabel: shader.compileInFlightLabel || null,
+          compileJobsInFlight: shader.compileJobsInFlight ?? null,
+          generationCompileJobsInFlight: compileActivity?.active
+            ?? shader.generationCompileJobsInFlight ?? null,
+          generationMaxCompileJobsInFlight: compileActivity?.peak
+            ?? shader.generationMaxCompileJobsInFlight ?? null,
+          pendingTextures: shader.pendingTextures ?? null,
+          setupSliceCount: shader.setupSlices?.length ?? null,
+          compileSliceCount: shader.compileSlices?.length ?? null,
+          textureSliceCount: shader.textureSlices?.length ?? null,
+          compileJobCount: shader.compileJobs?.length ?? null,
+          setupSlices: compactWarmEntries(shader.setupSlices),
+          compileSlices: compactWarmEntries(shader.compileSlices),
+          textureSlices: compactWarmEntries(shader.textureSlices),
+          compileJobs: compactWarmEntries(shader.compileJobs),
+        } : null,
+        residency: residency ? {
+          generation: residency.generation ?? null,
+          reason: residency.reason || null,
+          activeKey: residency.activeKey || null,
+          expectedKey,
+          progressiveKey: progress?.key || null,
+          bootstrapStatus: residency.bootstrapStatus || null,
+          surfaceStatus: residency.surfaceStatus || null,
+          bootstrapNext: residency.bootstrapNext ?? null,
+          errors: [...(residency.errors || [])],
+          queues: progress ? {
+            reduced: progress.queue?.length ?? null,
+            exact: progress.exactQueue?.length ?? null,
+            owner: progress.ownerQueue?.length ?? null,
+            ownerExact: progress.ownerExactQueue?.length ?? null,
+            deferred: progress.deferredQueue?.length ?? null,
+            deferredExact: progress.deferredExactQueue?.length ?? null,
+          } : null,
+          coverage: progress ? {
+            owner: progress.ownerCovered?.size ?? null,
+            ownerUniverse: progress.ownerUniverse?.size ?? null,
+            ownerExact: progress.ownerExactCovered?.size ?? null,
+            ownerExactUniverse: progress.ownerExactUniverse?.size ?? null,
+            deferred: progress.deferredCovered?.size ?? null,
+            deferredUniverse: progress.deferredUniverse?.size ?? null,
+            deferredExact: progress.deferredExactCovered?.size ?? null,
+            deferredExactUniverse: progress.deferredExactUniverse?.size ?? null,
+          } : null,
+          recorded: progress ? {
+            owner: !!progress.ownerRecorded,
+            ownerExact: !!progress.ownerExactRecorded,
+            deferred: !!progress.deferredRecorded,
+            deferredExact: !!progress.deferredExactRecorded,
+            ownerFinalizeBlocked: !!progress.ownerFinalizeBlocked,
+            deferredFinalizeBlocked: !!progress.deferredFinalizeBlocked,
+            snapshotReady: !!progress.snapshotReady,
+            complete: !!progress.complete,
+            exactShaderRevision: progress.exactShaderRevision ?? null,
+          } : null,
+          membership: {
+            reduced: expectedKey == null ? null : residency.reduced?.has(expectedKey) ?? null,
+            physical: expectedKey == null ? null : residency.physical?.has(expectedKey) ?? null,
+          },
+          bootstrapPasses: compactWarmEntries(residency.bootstrapPasses),
+          surfacePasses: compactWarmEntries(residency.surfacePasses),
+          snapshotPasses: compactWarmEntries(residency.snapshotPasses),
+        } : null,
+        targets: {
+          house: targetSnapshot(g._houseMirrorTargetWarmState),
+          finale: targetSnapshot(g.finale?._targetWarmState),
+        },
+        lastCompletedRender: lastCompletedRender ? { ...lastCompletedRender } : null,
+        restoreFrames: (probe?.frames || []).slice(-8).map((frame) => ({ ...frame })),
+      };
+    };
+    const shaderProgressSignature = () => {
+      const shader = g.shaderWarmup || null;
+      const houseTarget = g._houseMirrorTargetWarmState || null;
+      const finaleTarget = g.finale?._targetWarmState || null;
+      const compileActivity = g._shaderCompileActivity || null;
+      const lastJob = shader?.compileJobs?.at(-1) || null;
+      return JSON.stringify([
+        g._webglGeneration,
+        shader?.generation, shader?.status, shader?.reason,
+        shader?.recoveryRound, shader?.recoveryScheduled,
+        shader?.setupSlices?.length, shader?.compileSlices?.length,
+        shader?.textureSlices?.length, shader?.compileJobs?.length,
+        shader?.pendingTextures, shader?.compileJobsInFlight,
+        shader?.compileInFlightLabel,
+        lastJob?.label, lastJob?.settledMs, lastJob?.error,
+        compileActivity?.generation, compileActivity?.active,
+        shader?.currentExactKey, shader?.currentExactRevision,
+        shader?.currentExactStatus,
+        (shader?.readyVariants || []).join('|'),
+        houseTarget?.generation, houseTarget?.status, houseTarget?.warmed,
+        houseTarget?.recoveryRound, houseTarget?.recoveryScheduled,
+        houseTarget?.attempts, houseTarget?.failedTargets?.length,
+        finaleTarget?.generation, finaleTarget?.status, finaleTarget?.warmed,
+        finaleTarget?.recoveryRound, finaleTarget?.recoveryScheduled,
+        finaleTarget?.attempts, finaleTarget?.failedTargets?.length,
+      ]);
+    };
+    const waitForShaderReady = async ({
+      label, probe, extra = () => true, terminal = () => null,
+    }) => {
+      // A generation-wide itinerary contains hundreds of serial D3D11 jobs. Its
+      // wall time is not a frame budget: retain the strict per-render/slice gates,
+      // but fail a genuinely stuck itinerary by progress rather than an obsolete
+      // fixed 90-second total. The hard ceiling remains finite and diagnostic.
+      const hardDeadline = performance.now() + 240000;
+      let progressDeadline = performance.now() + 30000;
+      let signature = shaderProgressSignature();
+      while (performance.now() < hardDeadline) {
+        const shader = g.shaderWarmup;
+        if (!shader || g._webglGeneration !== probe?.generation
+            || shader.generation !== probe?.generation
+            || shader.status === 'invalidated') {
+          throw new Error(`context recovery shader identity failed: ${label}\n${JSON.stringify(
+            contextTimeoutSnapshot(probe),
+          )}`);
+        }
+        if (shader?.status === 'skipped'
+            || (shader?.status === 'degraded' && !shader.recoveryScheduled)) {
+          throw new Error(`context recovery shader terminal state: ${label}\n${JSON.stringify(
+            contextTimeoutSnapshot(probe),
+          )}`);
+        }
+        const terminalReason = terminal();
+        if (terminalReason) {
+          throw new Error(`context recovery dependency terminal state: ${label}: ${terminalReason}\n${JSON.stringify(
+            contextTimeoutSnapshot(probe),
+          )}`);
+        }
+        if (shader.status === 'ready' && extra()) return;
+        const nextSignature = shaderProgressSignature();
+        if (nextSignature !== signature) {
+          signature = nextSignature;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`context recovery shader made no progress: ${label}\n${JSON.stringify(
+            contextTimeoutSnapshot(probe),
+          )}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`context recovery shader exceeded hard ceiling: ${label}\n${JSON.stringify(
+        contextTimeoutSnapshot(probe),
+      )}`);
+    };
+    const waitForCurrentHouseOwnerSettlement = async ({ label, generation, key }) => {
+      const startedAt = performance.now();
+      // A new physical key must earn a new current-view exact certificate before
+      // owner work can resume. That certificate advances through the same serial
+      // D3D11 itinerary as context recovery, so watch its semantic milestones
+      // instead of declaring the unchanged owner counters dead after 30 seconds.
+      const hardDeadline = startedAt + 240000;
+      let progressDeadline = startedAt + 30000;
+      let signature = null;
+      const snapshot = () => {
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        const shader = g.shaderWarmup || null;
+        const compileActivity = g._shaderCompileActivity || null;
+        const lastJob = shader?.compileJobs?.at(-1) || null;
+        const ownerKey = g._ownerGpuResidencyKey('house');
+        const universe = (residency?.ownerUniverses || []).find((entry) => entry.key === key);
+        const finalizers = (residency?.universeFinalizePasses || []).filter((entry) =>
+          entry.generation === generation && entry.key === key
+            && entry.scope === 'owner' && entry.kind === 'house-owner-exact-finalize');
+        const target = g._houseMirrorTargetWarmState;
+        const liveTarget = g.houseMirror?.pool?.pool?.[0] || null;
+        return {
+          generation: g._webglGeneration,
+          residencyGeneration: residency?.generation ?? null,
+          activeKey: residency?.activeKey || null,
+          progressKey: progress?.key || null,
+          physical: residency?.physical?.has(key) || false,
+          queue: progress?.queue?.length ?? null,
+          pendingReveal: progress?.pendingReducedReveal?.length ?? null,
+          exactQueue: progress?.exactQueue?.length ?? null,
+          exactCovered: progress?.exactCovered?.size ?? null,
+          exactTotal: progress?.exactUniverse?.size ?? null,
+          exactShaderRevision: progress?.exactShaderRevision ?? null,
+          exactPreloadPasses: residency?.exactPreloadPasses?.length ?? null,
+          ownerQueue: progress?.ownerQueue?.length ?? null,
+          ownerExactQueue: progress?.ownerExactQueue?.length ?? null,
+          ownerCovered: progress?.ownerCovered?.size ?? null,
+          ownerTotal: progress?.ownerUniverse?.size ?? null,
+          ownerExactCovered: progress?.ownerExactCovered?.size ?? null,
+          ownerExactTotal: progress?.ownerExactUniverse?.size ?? null,
+          ownerRecorded: !!progress?.ownerRecorded,
+          ownerExactRecorded: !!progress?.ownerExactRecorded,
+          ownerFinalizeBlocked: !!progress?.ownerFinalizeBlocked,
+          failedOwners: progress?.failedOwners?.size ?? null,
+          ownerCertified: residency?.owners?.has(ownerKey) || false,
+          ownerPasses: residency?.ownerPasses?.length || 0,
+          universe: universe ? {
+            key: universe.key,
+            total: universe.total,
+            covered: universe.covered,
+            exactTotal: universe.exactTotal,
+            exactCovered: universe.exactCovered,
+          } : null,
+          finalizers: finalizers.map((entry) => ({
+            recorded: entry.recorded, error: entry.error, durationMs: entry.durationMs,
+          })),
+          target: target ? {
+            generation: target.generation,
+            status: target.status,
+            warmed: target.warmed,
+            current: target.targetRef === liveTarget
+              && target.targetUuid === liveTarget?.texture?.uuid,
+          } : null,
+          shader: shader ? {
+            generation: shader.generation,
+            status: shader.status,
+            reason: shader.reason || null,
+            recoveryRound: shader.recoveryRound ?? null,
+            recoveryScheduled: !!shader.recoveryScheduled,
+            setupSlices: shader.setupSlices?.length ?? null,
+            compileSlices: shader.compileSlices?.length ?? null,
+            textureSlices: shader.textureSlices?.length ?? null,
+            compileJobs: shader.compileJobs?.length ?? null,
+            compileJobsInFlight: shader.compileJobsInFlight ?? null,
+            compileInFlightLabel: shader.compileInFlightLabel || null,
+            lastJob: lastJob ? {
+              label: lastJob.label || null,
+              settledMs: lastJob.settledMs ?? null,
+              error: lastJob.error || null,
+            } : null,
+            activityGeneration: compileActivity?.generation ?? null,
+            activityActive: compileActivity?.active ?? null,
+            currentExactKey: shader.currentExactKey || null,
+            currentExactRevision: shader.currentExactRevision ?? null,
+            currentExactStatus: shader.currentExactStatus || null,
+            readyVariants: [...(shader.readyVariants || [])],
+          } : null,
+          mirrorActive: !!g.houseMirror?.active,
+          paneActive: !!g.houseMirror?.pane?.active,
+          errors: [...(residency?.errors || [])],
+        };
+      };
+      while (performance.now() < hardDeadline) {
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        const current = snapshot();
+        if (current.generation !== generation || current.residencyGeneration !== generation
+            || current.activeKey !== key || current.progressKey !== key) {
+          throw new Error(`context recovery owner identity drift: ${label}: ${JSON.stringify(current)}`);
+        }
+        if (!current.shader || current.shader.generation !== generation
+            || current.shader.status === 'invalidated'
+            || current.shader.status === 'skipped'
+            || (current.shader.status === 'degraded'
+              && !current.shader.recoveryScheduled)) {
+          throw new Error(`context recovery owner shader terminal: ${label}: ${JSON.stringify(current)}`);
+        }
+        if (current.paneActive || current.mirrorActive) {
+          throw new Error(`context recovery owner settlement exposed a pane: ${label}: ${JSON.stringify(current)}`);
+        }
+        if (current.ownerFinalizeBlocked || current.failedOwners > 0
+            || current.errors.length > 0) {
+          throw new Error(`context recovery owner settlement terminal: ${label}: ${JSON.stringify(current)}`);
+        }
+        const finalizer = (residency.universeFinalizePasses || []).find((entry) =>
+          entry.generation === generation && entry.key === key
+            && entry.scope === 'owner' && entry.kind === 'house-owner-exact-finalize'
+            && entry.recorded === true && entry.error == null);
+        const universe = (residency.ownerUniverses || []).find((entry) =>
+          entry.key === key && entry.house > 0);
+        const settled = current.physical && progress.ownerQueue.length === 0
+          && progress.ownerExactQueue.length === 0
+          && progress.ownerRecorded && progress.ownerExactRecorded
+          && progress.ownerCovered.size === progress.ownerUniverse.size
+          && progress.ownerExactCovered.size === progress.ownerExactUniverse.size
+          && universe?.covered === universe?.total
+          && universe?.exactCovered === universe?.exactTotal
+          && finalizer && current.target?.generation === generation
+          && current.target.status === 'ready' && current.target.warmed === 1
+          && current.target.current === true && current.ownerCertified === false;
+        if (settled) return { ...current, waitedMs: performance.now() - startedAt };
+        const nextSignature = JSON.stringify(current);
+        if (nextSignature !== signature) {
+          signature = nextSignature;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`context recovery owner settlement made no progress: ${label}: ${nextSignature}`);
+        }
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      throw new Error(`context recovery owner settlement exceeded 240s: ${label}: ${JSON.stringify(snapshot())}`);
     };
     const summarizeRestoreProbe = (probe) => {
       const frames = probe.frames.filter((frame) => frame.at >= probe.restoredAt
         && (probe.completedAt == null || frame.at <= probe.completedAt));
-      const intervals = frames.slice(1).map((frame, index) => frame.at - frames[index].at);
+      const startIntervals = frames.slice(1).map((frame, index) => frame.at - frames[index].at);
+      const completionIntervals = frames.slice(1)
+        .map((frame, index) => frame.completedAt - frames[index].completedAt);
+      const interRenderIdle = frames.slice(1)
+        .map((frame, index) => frame.at - frames[index].completedAt);
+      const orderingErrors = frames
+        .filter((frame) => frame.generation !== probe.generation
+          || frame.completedAt < frame.at)
+        .map((frame) => ({ current: frame, probeGeneration: probe.generation }));
+      orderingErrors.push(...frames.slice(1).flatMap((frame, index) => {
+        const previous = frames[index];
+        return frame.frameId > previous.frameId
+          && frame.generation === probe.generation
+          && previous.generation === probe.generation
+          && frame.completedAt >= frame.at && previous.completedAt >= previous.at
+          ? [] : [{ previous, current: frame, probeGeneration: probe.generation }];
+      }));
       const firstWorld = frames.find((frame) => frame.worldDrawCalls > 0 && !frame.shielded) || null;
       const firstFull = frames.find((frame) => frame.worldDrawCalls > 0
         && !frame.shielded && !frame.reducedDetail) || null;
@@ -2121,7 +2981,12 @@ async function runContextRecovery(browser) {
         exactPass: probe.exactPass,
         shieldDurationMs: firstShield
           ? (firstUnshield?.at || performance.now()) - firstShield.at : 0,
-        maxRafMs: Math.max(0, ...intervals),
+        frameCount: frames.length,
+        orderingErrors,
+        maxRafMs: Math.max(0, ...startIntervals),
+        maxRenderStartIntervalMs: Math.max(0, ...startIntervals),
+        maxInterRenderIdleMs: Math.max(0, ...interRenderIdle),
+        maxRenderCompletionIntervalMs: Math.max(0, ...completionIntervals),
         maxRenderMs: Math.max(0, ...frames.map((frame) => frame.ms)),
         maxVisibleProgramDelta: Math.max(0, ...frames
           .filter((frame) => !frame.shielded).map((frame) => frame.programDelta)),
@@ -2163,7 +3028,7 @@ async function runContextRecovery(browser) {
       const alreadyCapturedKind = recoveredHouseFrames.some((frame) =>
         frame.reducedDetail === reducedDetail);
       if (captureRecoveredHouse && !g._shaderTransitionShield
-          && g.lastRender?.drawCalls > 0 && !alreadyCapturedKind) {
+          && g.lastRender?.worldDrawCalls > 0 && !alreadyCapturedKind) {
         const worldLights = [];
         g.scene.traverseVisible((object) => {
           if (object.isLight && (object.layers.mask & 3) !== 0) worldLights.push(object);
@@ -2206,18 +3071,21 @@ async function runContextRecovery(browser) {
     markRestored(houseRestoreProbe);
     captureRecoveredHouse = true;
     await waitForRestoreReveal(houseRestoreProbe);
-    await waitFor(() => g.shaderWarmup?.status === 'ready', 'ready after pending loss');
-    await waitForRestoreExact(houseRestoreProbe);
+    await waitForRestoreExact(houseRestoreProbe, { keepActive: true });
     await waitFor(() => recoveredHouseFrames.some((frame) => !frame.reducedDetail),
       'first exact recovered house frame');
+    await waitForShaderReady({
+      label: 'ready after pending loss', probe: houseRestoreProbe,
+    });
+    houseRestoreProbe.completedAt = performance.now();
+    if (activeRestoreProbe === houseRestoreProbe) activeRestoreProbe = null;
     g.render = realRecoveredHouseRender;
     stages.push(mark('ready-after-pending-loss'));
     const afterPendingRecovery = state();
-    await waitFor(() => (g.currentGpuResidency?.ownerUniverses || [])
-      .some((entry) => entry.house > 0), 'restored house owner universe', 30000);
-
     const measureHouseView = async (kind) => {
+      const setupStartedAt = performance.now();
       F.teleport('house');
+      if (g.act !== 'house') throw new Error(`${kind} view landed in ${g.act}, not house`);
       g.skull.holdNow();
       if (kind === 'window') {
         g.houseMirror.awakened = false;
@@ -2248,48 +3116,52 @@ async function runContextRecovery(browser) {
       }
       g.player.vel.set(0, 0, 0);
       g.player._sync(0);
+      const setupMs = performance.now() - setupStartedAt;
       const before = {
         programs: g.renderer.info.programs?.length || 0,
         textures: g.renderer.info.memory.textures,
         geometries: g.renderer.info.memory.geometries,
       };
       const ownerPassIndex = g.currentGpuResidency?.ownerPasses?.length || 0;
-      let previous = null;
-      const intervals = [];
-      const visibleFrames = [];
-      await new Promise((resolve) => {
-        const sample = (timestamp) => {
-          if (previous != null) intervals.push(timestamp - previous);
-          previous = timestamp;
-          visibleFrames.push({
-            reducedDetail: !!g.lastRender?.reducedDetail,
-            worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
-            programDelta: g.lastRender?.visibleProgramDelta || 0,
-            textureDelta: g.lastRender?.visibleTextureDelta || 0,
-            geometryDelta: g.lastRender?.visibleGeometryDelta || 0,
-            residencyKey: g.lastRender?.residencyKey || null,
-            paneActive: !!g.houseMirror?.pane?.active,
-            mirrorActive: !!g.houseMirror?.active,
-          });
-          if (intervals.length >= 8) resolve();
-          else requestAnimationFrame(sample);
-        };
-        requestAnimationFrame(sample);
+      const timing = await sampleOwnedFrames({
+        count: 9,
+        label: `restored-house-${kind}`,
+        generation: g._webglGeneration,
+        key: g._currentGpuResidencyKey(),
       });
+      const visibleFrames = timing.frames.map((frame) => ({
+        ...frame,
+        programDelta: frame.programDelta,
+        textureDelta: frame.textureDelta,
+        geometryDelta: frame.geometryDelta,
+        residencyKey: frame.key,
+        paneActive: frame.housePaneActive,
+        mirrorActive: frame.houseMirrorActive,
+      }));
       g._syncShaderBallast();
       return {
         kind,
+        setupMs,
         before,
         after: {
           programs: g.renderer.info.programs?.length || 0,
           textures: g.renderer.info.memory.textures,
           geometries: g.renderer.info.memory.geometries,
         },
-        maxRafMs: Math.max(0, ...intervals),
+        renderCount: timing.frames.length,
+        orderingErrors: timing.orderingErrors,
+        observedIntervals: timing.observedIntervals,
+        maxRafMs: timing.maxObservedIntervalMs,
+        maxRenderMs: timing.maxRenderMs,
+        maxRenderStartIntervalMs: timing.maxRenderStartIntervalMs,
+        maxInterRenderIdleMs: timing.maxInterRenderIdleMs,
+        maxRenderCompletionIntervalMs: timing.maxRenderCompletionIntervalMs,
         reducedFrames: visibleFrames.filter((frame) => frame.reducedDetail).length,
         maxVisibleProgramDelta: Math.max(0, ...visibleFrames.map((frame) => frame.programDelta)),
         maxVisibleTextureDelta: Math.max(0, ...visibleFrames.map((frame) => frame.textureDelta)),
         maxVisibleGeometryDelta: Math.max(0, ...visibleFrames.map((frame) => frame.geometryDelta)),
+        firstOwnerPassFrame: visibleFrames.find((frame) =>
+          frame.ownerPassesAdded?.some((entry) => entry.kind === 'house')) || null,
         firstEnabledFrame: visibleFrames.find((frame) => frame.paneActive) || null,
         ownerPasses: [...(g.currentGpuResidency?.ownerPasses || [])].slice(ownerPassIndex),
         mirrorActive: g.houseMirror.active,
@@ -2301,25 +3173,41 @@ async function runContextRecovery(browser) {
           generation: g._houseMirrorTargetWarmState.generation,
           warmed: g._houseMirrorTargetWarmState.warmed,
           targetUuid: g._houseMirrorTargetWarmState.targetUuid,
+          current: g._houseMirrorTargetWarmState.targetRef === g.houseMirror?.pool?.pool?.[0]
+            && g._houseMirrorTargetWarmState.targetUuid
+              === g.houseMirror?.pool?.pool?.[0]?.texture?.uuid,
         } : null,
       };
     };
+    // Preserve the immediate destination transition sample, then let this exact
+    // House physical key finish its hidden owner universe while the window keeps
+    // the mirror ineligible. A Bedroom proof from the restored Wake is not a
+    // House proof: physical districts intentionally retire one another.
+    const restoredHouseWindow = await measureHouseView('window');
+    const restoredHouseGeneration = g._webglGeneration;
+    const restoredHouseKey = g._currentGpuResidencyKey();
+    const restoredHouseSettlement = await waitForCurrentHouseOwnerSettlement({
+      label: 'restored House destination owner universe',
+      generation: restoredHouseGeneration,
+      key: restoredHouseKey,
+    });
+    const restoredHouseMirror = await measureHouseView('mirror');
+    const restoredHouseMotion = await measureHouseView('mirror-motion');
     const restoredHouseViews = [
-      await measureHouseView('window'),
-      await measureHouseView('mirror'),
-      await measureHouseView('mirror-motion'),
+      restoredHouseWindow, restoredHouseMirror, restoredHouseMotion,
     ];
-    const restoredHouseOwnerUniverses = [...(g.currentGpuResidency?.ownerUniverses || [])];
+    const restoredHouseOwnerUniverses = [...(g.currentGpuResidency?.ownerUniverses || [])]
+      .filter((entry) => entry.key === restoredHouseKey);
     const restoredHouseOwnerBatches = [...(g.currentGpuResidency?.reducedPasses || [])]
-      .filter((entry) => entry.kind === 'owner-preload-batch');
-    const expectedHouseOwnerMembers = collectRenderableIds([
-      ...(g.staticWorldRenderRoots || []),
-      ...(g.houseRenderRoots || []),
-      ...(g.graveyardRenderRoots || []),
-      g.atmosphere?.group,
-      g.houseMirror?.double,
-      g.houseMirror?.echo,
-    ]);
+      .filter((entry) => entry.generation === restoredHouseGeneration
+        && entry.key === restoredHouseKey && entry.kind === 'owner-preload-batch');
+    const restoredHouseOwnerExactBatches = [...(g.currentGpuResidency?.exactPreloadPasses || [])]
+      .filter((entry) => entry.generation === restoredHouseGeneration
+        && entry.key === restoredHouseKey && entry.kind === 'owner-exact-preload-batch'
+        && entry.targetOwner === 'house');
+    const restoredHouseFinalizers = [...(g.currentGpuResidency?.universeFinalizePasses || [])]
+      .filter((entry) => entry.generation === restoredHouseGeneration
+        && entry.key === restoredHouseKey && entry.kind === 'house-owner-exact-finalize');
     const restoredImpactBefore = {
       programs: g.renderer.info.programs?.length || 0,
       textures: g.renderer.info.memory.textures,
@@ -2327,20 +3215,27 @@ async function runContextRecovery(browser) {
       lightUuid: g._impactLight?.uuid || null,
       ringUuid: g._impactRing?.uuid || null,
     };
-    const restoredImpactIntervals = [];
-    let restoredImpactPrevious = null;
+    const restoredImpactStartedAt = performance.now();
     g.impact('locked', g.player.pos.clone().setY(g.player.pos.y + 1));
-    for (let i = 0; i < 5; i++) {
-      await new Promise((resolve) => requestAnimationFrame((timestamp) => {
-        if (restoredImpactPrevious != null) {
-          restoredImpactIntervals.push(timestamp - restoredImpactPrevious);
-        }
-        restoredImpactPrevious = timestamp;
-        resolve();
-      }));
-    }
+    const restoredImpactActivation = {
+      ringVisible: !!g._impactRing?.visible,
+      bootPrime: !!g._impactRing?.userData?.bootPrime,
+      ringT: g._ringT,
+      ringIn: !!g._ringIn,
+      lightIntensity: g._impactLight?.intensity || 0,
+      hitStop: g.hitStop || 0,
+    };
+    const restoredImpactSetupMs = performance.now() - restoredImpactStartedAt;
+    const restoredImpactTiming = await sampleOwnedFrames({
+      count: 5,
+      label: 'restored-house-impact',
+      generation: g._webglGeneration,
+      key: g._currentGpuResidencyKey(),
+    });
     const restoredImpact = {
       before: restoredImpactBefore,
+      activation: restoredImpactActivation,
+      setupMs: restoredImpactSetupMs,
       after: {
         programs: g.renderer.info.programs?.length || 0,
         textures: g.renderer.info.memory.textures,
@@ -2348,7 +3243,8 @@ async function runContextRecovery(browser) {
         lightUuid: g._impactLight?.uuid || null,
         ringUuid: g._impactRing?.uuid || null,
       },
-      maxRafMs: Math.max(0, ...restoredImpactIntervals),
+      timing: restoredImpactTiming,
+      maxRafMs: restoredImpactTiming.maxObservedIntervalMs,
       bootPrime: !!g._impactRing?.userData?.bootPrime,
     };
     const activateDormantPool = (mesh, offset) => {
@@ -2367,19 +3263,19 @@ async function runContextRecovery(browser) {
       goreCount: g.goreMesh.count,
       stainCount: g.enemies.stainPool.count,
     };
+    const dynamicSetupStartedAt = performance.now();
     activateDormantPool(g.goreMesh, -0.15);
     activateDormantPool(g.enemies.stainPool, 0.15);
-    let dynamicPrevious = null;
-    const dynamicIntervals = [];
-    for (let i = 0; i < 5; i++) {
-      await new Promise((resolve) => requestAnimationFrame((timestamp) => {
-        if (dynamicPrevious != null) dynamicIntervals.push(timestamp - dynamicPrevious);
-        dynamicPrevious = timestamp;
-        resolve();
-      }));
-    }
+    const dynamicSetupMs = performance.now() - dynamicSetupStartedAt;
+    const dynamicTiming = await sampleOwnedFrames({
+      count: 5,
+      label: 'restored-house-dynamic-pools',
+      generation: g._webglGeneration,
+      key: g._currentGpuResidencyKey(),
+    });
     const dynamicPoolActivation = {
       before: dynamicBefore,
+      setupMs: dynamicSetupMs,
       after: {
         programs: g.renderer.info.programs?.length || 0,
         textures: g.renderer.info.memory.textures,
@@ -2387,7 +3283,8 @@ async function runContextRecovery(browser) {
         goreCount: g.goreMesh.count,
         stainCount: g.enemies.stainPool.count,
       },
-      maxRafMs: Math.max(0, ...dynamicIntervals),
+      timing: dynamicTiming,
+      maxRafMs: dynamicTiming.maxObservedIntervalMs,
     };
     g.goreMesh.count = 0;
     g.goreMesh.visible = false;
@@ -2410,24 +3307,34 @@ async function runContextRecovery(browser) {
     await restoreContext();
     markRestored(outboundRestoreProbe);
     await waitForRestoreReveal(outboundRestoreProbe);
-    await waitFor(() => g.shaderWarmup?.status === 'ready', 'ready after outbound skull loss');
-    await waitForRestoreExact(outboundRestoreProbe);
+    await waitForRestoreExact(outboundRestoreProbe, { keepActive: true });
+    await waitForShaderReady({
+      label: 'ready after outbound skull loss', probe: outboundRestoreProbe,
+    });
+    outboundRestoreProbe.completedAt = performance.now();
+    if (activeRestoreProbe === outboundRestoreProbe) activeRestoreProbe = null;
     const outboundAfter = skullFlightState();
     const outboundResidency = {
       reducedPasses: [...(g.currentGpuResidency?.reducedPasses || [])],
       exactPasses: [...(g.currentGpuResidency?.exactPasses || [])],
+      exactPreloadPasses: [...(g.currentGpuResidency?.exactPreloadPasses || [])],
       skullWorldPasses: [...(g.currentGpuResidency?.skullWorldPasses || [])],
       errors: [...(g.currentGpuResidency?.errors || [])],
     };
     stages.push(mark('ready-after-outbound-skull-loss'));
     g.skull.holdNow();
+    const restoredOssuarySeam = await measureAct(
+      'ossuary', 'ossuary-before-sacrifice-after-restore',
+    );
 
-    // 3. Restore with a real live Choir. Its owned light must be isolated from
+    // 3. Install the authored post-waterfall state as a renderer fixture, then
+    // restore with a real live Choir. Its owned light must be isolated from
     // ordinary/finale rigs while still contributing the cave-threat signature.
     // This is the exact late-game state a context loss can interrupt in play.
     if (!g.flags.has('waterfallTaken')) g.director.waterfallTaken();
     g.skull.vanish();
     F.teleport('cave');
+    if (g.act !== 'cave') throw new Error(`live-Choir fixture landed in ${g.act}, not cave`);
     F.stepWith(0.05, {}, false);
     const choirSource = g.director._caveEcology?.choirSource
       || g.underfalls.layout.main[5];
@@ -2439,12 +3346,17 @@ async function runContextRecovery(browser) {
     await restoreContext();
     markRestored(caveRestoreProbe);
     await waitForRestoreReveal(caveRestoreProbe);
-    await waitFor(() => g.shaderWarmup?.status === 'ready', 'ready after live Choir loss');
-    await waitForRestoreExact(caveRestoreProbe);
+    await waitForRestoreExact(caveRestoreProbe, { keepActive: true });
+    await waitForShaderReady({
+      label: 'ready after live Choir loss', probe: caveRestoreProbe,
+    });
+    caveRestoreProbe.completedAt = performance.now();
+    if (activeRestoreProbe === caveRestoreProbe) activeRestoreProbe = null;
     stages.push(mark('ready-after-live-choir-loss'));
     const afterReadyRecovery = state();
 
-    const measureAct = async (act, label = act) => {
+    async function measureAct(act, label = act) {
+      const setupStartedAt = performance.now();
       if (act === 'cave' && !g.flags.has('waterfallTaken')) g.director.waterfallTaken();
       if (act === 'ossuary') {
         F.teleport('graveyard');
@@ -2469,6 +3381,13 @@ async function runContextRecovery(browser) {
         F.teleport(act);
         F.stepWith(0.05, {}, false);
       }
+      if (act === 'ossuary') {
+        if (g.act !== 'graveyard' || !g.ossuary.inOssuary) {
+          throw new Error(`restored ossuary seam landed in ${g.act} without ossuary ownership`);
+        }
+      } else if (g.act !== act) {
+        throw new Error(`restored ${label} seam landed in ${g.act}, not ${act}`);
+      }
       if (act === 'cave') {
         // Put the cold first visible frame on the authored hatch approach. This
         // proves the destination signal and late-route materials were warmed,
@@ -2486,43 +3405,39 @@ async function runContextRecovery(browser) {
         textures: g.renderer.info.memory.textures,
         geometries: g.renderer.info.memory.geometries,
       };
-      let previous = null;
-      const intervals = [];
-      const visibleFrames = [];
-      await new Promise((resolve) => {
-        const sample = (timestamp) => {
-          if (previous != null) intervals.push(timestamp - previous);
-          previous = timestamp;
-          visibleFrames.push({
-            reducedDetail: !!g.lastRender?.reducedDetail,
-            worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
-            programDelta: g.lastRender?.visibleProgramDelta || 0,
-            textureDelta: g.lastRender?.visibleTextureDelta || 0,
-            geometryDelta: g.lastRender?.visibleGeometryDelta || 0,
-            residencyKey: g.lastRender?.residencyKey || null,
-          });
-          if (intervals.length >= 16) resolve();
-          else requestAnimationFrame(sample);
-        };
-        requestAnimationFrame(sample);
+      const setupMs = performance.now() - setupStartedAt;
+      const timing = await sampleOwnedFrames({
+        count: 17,
+        label: `restored-context-${label}`,
+        generation: g._webglGeneration,
+        key: g._currentGpuResidencyKey(),
       });
+      const visibleFrames = timing.frames;
       const result = {
         act,
         label,
+        setupMs,
         before,
         after: {
           programs: g.renderer.info.programs?.length || 0,
           textures: g.renderer.info.memory.textures,
           geometries: g.renderer.info.memory.geometries,
         },
-        maxRafMs: Math.max(...intervals),
-        worldSubmitted: (g.lastRender?.worldDrawCalls || 0) > 0,
-        shielded: !!g._shaderTransitionShield,
+        renderCount: timing.frames.length,
+        orderingErrors: timing.orderingErrors,
+        observedIntervals: timing.observedIntervals,
+        maxRafMs: timing.maxObservedIntervalMs,
+        maxRenderMs: timing.maxRenderMs,
+        maxRenderStartIntervalMs: timing.maxRenderStartIntervalMs,
+        maxInterRenderIdleMs: timing.maxInterRenderIdleMs,
+        maxRenderCompletionIntervalMs: timing.maxRenderCompletionIntervalMs,
+        worldSubmitted: visibleFrames.some((frame) => frame.worldDrawCalls > 0),
+        shielded: visibleFrames.some((frame) => frame.shielded),
         reducedFrames: visibleFrames.filter((frame) => frame.reducedDetail).length,
         maxVisibleProgramDelta: Math.max(0, ...visibleFrames.map((frame) => frame.programDelta)),
         maxVisibleTextureDelta: Math.max(0, ...visibleFrames.map((frame) => frame.textureDelta)),
         maxVisibleGeometryDelta: Math.max(0, ...visibleFrames.map((frame) => frame.geometryDelta)),
-        residencyKey: g.lastRender?.residencyKey || null,
+        residencyKey: visibleFrames.at(-1)?.key || null,
       };
       g._syncShaderBallast();
       const worldLights = [];
@@ -2545,15 +3460,29 @@ async function runContextRecovery(browser) {
           || ((light.isPointLight || light.isSpotLight) && light.castShadow)
           || (light.isDirectionalLight && !light.castShadow)
         )).map((light) => light.name);
+      result.cleanupMs = 0;
       if (act === 'ossuary') {
-        g.ossuary.inOssuary = false;
-        F.stepWith(0.03, {}, false);
+        const cleanupStartedAt = performance.now();
+        for (let index = 0; index < 15 && g.ossuary.portalCooldown > 0; index++) {
+          F.stepWith(0.04, {}, false);
+        }
+        g.player.pos.set(g.ossuary.origin.x, g.ossuary.origin.floor,
+          g.ossuary.origin.z + 0.2);
+        g.player.vel.set(0, 0, 0);
+        g.player.fallV = 0;
+        g.player.grounded = true;
+        g.player._sync(0);
+        F.stepWith(1 / 120, {}, false);
+        if (g.ossuary.inOssuary || g.ossuary.root.visible) {
+          throw new Error('restored ossuary backtrack did not restore the graveyard');
+        }
+        result.cleanupMs = performance.now() - cleanupStartedAt;
       }
       return result;
-    };
+    }
     const seams = [
       await measureAct('cave', 'hatch-with-live-choir'),
-      await measureAct('ossuary', 'ossuary-after-choir-retirement'),
+      restoredOssuarySeam,
       await measureAct('graveyard', 'graveyard-after-restore'),
       await measureAct('forest', 'forest-after-restore'),
       await measureAct('clearing', 'clearing-after-restore'),
@@ -2588,15 +3517,6 @@ async function runContextRecovery(browser) {
       }
       return rendered;
     };
-    const restoreIntervals = [];
-    let restorePrevious = null;
-    let sampleRestore = true;
-    const sampleRestoreRaf = (timestamp) => {
-      if (restorePrevious != null) restoreIntervals.push(timestamp - restorePrevious);
-      restorePrevious = timestamp;
-      if (sampleRestore) requestAnimationFrame(sampleRestoreRaf);
-    };
-    requestAnimationFrame(sampleRestoreRaf);
     await contextEvent('webglcontextlost', () => lose.loseContext());
     stages.push(mark('lost-with-active-finale'));
     if (!g.finale._contextRewarming) throw new Error('active Finale was not shielded on context loss');
@@ -2605,15 +3525,37 @@ async function runContextRecovery(browser) {
     markRestored(finaleRestoreProbe);
     recordReflections = true;
     await waitForRestoreReveal(finaleRestoreProbe);
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.finale._targetWarmState?.status === 'ready'
-      && !g.finale._contextRewarming, 'active Finale generation ready');
-    await waitForRestoreExact(finaleRestoreProbe);
+    await waitForRestoreExact(finaleRestoreProbe, { keepActive: true });
+    await waitForShaderReady({
+      label: 'active Finale generation ready', probe: finaleRestoreProbe,
+      extra: () => g.finale._targetWarmState?.status === 'ready'
+        && !g.finale._contextRewarming,
+      terminal: () => {
+        const target = g.finale._targetWarmState;
+        if (!target) return null;
+        if (target.generation !== g._webglGeneration) return 'target generation mismatch';
+        if (['skipped', 'invalidated'].includes(target.status)) {
+          return `target ${target.status}`;
+        }
+        if (target.status === 'degraded' && !target.recoveryScheduled) {
+          return 'target degraded without recovery';
+        }
+        if (g.shaderWarmup?.status === 'ready' && target.status === 'ready'
+            && g.finale._contextRewarming) {
+          return 'ready target left context rewarming latched';
+        }
+        return null;
+      },
+    });
     await waitFor(() => reflectionFrames.length > 0, 'first restored reflection');
+    await waitFor(() => finaleRestoreProbe.frames.some((frame) =>
+      frame.at >= finaleRestoreProbe.restoredAt && frame.finalePanesActive > 0),
+    'first restored Finale pane frame');
+    finaleRestoreProbe.completedAt = performance.now();
+    if (activeRestoreProbe === finaleRestoreProbe) activeRestoreProbe = null;
     g._syncShaderBallast();
     const finaleReflectionLightCensus = lightCensus(g.finale.mirrors._vcam);
     const finaleMotionFrameIndex = reflectionFrames.length;
-    const finaleMotionIntervalIndex = restoreIntervals.length;
     const finaleMotionOwnerBefore = g.currentGpuResidency?.ownerPasses?.length || 0;
     const finaleMotionBefore = {
       programs: g.renderer.info.programs?.length || 0,
@@ -2626,9 +3568,12 @@ async function runContextRecovery(browser) {
     g.player.pitch = -0.03;
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
-    for (let index = 0; index < 4; index++) {
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
+    const finaleMotionTiming = await sampleOwnedFrames({
+      count: 4,
+      label: 'active-finale-motion',
+      generation: g._webglGeneration,
+      key: g._currentGpuResidencyKey(),
+    });
     const finaleMotionFrames = reflectionFrames.slice(finaleMotionFrameIndex);
     const finaleMirrorMotion = {
       before: finaleMotionBefore,
@@ -2638,15 +3583,14 @@ async function runContextRecovery(browser) {
         geometries: g.renderer.info.memory.geometries,
       },
       frames: finaleMotionFrames,
-      maxRafMs: Math.max(0, ...restoreIntervals.slice(finaleMotionIntervalIndex)),
+      timing: finaleMotionTiming,
+      maxRafMs: finaleMotionTiming.maxObservedIntervalMs,
       ownerBefore: finaleMotionOwnerBefore,
       ownerAfter: g.currentGpuResidency?.ownerPasses?.length || 0,
       panesActive: g.finale.panes.filter((pane) => pane.active).length,
       reflectionLightCensus: lightCensus(g.finale.mirrors._vcam),
     };
     stages.push(mark('ready-after-active-finale-loss'));
-    sampleRestore = false;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
     g.finale.render = realFinaleRender;
     const afterActiveFinaleRecovery = state();
     const firstRestoredReflection = reflectionFrames[0];
@@ -2655,12 +3599,14 @@ async function runContextRecovery(browser) {
     const restoredFinaleOwnerUniverses = [...(g.currentGpuResidency?.ownerUniverses || [])];
     const restoredFinaleOwnerBatches = [...(g.currentGpuResidency?.reducedPasses || [])]
       .filter((entry) => entry.kind === 'owner-preload-batch');
-    const expectedFinaleOwnerMembers = collectRenderableIds([
-      ...(g.staticWorldRenderRoots || []),
-      ...(g.finale?.warmRoots || []),
-      g.finale?.figure,
-      g.finale?.figure?.userData?.exactHead,
-    ]);
+    const restoredFinaleOwnerExactBatches = [...(g.currentGpuResidency?.exactPreloadPasses || [])]
+      .filter((entry) => entry.kind === 'owner-exact-preload-batch'
+        && entry.targetOwner === 'finale');
+    const restoredFinaleFinalizers = [...(g.currentGpuResidency?.universeFinalizePasses || [])]
+      .filter((entry) => entry.kind === 'finale-owner-exact-finalize');
+    const activeRestoreSummary = summarizeRestoreProbe(finaleRestoreProbe);
+    const firstFinalePaneFrame = finaleRestoreProbe.frames.find((frame) =>
+      frame.at >= finaleRestoreProbe.restoredAt && frame.finalePanesActive > 0) || null;
     activeRestoreProbe = null;
     g.render = originalGameRender;
 
@@ -2804,10 +3750,14 @@ async function runContextRecovery(browser) {
       firstRecoveredHouseFrame: recoveredHouseFrames[0],
       firstRecoveredHouseFullFrame: recoveredHouseFrames
         .find((frame) => !frame.reducedDetail),
+      restoredHouseGeneration,
+      restoredHouseKey,
+      restoredHouseSettlement,
       restoredHouseViews,
       restoredHouseOwnerUniverses,
       restoredHouseOwnerBatches,
-      expectedHouseOwnerMembers,
+      restoredHouseOwnerExactBatches,
+      restoredHouseFinalizers,
       restoredImpact,
       dynamicPoolActivation,
       outboundBefore,
@@ -2824,8 +3774,11 @@ async function runContextRecovery(browser) {
       finaleOwnerPasses: restoredFinaleOwnerPasses,
       finaleOwnerUniverses: restoredFinaleOwnerUniverses,
       finaleOwnerBatches: restoredFinaleOwnerBatches,
-      expectedFinaleOwnerMembers,
-      activeRestoreMaxRafMs: Math.max(0, ...restoreIntervals),
+      finaleOwnerExactBatches: restoredFinaleOwnerExactBatches,
+      finaleFinalizers: restoredFinaleFinalizers,
+      finalizerFrames,
+      firstFinalePaneFrame,
+      activeRestoreMaxRafMs: activeRestoreSummary.maxRenderCompletionIntervalMs,
       restoreProbes: restoreProbes.map(summarizeRestoreProbe),
       failureRecovery,
       readFailureRecovery,
@@ -2833,27 +3786,6 @@ async function runContextRecovery(browser) {
   });
   report.browserErrors.push(...opened.errors.map((error) => `context: ${error}`));
   await page.close();
-  for (const seam of value.seams || []) seam.maxRafMs = round(seam.maxRafMs);
-  for (const view of value.restoredHouseViews || []) view.maxRafMs = round(view.maxRafMs);
-  for (const probe of value.restoreProbes || []) {
-    for (const key of ['firstWorldMs', 'firstFullMs', 'shieldDurationMs', 'maxRafMs', 'maxRenderMs']) {
-      probe[key] = round(probe[key]);
-    }
-    if (probe.exactPass) probe.exactPass.durationMs = round(probe.exactPass.durationMs);
-  }
-  if (value.firstRecoveredHouseFrame) value.firstRecoveredHouseFrame.ms =
-    round(value.firstRecoveredHouseFrame.ms);
-  if (value.firstRecoveredHouseFullFrame) value.firstRecoveredHouseFullFrame.ms =
-    round(value.firstRecoveredHouseFullFrame.ms);
-  if (value.restoredImpact) value.restoredImpact.maxRafMs = round(value.restoredImpact.maxRafMs);
-  if (value.dynamicPoolActivation) value.dynamicPoolActivation.maxRafMs =
-    round(value.dynamicPoolActivation.maxRafMs);
-  value.activeRestoreMaxRafMs = round(value.activeRestoreMaxRafMs);
-  if (value.firstRestoredReflection) value.firstRestoredReflection.ms = round(value.firstRestoredReflection.ms);
-  if (value.finaleMirrorMotion) {
-    value.finaleMirrorMotion.maxRafMs = round(value.finaleMirrorMotion.maxRafMs);
-    for (const frame of value.finaleMirrorMotion.frames || []) frame.ms = round(frame.ms);
-  }
   return value;
 }
 
@@ -2890,6 +3822,39 @@ async function runHouseFailureRecovery(browser) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
     };
+    const houseResidencySnapshot = () => {
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const key = g._currentGpuResidencyKey();
+      const ownerKey = g._ownerGpuResidencyKey('house');
+      return {
+        generation: residency?.generation ?? null,
+        key,
+        activeKey: residency?.activeKey || null,
+        progressKey: progress?.key || null,
+        physical: residency?.physical?.has(key) || false,
+        queue: progress?.queue?.length ?? null,
+        ownerQueue: progress?.ownerQueue?.length ?? null,
+        ownerExactQueue: progress?.ownerExactQueue?.length ?? null,
+        ownerCovered: progress?.ownerCovered?.size ?? null,
+        ownerTotal: progress?.ownerUniverse?.size ?? null,
+        ownerExactCovered: progress?.ownerExactCovered?.size ?? null,
+        ownerExactTotal: progress?.ownerExactUniverse?.size ?? null,
+        ownerRecorded: !!progress?.ownerRecorded,
+        ownerExactRecorded: !!progress?.ownerExactRecorded,
+        ownerFinalizeBlocked: !!progress?.ownerFinalizeBlocked,
+        failedOwners: progress?.failedOwners?.size ?? null,
+        ownerCertified: residency?.owners?.has(ownerKey) || false,
+        ownerPasses: residency?.ownerPasses?.length || 0,
+        universeRecorded: (residency?.ownerUniverses || []).some((entry) =>
+          entry.key === key && entry.house > 0 && entry.covered === entry.total
+            && entry.exactCovered === entry.exactTotal),
+        finalizerRecorded: (residency?.universeFinalizePasses || []).some((entry) =>
+          entry.generation === g._webglGeneration && entry.key === key
+            && entry.kind === 'house-owner-exact-finalize'
+            && entry.recorded === true && entry.error == null),
+      };
+    };
     const resourceSnapshot = () => ({
       generation: g._webglGeneration,
       shaderStatus: g.shaderWarmup?.status,
@@ -2901,9 +3866,14 @@ async function runHouseFailureRecovery(browser) {
         attempts: g._houseMirrorTargetWarmState.attempts,
         warmed: g._houseMirrorTargetWarmState.warmed,
         targetUuid: g._houseMirrorTargetWarmState.targetUuid,
+        current: g._houseMirrorTargetWarmState.targetRef === g.houseMirror?.pool?.pool?.[0]
+          && g._houseMirrorTargetWarmState.targetUuid
+            === g.houseMirror?.pool?.pool?.[0]?.texture?.uuid,
         errors: [...g._houseMirrorTargetWarmState.errors],
       } : null,
+      residency: houseResidencySnapshot(),
       drawCalls: g.lastRender?.drawCalls || 0,
+      worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
       paneActive: g.houseMirror.pane.active,
       mirrorActive: g.houseMirror.active,
       shielded: !!g._shaderTransitionShield,
@@ -2912,8 +3882,94 @@ async function runHouseFailureRecovery(browser) {
       visibleTextureDelta: g.lastRender?.visibleTextureDelta || 0,
       visibleGeometryDelta: g.lastRender?.visibleGeometryDelta || 0,
     });
+    const warmRecoverySignature = (target) => {
+      const shader = g.shaderWarmup;
+      const activity = g._shaderCompileActivity;
+      const lastJob = shader?.compileJobs?.at(-1);
+      const residency = houseResidencySnapshot();
+      return JSON.stringify([
+        g._webglGeneration, shader?.generation, shader?.status, shader?.reason,
+        shader?.recoveryRound, shader?.recoveryScheduled,
+        shader?.setupSlices?.length, shader?.compileSlices?.length,
+        shader?.textureSlices?.length, shader?.compileJobs?.length,
+        shader?.compileInFlightLabel, shader?.compileJobsInFlight,
+        lastJob?.label, lastJob?.settledMs, lastJob?.error,
+        activity?.generation, activity?.active,
+        shader?.currentExactKey, shader?.currentExactRevision,
+        shader?.currentExactStatus, (shader?.readyVariants || []).join('|'),
+        target?.generation, target?.status, target?.warmed,
+        target?.recoveryRound, target?.recoveryScheduled,
+        target?.attempts, target?.failedTargets?.length,
+        residency.generation, residency.key, residency.activeKey, residency.progressKey,
+        residency.physical, residency.queue, residency.ownerQueue,
+        residency.ownerExactQueue, residency.ownerCovered, residency.ownerTotal,
+        residency.ownerExactCovered, residency.ownerExactTotal,
+        residency.ownerRecorded, residency.ownerExactRecorded,
+        residency.ownerFinalizeBlocked, residency.failedOwners,
+        residency.ownerCertified, residency.ownerPasses,
+        residency.universeRecorded, residency.finalizerRecorded,
+        g.houseMirror?.active, g.houseMirror?.pane?.active,
+      ]);
+    };
+    const houseOwnerPaneReady = (generation, key) => {
+      const residency = houseResidencySnapshot();
+      return residency.generation === generation && residency.key === key
+        && residency.activeKey === key && residency.progressKey === key
+        && residency.physical === true && residency.queue === 0
+        && residency.ownerQueue === 0 && residency.ownerExactQueue === 0
+        && residency.ownerRecorded === true && residency.ownerExactRecorded === true
+        && residency.ownerCovered === residency.ownerTotal
+        && residency.ownerExactCovered === residency.ownerExactTotal
+        && residency.ownerFinalizeBlocked === false && residency.failedOwners === 0
+        && residency.universeRecorded === true && residency.finalizerRecorded === true
+        && residency.ownerCertified === true
+        && g.houseMirror?.active === true && g.houseMirror?.pane?.active === true;
+    };
+    const waitForWarmRecovery = async ({
+      label, generation, ready: isReady, target: readTarget = () => null,
+    }) => {
+      const hardDeadline = performance.now() + 240000;
+      let progressDeadline = performance.now() + 30000;
+      let signature = warmRecoverySignature(readTarget());
+      while (performance.now() < hardDeadline) {
+        const shader = g.shaderWarmup;
+        const target = readTarget();
+        if (!shader || g._webglGeneration !== generation
+            || shader.generation !== generation || shader.status === 'invalidated'
+            || shader.status === 'skipped'
+            || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
+          throw new Error(`house failure shader recovery terminal: ${label}: ${JSON.stringify(
+            resourceSnapshot(),
+          )}`);
+        }
+        const targetRecoveryScheduled = target?.recoveryScheduled
+          ?? shader.recoveryScheduled;
+        if (target && (target.generation !== generation
+            || ['skipped', 'invalidated'].includes(target.status)
+            || (target.status === 'degraded' && !targetRecoveryScheduled))) {
+          throw new Error(`house failure target recovery terminal: ${label}: ${JSON.stringify(
+            resourceSnapshot(),
+          )}`);
+        }
+        if (isReady()) return;
+        const nextSignature = warmRecoverySignature(target);
+        if (nextSignature !== signature) {
+          signature = nextSignature;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`house failure recovery made no progress: ${label}: ${JSON.stringify(
+            resourceSnapshot(),
+          )}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`house failure recovery exceeded 240s: ${label}: ${JSON.stringify(
+        resourceSnapshot(),
+      )}`);
+    };
     const placeAtMirror = () => {
       F.teleport('house');
+      if (g.act !== 'house') throw new Error(`mirror-failure fixture landed in ${g.act}, not house`);
       g.skull.holdNow();
       g.houseMirror.awakened = true;
       g.player.pos.set(g.houseMirror.pos.x + 2.1, 0, g.houseMirror.pos.z);
@@ -2938,21 +3994,51 @@ async function runHouseFailureRecovery(browser) {
     F.start();
     g._selfStep = false;
     placeAtMirror();
-    await waitFor(() => g.shaderWarmup?.status === 'degraded', 'initial bind degradation');
-    await frame();
+    await waitForWarmRecovery({
+      label: 'initial bind degradation',
+      generation: g._webglGeneration,
+      ready: () => g.shaderWarmup?.status === 'degraded'
+        && g.shaderWarmup.recoveryScheduled === true
+        && bindFailures === 2
+        && g._houseMirrorTargetWarmState?.status === 'degraded'
+        && g._houseMirrorTargetWarmState?.targetRef === initialHouseTarget,
+    });
+    // The recovery timer is already armed for 800ms. Prove one live degraded
+    // frame and capture it synchronously so a throttled rAF cannot let the
+    // retry replace this state (or exercise the still-injected wrapper) first.
+    g.render();
     const bindFailed = resourceSnapshot();
     renderer.setRenderTarget = originalSetRenderTarget;
+    // Let destination owner batches continue, but keep the real mirror
+    // ineligible until the ready boundary has been captured. Otherwise a fast
+    // retry can certify and reveal before the fixture starts observing it.
+    g.houseMirror.awakened = false;
+    g.houseMirror.active = false;
+    g.houseMirror.pane.setActive(false);
 
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.shaderWarmup.generation === bindFailed.generation
-      && g._houseMirrorTargetWarmState?.status === 'ready',
-    'same-generation bind recovery ready');
+    await waitForWarmRecovery({
+      label: 'same-generation bind recovery ready',
+      generation: bindFailed.generation,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.shaderWarmup.generation === bindFailed.generation
+        && g._houseMirrorTargetWarmState?.status === 'ready',
+      target: () => g._houseMirrorTargetWarmState,
+    });
     placeAtMirror();
+    const bindRecoveryKey = g._currentGpuResidencyKey();
     const bindRecoveryBefore = {
       programs: renderer.info.programs?.length || 0,
       textures: renderer.info.memory.textures,
     };
-    await frame();
+    await waitForWarmRecovery({
+      label: 'same-generation bind recovery owner settlement and pane',
+      generation: bindFailed.generation,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.shaderWarmup.generation === bindFailed.generation
+        && g._houseMirrorTargetWarmState?.status === 'ready'
+        && houseOwnerPaneReady(bindFailed.generation, bindRecoveryKey),
+      target: () => g._houseMirrorTargetWarmState,
+    });
     const bindRecovered = {
       ...resourceSnapshot(),
       before: bindRecoveryBefore,
@@ -2975,16 +4061,28 @@ async function runHouseFailureRecovery(browser) {
     };
     await cycleContext();
     const reflectionFailureGeneration = g._webglGeneration;
-    await waitFor(() => g.shaderWarmup?.status === 'degraded', 'reflection degradation');
+    await waitForWarmRecovery({
+      label: 'reflection degradation',
+      generation: reflectionFailureGeneration,
+      ready: () => g.shaderWarmup?.status === 'degraded'
+        && g.shaderWarmup.recoveryScheduled === true
+        && reflectionCompileFailures > 0
+        && !(g.shaderWarmup.readyVariants || []).includes('house-reflection'),
+      target: () => g._houseMirrorTargetWarmState,
+    });
     placeAtMirror();
-    await frame();
+    g.render();
     const reflectionFailed = resourceSnapshot();
     g._compileWarmVariant = originalCompile;
 
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.shaderWarmup.generation === reflectionFailureGeneration
-      && g._houseMirrorTargetWarmState?.status === 'ready',
-    'same-generation reflection recovery ready');
+    await waitForWarmRecovery({
+      label: 'same-generation reflection recovery ready',
+      generation: reflectionFailureGeneration,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.shaderWarmup.generation === reflectionFailureGeneration
+        && g._houseMirrorTargetWarmState?.status === 'ready',
+      target: () => g._houseMirrorTargetWarmState,
+    });
     placeAtMirror();
     const reflectionRecoveryBefore = {
       programs: renderer.info.programs?.length || 0,
@@ -3024,10 +4122,14 @@ async function runHouseFailureRecovery(browser) {
       failure: g.houseMirror.pool.lastFailure,
     };
     const houseRuntimeGeneration = g._webglGeneration;
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.shaderWarmup.generation === houseRuntimeGeneration
-      && g._houseMirrorTargetWarmState?.status === 'ready',
-    'live house pane recovery');
+    await waitForWarmRecovery({
+      label: 'live house pane recovery',
+      generation: houseRuntimeGeneration,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.shaderWarmup.generation === houseRuntimeGeneration
+        && g._houseMirrorTargetWarmState?.status === 'ready',
+      target: () => g._houseMirrorTargetWarmState,
+    });
     placeAtMirror();
     await frame();
     const houseRuntimeRecovered = resourceSnapshot();
@@ -3041,10 +4143,15 @@ async function runHouseFailureRecovery(browser) {
     g.skull.vanish();
     F.teleport('mirror');
     await waitFor(() => g.finale.active && g.act === 'mirror', 'active Finale setup');
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.currentGpuResidency?.physical?.has(g._currentGpuResidencyKey())
-      && !g.lastRender?.reducedDetail,
-    'active Finale physical residency');
+    const finalePhysicalGeneration = g._webglGeneration;
+    await waitForWarmRecovery({
+      label: 'active Finale physical residency',
+      generation: finalePhysicalGeneration,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.currentGpuResidency?.physical?.has(g._currentGpuResidencyKey())
+        && !g.lastRender?.reducedDetail,
+      target: () => g.finale._targetWarmState,
+    });
     await waitFor(() => g.finale._targetWarmState?.status === 'ready'
       && g.currentGpuResidency?.owners?.has(g._ownerGpuResidencyKey('finale'))
       && g.finale.panes.some((pane) => pane.active),
@@ -3066,6 +4173,7 @@ async function runHouseFailureRecovery(browser) {
       generation: g._webglGeneration,
       shaderStatus: g.shaderWarmup?.status,
       drawCalls: g.lastRender?.drawCalls || 0,
+      worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
       escaped: finaleRuntimeEscaped,
       poolInUpdate: g.finale.mirrors._inUpdate,
       scopesVisible: g.finale.panes.map((pane) => pane.mesh.visible),
@@ -3074,10 +4182,14 @@ async function runHouseFailureRecovery(browser) {
       failure: g.finale.mirrors.lastFailure,
     };
     const finaleRuntimeGeneration = g._webglGeneration;
-    await waitFor(() => g.shaderWarmup?.status === 'ready'
-      && g.shaderWarmup.generation === finaleRuntimeGeneration
-      && g.finale._targetWarmState?.status === 'ready',
-    'live Finale pane recovery');
+    await waitForWarmRecovery({
+      label: 'live Finale pane recovery',
+      generation: finaleRuntimeGeneration,
+      ready: () => g.shaderWarmup?.status === 'ready'
+        && g.shaderWarmup.generation === finaleRuntimeGeneration
+        && g.finale._targetWarmState?.status === 'ready',
+      target: () => g.finale._targetWarmState,
+    });
     await frame();
     const finaleRuntimeRecovered = {
       generation: g._webglGeneration,
@@ -3086,6 +4198,7 @@ async function runHouseFailureRecovery(browser) {
       contextRewarming: g.finale._contextRewarming,
       panesActive: g.finale.panes.map((pane) => pane.active),
       drawCalls: g.lastRender?.drawCalls || 0,
+      worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
     };
     return {
       supported: true,
@@ -3130,20 +4243,121 @@ try {
   failureBrowser = null;
 
   settledBrowser = await launchBrowser();
-  report.continuousView = await runContinuousViewResidency(settledBrowser);
-  report.deferredDistricts = await runDeferredDistrictResidency(settledBrowser);
   const result = await runPurityAndSettled(settledBrowser);
   report.purity = result.purity;
   report.settled = result.settled;
   report.caveTail = result.caveTail;
-  report.verbChurn = result.verbChurn;
   report.renderer = result.renderer;
+  check(/(?:D3D11|Direct3D11)/i.test(report.renderer || ''),
+    'the broad transition composition gate runs on real ANGLE D3D11', {
+      renderer: report.renderer,
+    });
 
   const same = (a, b, key) => JSON.stringify(a[key]) === JSON.stringify(b[key]);
-  const { afterStart, afterWarm } = report.purity;
+  const { afterStart, afterAudio, afterWarm } = report.purity;
   check(report.purity.startMs < 50,
-    'Wake Up returns in under 50ms without waiting on warmup',
+    'Wake Up returns in under 50ms without waiting on audio or GPU warmup',
     { startMs: round(report.purity.startMs) });
+  check(report.purity.audioInitCalls?.length === 1
+      && report.purity.audioInitCalls[0].durationMs < 50
+      && report.purity.wakeTaskMs < 50,
+    'gesture-owned context and silent graph setup reach the first paint inside 50ms', {
+      startMs: round(report.purity.startMs),
+      wakeTaskMs: round(report.purity.wakeTaskMs),
+      audioInitCalls: report.purity.audioInitCalls,
+    });
+  check(report.purity.audioPreparation?.contextExists
+      && ['running', 'suspended', 'interrupted'].includes(report.purity.audioPreparation.contextState)
+      && report.purity.audioPreparation.graphInitialized === false
+      && report.purity.audioPreparation.masterExists === false
+      && report.purity.audioPreparation.startupSourcesStarted === false
+      && report.purity.audioPreparation.ready === false
+      && report.purity.audioPreparation.status === 'idle'
+      && report.purity.audioPreparation.prepareCalls === 1
+      && Number.isFinite(report.purity.audioPreparation.contextPrepareStartedAt)
+      && Number.isFinite(report.purity.audioPreparation.contextPrepareReadyAt)
+      && Number.isFinite(report.purity.audioPreparation.contextCreatedAt)
+      && report.purity.audioPreparation.contextPrepareStartedAt
+        <= report.purity.audioPreparation.contextCreatedAt
+      && report.purity.audioPreparation.contextCreatedAt
+        === report.purity.audioPreparation.contextPrepareReadyAt
+      && Number.isFinite(report.purity.audioPreparation.contextPrepareMs)
+      && report.purity.audioPreparation.contextPrepareMs
+        === report.purity.audioPreparation.contextPrepareReadyAt
+          - report.purity.audioPreparation.contextPrepareStartedAt
+      && report.purity.audioPreparation.contextPrepareMs < 500
+      && report.purity.audioPreparation.contextPrepareError == null,
+    'native WebAudio context preparation completes during title loading without creating the graph or sources',
+    report.purity.audioPreparation);
+  const audioStartup = report.purity.audioStartup;
+  const audioSlices = audioStartup?.slices || [];
+  const audioResources = report.purity.audioResources;
+  check(afterStart.audioReady === false && afterAudio?.audioReady === true
+      && audioStartup?.status === 'ready'
+      && audioStartup.initCalls === 1
+      && audioStartup.contextState === 'running'
+      && audioStartup.resumeError == null
+      && audioStartup.cancelReason == null
+      && audioStartup.error == null,
+    'Wake preserves its user-gesture AudioContext edge while readiness moves to the deferred bake', {
+      afterStart: afterStart.audioReady,
+      afterAudio: afterAudio?.audioReady,
+      startup: audioStartup,
+    });
+  check(Number.isFinite(audioStartup?.requestedAt)
+      && Number.isFinite(audioStartup?.contextCreatedAt)
+      && Number.isFinite(audioStartup?.startedAt)
+      && Number.isFinite(audioStartup?.readyAt)
+      && audioStartup.contextCreatedAt <= audioStartup.requestedAt
+      && audioStartup.contextPrepareStartedAt
+        === report.purity.audioPreparation.contextPrepareStartedAt
+      && audioStartup.contextPrepareReadyAt
+        === report.purity.audioPreparation.contextPrepareReadyAt
+      && audioStartup.contextCreatedAt === report.purity.audioPreparation.contextCreatedAt
+      && audioStartup.contextPrepareReadyAt <= audioStartup.requestedAt
+      && audioStartup.requestedAt <= audioStartup.startedAt
+      && audioStartup.startedAt <= audioStartup.readyAt
+      && audioStartup.durationMs === audioStartup.readyAt - audioStartup.startedAt
+      && audioStartup.totalLatencyMs === audioStartup.readyAt - audioStartup.requestedAt
+      && audioStartup.durationMs < 2000 && audioStartup.totalLatencyMs < 2000,
+    'the complete procedural soundscape becomes audible within a finite two-second startup envelope',
+    audioStartup);
+  check(audioStartup?.primitiveLimit === 1
+      && audioStartup.pcmChunkSamples === 12000
+      && audioStartup.totalPrimitives > 0
+      && audioStartup.completed === audioStartup.totalPrimitives
+      && audioStartup.pending === 0
+      && audioStartup.droppedSlices === 0
+      && audioSlices.length === audioStartup.totalPrimitives + 1
+      && audioSlices.length <= audioStartup.sliceTelemetryLimit
+      && audioSlices[0]?.labels?.[0] === 'plan-core-pcm'
+      && audioSlices[0]?.primitiveCount === 0
+      && audioSlices[0]?.remaining === audioStartup.totalPrimitives
+      && audioSlices.at(-1)?.labels?.[0] === 'activate-core-audio'
+      && audioSlices.at(-1)?.remaining === 0
+      && audioSlices.every((slice, index) => slice.index === index
+        && slice.scheduler === 'paint'
+        && slice.durationMs < 16
+        && slice.maxPrimitiveMs < 16
+        && (index === 0
+          ? slice.primitiveCount === 0
+          : slice.primitiveCount === 1 && slice.labels.length === 1
+            && slice.remaining === audioStartup.totalPrimitives - index))
+      && audioStartup.maxSliceMs < 16 && audioStartup.maxPrimitiveMs < 16,
+    'audio planning and PCM generation yield after every paint with one strict sub-16ms primitive per slice',
+    audioStartup);
+  check(audioResources?.startupSourcesStarted === true
+      && JSON.stringify(Object.keys(audioResources.impulseBuffers || {}).sort())
+        === JSON.stringify(['cave', 'interior', 'outdoor'])
+      && audioResources.contextSampleRate >= 16000
+      && Object.values(audioResources.impulseBuffers || {}).every((buffer) =>
+        buffer?.channels === 2 && buffer.length > 0
+          && buffer.sampleRate === audioResources.contextSampleRate)
+      && audioResources.noiseSamples > 0 && audioResources.cricketSamples > 0
+      && audioResources.woodSteps === 3 && audioResources.stoneSteps === 3
+      && audioResources.dirtSteps === 3 && audioResources.leafSteps === 4,
+    'deferred activation publishes every core buffer and starts the finite bed sources only after completion',
+    audioResources);
   check(report.purity.warmup.status === 'ready' && report.purity.warmup.errors.length === 0,
     'the exact representative compiler reaches ready without degradation', report.purity.warmup);
   check(report.purity.warmup.variants.includes('ossuary'),
@@ -3200,6 +4414,18 @@ try {
       idleCompileSlices,
       compileSlices: report.purity.warmup.compileSlices,
     });
+  check((report.purity.warmup.compileJobs?.length || 0) > 0
+      && report.purity.warmup.compileJobsInFlight === 0
+      && report.purity.warmup.maxCompileJobsInFlight === 1
+      && report.purity.warmup.generationCompileJobsInFlight === 0
+      && report.purity.warmup.generationMaxCompileJobsInFlight === 1,
+    'the settled shader itinerary submits at most one generation-wide driver compile and drains it completely', {
+      jobs: report.purity.warmup.compileJobs?.length || 0,
+      statePeak: report.purity.warmup.maxCompileJobsInFlight,
+      stateFinal: report.purity.warmup.compileJobsInFlight,
+      generationPeak: report.purity.warmup.generationMaxCompileJobsInFlight,
+      generationFinal: report.purity.warmup.generationCompileJobsInFlight,
+    });
   check((report.purity.warmup.primeRepresentatives ?? 0) === 0
       && (report.purity.warmup.reflectionPrimeRepresentatives ?? 0) === 0
       && (report.purity.warmup.primeSlices || []).length === 0,
@@ -3218,12 +4444,16 @@ try {
         && entry.geometryDelta >= 0 && entry.geometryDelta <= 16
         && entry.geometryBytes >= 0 && entry.maxGeometryBytes >= 0
         && entry.maxGeometryBytes <= entry.geometryBytes && entry.vertices >= 0
-        && entry.durationMs <= 100)
+        && entry.durationMs < 100)
       && report.purity.residency.exactPasses.every((entry) =>
         entry.error == null && entry.programDelta === 0
-        && entry.textureDelta === 0 && entry.geometryDelta === 0)
-      && report.purity.residency.maxExactMs <= 100
-      && report.purity.residency.maxReducedPrimeMs <= 100
+        && entry.textureDelta === 0 && entry.geometryDelta === 0
+        && entry.durationMs < 100)
+      && report.purity.residency.exactPreloadPasses?.length > 0
+      && report.purity.residency.exactPreloadPasses.every(validExactPreload)
+      && report.purity.residency.maxExactMs < 100
+      && report.purity.residency.maxExactPreloadMs < 100
+      && report.purity.residency.maxReducedPrimeMs < 100
       && report.purity.residency.skullWorldPasses?.length === 1
       && report.purity.residency.skullWorldPasses[0].tether === true
       && report.purity.residency.skullWorldPasses[0].stateRestored === true
@@ -3231,30 +4461,56 @@ try {
       && report.purity.residency.skullWorldPasses[0].textureDelta === 0
       && report.purity.residency.skullWorldPasses[0].geometryDelta === 0
       && report.purity.residency.errors.length === 0,
-    'current-view geometry uploads in <=16-geometry paint batches before one bounded exact pass, including the hidden WORLD/P16 skull+tether pass',
+    'current-view uploads, exact program-selection batches, and the actual WORLD/P16 skull+tether certificate all remain bounded and transactional',
     report.purity.residency);
   const houseOwnerUniverse = report.purity.residency?.ownerUniverses
     ?.find((entry) => entry.house > 0);
   const houseOwnerBatches = report.purity.residency?.reducedPasses
     ?.filter((entry) => entry.kind === 'owner-preload-batch') || [];
+  const houseOwnerExactBatches = report.purity.residency?.exactPreloadPasses
+    ?.filter((entry) => entry.kind === 'owner-exact-preload-batch'
+      && entry.targetOwner === 'house') || [];
+  const houseOwnerFinalizers = report.purity.residency?.universeFinalizePasses
+    ?.filter((entry) => entry.scope === 'owner' && entry.kind === 'house-owner-exact-finalize')
+    || [];
+  const houseOwnerFinalizerFrames = report.purity.residency?.finalizerFrames
+    ?.filter((entry) => entry.kind === 'house-owner-exact-finalize') || [];
+  const purityProgress = report.purity.residency?.progress;
   check(houseOwnerUniverse?.house > 0
       && houseOwnerUniverse.total === houseOwnerUniverse.house
       && houseOwnerUniverse.houseGeometries > 0
       && houseOwnerUniverse.covered === houseOwnerUniverse.total
-      && JSON.stringify(houseOwnerUniverse.members)
-        === JSON.stringify(report.purity.expectedHouseOwnerMembers)
       && JSON.stringify(houseOwnerUniverse.coveredMembers)
         === JSON.stringify(houseOwnerUniverse.members)
+      && houseOwnerUniverse.exactTotal === houseOwnerUniverse.exactCovered
+      && houseOwnerUniverse.exactTotal >= houseOwnerUniverse.total
+      && JSON.stringify(houseOwnerUniverse.exactCoveredMembers)
+        === JSON.stringify(houseOwnerUniverse.exactMembers)
+      && houseOwnerUniverse.exactOnlyDecorative
+        === houseOwnerUniverse.exactOnlyMembers.length
       && houseOwnerBatches.length > 0
+      && houseOwnerExactBatches.length > 0
+      && houseOwnerExactBatches.every(validExactPreload)
+      && houseOwnerExactBatches.every((entry) => entry.key === houseOwnerUniverse.key)
+      && houseOwnerExactBatches.every((entry) => entry.targetUuid != null)
       && report.purity.residency.ownerFullFrames === houseOwnerBatches.length
       && houseOwnerBatches.every((entry) => entry.physicalReady === true
         && entry.ownerPreloadObjects > 0
         && entry.ownerPreloadGeometries <= 16
-        && entry.geometryDelta <= 16),
-    'house mirror universe is complete and uploads only after the exact physical room is playable', {
+        && entry.geometryDelta <= 16 && entry.durationMs < 100)
+      && houseOwnerFinalizers.length > 0
+      && houseOwnerFinalizers.every((entry) => entry.key === houseOwnerUniverse.key)
+      && finalizersOwnZeroDrawFrames(houseOwnerFinalizers, houseOwnerFinalizerFrames)
+      && purityProgress?.ownerQueue === 0 && purityProgress.ownerExactQueue === 0
+      && purityProgress.ownerRecorded === true && purityProgress.ownerExactRecorded === true
+      && purityProgress.ownerFinalizeBlocked === false,
+    'house mirror reduced and exact universes converge through bounded target-specific batches and an isolated successful finalizer', {
       universe: houseOwnerUniverse,
-      expected: report.purity.expectedHouseOwnerMembers,
       batches: houseOwnerBatches,
+      exactBatches: houseOwnerExactBatches,
+      finalizers: houseOwnerFinalizers,
+      finalizerFrames: houseOwnerFinalizerFrames,
+      progress: purityProgress,
     });
   check(JSON.stringify(report.purity.beforeSkullResidency)
       === JSON.stringify(report.purity.afterSkullResidency),
@@ -3262,241 +4518,6 @@ try {
       before: report.purity.beforeSkullResidency,
       after: report.purity.afterSkullResidency,
     });
-  const movingResidency = report.continuousView;
-  const movementIsBounded = (movement) => movement?.movements > 0
-    && movement.after > movement.before
-    && movement.lastMoveToFullMs != null && movement.lastMoveToFullMs <= 150
-    && movement.firstFull?.drawCalls > 0 && movement.firstFull?.reducedDetail === false
-    && movement.firstFull?.visibleProgramDelta === 0
-    && movement.firstFull?.visibleTextureDelta === 0
-    && movement.firstFull?.visibleGeometryDelta === 0
-    && movement.firstFull?.ms <= 100
-    && movement.frames?.some((frame) => frame.reducedDetail)
-    && movement.frames.filter((frame) => frame.reducedDetail)
-      .every((frame) => frame.drawCalls > 0 && frame.ms <= 100);
-  check(movementIsBounded(movingResidency?.critical)
-      && movementIsBounded(movingResidency?.owner)
-      && movingResidency?.critical?.firstFull?.ownerQueue > 0,
-    'continuous camera input promotes newly visible critical and owner geometry, keeps a nonzero silhouette moving, and returns to zero-upload full rendering within 150ms of the last look', {
-      critical: movingResidency?.critical,
-      owner: movingResidency?.owner,
-    });
-  check(movingResidency?.reducedPasses?.length > 0
-      && movingResidency.reducedPasses.every((entry) => entry.error == null
-        && entry.objects > 0 && entry.objects <= 32
-        && entry.geometries >= 0 && entry.geometries <= 16
-        && entry.geometryDelta >= 0 && entry.geometryDelta <= 16
-        && entry.durationMs <= 100)
-      && movingResidency?.exactPasses?.length >= 2
-      && movingResidency.exactPasses.every((entry) => entry.error == null
-        && entry.programDelta === 0 && entry.textureDelta === 0
-        && entry.geometryDelta === 0 && entry.durationMs <= 100)
-      && movingResidency.maxRafMs <= 100 && movingResidency.maxRenderMs <= 100
-      && movingResidency.errors?.length === 0,
-    'moving-view residency preserves the <=16 actual-geometry paint budget and every repeated exact certification is zero-delta/sub-100ms', movingResidency);
-  const coldStarts = movingResidency?.coldProbeStart || {};
-  const coldEnds = movingResidency?.coldProbeEnd || {};
-  check(coldStarts.critical?.inOwnerQueue === true
-      && coldStarts.owner?.inOwnerQueue === true
-      && coldStarts.ownerFailure?.inOwnerQueue === true
-      && coldStarts.physicalFailure?.inCriticalQueue === true
-      && coldStarts.physicalFailure?.inOwnerQueue === false
-      && Object.values(coldStarts).every((probe) => probe.inUniverse === true
-        && probe.geometrySeen === false)
-      && Object.values(coldEnds).every((probe) => probe.processed === true
-        && probe.covered === true && probe.geometrySeen === true)
-      && movingResidency.reducedPasses.some((entry) =>
-        entry.ownerPreloadGeometries > 0 && entry.geometryDelta > 0
-        && entry.geometryDelta <= 16),
-    'continuous-look promotion proves genuinely cold unique owner geometry is uploaded in a bounded reduced batch before exact reveal', {
-      start: coldStarts,
-      end: coldEnds,
-      passes: movingResidency?.reducedPasses,
-    });
-  check(movingResidency?.cloneFailureHits?.physical === 1
-      && movingResidency?.cloneFailureHits?.owner === 1
-      && movingResidency?.cloneFailureEvents?.length === 2
-      && movingResidency.cloneFailureEvents.every((event) => event.attempt === 1
-        && event.permanent === false)
-      && movingResidency.ownerProgressFrames?.length > 0
-      && movingResidency.ownerProgressFrames.every((frame) => frame.ownerPassDelta === 0)
-      && movingResidency.ownerProgressFrames.at(-1)?.ownerQueue === 0
-      && movingResidency.ownerCertificationFrames?.length === 1
-      && movingResidency.ownerCertificationFrames[0].ownerProgress === false
-      && movingResidency.ownerCertificationFrames[0].atMs
-        > movingResidency.ownerProgressFrames.at(-1).atMs,
-    'transient physical and owner clone failures retry without an infinite reduced loop, incomplete coverage, or same-paint pane certification', {
-      hits: movingResidency?.cloneFailureHits,
-      events: movingResidency?.cloneFailureEvents,
-      criticalFrames: movingResidency?.critical?.frames,
-      ownerFrames: movingResidency?.owner?.frames,
-      allOwnerProgressFrames: movingResidency?.ownerProgressFrames,
-      ownerCertificationFrames: movingResidency?.ownerCertificationFrames,
-    });
-  const persistentOwnerFailure = movingResidency?.persistentOwnerFailure;
-  check(persistentOwnerFailure?.attempts?.length === 3
-      && persistentOwnerFailure.attempts[0].deferred === true
-      && persistentOwnerFailure.attempts[1].deferred === true
-      && persistentOwnerFailure.attempts[2].failed === true
-      && persistentOwnerFailure.attempts[2].permanent === true
-      && persistentOwnerFailure.queue === 0
-      && persistentOwnerFailure.failedObjects.length === 0
-      && persistentOwnerFailure.failedOwners.length === 1
-      && persistentOwnerFailure.covered < persistentOwnerFailure.total
-      && persistentOwnerFailure.ownerRecorded === false
-      && persistentOwnerFailure.recordReturned === false
-      && persistentOwnerFailure.prerequisites === false
-      && persistentOwnerFailure.physicalStillReady === true,
-    'a persistent hidden owner clone fault stops after three bounded attempts, leaves the physical room playable, and keeps only the incomplete pane fail-closed',
-    persistentOwnerFailure);
-  check(movingResidency?.universe?.covered === movingResidency?.universe?.total
-      && JSON.stringify(movingResidency?.universe?.members)
-        === JSON.stringify(movingResidency?.expectedOwnerMembers)
-      && JSON.stringify(movingResidency?.universe?.coveredMembers)
-        === JSON.stringify(movingResidency?.universe?.members)
-      && movingResidency.universe.criticalPromotedObjects > 0
-      && movingResidency.universe.ownerPromotedObjects > 0,
-    'promoting owner members never loses or duplicates the complete house reflection universe', {
-      universe: movingResidency?.universe,
-      expected: movingResidency?.expectedOwnerMembers,
-    });
-  check(movingResidency?.promotionChecksAtCompletion
-      === movingResidency?.promotionChecksAfterSteady
-      && movingResidency?.steadyFrames?.length === 8
-      && movingResidency.steadyFrames.every((frame) => frame?.drawCalls > 0
-        && frame.reducedDetail === false && frame.ms <= 100),
-    'owner visibility promotion stops scanning after its bounded queue completes', {
-      before: movingResidency?.promotionChecksAtCompletion,
-      after: movingResidency?.promotionChecksAfterSteady,
-      frames: movingResidency?.steadyFrames,
-    });
-  check(movingResidency?.sweepFrames?.length === 4
-      && movingResidency.sweepFrames.every((frame) => frame?.drawCalls > 0
-        && frame.reducedDetail === false
-        && frame.visibleProgramDelta === 0 && frame.visibleTextureDelta === 0
-        && frame.ms <= 100)
-      && movingResidency.sweepMaxRafMs <= 100,
-    'four post-exact 90-degree house lookbacks keep full rendering sub-100ms with no new shader or texture', {
-      frames: movingResidency?.sweepFrames,
-      maxRafMs: movingResidency?.sweepMaxRafMs,
-    });
-  check(report.deferredDistricts?.length === 3
-      && report.deferredDistricts.map((entry) => `${entry.act}:${entry.rootKind}`).join(',')
-        === 'graveyard:forest-lookahead,forest:clearing-lookahead,cave:cave',
-    'grave-to-forest overlap, forest-to-clearing overlap, and Underfalls each run an isolated deferred-district movement adversary',
-    report.deferredDistricts?.map((entry) => `${entry.act}:${entry.rootKind}`));
-  for (const district of report.deferredDistricts || []) {
-    const batches = district.allReducedPasses || [];
-    const deferredBatches = batches.filter((entry) => entry.kind === 'deferred-preload-batch');
-    check(district.coldStart?.inUniverse === true
-        && district.coldStart?.inDeferredQueue === true
-        && district.coldStart?.processed === false
-        && district.coldStart?.geometrySeen === false
-        && district.coldStart?.deferredQueue > 0
-        && district.coldEnd?.processed === true
-        && district.coldEnd?.covered === true
-        && district.coldEnd?.geometrySeen === true,
-      `${district.act} turn starts with genuinely cold deferred geometry and covers it before full reveal`, {
-        start: district.coldStart,
-        end: district.coldEnd,
-      });
-    check(district.movementFrames?.length > 0
-        && district.movementFrames[0]?.reducedDetail === true
-        && district.movementFrames[0]?.drawCalls > 0
-        && district.movementFrames.filter((frame) => frame.reducedDetail)
-          .every((frame) => frame.drawCalls > 0 && frame.ms <= 100)
-        && district.moveToFullMs != null && district.moveToFullMs <= 150
-        && district.firstFull?.drawCalls > 0
-        && district.firstFull?.reducedDetail === false
-        && district.firstFull?.visibleProgramDelta === 0
-        && district.firstFull?.visibleTextureDelta === 0
-        && district.firstFull?.visibleGeometryDelta === 0
-        && district.firstFull?.ms <= 100
-        && district.queueAtFirstFull > 0,
-      `${district.act} path turn promotes before reveal, keeps a moving silhouette, and returns to a zero-upload full world within 150ms`, {
-        moveToFullMs: district.moveToFullMs,
-        queueAtFirstFull: district.queueAtFirstFull,
-        movementFrames: district.movementFrames,
-      });
-    check(batches.length > 0
-        && batches.every((entry) => entry.error == null
-          && entry.objects > 0 && entry.objects <= 32
-          && entry.geometries >= 0 && entry.geometries <= 16
-          && entry.geometryDelta >= 0 && entry.geometryDelta <= 16
-          && entry.durationMs <= 100)
-        && batches.some((entry) => entry.deferredPreloadGeometries > 0
-          && entry.geometryDelta > 0)
-        && district.exactPassesAtReveal?.length >= 2
-        && district.exactPassesAtReveal.every((entry) => entry.error == null
-          && entry.programDelta === 0 && entry.textureDelta === 0
-          && entry.geometryDelta === 0 && entry.durationMs <= 100)
-        && district.maxRafMs <= 100 && district.maxRenderMs <= 100
-        && district.errors?.length === 0,
-      `${district.act} deferred uploads and repeated exact certifications stay inside the <=16-geometry/sub-100ms D3D11 contract`, {
-        batches,
-        exact: district.exactPassesAtReveal,
-        maxRafMs: district.maxRafMs,
-        maxRenderMs: district.maxRenderMs,
-        errors: district.errors,
-      });
-    check(district.universe?.label === district.act
-        && district.universe?.total > 0
-        && district.universe.covered === district.universe.total
-        && JSON.stringify(district.universe.members)
-          === JSON.stringify(district.expectedMembers)
-        && JSON.stringify(district.universe.coveredMembers)
-          === JSON.stringify(district.universe.members)
-        && district.universe.promotedObjects > 0
-        && district.universe.cloneFailureEvents?.length === 0
-        && deferredBatches.length > 0
-        && district.deferredFullFrames === deferredBatches.length,
-      `${district.act} explicit authored universe drains completely behind the playable world without duplicate or missing ownership`, {
-        universe: district.universe,
-        expected: district.expectedMembers,
-        deferredBatches,
-        deferredFullFrames: district.deferredFullFrames,
-      });
-    check(district.promotionChecksAtCompletion
-          === district.promotionChecksAfterSteady
-        && district.steadyFrames?.length === 8
-        && district.steadyFrames.every((frame) => frame?.drawCalls > 0
-          && frame.reducedDetail === false && frame.ms <= 100),
-      `${district.act} deferred visibility scanning stops permanently after its finite district queue drains`, {
-        before: district.promotionChecksAtCompletion,
-        after: district.promotionChecksAfterSteady,
-        frames: district.steadyFrames,
-      });
-    check(district.sweepFrames?.length === 4
-        && district.sweepFrames.every((frame) => frame?.drawCalls > 0
-          && frame.reducedDetail === false
-          && frame.visibleProgramDelta === 0
-          && frame.visibleTextureDelta === 0
-          && frame.visibleGeometryDelta === 0
-          && frame.ms <= 100)
-        && district.sweepMaxRafMs <= 100,
-      `${district.act} four-way post-drain path lookback stays full, zero-upload, and sub-100ms`, {
-        frames: district.sweepFrames,
-        maxRafMs: district.sweepMaxRafMs,
-      });
-  }
-  const deferredFault = report.deferredDistricts
-    ?.find((entry) => entry.act === 'forest')?.transactionalFault;
-  check(deferredFault?.afterFault?.returned == null
-      && deferredFault.afterFault.queue === 1
-      && deferredFault.afterFault.processed === false
-      && deferredFault.afterFault.covered === false
-      && deferredFault.afterFault.geometrySeen === false
-      && deferredFault.afterFault.recorded === false
-      && deferredFault.retry?.error == null
-      && deferredFault.retry?.objects === 1
-      && deferredFault.retry?.geometries === 1
-      && deferredFault.afterRetry?.queue === 0
-      && deferredFault.afterRetry?.processed === true
-      && deferredFault.afterRetry?.covered === true
-      && deferredFault.afterRetry?.geometrySeen === true
-      && deferredFault.afterRetry?.recorded === true,
-    'a hidden deferred render fault rolls its whole batch back transactionally, cannot certify, and commits only after a clean retry',
-    deferredFault);
   check(report.purity.warmup.maxTextureSliceMs <= 16
       && report.purity.warmup.pendingTextures === 0,
     'actual sampler uploads are paint-sliced and resident before district entry', {
@@ -3510,25 +4531,39 @@ try {
       && report.purity.targetWarm.warmed === 4
       && report.purity.targetWarm.maxSliceMs < 100,
     'all four resident mirror targets allocate one bounded hidden slice at a time', report.purity.targetWarm);
-  for (const key of [
+  const gameplayPurityKeys = [
     'act', 'player', 'flags', 'enemies', 'choir', 'spawnSerial', 'spawnLog',
-    'audioReady', 'audioLoops', 'forestLoops', 'audioZone',
     'skullStage', 'skullMode', 'skullParent', 'exactHead', 'headChildren',
     'figureVisible', 'finaleActive', 'finalePhase', 'contextRewarming',
-    'rendererTarget', 'sceneParents',
+    'rendererTarget', 'sceneParents', 'audioLoops', 'forestLoops', 'audioZone',
+  ];
+  for (const key of gameplayPurityKeys) {
+    check(same(afterStart, afterAudio, key), `deferred audio startup preserves live ${key}`,
+      same(afterStart, afterAudio, key) ? null : {
+        before: afterStart[key], after: afterAudio[key],
+      });
+  }
+  for (const key of [
+    ...gameplayPurityKeys, 'audioReady',
   ]) {
-    check(same(afterStart, afterWarm, key), `warmup preserves live ${key}`,
-      same(afterStart, afterWarm, key) ? null : { before: afterStart[key], after: afterWarm[key] });
+    check(same(afterAudio, afterWarm, key), `warmup preserves live ${key}`,
+      same(afterAudio, afterWarm, key) ? null : { before: afterAudio[key], after: afterWarm[key] });
   }
   const warmIntervals = report.purity.intervals || [];
-  check(Math.max(0, ...warmIntervals) < 100,
-    'immediate-Wake sampling includes no warmup-owned frame over 100ms', {
+  check(report.purity.timing?.renderCount > 1
+      && report.purity.timing.rafIntervals > 0
+      && report.purity.timing.orderingErrors.length === 0
+      && Math.max(0, ...warmIntervals) < 100
+      && report.purity.timing.maxRenderMs < 100
+      && report.purity.timing.maxInterRenderIdleMs < 100
+      && report.purity.timing.maxRenderCompletionIntervalMs < 100,
+    'immediate-Wake sampling keeps render, inter-render idle, completion, and observed cadence below 100ms', {
+      timing: report.purity.timing,
       maxRafMs: round(Math.max(0, ...warmIntervals)),
       p95RafMs: round(percentile(warmIntervals, 0.95)),
     });
 
   for (const seam of report.settled) {
-    const mirror = seam.name === 'cave->mirror';
     const types = seam.after.lightTypes;
     check(seam.after.worldLights === 20
         && types?.AmbientLight === 1 && types?.HemisphereLight === 1
@@ -3541,21 +4576,41 @@ try {
         && seam.maxVisibleTextureDelta === 0
         && seam.maxVisibleGeometryDelta === 0,
       `${seam.name} first revealed frames compile/upload zero programs, textures, or geometry`, seam);
-    check(seam.maxRafMs <= (mirror ? 140 : 100),
-      `${seam.name} first-entry rAF stays inside the D3D11 acceptance budget`, seam);
+    check(seam.orderingErrors?.length === 0 && seam.maxRafMs < 100,
+      `${seam.name} observed post-render callback cadence stays strictly inside the D3D11 acceptance budget`, seam);
+    check(seam.renderCount > 1 && seam.maxRenderMs < 100
+        && seam.maxInterRenderIdleMs < 100
+        && seam.maxRenderCompletionIntervalMs < 100
+        && seam.transitionMs < 100 && seam.cleanupMs < 100,
+      `${seam.name} render duration, inter-render idle, and paint-ready completion cadence stay strictly sub-100ms`, seam);
     check(seam.maxStepMs < 20,
       `${seam.name} fixed simulation remains below 20ms`, seam);
     check(seam.worldSubmitted === true && seam.firstWorldMs != null
-        && seam.firstWorldMs <= 100 && seam.shieldFrames === 0,
+        && seam.firstWorldMs < 100 && seam.shieldFrames === 0,
       `${seam.name} settled entry submits a nonzero world within 100ms with no opaque frame`, seam);
     check(seam.sweepFrames?.length === 4
-        && seam.sweepFrames.every((frame) => frame?.drawCalls > 0
-          && frame.reducedDetail === false
-          && frame.visibleProgramDelta === 0
-          && frame.visibleTextureDelta === 0
-          && frame.ms <= 100)
-        && seam.sweepMaxRafMs <= 100,
-      `${seam.name} four-way post-exact lookback stays sub-100ms with no cold shader or texture`, {
+        && seam.sweepFrames.every((frame, turn) => {
+          const owned = frame?.lookTurn === turn && frame.lookAppliedAt <= frame.startedAt
+            && frame.generation === seam.expectedGeneration
+            && frame.residencyKey === seam.expectedKey;
+          const visiblePhase = frame?.worldDrawCalls > 0
+            && (frame.lookPhase === 'exact-visible'
+              || (frame.lookPhase === 'reduced-reveal'
+                && frame.reducedBatchRevealed === true));
+          const hiddenPhase = frame?.worldDrawCalls === 0 && frame.drawCalls === 0
+            && frame.lookPhase === 'hidden-residency'
+            && (frame.snapshotProgress || frame.reducedBatchSubmitted
+              || frame.reducedBatchRevealed || frame.ownerProgress
+              || frame.deferredProgress || frame.ownerExactProgress
+              || frame.deferredExactProgress || frame.reducedPassesAdded > 0
+              || frame.exactPassesAdded > 0 || frame.exactPreloadPassesAdded > 0
+              || frame.ownerPassesAdded > 0 || frame.finalizerPassesAdded > 0);
+          return owned && !frame.shielded && (visiblePhase || hiddenPhase)
+            && frame.visibleProgramDelta === 0 && frame.visibleTextureDelta === 0
+            && frame.ms < 100;
+        })
+        && seam.sweepMaxRafMs < 100,
+      `${seam.name} four-way look rows stay key-owned and sub-100ms across visible and isolated residency phases`, {
         frames: seam.sweepFrames,
         maxRafMs: seam.sweepMaxRafMs,
       });
@@ -3603,64 +4658,6 @@ try {
   check(caveTail.heapPeakGrowth == null || caveTail.heapPeakGrowth < 24 * 1024 * 1024,
     'long Underfalls residency has no unbounded allocation tail', caveTail);
 
-  const verbCases = Object.fromEntries((report.verbChurn?.cases || [])
-    .map((entry) => [entry.label, entry]));
-  for (const label of [
-    'first-throw', 'catch-return', 'bedroom-key-carry',
-    'flame-absorb', 'offscreen-stage-evolution',
-  ]) {
-    const entry = verbCases[label];
-    check(entry?.exactAfter === entry?.exactBefore
-        && entry?.maxRafMs <= 100 && entry?.maxRenderMs <= 100,
-      `${label} never recertifies the full scene during visible play and stays inside 100ms`, entry);
-  }
-  for (const label of ['first-throw', 'catch-return', 'bedroom-key-carry', 'flame-absorb']) {
-    const entry = verbCases[label];
-    check(entry?.maxVisibleProgramDelta === 0
-        && entry?.maxVisibleTextureDelta === 0
-        && entry?.maxVisibleGeometryDelta === 0,
-      `${label} consumes only its prebuilt held/carry resource path`, entry);
-  }
-  const mirrorApproach = verbCases['awakened-mirror-approach'];
-  check(mirrorApproach?.exactAfter === mirrorApproach?.exactBefore
-      && mirrorApproach?.ownerAfter === mirrorApproach?.ownerBefore + 1
-      && mirrorApproach?.ownerPasses?.length === 1
-      && mirrorApproach.ownerPasses[0].rendered === true
-      && mirrorApproach.ownerPasses[0].error == null
-      && mirrorApproach.ownerPasses[0].durationMs <= 100
-      && mirrorApproach.ownerPasses[0].programDelta === 0
-      && mirrorApproach.ownerPasses[0].textureDelta === 0
-      && mirrorApproach.ownerPasses[0].geometryDelta === 0
-      && mirrorApproach.firstFrame?.paneActive === false
-      && mirrorApproach.firstPaneFrame?.programDelta === 0
-      && mirrorApproach.firstPaneFrame?.textureDelta === 0
-      && mirrorApproach.firstPaneFrame?.geometryDelta === 0
-      && mirrorApproach.maxRafMs <= 100 && mirrorApproach.maxRenderMs <= 100,
-    'awakened house mirror certifies once behind dark glass under 100ms, then enables with zero upload',
-    mirrorApproach);
-  check(exactP16LightCensus(mirrorApproach?.reflectionLightCensus),
-    'actual house reflection camera receives exact A1/H1/D1/S1/P16 with one directional shadow',
-    mirrorApproach?.reflectionLightCensus);
-  const mirrorMotion = verbCases['awakened-mirror-motion'];
-  check(mirrorMotion?.exactAfter === mirrorMotion?.exactBefore
-      && mirrorMotion?.ownerAfter === mirrorMotion?.ownerBefore
-      && mirrorMotion?.ownerPasses?.length === 0
-      && mirrorMotion?.firstPaneFrame?.programDelta === 0
-      && mirrorMotion?.firstPaneFrame?.textureDelta === 0
-      && mirrorMotion?.firstPaneFrame?.geometryDelta === 0
-      && mirrorMotion?.maxVisibleProgramDelta === 0
-      && mirrorMotion?.maxVisibleTextureDelta === 0
-      && mirrorMotion?.maxVisibleGeometryDelta === 0
-      && mirrorMotion?.maxRafMs <= 100 && mirrorMotion?.maxRenderMs <= 100,
-    'later house mirror-camera motion reveals only the completed owner universe without recertification or upload',
-    mirrorMotion);
-  check(exactP16LightCensus(mirrorMotion?.reflectionLightCensus),
-    'moved live house reflection camera retains the exact fixed light/shadow signature',
-    mirrorMotion?.reflectionLightCensus);
-  check(report.verbChurn?.residencyErrors?.length === 0,
-    'normal visible verb and mirror-approach residency emits zero certification errors',
-    report.verbChurn?.residencyErrors);
-
   // Race evidence is kept diagnostic: it attacks a timing faster than human
   // traversal, but a visible render must still never be the place a program or
   // four-target allocation is first created.
@@ -3672,14 +4669,28 @@ try {
       && report.race.wakeHouse.maxShieldDurationMs === 0,
     'Wake reveals a moving physical house silhouette within 150ms and never waits on background shaders',
     report.race.wakeHouse);
-  check(report.race.wakeHouse?.wakeToFirstFullMs != null
-      && report.race.wakeHouse.wakeToFirstFullMs <= 600
-      && report.race.wakeHouse.firstFull?.visibleProgramDelta === 0
-      && report.race.wakeHouse.firstFull?.visibleTextureDelta === 0
-      && report.race.wakeHouse.firstFull?.visibleGeometryDelta === 0
-      && report.race.wakeHouse.firstFull?.ms <= 100,
-    'immediate Wake reaches the exact full house within 600ms with a zero-upload sub-100ms reveal',
-    report.race.wakeHouse);
+  const wakeRows = report.race.firstImpact?.renderRows || [];
+  const combinedWakeRows = wakeRows.filter((row) => row.snapshotProgress
+    && row.reducedBatchSubmitted && !row.reducedBatchRevealed
+    && row.drawCalls === 0 && row.worldDrawCalls === 0);
+  const combinedWakeIndex = combinedWakeRows.length === 1
+    ? wakeRows.indexOf(combinedWakeRows[0]) : -1;
+  const combinedWake = combinedWakeIndex >= 0 ? wakeRows[combinedWakeIndex] : null;
+  const wakeReveal = combinedWakeIndex >= 0 ? wakeRows[combinedWakeIndex + 1] : null;
+  check(combinedWakeRows.length === 1 && combinedWake != null && wakeReveal != null
+      && wakeReveal.frameId === combinedWake.frameId + 1
+      && wakeReveal.generation === combinedWake.generation
+      && wakeReveal.residencyKey != null
+      && wakeReveal.residencyKey === combinedWake.residencyKey
+      && combinedWake.reducedDetail === true
+      && wakeReveal.reducedBatchRevealed === true
+      && wakeReveal.snapshotProgress === false
+      && wakeReveal.reducedBatchSubmitted === false
+      && wakeReveal.reducedDetail === true
+      && wakeReveal.worldDrawCalls > 0
+      && combinedWake.ms < 100 && wakeReveal.ms < 100,
+    'Wake combines current census with one hidden reduced upload, then reveals it on the immediately following bounded paint',
+    { combinedWake, wakeReveal, wakeRows });
   const wakeTypes = report.race.wakeHouse?.lightTypes;
   check(report.race.wakeHouse?.worldLights === 20
       && wakeTypes?.AmbientLight === 1 && wakeTypes?.HemisphereLight === 1
@@ -3721,17 +4732,33 @@ try {
       && report.race.earlyHousePriority.restarts === 0,
     'bedroom, house, and basement share one warm priority without restart thrash',
     report.race.earlyHousePriority);
-  check(report.race.maxRafMs <= 100,
-    'the complete immediate-Wake/fast-entry race contains no multi-second freeze', {
+  check(report.race.rafIntervals > 0 && report.race.orderingErrors.length === 0
+      && report.race.maxRafMs < 100,
+    'the complete immediate-Wake/fast-entry race keeps observed callback cadence strictly sub-100ms', {
       maxRafMs: report.race.maxRafMs,
       p95RafMs: report.race.p95RafMs,
       maxRenderMs: report.race.maxRenderMs,
     });
-  check(report.race.residency?.maxReducedPrimeMs <= 100
-      && report.race.residency?.maxExactMs <= 100
-      && report.race.residency?.maxOwnerMs <= 140
+  check(report.race.renderCount > 1 && report.race.maxRenderMs < 100
+      && report.race.maxInterRenderIdleMs < 100
+      && report.race.maxRenderCompletionIntervalMs < 100,
+    'the complete immediate-Wake/fast-entry race keeps render, inter-render idle, and paint-ready cadence strictly sub-100ms', {
+      maxRenderMs: report.race.maxRenderMs,
+      maxRenderStartIntervalMs: report.race.maxRenderStartIntervalMs,
+      maxInterRenderIdleMs: report.race.maxInterRenderIdleMs,
+      maxRenderCompletionIntervalMs: report.race.maxRenderCompletionIntervalMs,
+    });
+  check(report.race.residency?.maxReducedPrimeMs < 100
+      && report.race.residency?.maxExactMs < 100
+      && report.race.residency?.maxExactPreloadMs < 100
+      && report.race.residency?.maxOwnerMs < 100
+      && report.race.residency?.exactPreloadPasses?.every(validExactPreload)
+      && finalizerAttemptsOwnZeroDrawFrames(
+        report.race.residency?.universeFinalizePasses || [],
+        report.race.residency?.finalizerFrames || [],
+      )
       && report.race.residency?.errors?.length === 0,
-    'exact live-scene, reduced fallback, and owner-RT certifications remain inside their hard budgets',
+    'exact selection, live-scene, reduced fallback, finalization, and owner-RT work remain inside strict hard budgets',
     report.race.residency);
   check(report.race.maxShieldDurationMs === 0
       && report.race.transitions.every((seam) => seam.shieldFrames === 0),
@@ -3742,7 +4769,13 @@ try {
   check(report.race.firstImpact.before.pointLights === report.race.firstImpact.after.pointLights
       && report.race.firstImpact.before.sceneChildren === report.race.firstImpact.after.sceneChildren
       && report.race.firstImpact.before.lightUuid === report.race.firstImpact.after.lightUuid
-      && report.race.firstImpact.before.ringUuid === report.race.firstImpact.after.ringUuid,
+      && report.race.firstImpact.before.ringUuid === report.race.firstImpact.after.ringUuid
+      && report.race.firstImpact.activation?.ringVisible === true
+      && report.race.firstImpact.activation?.bootPrime === false
+      && report.race.firstImpact.activation?.ringT > 0
+      && report.race.firstImpact.activation?.ringIn === true
+      && report.race.firstImpact.activation?.lightIntensity > 0
+      && report.race.firstImpact.activation?.hitStop > 0,
     'first locked/bell impact reuses its boot-resident light and ring without scene allocation',
     report.race.firstImpact);
   check(report.race.firstImpact.visibleRenderProgramDelta === 0
@@ -3750,8 +4783,11 @@ try {
       && report.race.firstImpact.visibleRenderGeometryDelta === 0,
     'first locked/bell impact compiles and allocates zero visible-frame resources',
     report.race.firstImpact);
-  check(report.race.firstImpact.maxRafMs <= 100
-      && report.race.firstImpact.maxRenderMs < 70,
+  check(report.race.firstImpact.renderCount > 1
+      && report.race.firstImpact.maxRafMs < 100
+      && report.race.firstImpact.maxRenderMs < 70
+      && report.race.firstImpact.maxInterRenderIdleMs < 100
+      && report.race.firstImpact.maxRenderCompletionIntervalMs < 100,
     'first locked/bell impact remains inside the ordinary-frame D3D11 budget',
     report.race.firstImpact);
 
@@ -3767,10 +4803,12 @@ try {
         && outboundResidency?.errors?.length === 0
         && outboundResidency?.reducedPasses?.length > 0
         && outboundResidency.reducedPasses.every((entry) =>
-          entry.geometryDelta >= 0 && entry.geometryDelta <= 16 && entry.durationMs <= 100)
+          entry.geometryDelta >= 0 && entry.geometryDelta <= 16 && entry.durationMs < 100)
         && outboundResidency?.exactPasses?.length > 0
         && outboundResidency.exactPasses.every((entry) => entry.programDelta === 0
-          && entry.textureDelta === 0 && entry.geometryDelta === 0 && entry.durationMs <= 100)
+          && entry.textureDelta === 0 && entry.geometryDelta === 0 && entry.durationMs < 100)
+        && outboundResidency?.exactPreloadPasses?.length > 0
+        && outboundResidency.exactPreloadPasses.every(validExactPreload)
         && outboundResidency?.skullWorldPasses?.length === 1
         && outboundResidency.skullWorldPasses[0].stateRestored === true
         && outboundResidency.skullWorldPasses[0].programDelta === 0
@@ -3827,8 +4865,11 @@ try {
           && probe.shieldDurationMs === 0 && probe.shieldFrames === 0,
         `${label} context restore returns a playable physical world within 250ms without a shader shield`,
         probe);
-      check(probe?.maxRafMs <= 100 && probe?.maxRenderMs <= 100
-          && probe?.exactPass?.durationMs <= 100,
+      check(probe?.frameCount > 1 && probe?.orderingErrors?.length === 0
+          && probe?.maxRenderMs < 100
+          && probe.maxInterRenderIdleMs < 100
+          && probe.maxRenderCompletionIntervalMs < 100
+          && probe?.exactPass?.durationMs < 100,
         `${label} restore-to-reveal path contains no driver-sized frame stall`, probe);
       check(probe?.maxVisibleProgramDelta === 0
           && probe?.maxVisibleTextureDelta === 0
@@ -3885,9 +4926,14 @@ try {
           && seam.maxVisibleTextureDelta === 0
           && seam.maxVisibleGeometryDelta === 0,
         `restored-context ${seam.act} first revealed frames upload no programs, textures, or geometry`, seam);
-      check(seam.maxRafMs <= (seam.act === 'mirror' ? 140 : 100),
-        `restored-context ${seam.act} entry stays inside the cold-frame budget`, seam);
-      check(seam.worldSubmitted === true && seam.shielded === false,
+      check(seam.maxRafMs < 100,
+        `restored-context ${seam.act} observed callback cadence stays strictly inside the cold-frame budget`, seam);
+      check(seam.renderCount > 1 && seam.observedIntervals > 0
+          && seam.orderingErrors.length === 0 && seam.maxRenderMs < 100
+          && seam.maxInterRenderIdleMs < 100
+          && seam.maxRenderCompletionIntervalMs < 100
+          && seam.setupMs < 100 && seam.cleanupMs < 100
+          && seam.worldSubmitted === true && seam.shielded === false,
         `restored-context ${seam.act} delivers a nonzero world instead of an opaque pass`, seam);
     }
     const recoveredHouseFrame = recovery.firstRecoveredHouseFrame;
@@ -3897,7 +4943,7 @@ try {
         && recoveredHouseFrame?.visibleProgramDelta === 0
         && recoveredHouseFrame?.visibleTextureDelta === 0
         && recoveredHouseFrame?.visibleGeometryDelta === 0
-        && recoveredHouseFrame?.ms <= 100,
+        && recoveredHouseFrame?.ms < 100,
       'first restored house frame is a bounded nonzero playable submission with zero visible upload',
       recoveredHouseFrame);
     check(recoveredHouseFull?.worldDrawCalls > 0
@@ -3906,7 +4952,7 @@ try {
         && recoveredHouseFull?.visibleProgramDelta === 0
         && recoveredHouseFull?.visibleTextureDelta === 0
         && recoveredHouseFull?.visibleGeometryDelta === 0
-        && recoveredHouseFull?.ms <= 100,
+        && recoveredHouseFull?.ms < 100,
       'first exact restored house world+held frame consumes only hidden-certified resources',
       recoveredHouseFull);
     check(recoveredHouseFull?.worldLights === 20
@@ -3919,11 +4965,37 @@ try {
         && recoveredHouseTypes?.totalShadows === 1,
       'first restored house frame matches the fixed directional-shadow signature',
       recoveredHouseFull);
+    const restoredHouseSettlement = recovery.restoredHouseSettlement;
+    check(recovery.restoredHouseGeneration === byLabel['ready-after-pending-loss']?.generation
+        && restoredHouseSettlement?.generation === recovery.restoredHouseGeneration
+        && restoredHouseSettlement?.activeKey === recovery.restoredHouseKey
+        && restoredHouseSettlement?.progressKey === recovery.restoredHouseKey
+        && restoredHouseSettlement?.physical === true
+        && restoredHouseSettlement?.ownerQueue === 0
+        && restoredHouseSettlement?.ownerExactQueue === 0
+        && restoredHouseSettlement?.ownerRecorded === true
+        && restoredHouseSettlement?.ownerExactRecorded === true
+        && restoredHouseSettlement?.universe?.key === recovery.restoredHouseKey
+        && restoredHouseSettlement?.finalizers?.some((entry) =>
+          entry.recorded === true && entry.error == null && entry.durationMs < 100)
+        && restoredHouseSettlement?.target?.generation === recovery.restoredHouseGeneration
+        && restoredHouseSettlement?.target?.status === 'ready'
+        && restoredHouseSettlement?.target?.current === true
+        && restoredHouseSettlement?.ownerCertified === false
+        && restoredHouseSettlement?.mirrorActive === false
+        && restoredHouseSettlement?.paneActive === false,
+      'restored House destination earns same-generation physical and owner-exact proof while every pane stays dark',
+      restoredHouseSettlement);
     for (const view of recovery.restoredHouseViews || []) {
       check(view.maxVisibleProgramDelta === 0
           && view.maxVisibleTextureDelta === 0
           && view.maxVisibleGeometryDelta === 0
-          && view.maxRafMs <= (view.kind.includes('mirror') ? 140 : 100),
+          && view.renderCount > 1 && view.observedIntervals > 0
+          && view.orderingErrors.length === 0
+          && view.setupMs < 100
+          && view.maxRafMs < 100 && view.maxRenderMs < 100
+          && view.maxInterRenderIdleMs < 100
+          && view.maxRenderCompletionIntervalMs < 100,
         `restored house ${view.kind} reveals no cold program/texture/geometry upload`, view);
       if (view.kind.includes('mirror')) {
         check(exactP16LightCensus(view.reflectionLightCensus),
@@ -3933,15 +5005,19 @@ try {
       if (view.kind === 'mirror') {
         check(view.mirrorActive === true && view.paneActive === true
             && view.targetState?.status === 'ready'
-            && view.targetState.generation === byLabel['ready-after-pending-loss']?.generation,
+            && view.targetState.current === true
+            && view.targetState.generation === recovery.restoredHouseGeneration,
           'restored awakened house mirror consumes only its current resident target', view);
         check(view.ownerPasses.length === 1
             && view.ownerPasses[0].rendered === true
             && view.ownerPasses[0].error == null
-            && view.ownerPasses[0].durationMs <= 140
+            && view.ownerPasses[0].durationMs < 100
             && view.ownerPasses[0].programDelta === 0
             && view.ownerPasses[0].textureDelta === 0
             && view.ownerPasses[0].geometryDelta === 0
+            && view.firstOwnerPassFrame?.ownerPassesAdded?.length === 1
+            && view.firstOwnerPassFrame.ownerPassesAdded[0].kind === 'house'
+            && view.firstOwnerPassFrame.frameId < view.firstEnabledFrame?.frameId
             && view.firstEnabledFrame?.programDelta === 0
             && view.firstEnabledFrame?.textureDelta === 0
             && view.firstEnabledFrame?.geometryDelta === 0,
@@ -3949,6 +5025,7 @@ try {
       } else if (view.kind === 'mirror-motion') {
         check(view.ownerPasses.length === 0
             && view.mirrorActive === true && view.paneActive === true
+            && view.targetState?.current === true
             && view.firstEnabledFrame?.programDelta === 0
             && view.firstEnabledFrame?.textureDelta === 0
             && view.firstEnabledFrame?.geometryDelta === 0,
@@ -3957,22 +5034,56 @@ try {
       }
     }
     const restoredHouseUniverse = recovery.restoredHouseOwnerUniverses
-      ?.find((entry) => entry.house > 0);
+      ?.find((entry) => entry.key === recovery.restoredHouseKey && entry.house > 0);
+    const restoredHouseFinalizerFrames = matchingFinalizerFrames(
+      recovery.restoredHouseFinalizers, recovery.finalizerFrames,
+    );
+    const restoredHouseTerminalFrame = restoredHouseFinalizerFrames.at(-1) || null;
+    const restoredHousePaneFrame = recovery.restoredHouseViews
+      ?.find((view) => view.kind === 'mirror')?.firstEnabledFrame || null;
+    const restoredHouseOwnerFrame = recovery.restoredHouseViews
+      ?.find((view) => view.kind === 'mirror')?.firstOwnerPassFrame || null;
     check(restoredHouseUniverse?.covered === restoredHouseUniverse?.total
+        && restoredHouseUniverse?.total === restoredHouseUniverse?.house
         && restoredHouseUniverse?.houseGeometries > 0
-        && JSON.stringify(restoredHouseUniverse?.members)
-          === JSON.stringify(recovery.expectedHouseOwnerMembers)
         && JSON.stringify(restoredHouseUniverse?.coveredMembers)
           === JSON.stringify(restoredHouseUniverse?.members)
+        && restoredHouseUniverse.exactCovered === restoredHouseUniverse.exactTotal
+        && restoredHouseUniverse.exactTotal >= restoredHouseUniverse.total
+        && JSON.stringify(restoredHouseUniverse.exactCoveredMembers)
+          === JSON.stringify(restoredHouseUniverse.exactMembers)
+        && restoredHouseUniverse.exactOnlyDecorative
+          === restoredHouseUniverse.exactOnlyMembers.length
         && (recovery.restoredHouseOwnerBatches || []).length > 0
         && recovery.restoredHouseOwnerBatches.every((entry) =>
-          entry.physicalReady === true && entry.ownerPreloadObjects > 0
+          entry.generation === recovery.restoredHouseGeneration
+          && entry.key === recovery.restoredHouseKey
+          && entry.physicalReady === true && entry.ownerPreloadObjects > 0
           && entry.ownerPreloadGeometries <= 16 && entry.geometryDelta <= 16
-          && entry.durationMs <= 100),
-      'restored house owner universe covers every possible authored pane renderable after physical reveal', {
+          && entry.durationMs < 100)
+        && recovery.restoredHouseOwnerExactBatches?.length > 0
+        && recovery.restoredHouseOwnerExactBatches.every(validExactPreload)
+        && recovery.restoredHouseOwnerExactBatches.every((entry) =>
+          entry.generation === recovery.restoredHouseGeneration
+            && entry.key === restoredHouseUniverse.key)
+        && recovery.restoredHouseOwnerExactBatches.every((entry) => entry.targetUuid != null)
+        && recovery.restoredHouseFinalizers?.length > 0
+        && recovery.restoredHouseFinalizers.every((entry) =>
+          entry.generation === recovery.restoredHouseGeneration
+            && entry.key === restoredHouseUniverse.key)
+        && finalizersOwnZeroDrawFrames(
+          recovery.restoredHouseFinalizers, restoredHouseFinalizerFrames,
+        )
+        && restoredHouseTerminalFrame?.frameId < restoredHouseOwnerFrame?.frameId
+        && restoredHouseOwnerFrame?.frameId < restoredHousePaneFrame?.frameId,
+      'restored house owner scope converges across reduced/exact target batches and bounded finalization', {
         universe: restoredHouseUniverse,
-        expected: recovery.expectedHouseOwnerMembers,
         batches: recovery.restoredHouseOwnerBatches,
+        exactBatches: recovery.restoredHouseOwnerExactBatches,
+        finalizers: recovery.restoredHouseFinalizers,
+        finalizerFrames: restoredHouseFinalizerFrames,
+        firstOwnerFrame: restoredHouseOwnerFrame,
+        firstPaneFrame: restoredHousePaneFrame,
       });
     check(recovery.restoredImpact?.after.programs
           === recovery.restoredImpact?.before.programs
@@ -3985,13 +5096,31 @@ try {
         && recovery.restoredImpact?.after.ringUuid
           === recovery.restoredImpact?.before.ringUuid
         && recovery.restoredImpact?.bootPrime === false
-        && recovery.restoredImpact?.maxRafMs <= 100,
+        && recovery.restoredImpact?.activation?.ringVisible === true
+        && recovery.restoredImpact?.activation?.bootPrime === false
+        && recovery.restoredImpact?.activation?.ringT > 0
+        && recovery.restoredImpact?.activation?.ringIn === true
+        && recovery.restoredImpact?.activation?.lightIntensity > 0
+        && recovery.restoredImpact?.activation?.hitStop > 0
+        && recovery.restoredImpact?.setupMs < 100
+        && recovery.restoredImpact?.timing?.frames?.length > 1
+        && recovery.restoredImpact.timing.observedIntervals > 0
+        && recovery.restoredImpact.timing.orderingErrors.length === 0
+        && recovery.restoredImpact?.maxRafMs < 100
+        && recovery.restoredImpact.timing.maxRenderMs < 100
+        && recovery.restoredImpact.timing.maxInterRenderIdleMs < 100
+        && recovery.restoredImpact.timing.maxRenderCompletionIntervalMs < 100,
       'first post-restore impact reuses its physically delivered ring/light with zero resource delta',
       recovery.restoredImpact);
     const pools = recovery.dynamicPoolActivation;
     check(pools?.before.goreCount === 0 && pools?.before.stainCount === 0
         && pools?.after.goreCount === 1 && pools?.after.stainCount === 1
-        && pools.maxRafMs <= 100,
+        && pools.timing?.frames?.length > 1 && pools.timing.observedIntervals > 0
+        && pools.timing.orderingErrors.length === 0
+        && pools.setupMs < 100
+        && pools.maxRafMs < 100 && pools.timing.maxRenderMs < 100
+        && pools.timing.maxInterRenderIdleMs < 100
+        && pools.timing.maxRenderCompletionIntervalMs < 100,
       'later offscreen gore and enemy-stain pool activation remains below the ordinary-frame budget',
       pools);
     const firstReflection = recovery.firstRestoredReflection;
@@ -4000,8 +5129,8 @@ try {
         && firstReflection?.afterGeometries === firstReflection?.beforeGeometries,
       'first active-Finale reflection after restore compiles and allocates zero resources',
       firstReflection);
-    check(firstReflection?.ms <= 140 && recovery.activeRestoreMaxRafMs <= 140,
-      'active-Finale restore and first reflection remain within the mirror frame budget', {
+    check(firstReflection?.ms < 100 && recovery.activeRestoreMaxRafMs < 100,
+      'active-Finale restore and first reflection remain strictly below 100ms', {
         firstReflection,
         activeRestoreMaxRafMs: recovery.activeRestoreMaxRafMs,
       });
@@ -4011,7 +5140,7 @@ try {
     check(recovery.finaleOwnerPasses?.length === 1
         && recovery.finaleOwnerPasses[0].rendered === true
         && recovery.finaleOwnerPasses[0].error == null
-        && recovery.finaleOwnerPasses[0].durationMs <= 140
+        && recovery.finaleOwnerPasses[0].durationMs < 100
         && recovery.finaleOwnerPasses[0].programDelta === 0
         && recovery.finaleOwnerPasses[0].textureDelta === 0
         && recovery.finaleOwnerPasses[0].geometryDelta === 0,
@@ -4019,21 +5148,41 @@ try {
       recovery.finaleOwnerPasses);
     const finaleUniverse = recovery.finaleOwnerUniverses
       ?.find((entry) => entry.finale > 0);
+    const finaleFinalizerFrames = matchingFinalizerFrames(
+      recovery.finaleFinalizers, recovery.finalizerFrames,
+    );
+    const finaleTerminalFrame = finaleFinalizerFrames.at(-1) || null;
     check(finaleUniverse?.covered === finaleUniverse?.total
+        && finaleUniverse?.total === finaleUniverse?.finale
         && finaleUniverse?.finaleGeometries > 0
-        && JSON.stringify(finaleUniverse?.members)
-          === JSON.stringify(recovery.expectedFinaleOwnerMembers)
         && JSON.stringify(finaleUniverse?.coveredMembers)
           === JSON.stringify(finaleUniverse?.members)
+        && finaleUniverse.exactCovered === finaleUniverse.exactTotal
+        && finaleUniverse.exactTotal >= finaleUniverse.total
+        && JSON.stringify(finaleUniverse.exactCoveredMembers)
+          === JSON.stringify(finaleUniverse.exactMembers)
+        && finaleUniverse.exactOnlyDecorative === finaleUniverse.exactOnlyMembers.length
         && (recovery.finaleOwnerBatches || []).length > 0
         && recovery.finaleOwnerBatches.every((entry) =>
           entry.physicalReady === true && entry.ownerPreloadObjects > 0
           && entry.ownerPreloadGeometries <= 16 && entry.geometryDelta <= 16
-          && entry.durationMs <= 100),
-      'Finale owner universe covers every possible room/figure/head pane renderable after physical reveal', {
+          && entry.durationMs < 100)
+        && recovery.finaleOwnerExactBatches?.length > 0
+        && recovery.finaleOwnerExactBatches.every(validExactPreload)
+        && recovery.finaleOwnerExactBatches.every((entry) =>
+          entry.key === finaleUniverse.key)
+        && recovery.finaleOwnerExactBatches.every((entry) => entry.targetUuid != null)
+        && recovery.finaleFinalizers?.length > 0
+        && recovery.finaleFinalizers.every((entry) => entry.key === finaleUniverse.key)
+        && finalizersOwnZeroDrawFrames(recovery.finaleFinalizers, finaleFinalizerFrames)
+        && finaleTerminalFrame?.frameId < recovery.firstFinalePaneFrame?.frameId,
+      'Finale owner scope converges across reduced/exact target batches and bounded finalization', {
         universe: finaleUniverse,
-        expected: recovery.expectedFinaleOwnerMembers,
         batches: recovery.finaleOwnerBatches,
+        exactBatches: recovery.finaleOwnerExactBatches,
+        finalizers: recovery.finaleFinalizers,
+        finalizerFrames: finaleFinalizerFrames,
+        firstPaneFrame: recovery.firstFinalePaneFrame,
       });
     const finaleMotion = recovery.finaleMirrorMotion;
     check(finaleMotion?.panesActive > 0
@@ -4045,8 +5194,14 @@ try {
         && finaleMotion.frames.every((frame) => frame.afterPrograms === frame.beforePrograms
           && frame.afterTextures === frame.beforeTextures
           && frame.afterGeometries === frame.beforeGeometries
-          && frame.ms <= 140)
-        && finaleMotion.maxRafMs <= 140,
+          && frame.ms < 100)
+        && finaleMotion.timing?.frames?.length > 1
+        && finaleMotion.timing.observedIntervals > 0
+        && finaleMotion.timing.orderingErrors.length === 0
+        && finaleMotion.maxRafMs < 100
+        && finaleMotion.timing.maxRenderMs < 100
+        && finaleMotion.timing.maxInterRenderIdleMs < 100
+        && finaleMotion.timing.maxRenderCompletionIntervalMs < 100,
       'later Finale mirror-camera motion reveals no new program, texture, geometry, or owner pass',
       finaleMotion);
     check(exactP16LightCensus(finaleMotion?.reflectionLightCensus),
@@ -4106,7 +5261,7 @@ try {
         && houseFailures.bindFailed.target?.status === 'degraded'
         && houseFailures.bindFailed.target.attempts === 2
         && houseFailures.bindFailed.target.warmed === 0
-        && houseFailures.bindFailed.drawCalls > 0
+        && houseFailures.bindFailed.worldDrawCalls > 0
         && houseFailures.bindFailed.paneActive === false
         && houseFailures.bindFailed.shielded === false,
       'persistent house-target bind failure retries twice while world stays live and pane stays dark',
@@ -4115,18 +5270,39 @@ try {
         && houseFailures.bindRecovered.generation === houseFailures.bindFailed.generation
         && houseFailures.bindRecovered.target?.status === 'ready'
         && houseFailures.bindRecovered.target.warmed === 1
+        && houseFailures.bindRecovered.target.current === true
+        && houseFailures.bindRecovered.residency?.generation
+          === houseFailures.bindRecovered.generation
+        && houseFailures.bindRecovered.residency.key
+          === houseFailures.bindRecovered.residency.activeKey
+        && houseFailures.bindRecovered.residency.key
+          === houseFailures.bindRecovered.residency.progressKey
+        && houseFailures.bindRecovered.residency.physical === true
+        && houseFailures.bindRecovered.residency.queue === 0
+        && houseFailures.bindRecovered.residency.ownerQueue === 0
+        && houseFailures.bindRecovered.residency.ownerExactQueue === 0
+        && houseFailures.bindRecovered.residency.ownerRecorded === true
+        && houseFailures.bindRecovered.residency.ownerExactRecorded === true
+        && houseFailures.bindRecovered.residency.universeRecorded === true
+        && houseFailures.bindRecovered.residency.finalizerRecorded === true
+        && houseFailures.bindRecovered.residency.ownerCertified === true
+        && houseFailures.bindRecovered.residency.ownerPasses === 1
         && houseFailures.bindRecovered.mirrorActive === true
         && houseFailures.bindRecovered.paneActive === true
         && houseFailures.bindRecovered.visibleProgramDelta === 0
         && houseFailures.bindRecovered.visibleTextureDelta === 0
-        && houseFailures.bindRecovered.visibleGeometryDelta === 0,
+        && houseFailures.bindRecovered.visibleGeometryDelta === 0
+        && houseFailures.bindRecovered.after.programs
+          === houseFailures.bindRecovered.before.programs
+        && houseFailures.bindRecovered.after.textures
+          === houseFailures.bindRecovered.before.textures,
       'bounded same-generation retry certifies the hidden owner target before a zero-upload visible pane',
       houseFailures.bindRecovered);
     check(houseFailures.reflectionCompileFailures > 0
         && houseFailures.reflectionFailed.shaderStatus === 'degraded'
         && houseFailures.reflectionFailed.target?.status === 'ready'
         && !houseFailures.reflectionFailed.readyVariants.includes('house-reflection')
-        && houseFailures.reflectionFailed.drawCalls > 0
+        && houseFailures.reflectionFailed.worldDrawCalls > 0
         && houseFailures.reflectionFailed.paneActive === false
         && houseFailures.reflectionFailed.shielded === false,
       'house RT-program failure leaves the playable world live and fails the pane closed',
@@ -4148,7 +5324,7 @@ try {
         && houseFailures.houseRuntimeFailed.poolInUpdate === false
         && houseFailures.houseRuntimeFailed.scopeVisible === true
         && houseFailures.houseRuntimeFailed.paneActive === false
-        && houseFailures.houseRuntimeFailed.drawCalls > 0
+        && houseFailures.houseRuntimeFailed.worldDrawCalls > 0
         && houseFailures.houseRuntimeFailed.shaderStatus === 'degraded'
         && houseFailures.houseRuntimeFailed.failure?.message
           ?.includes('injected live house pane render failure'),
@@ -4160,7 +5336,7 @@ try {
         && houseFailures.houseRuntimeRecovered.target?.status === 'ready'
         && houseFailures.houseRuntimeRecovered.mirrorActive === true
         && houseFailures.houseRuntimeRecovered.paneActive === true
-        && houseFailures.houseRuntimeRecovered.drawCalls > 0,
+        && houseFailures.houseRuntimeRecovered.worldDrawCalls > 0,
       'the live house-pane fault automatically recovers in the same GL generation',
       houseFailures.houseRuntimeRecovered);
     check(houseFailures.finaleRuntimeFaults === 1
@@ -4169,7 +5345,7 @@ try {
         && houseFailures.finaleRuntimeFailed.scopesVisible.every((visible) => visible === true)
         && houseFailures.finaleRuntimeFailed.panesActive.every((active) => active === false)
         && houseFailures.finaleRuntimeFailed.contextRewarming === true
-        && houseFailures.finaleRuntimeFailed.drawCalls > 0
+        && houseFailures.finaleRuntimeFailed.worldDrawCalls > 0
         && houseFailures.finaleRuntimeFailed.failure?.message
           ?.includes('injected live Finale pane bind failure'),
       'a live Finale FBO bind fault is contained, restores every pane scope, and keeps the world live',
@@ -4180,34 +5356,43 @@ try {
         && houseFailures.finaleRuntimeRecovered.targetStatus === 'ready'
         && houseFailures.finaleRuntimeRecovered.contextRewarming === false
         && houseFailures.finaleRuntimeRecovered.panesActive.some((active) => active === true)
-        && houseFailures.finaleRuntimeRecovered.drawCalls > 0,
+        && houseFailures.finaleRuntimeRecovered.worldDrawCalls > 0,
       'the live Finale target fault automatically recovers in the same GL generation',
       houseFailures.finaleRuntimeRecovered);
   }
   for (const seam of report.race.transitions) {
-    const mirror = seam.name === 'cave->mirror';
     check(seam.visibleRenderProgramDelta === 0
         && seam.visibleRenderTextureDelta === 0
         && seam.visibleRenderGeometryDelta === 0,
       `${seam.name} race reveals no cold program, texture, or geometry upload`, seam);
-    check(seam.maxRafMs <= 100,
-      `${seam.name} race rAF stays inside the cold-entry budget`, seam);
-    check(seam.maxRenderMs <= (mirror ? 140 : 100),
+    check(seam.orderingErrors?.length === 0 && seam.rafIntervals > 0
+        && seam.renderCount > 1 && seam.maxRafMs < 100,
+      `${seam.name} race observed callback cadence stays inside the cold-entry budget`, seam);
+    check(seam.maxRenderMs < 100,
       `${seam.name} race render submission stays bounded`, seam);
+    check(seam.maxInterRenderIdleMs < 100
+        && seam.maxRenderCompletionIntervalMs < 100
+        && seam.transitionMs < 100 && seam.cleanupMs < 100,
+      `${seam.name} race inter-render idle and paint-ready cadence stay strictly sub-100ms`, seam);
     check(seam.worldSubmitted === true && seam.firstWorldMs != null
+        && seam.firstWorldMs >= 0
         && seam.firstWorldMs <= 150 && seam.shieldDurationMs === 0
         && seam.shieldFrames === 0,
       `${seam.name} impossible-fast entry reveals a nonzero moving world within 150ms without a shield`, seam);
   }
-  check(report.race.residentReturn?.residentBefore === true
-      && report.race.residentReturn.restarts === 0
-      && report.race.residentReturn.worldSubmitted === true
-      && report.race.residentReturn.firstWorldMs <= 100
+  check(report.race.residentReturn?.worldSubmitted === true
+      && report.race.residentReturn.orderingErrors?.length === 0
+      && report.race.residentReturn.rafIntervals > 0
+      && report.race.residentReturn.renderCount > 1
+      && report.race.residentReturn.firstWorldMs >= 0
+      && report.race.residentReturn.firstWorldMs < 100
       && report.race.residentReturn.visibleProgramDelta === 0
       && report.race.residentReturn.visibleTextureDelta === 0
       && report.race.residentReturn.visibleGeometryDelta === 0
-      && report.race.residentReturn.maxRafMs <= 100,
-    'a reprioritized forest remains genuinely resident when the player returns',
+      && report.race.residentReturn.maxRafMs < 100
+      && report.race.residentReturn.maxInterRenderIdleMs < 100
+      && report.race.residentReturn.maxRenderCompletionIntervalMs < 100,
+    'a rapid forest return immediately delivers a zero-upload world while destination residency is re-earned',
     report.race.residentReturn);
   check(report.browserErrors.length === 0,
     'transition warmup scenarios emit zero browser errors', report.browserErrors);

@@ -74,10 +74,16 @@ function validateEpisode(label, episode, { owner = true, coldFree = true } = {})
   check(episode.frames > 0 && episode.maxRenderMs < 100
       && episode.slowFrames.length === 0,
   `${label} keeps every render strictly below 100ms`, episode);
-  check(episode.rafIntervals > 0 && episode.maxRafMs < 100
+  check(episode.renderIntervals > 0 && episode.maxRenderStartMs < 100
+      && episode.maxRenderCompletionMs < 100 && episode.maxInterRenderIdleMs < 100
+      && episode.renderTimingErrors.length === 0,
+  `${label} keeps every owned render start, completion, and idle interval strictly below 100ms`,
+  episode);
+  check(episode.rafIntervals > 0 && episode.maxObservedRafMs < 100
       && episode.slowRafs.length === 0
+      && episode.rafOrderingErrors.length === 0
       && episode.stageToFirstObservedRafMs < 100,
-  `${label} keeps every owned rAF boundary strictly below 100ms`, episode);
+  `${label} keeps every owned post-render callback boundary strictly below 100ms`, episode);
   check(episode.shieldedFrames === 0 && episode.visibleResourceFrames.length === 0,
     `${label} reveals no shader shield or visible cold P/T/G work`, episode);
   const liveGl = sumGl(episode.glByPhase, liveGlPhases);
@@ -128,9 +134,16 @@ function validateEpisode(label, episode, { owner = true, coldFree = true } = {})
       && lights?.byType?.PointLight === 16,
   `${label} owner certificate consumes the exact shipping A1/H1/D1/S1/P16 rig`,
   pass?.identity);
-  const ownerPhase = episode.ownerFrame?.glByPhase?.[`${episode.kind}-owner-certificate`];
+  const ownerPhase = episode.ownerFrame?.glByPhase?.[`${episode.kind}-owner-certificate`]
+    || emptyGl();
   const paneLive = sumGl(episode.firstPaneFrame?.glByPhase, liveGlPhases);
-  const panePhase = episode.firstPaneFrame?.glByPhase?.[`${episode.kind}-pane-render`];
+  const panePhase = episode.firstPaneFrame?.glByPhase?.[`${episode.kind}-pane-render`]
+    || emptyGl();
+  const paneRenderCalls = episode.kind === 'house'
+    ? episode.firstPaneFrame?.housePaneRenderCalls || 0
+    : episode.firstPaneFrame?.finalePaneRenderCalls || 0;
+  const ownerPhaseCalls = episode.ownerFrame?.phaseCalls
+    ?.[`${episode.kind}-owner-certificate`] || 0;
   const paneTextures = episode.kind === 'house'
     ? [episode.firstPaneFrame?.houseTextureUuid].filter(Boolean)
     : episode.firstPaneFrame?.finaleTextureUuids || [];
@@ -139,9 +152,10 @@ function validateEpisode(label, episode, { owner = true, coldFree = true } = {})
     : episode.firstPaneFrame?.finalePoolTextureUuids || [];
   check(episode.ownerFrameId != null && episode.firstPaneFrameId != null
       && episode.firstPaneFrameId > episode.ownerFrameId
-      && ownerPhase?.bufferData === 0
+      && ownerPhaseCalls > 0
+      && ownerPhase.bufferData === 0
       && ownerPhase?.createVertexArray === 0
-      && panePhase != null && paneTextures.length > 0
+      && paneRenderCalls > 0 && paneTextures.length > 0
       && paneTextures.every((uuid) => poolTextures.includes(uuid))
       && episode.firstPaneFrame?.worldDrawCalls > 0
       && episode.firstPaneFrame?.visibleProgramDelta === 0
@@ -338,6 +352,9 @@ try {
           ? (state?.failed ? [-1] : []) : [...(state?.failedTargets || [])],
         errors: [...(state?.errors || [])],
         maxSliceMs: state?.maxSliceMs ?? null,
+        attempts: state?.attempts ?? null,
+        recoveryScheduled: state?.recoveryScheduled ?? null,
+        reason: state?.reason || null,
       };
     };
     const shaderSnapshot = () => {
@@ -412,6 +429,185 @@ try {
       while (!predicate() && performance.now() < deadline) await frame();
       if (!predicate()) throw new Error(`Stage C mirror timeout: ${label}`);
     };
+    const mirrorProgressSnapshot = (kind) => {
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const shader = g.shaderWarmup;
+      const compileActivity = g._shaderCompileActivity;
+      const lastJob = shader?.compileJobs?.at(-1) || null;
+      const readyVariants = shader?.readyVariants || [];
+      const targetOwner = poolFor(kind);
+      const targetPool = targetOwner.pool;
+      const targetState = kind === 'house'
+        ? g._houseMirrorTargetWarmState : g.finale._targetWarmState;
+      const targetRefsMatch = kind === 'house'
+        ? targetState?.targetRef === targetPool[0]
+        : targetState?.targetRefs?.length === targetPool.length
+          && targetState.targetRefs.every((target, index) => target === targetPool[index]);
+      const livePoolSignature = g._renderTargetPoolIdentity(targetPool, targetOwner);
+      const panes = panesFor(kind);
+      let paneActive = 0;
+      let paneCurrentPool = true;
+      for (const pane of panes) {
+        if (!pane.active) continue;
+        paneActive++;
+        const texture = pane.material.uniforms.tDiffuse.value;
+        if (!targetPool.some((target) => target.texture === texture)) paneCurrentPool = false;
+      }
+      const ownerKey = g._ownerGpuResidencyKey(kind);
+      const finalizers = residency?.universeFinalizePasses || [];
+      const lastFinalizer = finalizers.at(-1) || null;
+      return {
+        generation: g._webglGeneration,
+        residencyGeneration: residency?.generation ?? null,
+        act: g.act,
+        physicalKey: g._currentGpuResidencyKey?.() || null,
+        activeKey: residency?.activeKey || null,
+        progressKey: progress?.key || null,
+        physical: progress ? residency?.physical?.has(progress.key) || false : false,
+        snapshotPhase: progress?.snapshotPhase || null,
+        snapshotPasses: residency?.snapshotPasses?.length ?? null,
+        queue: progress?.queue?.length ?? null,
+        pendingReducedReveal: progress?.pendingReducedReveal?.length ?? null,
+        exactQueue: progress?.exactQueue?.length ?? null,
+        exactCovered: progress?.exactCovered?.size ?? null,
+        exactUniverse: progress?.exactUniverse?.size ?? null,
+        exactShaderRevision: progress?.exactShaderRevision ?? null,
+        ownerQueue: progress?.ownerQueue?.length ?? null,
+        ownerExactQueue: progress?.ownerExactQueue?.length ?? null,
+        ownerCovered: progress?.ownerCovered?.size ?? null,
+        ownerUniverse: progress?.ownerUniverse?.size ?? null,
+        ownerExactCovered: progress?.ownerExactCovered?.size ?? null,
+        ownerExactUniverse: progress?.ownerExactUniverse?.size ?? null,
+        ownerRecorded: !!progress?.ownerRecorded,
+        ownerExactRecorded: !!progress?.ownerExactRecorded,
+        ownerFinalizeBlocked: !!progress?.ownerFinalizeBlocked,
+        blockedCritical: !!progress?.blockedCritical,
+        failedOwners: progress?.failedOwners?.size ?? null,
+        ownerKey,
+        ownerPresent: residency?.owners?.has(ownerKey) || false,
+        reducedPasses: residency?.reducedPasses?.length ?? null,
+        exactPreloadPasses: residency?.exactPreloadPasses?.length ?? null,
+        exactPasses: residency?.exactPasses?.length ?? null,
+        ownerPasses: residency?.ownerPasses?.length ?? null,
+        finalizerPasses: finalizers.length,
+        lastFinalizer: lastFinalizer ? {
+          generation: lastFinalizer.generation ?? null,
+          key: lastFinalizer.key || null,
+          kind: lastFinalizer.kind || null,
+          scope: lastFinalizer.scope || null,
+          recorded: !!lastFinalizer.recorded,
+          error: lastFinalizer.error || null,
+        } : null,
+        residencyErrors: residency?.errors?.length ?? null,
+        target: {
+          status: targetState?.status || null,
+          generation: targetState?.generation ?? null,
+          warmed: targetState?.warmed ?? null,
+          attempts: Array.isArray(targetState?.attempts)
+            ? targetState.attempts.join(',') : targetState?.attempts ?? null,
+          recoveryScheduled: targetState?.recoveryScheduled ?? null,
+          poolEpoch: targetState?.poolEpoch ?? null,
+          livePoolEpoch: targetOwner.poolEpoch,
+          poolSignature: targetState?.poolSignature || null,
+          livePoolSignature,
+          failedTargets: kind === 'house'
+            ? targetState?.failed ? 1 : 0 : targetState?.failedTargets?.length ?? 0,
+          errors: targetState?.errors?.length ?? 0,
+          poolRefMatches: targetState?.poolRef === targetPool,
+          targetRefsMatch: !!targetRefsMatch,
+          poolSignatureMatches: targetState?.poolSignature === livePoolSignature,
+        },
+        paneActive,
+        paneCurrentPool,
+        shader: shader ? {
+          generation: shader.generation,
+          status: shader.status,
+          reason: shader.reason || null,
+          recoveryRound: shader.recoveryRound ?? null,
+          recoveryScheduled: !!shader.recoveryScheduled,
+          setupSlices: shader.setupSlices?.length ?? null,
+          compileSlices: shader.compileSlices?.length ?? null,
+          textureSlices: shader.textureSlices?.length ?? null,
+          compileJobs: shader.compileJobs?.length ?? null,
+          compileJobsInFlight: shader.compileJobsInFlight ?? null,
+          compileInFlightLabel: shader.compileInFlightLabel || null,
+          pendingTextures: shader.pendingTextures ?? null,
+          currentExactKey: shader.currentExactKey || null,
+          currentExactRevision: shader.currentExactRevision ?? null,
+          currentExactStatus: shader.currentExactStatus || null,
+          readyVariantCount: readyVariants.length,
+          lastReadyVariant: readyVariants.at(-1) || null,
+          pageVariantsReady: pageVariants(kind).map((name) =>
+            readyVariants.includes(name)),
+          errors: shader.errors?.length ?? null,
+          lastJob: lastJob ? {
+            label: lastJob.label || null,
+            settledMs: lastJob.settledMs ?? null,
+            error: lastJob.error || null,
+          } : null,
+        } : null,
+        compileActivity: {
+          generation: compileActivity?.generation ?? null,
+          active: compileActivity?.active ?? null,
+        },
+      };
+    };
+    const waitForQuiescent = async (kind, label) => {
+      const generation = g._webglGeneration;
+      const expected = mirrorProgressSnapshot(kind);
+      const expectedPhysicalKey = expected.physicalKey;
+      const expectedOwnerKey = expected.ownerKey;
+      const expectedPoolEpoch = expected.target.livePoolEpoch;
+      const expectedPoolSignature = expected.target.livePoolSignature;
+      const hardDeadline = performance.now() + 240000;
+      let progressDeadline = performance.now() + 30000;
+      let signature = null;
+      while (performance.now() < hardDeadline) {
+        const current = mirrorProgressSnapshot(kind);
+        const shader = g.shaderWarmup;
+        const target = current.target;
+        if (!shader || current.generation !== generation
+            || current.residencyGeneration !== generation
+            || shader.generation !== generation
+            || current.act !== expected.act
+            || current.physicalKey !== expectedPhysicalKey
+            || current.ownerKey !== expectedOwnerKey
+            || current.target.livePoolEpoch !== expectedPoolEpoch
+            || current.target.livePoolSignature !== expectedPoolSignature) {
+          throw new Error(`Stage C mirror identity drift: ${label}: ${JSON.stringify(current)}`);
+        }
+        if (current.activeKey === expectedPhysicalKey
+            && current.progressKey === expectedPhysicalKey
+            && quiescent(kind)) return;
+        if (shader.status === 'invalidated' || shader.status === 'skipped'
+            || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
+          throw new Error(`Stage C mirror shader terminal: ${label}: ${JSON.stringify(current)}`);
+        }
+        const targetRecoveryScheduled = target.recoveryScheduled
+          ?? shader.recoveryScheduled;
+        const shaderCanStillScheduleRecovery = ['scheduled', 'bootstrap-wait', 'pending']
+          .includes(shader.status);
+        if (['skipped', 'invalidated'].includes(target.status)
+            || (target.status === 'degraded' && !targetRecoveryScheduled
+              && !shaderCanStillScheduleRecovery)
+            || current.blockedCritical || current.ownerFinalizeBlocked
+            || current.failedOwners > 0 || current.residencyErrors > 0) {
+          throw new Error(`Stage C mirror dependency terminal: ${label}: ${JSON.stringify(current)}`);
+        }
+        const nextSignature = JSON.stringify(current);
+        if (nextSignature !== signature) {
+          signature = nextSignature;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`Stage C mirror made no progress: ${label}: ${nextSignature}`);
+        }
+        await frame();
+      }
+      throw new Error(`Stage C mirror exceeded 240s: ${label}: ${JSON.stringify(
+        mirrorProgressSnapshot(kind),
+      )}`);
+    };
 
     const setupOperations = [];
     const timed = (label, callback) => {
@@ -439,13 +635,34 @@ try {
 
     let activeEpisode = null;
     let activeFrame = null;
-    let activeDraw = null;
+    let activeDrawObject = null;
+    let activeDrawGeometry = null;
+    let activeDrawMaterial = null;
+    let activeDrawCamera = null;
+    let activeDrawRenderer = null;
+    const activeDrawIdentity = () => activeDrawGeometry ? {
+      object: activeDrawObject?.name || activeDrawObject?.type || '(unnamed)',
+      objectType: activeDrawObject?.type || null,
+      objectUuid: activeDrawObject?.uuid || null,
+      geometryUuid: activeDrawGeometry?.uuid || null,
+      material: activeDrawMaterial?.name || activeDrawMaterial?.type || '(unnamed)',
+      materialType: activeDrawMaterial?.type || null,
+      materialUuid: activeDrawMaterial?.uuid || null,
+      layers: activeDrawObject?.layers?.mask ?? null,
+      camera: activeDrawCamera?.name || activeDrawCamera?.type || null,
+      cameraLayers: activeDrawCamera?.layers?.mask ?? null,
+      targetUuid: activeDrawRenderer?.getRenderTarget?.()?.texture?.uuid || null,
+    } : null;
     let previousRaf = null;
+    let lastCompletedRender = null;
     let sampling = true;
     let frameSerial = 0;
     const episodes = {};
     const phaseStack = ['async-outside-render'];
     const withPhase = (label, callback) => {
+      if (activeFrame) {
+        activeFrame.phaseCalls[label] = (activeFrame.phaseCalls[label] || 0) + 1;
+      }
       phaseStack.push(label);
       try { return callback(); }
       finally { phaseStack.pop(); }
@@ -456,13 +673,18 @@ try {
         label, kind, generation: g._webglGeneration,
         startedAt: performance.now(), frames: 0, rafIntervals: 0,
         firstRafObservedAt: null, stageToFirstObservedRafMs: null,
-        maxRenderMs: 0, maxRafMs: 0, slowFrames: [], slowRafs: [],
+        maxRenderMs: 0, maxRafMs: 0, maxObservedRafMs: 0,
+        maxRafTimestampMs: 0, slowFrames: [], slowRafs: [], timestampJumps: [],
+        rafOrderingErrors: [], renderIntervals: 0, maxRenderStartMs: 0,
+        maxRenderCompletionMs: 0, maxInterRenderIdleMs: 0,
+        renderTimingErrors: [], previousCompletedFrame: null,
         shieldedFrames: 0, visibleResourceFrames: [], gl: makeGl(),
         glByPhase: {},
         ownerPasses: [], ownerFrameId: null, ownerFrame: null,
         firstPaneFrameId: null, firstPaneFrame: null,
         firstFullFrameId: null, firstFullFrame: null,
         samples: [], textureBindings: [], keyTransitions: [], preloadPasses: [],
+        exactPasses: [],
       };
       episodes[label] = episode;
       activeEpisode = episode;
@@ -476,22 +698,69 @@ try {
     };
     const sampleRaf = (timestamp) => {
       const observedAt = performance.now();
-      if (activeEpisode && activeEpisode.firstRafObservedAt == null) {
+      const current = {
+        episode: activeEpisode,
+        generation: g._webglGeneration,
+        timestamp,
+        observedAt,
+        completedFrameId: lastCompletedRender?.frameId ?? null,
+        completedAt: lastCompletedRender?.completedAt ?? null,
+        completedEpisode: lastCompletedRender?.episode ?? null,
+        completedGeneration: lastCompletedRender?.generation ?? null,
+      };
+      if (activeEpisode && activeEpisode.firstRafObservedAt == null
+          && Number.isInteger(current.completedFrameId)
+          && Number.isFinite(current.completedAt)
+          && current.completedEpisode === activeEpisode
+          && current.completedGeneration === activeEpisode.generation
+          && current.completedAt <= observedAt) {
         activeEpisode.firstRafObservedAt = observedAt;
         activeEpisode.stageToFirstObservedRafMs = observedAt - activeEpisode.startedAt;
       }
       if (activeEpisode && previousRaf?.episode === activeEpisode
-          && previousRaf.generation === g._webglGeneration
-          && previousRaf.timestamp >= activeEpisode.startedAt
-          && timestamp >= activeEpisode.startedAt) {
-        const durationMs = timestamp - previousRaf.timestamp;
+          && previousRaf.generation === g._webglGeneration) {
+        const timestampIntervalMs = timestamp - previousRaf.timestamp;
+        const observedIntervalMs = observedAt - previousRaf.observedAt;
+        const orderingValid = Number.isInteger(previousRaf.completedFrameId)
+          && Number.isInteger(current.completedFrameId)
+          && Number.isFinite(previousRaf.completedAt)
+          && Number.isFinite(current.completedAt)
+          && current.completedFrameId > previousRaf.completedFrameId
+          && previousRaf.completedEpisode === activeEpisode
+          && current.completedEpisode === activeEpisode
+          && previousRaf.completedGeneration === activeEpisode.generation
+          && current.completedGeneration === activeEpisode.generation
+          && previousRaf.completedAt <= previousRaf.observedAt
+          && current.completedAt <= observedAt;
         activeEpisode.rafIntervals++;
-        activeEpisode.maxRafMs = Math.max(activeEpisode.maxRafMs, durationMs);
-        if (durationMs >= 100) activeEpisode.slowRafs.push({ durationMs,
-          from: previousRaf.timestamp, to: timestamp });
+        activeEpisode.maxRafTimestampMs = Math.max(
+          activeEpisode.maxRafTimestampMs, timestampIntervalMs,
+        );
+        activeEpisode.maxObservedRafMs = Math.max(
+          activeEpisode.maxObservedRafMs, observedIntervalMs,
+        );
+        activeEpisode.maxRafMs = activeEpisode.maxObservedRafMs;
+        const row = {
+          timestampIntervalMs, observedIntervalMs, orderingValid,
+          fromCompletedFrameId: previousRaf.completedFrameId,
+          toCompletedFrameId: current.completedFrameId,
+          fromCompletedAt: previousRaf.completedAt,
+          toCompletedAt: current.completedAt,
+          previousCallbackLagMs: previousRaf.observedAt - previousRaf.timestamp,
+          currentCallbackLagMs: observedAt - timestamp,
+          at: observedAt,
+        };
+        if (timestampIntervalMs >= 100 && activeEpisode.timestampJumps.length < 16) {
+          activeEpisode.timestampJumps.push(row);
+        }
+        if (observedIntervalMs >= 100 && activeEpisode.slowRafs.length < 16) {
+          activeEpisode.slowRafs.push(row);
+        }
+        if (!orderingValid && activeEpisode.rafOrderingErrors.length < 16) {
+          activeEpisode.rafOrderingErrors.push(row);
+        }
       }
-      previousRaf = { episode: activeEpisode, generation: g._webglGeneration,
-        timestamp, observedAt };
+      previousRaf = current;
       if (sampling) requestAnimationFrame(sampleRaf);
     };
     requestAnimationFrame(sampleRaf);
@@ -519,7 +788,8 @@ try {
       return activeFrame.glByPhase[label] ||= makeGl();
     };
     const sample = (counts, key, row, limit) => {
-      if (counts[key].length < limit) counts[key].push(row);
+      if (counts[key].length >= limit) return;
+      counts[key].push(typeof row === 'function' ? row() : row);
     };
     const hook = (name, callback) => {
       originals[name] = gl[name];
@@ -544,11 +814,11 @@ try {
       counts.bufferData++;
       counts.bufferDataBytes += bytes;
       if (buffer) allocatedBuffers.add(buffer);
-      sample(counts, 'samples', {
+      sample(counts, 'samples', () => ({
         method: 'bufferData', phase: phaseStack.at(-1), target: args[0], bytes,
         bufferId: idFor(bufferIds, buffer, 'buffer'),
-        generation: g._webglGeneration, draw: activeDraw ? { ...activeDraw } : null,
-      }, 64);
+        generation: g._webglGeneration, draw: activeDrawIdentity(),
+      }), 64);
       return original.apply(this, args);
     });
     hook('bufferSubData', function bufferSubData(original, args) {
@@ -557,40 +827,62 @@ try {
       const bytes = Number(args[2]?.byteLength || 0);
       let size = null;
       let probeError = null;
-      try { size = Number(gl.getBufferParameter(args[0], gl.BUFFER_SIZE)); }
-      catch (error) { probeError = error?.message || `${error}`; }
-      const allocatedBefore = !!buffer && (allocatedBuffers.has(buffer) || size > 0);
+      let allocatedBefore = !!buffer && allocatedBuffers.has(buffer);
+      if (!allocatedBefore) {
+        try {
+          size = Number(gl.getBufferParameter(args[0], gl.BUFFER_SIZE));
+          allocatedBefore = !!buffer && size > 0;
+        } catch (error) { probeError = error?.message || `${error}`; }
+      }
       if (allocatedBefore && buffer) allocatedBuffers.add(buffer);
       counts.bufferSubData++;
       counts.bufferSubDataBytes += bytes;
       if (!allocatedBefore) counts.unallocatedBufferSubData++;
       if (probeError) counts.bufferAllocationProbeErrors++;
-      sample(counts, 'samples', {
+      sample(counts, 'samples', () => ({
         method: 'bufferSubData', phase: phaseStack.at(-1), target: args[0], bytes,
         allocatedBefore, probeError,
         bufferId: idFor(bufferIds, buffer, 'buffer'),
-        generation: g._webglGeneration, draw: activeDraw ? { ...activeDraw } : null,
-      }, 64);
+        generation: g._webglGeneration, draw: activeDrawIdentity(),
+      }), 64);
       return original.apply(this, args);
     });
     hook('createVertexArray', function createVertexArray(original, args) {
       const vao = original.apply(this, args);
       const counts = bucket();
       counts.createVertexArray++;
-      const row = {
+      const makeRow = () => ({
         method: 'createVertexArray', phase: phaseStack.at(-1),
         vaoId: idFor(vaoIds, vao, 'vao'), generation: g._webglGeneration,
-        draw: activeDraw ? { ...activeDraw } : null,
-      };
-      sample(counts, 'vaoSamples', row, 192);
-      sample(counts, 'samples', row, 64);
+        draw: activeDrawIdentity(),
+      });
+      let row = null;
+      const rowForSample = () => (row ||= makeRow());
+      sample(counts, 'vaoSamples', rowForSample, 192);
+      sample(counts, 'samples', rowForSample, 64);
       return vao;
     });
-    hook('bindVertexArray', function bindVertexArray(original, args) {
-      const value = original.apply(this, args);
-      bucket().bindVertexArray++;
-      return value;
-    });
+
+    const seedAttribute = (attribute) => {
+      if (!attribute) return;
+      const properties = renderer.attributes?.get?.(attribute);
+      if (properties?.buffer) allocatedBuffers.add(properties.buffer);
+    };
+    for (const root of [g.scene, g.grainScene]) {
+      root?.traverse?.((object) => {
+        const geometry = object.geometry;
+        if (!geometry) return;
+        seedAttribute(geometry.index);
+        for (const attribute of Object.values(geometry.attributes || {})) {
+          seedAttribute(attribute);
+        }
+        for (const list of Object.values(geometry.morphAttributes || {})) {
+          for (const attribute of list || []) seedAttribute(attribute);
+        }
+        seedAttribute(object.instanceMatrix);
+        seedAttribute(object.instanceColor);
+      });
+    }
 
     const realSubmitBatch = g._submitReducedWorldBatch;
     g._submitReducedWorldBatch = function tracedMirrorResidencyBatch(
@@ -607,6 +899,32 @@ try {
     g._submitExactCurrentPass = function tracedMirrorExactPass(options) {
       return withPhase('exact-certificate', () => realExactPass.call(this, options));
     };
+    const realExactScan = g._refreshExactResidencyQueue;
+    g._refreshExactResidencyQueue = function tracedMirrorExactScan(progress, scope) {
+      const startedAt = performance.now();
+      let result = null;
+      let error = null;
+      try {
+        result = realExactScan.call(this, progress, scope);
+        return result;
+      } catch (caught) {
+        error = caught;
+        throw caught;
+      } finally {
+        if (activeFrame) {
+          activeFrame.exactScans.push({
+            scope: scope || null,
+            durationMs: performance.now() - startedAt,
+            stable: !!result?.stable,
+            queued: result?.queued ?? null,
+            added: result?.added ?? null,
+            invalidated: result?.invalidated ?? null,
+            repeated: result?.repeated ?? null,
+            error: error?.message || result?.error || null,
+          });
+        }
+      }
+    };
     const realOwnerPass = g._prepareOwnerGpuResidency;
     g._prepareOwnerGpuResidency = function tracedMirrorOwnerPass(kind) {
       return withPhase(`${kind}-owner-certificate`, () => realOwnerPass.call(this, kind));
@@ -616,15 +934,20 @@ try {
       if (phaseStack.at(-1) !== 'visible-render') {
         return realHouseMirrorRender.apply(this, args);
       }
-      return withPhase('house-pane-render', () =>
+      const rendered = withPhase('house-pane-render', () =>
         realHouseMirrorRender.apply(this, args));
+      if (rendered && activeFrame) activeFrame.housePaneRenderCalls++;
+      return rendered;
     };
     const realFinaleRender = g.finale.render;
     g.finale.render = function tracedFinalePaneRender(...args) {
       if (phaseStack.at(-1) !== 'visible-render') {
         return realFinaleRender.apply(this, args);
       }
-      return withPhase('finale-pane-render', () => realFinaleRender.apply(this, args));
+      const rendered = withPhase('finale-pane-render', () =>
+        realFinaleRender.apply(this, args));
+      if (rendered && activeFrame) activeFrame.finalePaneRenderCalls++;
+      return rendered;
     };
     const realRendererRender = renderer.render;
     renderer.render = function tracedRendererRender(scene, camera, ...args) {
@@ -642,24 +965,26 @@ try {
     renderer.renderBufferDirect = function tracedRenderBufferDirect(
       camera, scene, geometry, material, object, group,
     ) {
-      const previous = activeDraw;
-      activeDraw = {
-        object: object?.name || object?.type || '(unnamed)',
-        objectType: object?.type || null,
-        objectUuid: object?.uuid || null,
-        geometryUuid: geometry?.uuid || null,
-        material: material?.name || material?.type || '(unnamed)',
-        materialType: material?.type || null,
-        materialUuid: material?.uuid || null,
-        layers: object?.layers?.mask ?? null,
-        camera: camera?.name || camera?.type || null,
-        cameraLayers: camera?.layers?.mask ?? null,
-        targetUuid: renderer.getRenderTarget()?.texture?.uuid || null,
-      };
+      const previousObject = activeDrawObject;
+      const previousGeometry = activeDrawGeometry;
+      const previousMaterial = activeDrawMaterial;
+      const previousCamera = activeDrawCamera;
+      const previousRenderer = activeDrawRenderer;
+      activeDrawObject = object;
+      activeDrawGeometry = geometry;
+      activeDrawMaterial = material;
+      activeDrawCamera = camera;
+      activeDrawRenderer = this;
       try {
         return realRenderBufferDirect.call(this,
           camera, scene, geometry, material, object, group);
-      } finally { activeDraw = previous; }
+      } finally {
+        activeDrawObject = previousObject;
+        activeDrawGeometry = previousGeometry;
+        activeDrawMaterial = previousMaterial;
+        activeDrawCamera = previousCamera;
+        activeDrawRenderer = previousRenderer;
+      }
     };
     const drawHookRestores = [];
     const drawStack = [];
@@ -675,26 +1000,25 @@ try {
         activeRenderer, scene, camera, geometry, material, group,
       ) {
         before?.call(this, activeRenderer, scene, camera, geometry, material, group);
-        drawStack.push(activeDraw);
-        activeDraw = {
-          object: this.name || this.type || '(unnamed)',
-          objectType: this.type || null,
-          objectUuid: this.uuid || null,
-          geometryUuid: geometry?.uuid || null,
-          material: material?.name || material?.type || '(unnamed)',
-          materialType: material?.type || null,
-          materialUuid: material?.uuid || null,
-          layers: this.layers?.mask ?? null,
-          camera: camera?.name || camera?.type || null,
-          cameraLayers: camera?.layers?.mask ?? null,
-          targetUuid: activeRenderer?.getRenderTarget?.()?.texture?.uuid || null,
-        };
+        drawStack.push(activeDrawObject, activeDrawGeometry, activeDrawMaterial,
+          activeDrawCamera, activeDrawRenderer);
+        activeDrawObject = this;
+        activeDrawGeometry = geometry;
+        activeDrawMaterial = material;
+        activeDrawCamera = camera;
+        activeDrawRenderer = activeRenderer;
       };
       object.onAfterRender = function stageCMirrorDrawIdentityRestore(
         activeRenderer, scene, camera, geometry, material, group,
       ) {
         try { after?.call(this, activeRenderer, scene, camera, geometry, material, group); }
-        finally { activeDraw = drawStack.pop() ?? null; }
+        finally {
+          activeDrawRenderer = drawStack.pop() ?? null;
+          activeDrawCamera = drawStack.pop() ?? null;
+          activeDrawMaterial = drawStack.pop() ?? null;
+          activeDrawGeometry = drawStack.pop() ?? null;
+          activeDrawObject = drawStack.pop() ?? null;
+        }
       };
       drawHookRestores.push(() => {
         object.onBeforeRender = before;
@@ -712,8 +1036,31 @@ try {
     };
 
     const realRender = g.render;
+    const shaderFrameSnapshot = () => {
+      const shader = g.shaderWarmup;
+      const activity = g._shaderCompileActivity;
+      const lastJob = shader?.compileJobs?.at(-1) || null;
+      return shader ? {
+        generation: shader.generation ?? null,
+        status: shader.status || null,
+        compileJobs: shader.compileJobs?.length ?? null,
+        compileJobsInFlight: shader.compileJobsInFlight ?? null,
+        compileInFlightLabel: shader.compileInFlightLabel || null,
+        lastJob: lastJob ? {
+          label: lastJob.label || null,
+          atMs: lastJob.atMs ?? null,
+          settledMs: lastJob.settledMs ?? null,
+          error: lastJob.error || null,
+        } : null,
+        compileActivity: {
+          generation: activity?.generation ?? null,
+          active: activity?.active ?? null,
+        },
+      } : null;
+    };
     g.render = function measuredMirrorRender(...args) {
       const before = stats();
+      const shaderBefore = shaderFrameSnapshot();
       const residency = g.currentGpuResidency;
       const passBefore = {
         reduced: residency?.reducedPasses?.length || 0,
@@ -725,14 +1072,26 @@ try {
       const row = activeFrame = {
         frameId: ++frameSerial, generation: g._webglGeneration,
         episode: activeEpisode?.label || 'unowned', act: g.act,
-        startedAt: performance.now(), gl: makeGl(), glByPhase: {},
+        gl: makeGl(), glByPhase: {}, phaseCalls: {}, exactScans: [],
+        housePaneRenderCalls: 0, finalePaneRenderCalls: 0,
       };
+      row.startedAt = performance.now();
       try { return withPhase('visible-render', () => realRender.apply(this, args)); }
       finally {
+        row.completedAt = performance.now();
+        row.renderMs = row.completedAt - row.startedAt;
+        lastCompletedRender = {
+          frameId: row.frameId,
+          episode: activeEpisode,
+          generation: row.generation,
+          startedAt: row.startedAt,
+          completedAt: row.completedAt,
+        };
         const live = g.currentGpuResidency;
+        row.shaderBefore = shaderBefore;
+        row.shaderAfter = shaderFrameSnapshot();
         const after = stats();
         for (const counts of Object.values(row.glByPhase)) addGl(row.gl, counts);
-        row.renderMs = performance.now() - row.startedAt;
         row.worldDrawCalls = g.lastRender?.worldDrawCalls || 0;
         row.reducedDetail = !!g.lastRender?.reducedDetail;
         row.shielded = !!g._shaderTransitionShield;
@@ -762,6 +1121,14 @@ try {
           live?.keyTransitions?.length || 0];
         row.exactPreloadKinds = clone((live?.exactPreloadPasses || [])
           .slice(...row.exactPreloadRange).map((entry) => entry.kind));
+        row.exactPasses = clone((live?.exactPasses || [])
+          .slice(...row.exactPassRange).map((entry) => ({
+            generation: entry.generation, key: entry.key, kind: entry.kind,
+            durationMs: entry.durationMs, subpasses: entry.subpasses || [],
+            programDelta: entry.programDelta, textureDelta: entry.textureDelta,
+            geometryDelta: entry.geometryDelta, committed: entry.committed,
+            error: entry.error,
+          })));
         row.preloadPasses = clone([
           ...(live?.reducedPasses || []).slice(...row.reducedPassRange),
           ...(live?.exactPreloadPasses || []).slice(...row.exactPreloadRange),
@@ -785,6 +1152,46 @@ try {
             identity: entry.identity || null })));
         const episode = activeEpisode;
         if (episode) {
+          const previous = episode.previousCompletedFrame;
+          if (previous) {
+            const startIntervalMs = row.startedAt - previous.startedAt;
+            const completionIntervalMs = row.completedAt - previous.completedAt;
+            const interRenderIdleMs = row.startedAt - previous.completedAt;
+            const orderingValid = Number.isInteger(previous.frameId)
+              && row.frameId > previous.frameId
+              && previous.episode === episode
+              && previous.generation === episode.generation
+              && row.generation === episode.generation
+              && Number.isFinite(startIntervalMs) && startIntervalMs >= 0
+              && Number.isFinite(completionIntervalMs) && completionIntervalMs >= 0
+              && Number.isFinite(interRenderIdleMs) && interRenderIdleMs >= 0;
+            episode.renderIntervals++;
+            episode.maxRenderStartMs = Math.max(
+              episode.maxRenderStartMs, startIntervalMs,
+            );
+            episode.maxRenderCompletionMs = Math.max(
+              episode.maxRenderCompletionMs, completionIntervalMs,
+            );
+            episode.maxInterRenderIdleMs = Math.max(
+              episode.maxInterRenderIdleMs, interRenderIdleMs,
+            );
+            if (!orderingValid && episode.renderTimingErrors.length < 16) {
+              episode.renderTimingErrors.push({
+                fromFrameId: previous.frameId,
+                toFrameId: row.frameId,
+                startIntervalMs,
+                completionIntervalMs,
+                interRenderIdleMs,
+              });
+            }
+          }
+          episode.previousCompletedFrame = {
+            frameId: row.frameId,
+            episode,
+            generation: row.generation,
+            startedAt: row.startedAt,
+            completedAt: row.completedAt,
+          };
           episode.frames++;
           episode.maxRenderMs = Math.max(episode.maxRenderMs, row.renderMs);
           addGl(episode.gl, row.gl);
@@ -794,11 +1201,16 @@ try {
           }
           episode.keyTransitions.push(...row.keyTransitions);
           episode.preloadPasses.push(...row.preloadPasses);
-          if (row.renderMs >= 100) episode.slowFrames.push(clone(row));
+          episode.exactPasses.push(...row.exactPasses);
+          if (row.renderMs >= 100 && episode.slowFrames.length < 16) {
+            episode.slowFrames.push(clone(row));
+          }
           if (row.shielded) episode.shieldedFrames++;
           if (row.worldDrawCalls > 0 && (row.visibleProgramDelta !== 0
               || row.visibleTextureDelta !== 0 || row.visibleGeometryDelta !== 0)) {
-            episode.visibleResourceFrames.push(clone(row));
+            if (episode.visibleResourceFrames.length < 16) {
+              episode.visibleResourceFrames.push(clone(row));
+            }
           }
           if (episode.firstFullFrameId == null && row.worldDrawCalls > 0
               && !row.reducedDetail) {
@@ -816,13 +1228,13 @@ try {
           }
           const paneActive = episode.kind === 'house'
             ? row.housePaneActive : row.finalePaneCount > 0;
-          const panePhase = episode.kind === 'house'
-            ? row.glByPhase['house-pane-render'] : row.glByPhase['finale-pane-render'];
+          const paneRenderCalls = episode.kind === 'house'
+            ? row.housePaneRenderCalls : row.finalePaneRenderCalls;
           const paneTextures = episode.kind === 'house'
             ? [row.houseTextureUuid].filter(Boolean) : row.finaleTextureUuids;
           const poolTextures = episode.kind === 'house'
             ? row.housePoolTextureUuids : row.finalePoolTextureUuids;
-          const paneSubmittedCurrentPool = !!panePhase && paneTextures.length > 0
+          const paneSubmittedCurrentPool = paneRenderCalls > 0 && paneTextures.length > 0
             && paneTextures.every((uuid) => poolTextures.includes(uuid));
           if (episode.ownerFrameId != null && episode.firstPaneFrameId == null
               && row.frameId > episode.ownerFrameId && paneActive
@@ -830,10 +1242,14 @@ try {
             episode.firstPaneFrameId = row.frameId;
             episode.firstPaneFrame = clone(row);
           }
-          episode.textureBindings.push(...(episode.kind === 'house'
-            ? [row.houseTextureUuid].filter(Boolean) : row.finaleTextureUuids));
-          if (episode.samples.length < 5 || ownerPasses.length
-              || row.frameId === episode.firstPaneFrameId || row.renderMs >= 100) {
+          const boundTextures = episode.kind === 'house'
+            ? [row.houseTextureUuid].filter(Boolean) : row.finaleTextureUuids;
+          for (const uuid of boundTextures) {
+            if (!episode.textureBindings.includes(uuid)) episode.textureBindings.push(uuid);
+          }
+          if (episode.samples.length < 5 || (episode.samples.length < 32
+              && (ownerPasses.length || row.frameId === episode.firstPaneFrameId
+                || row.renderMs >= 100))) {
             episode.samples.push(clone(row));
           }
         }
@@ -916,7 +1332,7 @@ try {
         poolChangeRows: (residency.poolChanges?.length || 0) - changeBefore,
         before: serializePool(before), next: serializePool(next),
       };
-      await waitFor(() => quiescent(kind), `${label} recertification`);
+      await waitForQuiescent(kind, `${label} recertification`);
       await frame();
       const ownerPasses = g.currentGpuResidency.ownerPasses.slice(passBefore)
         .filter((entry) => entry.kind === kind && entry.key === next.ownerKey);
@@ -1001,7 +1417,7 @@ try {
               && !(shader.readyVariants || []).includes(name)),
         targetStatus: target.status, shaderStatus: shader.status,
       };
-      await waitFor(() => quiescent(kind), `${label} automatic recovery`);
+      await waitForQuiescent(kind, `${label} automatic recovery`);
       await frame();
       const ownerPasses = g.currentGpuResidency.ownerPasses.slice(passBefore)
         .filter((entry) => entry.kind === kind && entry.key === beforePool.ownerKey);
@@ -1040,7 +1456,7 @@ try {
       timed('teleport-house', () => F.teleport('house'));
       if (g.skull.mode !== 'held') g.skull.holdNow();
       timed('position-house-mirror', positionHouseMirror);
-      await waitFor(() => quiescent('house'), 'initial House owner readiness');
+      await waitForQuiescent('house', 'initial House owner readiness');
       await finishEpisode(houseInitial);
       const baselineRows = visibilitySnapshot();
       baseline = {
@@ -1070,7 +1486,7 @@ try {
       g.player.yaw = Math.PI;
       g.player.pitch = 0;
       g.player._sync(0);
-      await waitFor(() => quiescent('finale'), 'initial Finale owner readiness');
+      await waitForQuiescent('finale', 'initial Finale owner readiness');
       await finishEpisode(finaleInitial);
       replacements.finale = await replacement('finale', 1023, 'finale-replacement');
       faults.finaleRender = await injectFault('finale', 'render', 'finale-render-fault');
@@ -1132,12 +1548,17 @@ try {
       setupOperations.push({ label: 'leave-finale-to-house',
         durationMs: leaveDurationMs, error: leaveError?.message || null });
       positionHouseMirror();
-      await waitFor(() => leaveEpisode.firstFullFrame?.act === 'house'
-        && leaveEpisode.firstFullFrame.worldDrawCalls > 0
-        && leaveEpisode.firstFullFrame.reducedDetail === false
-        && leaveEpisode.firstFullFrame.finalePaneCount === 0
-        && quiescent('house'),
-      'House physical and owner recertification after Finale leave');
+      await waitForQuiescent('house',
+        'House physical and owner recertification after Finale leave');
+      if (!(leaveEpisode.firstFullFrame?.act === 'house'
+          && leaveEpisode.firstFullFrame.worldDrawCalls > 0
+          && leaveEpisode.firstFullFrame.reducedDetail === false
+          && leaveEpisode.firstFullFrame.finalePaneCount === 0)) {
+        throw new Error(`Stage C mirror missing clean House reveal after Finale leave: ${JSON.stringify({
+          progress: mirrorProgressSnapshot('house'),
+          firstFullFrame: leaveEpisode.firstFullFrame || null,
+        })}`);
+      }
       await finishEpisode(leaveEpisode);
       const currentVisibility = visibilitySnapshot();
       const expectedMap = new Map(baselineRows.map((entry) => [entry.uuid, entry.visible]));
@@ -1179,6 +1600,7 @@ try {
         gl[name] === wrapper);
       trace.methodHealthyBeforeRestore = g._submitReducedWorldBatch
           !== realSubmitBatch && g._submitExactCurrentPass !== realExactPass
+          && g._refreshExactResidencyQueue !== realExactScan
           && g._prepareOwnerGpuResidency !== realOwnerPass
           && g.houseMirror.render !== realHouseMirrorRender
           && g.finale.render !== realFinaleRender
@@ -1187,13 +1609,18 @@ try {
       g.render = realRender;
       g._submitReducedWorldBatch = realSubmitBatch;
       g._submitExactCurrentPass = realExactPass;
+      g._refreshExactResidencyQueue = realExactScan;
       g._prepareOwnerGpuResidency = realOwnerPass;
       g.houseMirror.render = realHouseMirrorRender;
       g.finale.render = realFinaleRender;
       renderer.render = realRendererRender;
       renderer.renderBufferDirect = realRenderBufferDirect;
       for (const restore of drawHookRestores.reverse()) restore();
-      activeDraw = null;
+      activeDrawObject = null;
+      activeDrawGeometry = null;
+      activeDrawMaterial = null;
+      activeDrawCamera = null;
+      activeDrawRenderer = null;
       drawStack.length = 0;
       for (const [name, original] of Object.entries(originals)) gl[name] = original;
     }
@@ -1204,7 +1631,16 @@ try {
       rafIntervals: episode.rafIntervals,
       stageToFirstObservedRafMs: episode.stageToFirstObservedRafMs,
       maxRenderMs: episode.maxRenderMs, maxRafMs: episode.maxRafMs,
+      maxObservedRafMs: episode.maxObservedRafMs,
+      maxRafTimestampMs: episode.maxRafTimestampMs,
       slowFrames: episode.slowFrames, slowRafs: episode.slowRafs,
+      timestampJumps: episode.timestampJumps,
+      rafOrderingErrors: episode.rafOrderingErrors,
+      renderIntervals: episode.renderIntervals,
+      maxRenderStartMs: episode.maxRenderStartMs,
+      maxRenderCompletionMs: episode.maxRenderCompletionMs,
+      maxInterRenderIdleMs: episode.maxInterRenderIdleMs,
+      renderTimingErrors: episode.renderTimingErrors,
       shieldedFrames: episode.shieldedFrames,
       visibleResourceFrames: episode.visibleResourceFrames,
       gl: episode.gl, glByPhase: episode.glByPhase,
@@ -1216,6 +1652,7 @@ try {
       firstFullFrame: episode.firstFullFrame,
       keyTransitions: episode.keyTransitions,
       preloadPasses: episode.preloadPasses,
+      exactPasses: episode.exactPasses,
       samples: episode.samples,
     });
     const debugRenderer = gl.getExtension('WEBGL_debug_renderer_info');

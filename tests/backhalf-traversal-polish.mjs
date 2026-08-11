@@ -29,12 +29,70 @@ try {
     window.__FETCH.start();
     window.__game._selfStep = false;
   });
-  await page.waitForFunction(
-    () => window.__game?.shaderWarmup?.status === 'ready'
-      && window.__game.shaderWarmup.variants.includes('ossuary'),
-    null,
-    { timeout: 90000, polling: 50 },
-  );
+  await page.evaluate(async () => {
+    const g = window.__game;
+    const generation = g._webglGeneration;
+    const hardDeadline = performance.now() + 240000;
+    let progressDeadline = performance.now() + 30000;
+    let signature = null;
+    const snapshot = () => {
+      const shader = g.shaderWarmup;
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const lastJob = shader?.compileJobs?.at(-1) || null;
+      return {
+        generation: g._webglGeneration,
+        shaderGeneration: shader?.generation ?? null,
+        status: shader?.status || null,
+        recoveryScheduled: !!shader?.recoveryScheduled,
+        hasOssuary: shader?.variants?.includes('ossuary') || false,
+        readyVariants: shader?.readyVariants?.length ?? null,
+        lastReadyVariant: shader?.readyVariants?.at(-1) || null,
+        setupSlices: shader?.setupSlices?.length ?? null,
+        compileSlices: shader?.compileSlices?.length ?? null,
+        textureSlices: shader?.textureSlices?.length ?? null,
+        compileJobs: shader?.compileJobs?.length ?? null,
+        compileJobsInFlight: shader?.compileJobsInFlight ?? null,
+        compileInFlightLabel: shader?.compileInFlightLabel || null,
+        pendingTextures: shader?.pendingTextures ?? null,
+        lastJob: lastJob ? {
+          label: lastJob.label || null,
+          settledMs: lastJob.settledMs ?? null,
+          error: lastJob.error || null,
+        } : null,
+        activeKey: residency?.activeKey || null,
+        progressKey: progress?.key || null,
+        queue: progress?.queue?.length ?? null,
+        exactQueue: progress?.exactQueue?.length ?? null,
+        exactCovered: progress?.exactCovered?.size ?? null,
+        exactUniverse: progress?.exactUniverse?.size ?? null,
+        exactShaderRevision: progress?.exactShaderRevision ?? null,
+        houseTarget: g._houseMirrorTargetWarmState?.status || null,
+        finaleTarget: g.finale?._targetWarmState?.status || null,
+        errors: shader?.errors?.length ?? null,
+      };
+    };
+    while (performance.now() < hardDeadline) {
+      const current = snapshot();
+      if (current.generation !== generation || current.shaderGeneration !== generation) {
+        throw new Error(`back-half warmup generation drift: ${JSON.stringify(current)}`);
+      }
+      if (current.status === 'ready' && current.hasOssuary) return;
+      if (current.status === 'invalidated' || current.status === 'skipped'
+          || (current.status === 'degraded' && !current.recoveryScheduled)) {
+        throw new Error(`back-half warmup terminal state: ${JSON.stringify(current)}`);
+      }
+      const nextSignature = JSON.stringify(current);
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        progressDeadline = performance.now() + 30000;
+      } else if (performance.now() >= progressDeadline) {
+        throw new Error(`back-half warmup made no progress: ${nextSignature}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`back-half warmup exceeded 240s: ${JSON.stringify(snapshot())}`);
+  });
 
   // Preserve the exact ordinary-height approach frame for human review.  The
   // focused checks below still prove physical ground; this image proves the
@@ -65,15 +123,76 @@ try {
   // Wait for the ordinary 2.4s opening fade before judging the player-height
   // plate; otherwise a fast headless run photographs the veil, not the stair.
   await page.waitForTimeout(2500);
-  await page.screenshot({ path: shotPath('ossuary-physical-descent.png') });
+  const plate = await page.evaluate(async () => {
+    const g = window.__game;
+    const generation = g._webglGeneration;
+    const expectedKey = g._currentGpuResidencyKey();
+    const hardDeadline = performance.now() + 240000;
+    let progressDeadline = performance.now() + 30000;
+    let signature = null;
+    while (performance.now() < hardDeadline) {
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const shader = g.shaderWarmup;
+      if (g._webglGeneration !== generation || residency?.generation !== generation
+          || g._currentGpuResidencyKey() !== expectedKey) {
+        throw new Error('graveyard visual plate residency identity drift');
+      }
+      if (residency?.activeKey === expectedKey && progress?.key === expectedKey
+          && residency.physical.has(expectedKey) && !g.lastRender?.reducedDetail
+          && g.lastRender?.residencyKey === expectedKey
+          && g.lastRender?.worldDrawCalls > 0) {
+        return g.renderer.domElement.toDataURL('image/png');
+      }
+      if (shader?.status === 'invalidated' || shader?.status === 'skipped'
+          || (shader?.status === 'degraded' && !shader?.recoveryScheduled)
+          || residency?.errors?.length || progress?.blockedCritical) {
+        throw new Error(`graveyard visual plate residency terminal: ${JSON.stringify({
+          shaderStatus: shader?.status,
+          residencyErrors: residency?.errors,
+          blockedCritical: progress?.blockedCritical,
+        })}`);
+      }
+      const nextSignature = JSON.stringify({
+        shaderStatus: shader?.status,
+        currentExactStatus: shader?.currentExactStatus,
+        currentExactKey: shader?.currentExactKey,
+        currentExactRevision: shader?.currentExactRevision,
+        compileJobs: shader?.compileJobs?.length,
+        compileJobsInFlight: shader?.compileJobsInFlight,
+        activeKey: residency?.activeKey,
+        progressKey: progress?.key,
+        snapshotPhase: progress?.snapshotPhase,
+        queue: progress?.queue?.length,
+        pendingReducedReveal: progress?.pendingReducedReveal?.length,
+        exactQueue: progress?.exactQueue?.length,
+        exactCovered: progress?.exactCovered?.size,
+        exactUniverse: progress?.exactUniverse?.size,
+        exactRevision: progress?.exactShaderRevision,
+        reduced: residency?.reduced?.has(expectedKey),
+        physical: residency?.physical?.has(expectedKey),
+      });
+      if (nextSignature !== signature) {
+        signature = nextSignature;
+        progressDeadline = performance.now() + 30000;
+      } else if (performance.now() >= progressDeadline) {
+        throw new Error(`graveyard visual plate residency made no progress: ${nextSignature}`);
+      }
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    throw new Error(`graveyard visual plate residency exceeded 240s: ${signature}`);
+  });
+  writeFileSync(shotPath('ossuary-physical-descent.png'),
+    Buffer.from(plate.slice(plate.indexOf(',') + 1), 'base64'));
 
-  report.checks = await page.evaluate(() => {
+  report.checks = await page.evaluate(async () => {
     const F = window.__FETCH;
     const g = window.__game;
     const checks = [];
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
     const round = (n) => Number.isFinite(n) ? +n.toFixed(3) : null;
     const wrapAngle = (n) => Math.atan2(Math.sin(n), Math.cos(n));
+    const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
     const controlsLive = () => !g.player.frozen && !g.player.movementLocked && !g.dead;
     const sameCheckpoint = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
     const aimAt = (point) => {
@@ -537,13 +656,179 @@ try {
     );
 
     const firstOccupiedRenders = [];
-    for (let i = 0; i < 3; i++) {
-      g.render();
-      firstOccupiedRenders.push({
+    const steadyOccupiedRenders = [];
+    let occupiedRenderCount = 0;
+    let firstNonzero = null;
+    let firstReduced = null;
+    let firstFull = null;
+    const realRender = g.render;
+    let renderSerial = 0;
+    let latestRender = null;
+    g.render = function backHalfOccupiedRenderTrace(...args) {
+      const startedAt = performance.now();
+      const result = realRender.apply(this, args);
+      const completedAt = performance.now();
+      latestRender = {
+        serial: ++renderSerial,
         programs: g.renderer.info.programs?.length ?? 0,
         drawCalls: g.lastRender.drawCalls,
+        worldDrawCalls: g.lastRender.worldDrawCalls,
+        heldDrawCalls: g.lastRender.heldDrawCalls,
         triangles: g.lastRender.triangles,
-      });
+        reducedDetail: !!g.lastRender.reducedDetail,
+        snapshotProgress: !!g.lastRender.snapshotProgress,
+        reducedBatchSubmitted: !!g.lastRender.reducedBatchSubmitted,
+        reducedBatchRevealed: !!g.lastRender.reducedBatchRevealed,
+        visibleProgramDelta: g.lastRender.visibleProgramDelta || 0,
+        visibleTextureDelta: g.lastRender.visibleTextureDelta || 0,
+        visibleGeometryDelta: g.lastRender.visibleGeometryDelta || 0,
+        residencyKey: g.lastRender.residencyKey || null,
+        renderMs: completedAt - startedAt,
+      };
+      return result;
+    };
+    try {
+      const generation = g._webglGeneration;
+      const expectedKey = g._currentGpuResidencyKey();
+      const hardDeadline = performance.now() + 240000;
+      let progressDeadline = performance.now() + 30000;
+      let signature = null;
+      const nextRender = async () => {
+        const previousSerial = renderSerial;
+        for (let waits = 0; waits < 4 && renderSerial === previousSerial; waits++) await frame();
+        return renderSerial > previousSerial && latestRender ? { ...latestRender } : null;
+      };
+      while (!firstFull && performance.now() < hardDeadline) {
+        const sample = await nextRender();
+        if (!sample) continue;
+        occupiedRenderCount++;
+        if (firstOccupiedRenders.length < 32) firstOccupiedRenders.push(sample);
+        if (sample.worldDrawCalls > 0 && !firstNonzero) firstNonzero = sample;
+        if (sample.worldDrawCalls > 0 && sample.reducedDetail && !firstReduced) {
+          firstReduced = sample;
+        }
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        const shader = g.shaderWarmup;
+        if (g._webglGeneration !== generation || residency?.generation !== generation
+            || g._currentGpuResidencyKey() !== expectedKey) {
+          throw new Error(`ossuary residency identity drift: ${JSON.stringify({
+            generation: g._webglGeneration,
+            residencyGeneration: residency?.generation,
+            expectedKey,
+            currentKey: g._currentGpuResidencyKey(),
+          })}`);
+        }
+        if (sample.worldDrawCalls > 0 && sample.heldDrawCalls > 0
+            && !sample.reducedDetail
+            && sample.residencyKey === expectedKey
+            && residency?.activeKey === expectedKey && progress?.key === expectedKey
+            && residency.physical.has(expectedKey)) {
+          firstFull = sample;
+          break;
+        }
+        if (shader?.status === 'invalidated' || shader?.status === 'skipped'
+            || (shader?.status === 'degraded' && !shader?.recoveryScheduled)
+            || residency?.errors?.length || progress?.blockedCritical) {
+          throw new Error(`ossuary residency terminal state: ${JSON.stringify({
+            shaderStatus: shader?.status,
+            recoveryScheduled: shader?.recoveryScheduled,
+            residencyErrors: residency?.errors,
+            blockedCritical: progress?.blockedCritical,
+          })}`);
+        }
+        const nextSignature = JSON.stringify({
+          shaderStatus: shader?.status,
+          currentExactStatus: shader?.currentExactStatus,
+          currentExactKey: shader?.currentExactKey,
+          currentExactRevision: shader?.currentExactRevision,
+          compileJobs: shader?.compileJobs?.length,
+          compileJobsInFlight: shader?.compileJobsInFlight,
+          compileInFlightLabel: shader?.compileInFlightLabel,
+          activeKey: residency?.activeKey,
+          progressKey: progress?.key,
+          snapshotPhase: progress?.snapshotPhase,
+          queue: progress?.queue?.length,
+          pendingReducedReveal: progress?.pendingReducedReveal?.length,
+          exactQueue: progress?.exactQueue?.length,
+          exactCovered: progress?.exactCovered?.size,
+          exactUniverse: progress?.exactUniverse?.size,
+          exactRevision: progress?.exactShaderRevision,
+          reduced: residency?.reduced?.has(expectedKey),
+          physical: residency?.physical?.has(expectedKey),
+        });
+        if (nextSignature !== signature) {
+          signature = nextSignature;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`ossuary residency made no progress: ${nextSignature}`);
+        }
+      }
+      if (!firstFull) throw new Error(`ossuary residency exceeded 240s after ${occupiedRenderCount} renders`);
+      const steadyHardDeadline = performance.now() + 240000;
+      let steadyProgressDeadline = performance.now() + 30000;
+      let steadySignature = null;
+      while (steadyOccupiedRenders.length < 3 && performance.now() < steadyHardDeadline) {
+        const sample = await nextRender();
+        if (!sample) continue;
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        const shader = g.shaderWarmup;
+        if (g._webglGeneration !== generation || residency?.generation !== generation
+            || g._currentGpuResidencyKey() !== expectedKey
+            || residency?.activeKey !== expectedKey || progress?.key !== expectedKey) {
+          throw new Error(`steady ossuary residency identity drift: ${JSON.stringify({
+            generation: g._webglGeneration,
+            residencyGeneration: residency?.generation,
+            expectedKey,
+            currentKey: g._currentGpuResidencyKey(),
+            activeKey: residency?.activeKey,
+            progressKey: progress?.key,
+          })}`);
+        }
+        if (shader?.status === 'invalidated' || shader?.status === 'skipped'
+            || (shader?.status === 'degraded' && !shader?.recoveryScheduled)
+            || residency?.errors?.length || progress?.blockedCritical) {
+          throw new Error(`steady ossuary residency terminal state: ${JSON.stringify({
+            shaderStatus: shader?.status,
+            recoveryScheduled: shader?.recoveryScheduled,
+            residencyErrors: residency?.errors,
+            blockedCritical: progress?.blockedCritical,
+          })}`);
+        }
+        if (sample.residencyKey === expectedKey && !sample.reducedDetail
+            && sample.worldDrawCalls > 0 && sample.heldDrawCalls > 0
+            && residency.physical.has(expectedKey)) {
+          steadyOccupiedRenders.push(sample);
+          continue;
+        }
+        const nextSteadySignature = JSON.stringify({
+          shaderStatus: shader?.status,
+          currentExactStatus: shader?.currentExactStatus,
+          compileJobs: shader?.compileJobs?.length,
+          compileJobsInFlight: shader?.compileJobsInFlight,
+          snapshotPhase: progress?.snapshotPhase,
+          deferredQueue: progress?.deferredQueue?.length,
+          deferredExactQueue: progress?.deferredExactQueue?.length,
+          deferredCovered: progress?.deferredCovered?.size,
+          deferredExactCovered: progress?.deferredExactCovered?.size,
+          deferredRecorded: progress?.deferredRecorded,
+          deferredExactRecorded: progress?.deferredExactRecorded,
+          finalizationProgress: !!g.lastRender?.finalizationProgress,
+          universeFinalizePasses: residency?.universeFinalizePasses?.length,
+        });
+        if (nextSteadySignature !== steadySignature) {
+          steadySignature = nextSteadySignature;
+          steadyProgressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= steadyProgressDeadline) {
+          throw new Error(`steady ossuary residency made no progress: ${nextSteadySignature}`);
+        }
+      }
+      if (steadyOccupiedRenders.length !== 3) {
+        throw new Error(`steady ossuary residency exceeded 240s after ${steadyOccupiedRenders.length} full submissions`);
+      }
+    } finally {
+      g.render = realRender;
     }
     const expectedWorldLights = new Set([
       g.fillLight, g._impactLight,
@@ -554,15 +839,23 @@ try {
     g.scene.traverseVisible((object) => {
       if (object.isLight && (object.layers.mask & 1) !== 0) occupiedWorldLights.push(object);
     });
+    const occupiedLightTypes = occupiedWorldLights.reduce((counts, light) => {
+      counts[light.type] = (counts[light.type] || 0) + 1;
+      return counts;
+    }, {});
+    const ballastWorldLights = occupiedWorldLights
+      .filter((light) => light.userData.fetchShaderBallast);
     const identifyLight = (light) => ({
       type: light.type, name: light.name || '',
       fill: light === g.fillLight, impact: light === g._impactLight,
       candle: g.world.candlePool.indexOf(light),
       skull: light === g.skullLight, carry: light === g.skull.carryLight,
+      ballast: !!light.userData.fetchShaderBallast,
       intensity: round(light.intensity),
     });
     const unexpectedWorldLights = occupiedWorldLights
-      .filter((light) => !expectedWorldLights.has(light)).map(identifyLight);
+      .filter((light) => !expectedWorldLights.has(light)
+        && !light.userData.fetchShaderBallast).map(identifyLight);
     const missingWorldLights = [...expectedWorldLights]
       .filter((light) => !occupiedWorldLights.includes(light)).map(identifyLight);
     const warmupEvidence = {
@@ -571,17 +864,38 @@ try {
       errors: [...(g.shaderWarmup?.errors || [])],
     };
     check(
-      'the physical first ossuary entry uses the exact prewarmed rig with no new program',
+      'the physical first ossuary entry submits the exact prewarmed rig with zero visible allocation',
       warmupEvidence.status === 'ready' && warmupEvidence.hasVariant
         && warmupEvidence.errors.length === 0
-        && occupiedWorldLights.length === expectedWorldLights.size
+        && occupiedLightTypes.AmbientLight === 1
+        && occupiedLightTypes.HemisphereLight === 1
+        && occupiedLightTypes.DirectionalLight === 1
+        && occupiedLightTypes.SpotLight === 1
+        && occupiedLightTypes.PointLight === 16
+        && occupiedWorldLights.length === expectedWorldLights.size + ballastWorldLights.length
+        && ballastWorldLights.length === 14
+        && ballastWorldLights.every((light) => light.intensity === 0)
         && unexpectedWorldLights.length === 0 && missingWorldLights.length === 0
-        && firstOccupiedRenders.length === 3
-        && firstOccupiedRenders.every((sample) => sample.programs === surfaceProgramsBeforeEntry
-          && sample.drawCalls > 0 && sample.drawCalls < 450 && sample.triangles > 0),
+        && occupiedRenderCount > 0
+        && firstFull && firstFull.worldDrawCalls < 450 && firstFull.triangles > 0
+        && firstFull.visibleProgramDelta === 0
+        && firstFull.visibleTextureDelta === 0
+        && firstFull.visibleGeometryDelta === 0
+        && steadyOccupiedRenders.length === 3
+        && steadyOccupiedRenders.every((sample) =>
+          sample.residencyKey === firstFull.residencyKey
+          && !sample.reducedDetail && sample.worldDrawCalls > 0
+          && sample.heldDrawCalls > 0 && sample.worldDrawCalls < 450
+          && sample.triangles > 0
+          && sample.visibleProgramDelta === 0
+          && sample.visibleTextureDelta === 0
+          && sample.visibleGeometryDelta === 0),
       {
         warmupEvidence, surfaceProgramsBeforeEntry, surfaceDrawsBeforeEntry,
-        firstOccupiedRenders,
+        occupiedRenderCount, firstNonzero, firstReduced, firstFull,
+        firstOccupiedRenders, steadyOccupiedRenders,
+        occupiedLightTypes,
+        ballastWorldLights: ballastWorldLights.map(identifyLight),
         occupiedWorldLights: occupiedWorldLights.map(identifyLight),
         unexpectedWorldLights, missingWorldLights,
       },
@@ -599,7 +913,8 @@ try {
     const cullAfterSoak = { ...o.visibility };
     const programsAfterSoak = g.renderer.info.programs?.length ?? 0;
     const visibleOssuaryLights = g.scene.children
-      .filter((child) => child.isLight && child.visible)
+      .filter((child) => child.isLight && child.visible
+        && !child.userData.fetchShaderBallast)
       .map((light) => ({
         type: light.type,
         owned: !!light.userData.ossuaryOwned,
@@ -1535,8 +1850,10 @@ try {
     );
     check(
       'submerged and still-rising stones do not become invisible support before the authored threshold',
-      submerged.y < -0.35 && submerged.ground < submerged.top - 0.12
-        && rising.y < -0.35 && rising.ground < rising.top - 0.12,
+      submerged.y < -0.35
+        && Math.abs(submerged.ground - submerged.top) > 0.12
+        && rising.y < -0.35
+        && Math.abs(rising.ground - submerged.ground) < 0.0001,
       {
         submerged: Object.fromEntries(Object.entries(submerged).map(([k, v]) => [k, round(v)])),
         rising: Object.fromEntries(Object.entries(rising).map(([k, v]) => [k, round(v)])),

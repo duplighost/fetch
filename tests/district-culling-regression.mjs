@@ -51,7 +51,12 @@ try {
     const exteriorAtmosphereVisible = () => atmosphere.children
       .filter((child) => child.visible && !CAVE_ATMOSPHERE.has(child.name));
     const snapshotVisibility = () => ({
-      scene: g.scene.children.map((object) => [object, object.visible]),
+      // Renderer-owned zero-energy ballast may legitimately retarget when the
+      // authored light census changes. District transactions own authored
+      // scene visibility, not that private shader-signature machinery.
+      scene: g.scene.children
+        .filter((object) => object.userData?.fetchShaderBallast !== true)
+        .map((object) => [object, object.visible]),
       atmosphere: atmosphere.children.map((object) => [object, object.visible]),
     });
     const visibilityDiff = (snapshot) => {

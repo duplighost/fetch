@@ -119,10 +119,29 @@ function validateStage(label, stage) {
     slow: stage.frames.filter((frame) => frame.renderMs >= 100),
   });
   check(stage.rafIntervals.length > 0
-      && stage.rafIntervals.every((entry) => entry.durationMs < 100),
-    `${label} every in-generation rAF interval stays strictly below 100ms`, {
-      maxRafMs: Math.max(0, ...stage.rafIntervals.map((entry) => entry.durationMs)),
-      slow: stage.rafIntervals.filter((entry) => entry.durationMs >= 100),
+      && stage.rafIntervals.every((entry) => entry.observedIntervalMs < 100
+        && entry.orderingValid),
+    `${label} every ordered post-render callback interval stays strictly below 100ms`, {
+      maxObservedRafMs: Math.max(0,
+        ...stage.rafIntervals.map((entry) => entry.observedIntervalMs)),
+      slowObserved: stage.rafIntervals.filter((entry) => entry.observedIntervalMs >= 100),
+      orderingErrors: stage.rafIntervals.filter((entry) => !entry.orderingValid),
+      maxRafTimestampMs: Math.max(0,
+        ...stage.rafIntervals.map((entry) => entry.timestampIntervalMs)),
+      timestampJumps: stage.rafIntervals.filter((entry) => entry.timestampIntervalMs >= 100),
+    });
+  check(stage.renderIntervals.length > 0
+      && stage.renderIntervals.every((entry) => entry.startIntervalMs < 100
+        && entry.completionIntervalMs < 100 && entry.interRenderIdleMs < 100),
+    `${label} every render-start, completion, and inter-render idle interval stays strictly below 100ms`, {
+      maxStartIntervalMs: Math.max(0,
+        ...stage.renderIntervals.map((entry) => entry.startIntervalMs)),
+      maxCompletionIntervalMs: Math.max(0,
+        ...stage.renderIntervals.map((entry) => entry.completionIntervalMs)),
+      maxInterRenderIdleMs: Math.max(0,
+        ...stage.renderIntervals.map((entry) => entry.interRenderIdleMs)),
+      slow: stage.renderIntervals.filter((entry) => entry.startIntervalMs >= 100
+        || entry.completionIntervalMs >= 100 || entry.interRenderIdleMs >= 100),
     });
   check(stage.frames.every((frame) => frame.shielded === false),
     `${label} uses zero opaque shader-shield frames`,
@@ -463,10 +482,35 @@ try {
       vaoSamples: [],
     });
     let activeFrame = null;
-    let activeDraw = null;
+    // Keep the hot draw path allocation-free. A steady reduced/full frame can
+    // contain hundreds of draws while producing no cold GL event at all; eagerly
+    // cloning identity metadata for each one makes the observer part of the
+    // timing result. Raw references are enough until an allocation/VAO sample
+    // actually needs a durable identity row.
+    let activeDrawObject = null;
+    let activeDrawGeometry = null;
+    let activeDrawMaterial = null;
+    let activeDrawCamera = null;
+    let activeDrawRenderer = null;
     let outsideCounts = makeCounts();
     let trace = null;
     const traceInstallations = [];
+    const activeDrawIdentity = () => activeDrawGeometry ? {
+      object: activeDrawObject?.name || activeDrawObject?.type || '(unnamed)',
+      objectType: activeDrawObject?.type || null,
+      objectUuid: activeDrawObject?.uuid || null,
+      geometryUuid: activeDrawGeometry?.uuid || null,
+      material: activeDrawMaterial?.name || activeDrawMaterial?.type || '(unnamed)',
+      materialType: activeDrawMaterial?.type || null,
+      materialUuid: activeDrawMaterial?.uuid || null,
+      side: activeDrawMaterial?.side ?? null,
+      transparent: !!activeDrawMaterial?.transparent,
+      wireframe: !!activeDrawMaterial?.wireframe,
+      layers: activeDrawObject?.layers?.mask ?? null,
+      camera: activeDrawCamera?.name || activeDrawCamera?.type || null,
+      cameraLayers: activeDrawCamera?.layers?.mask ?? null,
+      targetUuid: activeDrawRenderer?.getRenderTarget?.()?.texture?.uuid || null,
+    } : null;
     const installTrace = () => {
       const gl = g.renderer.getContext();
       const originals = {};
@@ -548,7 +592,7 @@ try {
           method: 'createVertexArray',
           vaoId: idFor(vaoIds, vao, 'vao'),
           generation: g._webglGeneration,
-          draw: activeDraw ? { ...activeDraw } : null,
+          draw: activeDrawIdentity(),
         };
         if (counts.vaoSamples.length < 64) counts.vaoSamples.push(row);
         sample(counts, row);
@@ -611,27 +655,25 @@ try {
     g.renderer.renderBufferDirect = function tracedRenderBufferDirect(
       camera, scene, geometry, material, object, group,
     ) {
-      const previous = activeDraw;
-      activeDraw = {
-        object: object?.name || object?.type || '(unnamed)',
-        objectType: object?.type || null,
-        objectUuid: object?.uuid || null,
-        geometryUuid: geometry?.uuid || null,
-        material: material?.name || material?.type || '(unnamed)',
-        materialType: material?.type || null,
-        materialUuid: material?.uuid || null,
-        side: material?.side ?? null,
-        transparent: !!material?.transparent,
-        wireframe: !!material?.wireframe,
-        layers: object?.layers?.mask ?? null,
-        camera: camera?.name || camera?.type || null,
-        targetUuid: g.renderer.getRenderTarget()?.texture?.uuid || null,
-      };
+      const previousObject = activeDrawObject;
+      const previousGeometry = activeDrawGeometry;
+      const previousMaterial = activeDrawMaterial;
+      const previousCamera = activeDrawCamera;
+      const previousRenderer = activeDrawRenderer;
+      activeDrawObject = object;
+      activeDrawGeometry = geometry;
+      activeDrawMaterial = material;
+      activeDrawCamera = camera;
+      activeDrawRenderer = this;
       try {
         return realRenderBufferDirect.call(this,
           camera, scene, geometry, material, object, group);
       } finally {
-        activeDraw = previous;
+        activeDrawObject = previousObject;
+        activeDrawGeometry = previousGeometry;
+        activeDrawMaterial = previousMaterial;
+        activeDrawCamera = previousCamera;
+        activeDrawRenderer = previousRenderer;
       }
     };
     // Three's internal render path does not consistently route through the
@@ -649,29 +691,25 @@ try {
         renderer, scene, camera, geometry, material, group,
       ) {
         before?.call(this, renderer, scene, camera, geometry, material, group);
-        drawStack.push(activeDraw);
-        activeDraw = {
-          object: this.name || this.type || '(unnamed)',
-          objectType: this.type || null,
-          objectUuid: this.uuid || null,
-          geometryUuid: geometry?.uuid || null,
-          material: material?.name || material?.type || '(unnamed)',
-          materialType: material?.type || null,
-          materialUuid: material?.uuid || null,
-          side: material?.side ?? null,
-          transparent: !!material?.transparent,
-          wireframe: !!material?.wireframe,
-          layers: this.layers?.mask ?? null,
-          camera: camera?.name || camera?.type || null,
-          cameraLayers: camera?.layers?.mask ?? null,
-          targetUuid: renderer?.getRenderTarget?.()?.texture?.uuid || null,
-        };
+        drawStack.push(activeDrawObject, activeDrawGeometry, activeDrawMaterial,
+          activeDrawCamera, activeDrawRenderer);
+        activeDrawObject = this;
+        activeDrawGeometry = geometry;
+        activeDrawMaterial = material;
+        activeDrawCamera = camera;
+        activeDrawRenderer = renderer;
       };
       object.onAfterRender = function stageCDrawIdentityRestore(
         renderer, scene, camera, geometry, material, group,
       ) {
         try { after?.call(this, renderer, scene, camera, geometry, material, group); }
-        finally { activeDraw = drawStack.pop() ?? null; }
+        finally {
+          activeDrawRenderer = drawStack.pop() ?? null;
+          activeDrawCamera = drawStack.pop() ?? null;
+          activeDrawMaterial = drawStack.pop() ?? null;
+          activeDrawGeometry = drawStack.pop() ?? null;
+          activeDrawObject = drawStack.pop() ?? null;
+        }
       };
       drawHookRestores.push(() => {
         object.onBeforeRender = before;
@@ -687,16 +725,48 @@ try {
     let stageLabel = 'prestart';
     let sampling = true;
     let previousRaf = null;
+    let lastCompletedRender = null;
     const sampleRaf = (timestamp) => {
-      if (previousRaf != null) {
+      const observedAt = performance.now();
+      const current = {
+        stage: stageLabel,
+        generation: g._webglGeneration,
+        timestamp,
+        observedAt,
+        completedFrameId: lastCompletedRender?.frameId ?? null,
+        completedAt: lastCompletedRender?.completedAt ?? null,
+        completedStage: lastCompletedRender?.stage ?? null,
+        completedGeneration: lastCompletedRender?.generation ?? null,
+      };
+      if (previousRaf && previousRaf.stage === current.stage
+          && previousRaf.generation === current.generation) {
+        const timestampIntervalMs = timestamp - previousRaf.timestamp;
+        const observedIntervalMs = observedAt - previousRaf.observedAt;
         intervals.push({
           stage: stageLabel,
           generation: g._webglGeneration,
-          durationMs: timestamp - previousRaf,
-          at: performance.now(),
+          durationMs: timestampIntervalMs,
+          timestampIntervalMs,
+          observedIntervalMs,
+          previousCallbackLagMs: previousRaf.observedAt - previousRaf.timestamp,
+          currentCallbackLagMs: observedAt - timestamp,
+          fromCompletedFrameId: previousRaf.completedFrameId,
+          toCompletedFrameId: current.completedFrameId,
+          fromCompletedAt: previousRaf.completedAt,
+          toCompletedAt: current.completedAt,
+          orderingValid: Number.isInteger(previousRaf.completedFrameId)
+            && Number.isInteger(current.completedFrameId)
+            && current.completedFrameId > previousRaf.completedFrameId
+            && previousRaf.completedStage === stageLabel
+            && current.completedStage === stageLabel
+            && previousRaf.completedGeneration === g._webglGeneration
+            && current.completedGeneration === g._webglGeneration
+            && previousRaf.completedAt <= previousRaf.observedAt
+            && current.completedAt <= observedAt,
+          at: observedAt,
         });
       }
-      previousRaf = timestamp;
+      previousRaf = current;
       if (sampling) requestAnimationFrame(sampleRaf);
     };
     requestAnimationFrame(sampleRaf);
@@ -720,10 +790,16 @@ try {
       try {
         return withPhase('visible-render', () => realRender.apply(this, args));
       } finally {
-        const afterStats = stats();
-        const liveResidency = g.currentGpuResidency;
         row.completedAt = performance.now();
         row.renderMs = row.completedAt - row.startedAt;
+        lastCompletedRender = {
+          frameId: row.frameId,
+          stage: row.stage,
+          generation: row.generation,
+          completedAt: row.completedAt,
+        };
+        const afterStats = stats();
+        const liveResidency = g.currentGpuResidency;
         row.worldDrawCalls = g.lastRender?.worldDrawCalls || 0;
         row.reducedDetail = !!g.lastRender?.reducedDetail;
         row.shielded = !!g._shaderTransitionShield;
@@ -1038,6 +1114,13 @@ try {
         && entry.startedAt <= endedAt);
       const stageIntervals = intervals.filter((entry) => entry.stage === label
         && entry.generation === generation && entry.at >= startedAt && entry.at <= endedAt);
+      const renderIntervals = stageFrames.slice(1).map((entry, index) => ({
+        fromFrameId: stageFrames[index].frameId,
+        toFrameId: entry.frameId,
+        startIntervalMs: entry.startedAt - stageFrames[index].startedAt,
+        completionIntervalMs: entry.completedAt - stageFrames[index].completedAt,
+        interRenderIdleMs: entry.startedAt - stageFrames[index].completedAt,
+      }));
       const ownerUniverse = [...(residency.ownerUniverses || [])]
         .find((entry) => entry.house > 0) || null;
       const currentKeys = [...progress.exactUniverse].sort();
@@ -1062,6 +1145,7 @@ try {
         wakeMs,
         frames: stageFrames,
         rafIntervals: stageIntervals,
+        renderIntervals,
         exactPreloadPasses: residency.exactPreloadPasses,
         reducedPasses: residency.reducedPasses,
         exactScanPasses: residency.exactScanPasses,
@@ -1138,6 +1222,7 @@ try {
       trace = installTrace();
       await frame();
       outsideCounts = makeCounts();
+      previousRaf = null;
       stageLabel = 'initial';
       const initialGeneration = g._webglGeneration;
       const initialAt = performance.now();
@@ -1193,7 +1278,11 @@ try {
       g._prepareOwnerGpuResidency = realOwnerPass;
       g.renderer.renderBufferDirect = realRenderBufferDirect;
       for (const restore of drawHookRestores.reverse()) restore();
-      activeDraw = null;
+      activeDrawObject = null;
+      activeDrawGeometry = null;
+      activeDrawMaterial = null;
+      activeDrawCamera = null;
+      activeDrawRenderer = null;
       drawStack.length = 0;
       await frame();
     }

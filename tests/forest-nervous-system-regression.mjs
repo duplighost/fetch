@@ -8,7 +8,7 @@ import { ensureServer, launchBrowser, openPage, URL_BASE, resultsPath } from './
 const server = await ensureServer();
 const browser = await launchBrowser();
 let exit = 0;
-const report = { url: `${URL_BASE}/?test=1`, checks: [], browserErrors: [] };
+const report = { url: `${URL_BASE}/?test=1&warmup=1&warmupRace=1`, checks: [], browserErrors: [] };
 
 try {
   const { page, errors } = await openPage(browser, report.url);
