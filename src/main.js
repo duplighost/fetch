@@ -3037,6 +3037,8 @@ class Game {
         attributes: attributeRows.length,
         arrays: arrayOwners.size,
         attributeApiAvailable,
+        stateCheckMode: attributeApiAvailable ? 'selective-unresident' : 'gl-hooks-only',
+        stateChecksSkipped: attributeApiAvailable ? 0 : attributeRows.length,
         baselineResident: attributeApiAvailable
           ? attributeRows.length - initiallyUnresidentRows.length : null,
         initiallyUnresident: attributeApiAvailable
@@ -6050,7 +6052,10 @@ class Game {
         if (!await discover('grave', rootsByLabel.get('grave'))) return;
         if (!await discover('atmosphere', rootsByLabel.get('atmosphere'))) return;
         if (!await discover('skull', rootsByLabel.get('skull'), { reflection: true })) return;
-        if (!await discover('dynamic', rootsByLabel.get('dynamic'))) return;
+        // Mirror targets render the dynamic stain/gore/impact roots with the
+        // target output signature too. Discover both signatures before any
+        // target label can be carried as ready.
+        if (!await discover('dynamic', rootsByLabel.get('dynamic'), { reflection: true })) return;
         if (!await discover('music-box-figure', rootsByLabel.get('music-box-figure'))) return;
         if (!await discover('future-walker', rootsByLabel.get('future-walker'))) return;
         if (!await discover('future-resident', rootsByLabel.get('future-resident'))) return;
@@ -6119,7 +6124,9 @@ class Game {
         })) return;
       } else if (priority === 'mirror') {
         if (!await discover('static-world', rootsByLabel.get('static-world'), { reflection: true })) return;
-        if (!await discover('dynamic', rootsByLabel.get('dynamic'))) return;
+        // The active Finale cannot let its first owner preload discover the
+        // Instanced MeshBasic stain program for the reflection target.
+        if (!await discover('dynamic', rootsByLabel.get('dynamic'), { reflection: true })) return;
         if (!await discover('finale-room', rootsByLabel.get('finale-room'), { reflection: true })) return;
         if (!await discover('finale-figure', rootsByLabel.get('finale-figure'), { reflection: true })) return;
         if (!await warmPendingTextures('priority-finale')) return;
@@ -6214,7 +6221,10 @@ class Game {
       if (!await discover('grave', rootsByLabel.get('grave'))) return;
       if (!await discover('atmosphere', rootsByLabel.get('atmosphere'))) return;
       if (!await discover('skull', rootsByLabel.get('skull'), { reflection: true })) return;
-      if (!await discover('dynamic', rootsByLabel.get('dynamic'))) return;
+      // The chronological background itinerary must certify the same dynamic
+      // reflection signatures as the priority-Finale path. A carried
+      // `reflection-target` label is only valid if both paths own this set.
+      if (!await discover('dynamic', rootsByLabel.get('dynamic'), { reflection: true })) return;
       if (!await discover('music-box-figure', rootsByLabel.get('music-box-figure'))) return;
       if (!await discover('future-walker', rootsByLabel.get('future-walker'))) return;
       if (!await discover('future-resident', rootsByLabel.get('future-resident'))) return;

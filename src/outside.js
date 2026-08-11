@@ -3904,7 +3904,7 @@ export class Forest {
     }
   }
 
-  syncBackDistrictCulling(force = null) {
+  syncBackDistrictCulling(force = null, { reapply = false } = {}) {
     // The sealed under-yard owns every exterior visibility bit while occupied.
     // A respawn briefly visits the graveyard act spawn before restoring its
     // saved underground pose; do not let this independent culler restore one
@@ -3915,17 +3915,25 @@ export class Forest {
       || act === 'cave' || act === 'mirror'
       || (act === 'graveyard' && !this.game.ossuary?.inOssuary
         && this.game.player.pos.z > FOREST_GATE.z - 0.45));
-    if (pastGate === this.backDistrictCullActive) return;
-    this.backDistrictCullActive = pastGate;
+    if (pastGate === this.backDistrictCullActive && !reapply) return;
     if (pastGate) {
-      this.backDistrictVisibility.clear();
+      // Underfalls temporarily owns every exterior visibility bit. Its
+      // deliberate restore at the cave-to-Finale edge can therefore re-expose
+      // roots while this culler is still semantically active. A forced reapply
+      // must re-hide them without replacing the original pre-gate snapshot;
+      // otherwise a later restore would remember the accidental visible state.
+      if (!this.backDistrictCullActive) this.backDistrictVisibility.clear();
       for (const root of this.backDistrictRoots) {
         if (root.parent !== this.game.scene) continue;
-        this.backDistrictVisibility.set(root, root.visible);
+        if (!this.backDistrictVisibility.has(root)) {
+          this.backDistrictVisibility.set(root, root.visible);
+        }
         root.visible = false;
       }
+      this.backDistrictCullActive = true;
       return;
     }
+    this.backDistrictCullActive = false;
     for (const [root, visible] of this.backDistrictVisibility) {
       if (root.parent === this.game.scene) root.visible = visible;
     }

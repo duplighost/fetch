@@ -208,9 +208,13 @@ function validateStage(label, stage) {
     check(geometryTrace?.objects > 0 && geometryTrace?.attributes > 0
         && geometryTrace?.arrays > 0 && geometryTrace?.bufferHooksInstalled === true
         && (geometryTrace.attributeApiAvailable === false
-          ? geometryTrace.baselineResident == null
+          ? geometryTrace.stateCheckMode === 'gl-hooks-only'
+            && geometryTrace.stateChecksSkipped === geometryTrace.attributes
+            && geometryTrace.baselineResident == null
             && geometryTrace.initiallyUnresident == null
-          : geometryTrace.baselineResident >= 0
+          : geometryTrace.stateCheckMode === 'selective-unresident'
+            && geometryTrace.stateChecksSkipped === 0
+            && geometryTrace.baselineResident >= 0
             && geometryTrace.initiallyUnresident >= 0
             && geometryTrace.baselineResident + geometryTrace.initiallyUnresident
               === geometryTrace.attributes),
@@ -245,6 +249,7 @@ function validateStage(label, stage) {
       && certificateFrame.reducedDetail === true
       && phase(certificateFrame, 'exact-certificate').bufferData === 0
       && phase(certificateFrame, 'exact-certificate').createVertexArray === 0
+      && phase(certificateFrame, 'exact-certificate').unallocatedBufferSubData === 0
       && exactFrame.worldDrawCalls > 0 && exactFrame.reducedDetail === false
       && exactFrame.visibleProgramDelta === 0 && exactFrame.visibleTextureDelta === 0
       && exactFrame.visibleGeometryDelta === 0

@@ -212,6 +212,16 @@ export class Finale {
     this._targetRecoveryTimer = null;
     this._targetRecoveryGeneration = -1;
     this._targetRecoveryRound = 0;
+    this._visibilityIsolationSaved = new Map();
+    this.visibilityIsolation = {
+      active: false,
+      runs: 0,
+      roots: 0,
+      renderables: 0,
+      writes: 0,
+      allHidden: false,
+      durationMs: 0,
+    };
     // A restored WebGL context has no resident mirror programs or FBO storage,
     // even though the JS-side Finale object is still active. Keep the panes as
     // authored dark glass while the new generation is rebuilt; simulation and
@@ -1056,8 +1066,51 @@ export class Finale {
     return state;
   }
 
+  _isolateFinishedDistricts() {
+    const g = this.game;
+    const startedAt = performance.now();
+    const roots = [...new Set([
+      ...(g.houseRenderRoots || []),
+      ...(g.outsideRenderRoots || []),
+      g.atmosphere?.group,
+    ].filter((root) => root?.parent === g.scene))];
+    const state = this.visibilityIsolation;
+    if (!state.active) this._visibilityIsolationSaved.clear();
+    let writes = 0;
+    let renderables = 0;
+    for (const root of roots) {
+      if (!this._visibilityIsolationSaved.has(root)) {
+        this._visibilityIsolationSaved.set(root, root.visible);
+      }
+      root.traverse((object) => {
+        if ((object.isMesh || object.isLine || object.isPoints)
+            && object.geometry && object.material) renderables++;
+      });
+      if (root.visible) {
+        root.visible = false;
+        writes++;
+      }
+    }
+    state.active = true;
+    state.runs++;
+    state.roots = roots.length;
+    state.renderables = renderables;
+    state.writes = writes;
+    state.allHidden = roots.every((root) => root.visible === false);
+    state.durationMs = performance.now() - startedAt;
+    return state;
+  }
+
   begin() {
     const g = this.game;
+    // Underfalls restores the pre-cave scene transaction before this call. The
+    // forest culler may already believe its back-district boundary is active,
+    // so force its visibility writes once, then hide every completed surface
+    // root behind an explicit Finale lifecycle boundary. Without this step the
+    // real mirror cameras traversed the restored moon, graveyard, and forest;
+    // the first pane became an accidental global prime and a visual leak.
+    g.forest?.syncBackDistrictCulling?.(true, { reapply: true });
+    this._isolateFinishedDistricts();
     this.active = true;
     this.t = 0;
     this.phase = 'still';
