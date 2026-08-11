@@ -344,17 +344,47 @@ try {
   check(warmup.retainedMaterials === 9,
     'warm-up retains only the nine on-demand threat materials',
     `${warmup.retainedMaterials}`);
-  const fallback = await page.evaluate(() => {
+  const fallback = await page.evaluate(async () => {
     const g = window.__game;
     const compileAsync = g.renderer.compileAsync;
     g.renderer.compileAsync = undefined;
+    let result;
     try {
-      return g._compileWarmVariant(g.grainScene, g.grainCam) === null;
+      const job = g._compileWarmVariant(g.grainScene, g.grainCam);
+      const detail = await job;
+      result = {
+        returnedPromise: !!job && typeof job.then === 'function',
+        generation: detail?.generation ?? null,
+        currentGeneration: g._webglGeneration,
+        invalidated: detail?.invalidated === true,
+        programs: detail?.programs ?? null,
+        identities: detail?.identities?.length ?? null,
+        submitDurationMs: detail?.submitDurationMs ?? null,
+        readinessPolls: detail?.readinessPolls ?? null,
+        maxSynchronousSliceMs: detail?.maxSynchronousSliceMs ?? null,
+      };
     } finally {
       g.renderer.compileAsync = compileAsync;
     }
+    return {
+      ...result,
+      compileAsyncRestored: g.renderer.compileAsync === compileAsync,
+    };
   });
-  check(fallback, 'sync renderer.compile fallback completes without a promise');
+  check(fallback.returnedPromise
+      && fallback.generation === fallback.currentGeneration
+      && fallback.invalidated === false
+      && fallback.programs > 0
+      && fallback.identities === fallback.programs
+      && Number.isFinite(fallback.submitDurationMs)
+      && fallback.submitDurationMs >= 0
+      && Number.isFinite(fallback.readinessPolls)
+      && fallback.readinessPolls > 0
+      && Number.isFinite(fallback.maxSynchronousSliceMs)
+      && fallback.maxSynchronousSliceMs >= 0
+      && fallback.compileAsyncRestored,
+  'sync renderer.compile fallback returns an awaited same-generation readiness certificate',
+  JSON.stringify(fallback));
   check(errors.length === 0, 'browser emitted no page or console errors', errors.join(' | '));
 } finally {
   await browser.close();
