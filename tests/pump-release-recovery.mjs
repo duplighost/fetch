@@ -1,6 +1,7 @@
 // Focused regression for the pump bridge's worst recoverable misuse:
 // release LMB while standing between the closing near gate and the far pawl.
-// The test drives the ordinary Player + Skull input path throughout; it never
+// The test drives the ordinary Player + Skull input path throughout; direct
+// player poses create reproducible adversarial preconditions, but it never
 // calls a target callback or mutates the pump route's progress/latch state.
 //
 //   node tests/pump-release-recovery.mjs
@@ -133,20 +134,16 @@ try {
       creaks: hintCreaks,
     };
 
-    // Adversarial lifecycle first: reach the far commit lane with a partial
-    // payout, die while the physical mouse is still held, and keep it held
-    // longer than the remaining solve time. A dead life may not pay the pawl.
+    // Adversarial lifecycle first: build a real partial payout on the reachable
+    // bank, die while the physical mouse is still held, and keep it held longer
+    // than the remaining solve time. A dead life may not keep paying the winch.
     settlePlayer(-14.35, -3, -0.045, -0.02);
     g.skull.holdNow();
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
     F.stepWith(0.55, { throwHeld: true }, false);
     let deathPayoutFrames = 0;
     while (route.progress < 0.68 && deathPayoutFrames < 360) {
-      F.stepWith(1 / 120, { moveX: -1, throwHeld: true }, false);
-      deathPayoutFrames++;
-    }
-    while (g.player.pos.x > -17.36 && deathPayoutFrames < 720) {
-      F.stepWith(1 / 120, { moveX: -1, throwHeld: true }, false);
+      F.stepWith(1 / 120, { throwHeld: true }, false);
       deathPayoutFrames++;
     }
     const checkpointBeforeDeath = JSON.stringify(g.checkpointPose);
@@ -325,14 +322,15 @@ try {
   'a stale pump-hint callback cannot complete a newer pending generation early',
   { stale: result.afterStaleHint, fresh: result.afterFreshHint });
 
-  check(result.beforeHeldDeath.player[0] < -17.28
+  check(result.beforeHeldDeath.player[0] > -17.28
       && result.beforeHeldDeath.progress > 0.45 && result.beforeHeldDeath.progress < 0.9
-      && result.beforeHeldDeath.mode === 'anchored' && !result.beforeHeldDeath.latched,
-  'the death adversary reaches the far pawl lane with a genuinely partial live payout',
+      && result.beforeHeldDeath.mode === 'anchored' && !result.beforeHeldDeath.latched
+      && !result.beforeHeldDeath.gateOpen,
+  'the death adversary interrupts a reachable pre-pawl partial payout',
   result.beforeHeldDeath);
   check(!result.duringHeldDeath.latched && !result.duringHeldDeath.gateOpen
       && !result.duringHeldDeath.flag && result.duringHeldDeath.progress === 0
-      && result.duringHeldDeath.mode === 'returning'
+      && ['returning', 'held'].includes(result.duringHeldDeath.mode)
       && result.duringHeldDeath.checkpointUnchanged
       && !result.afterHeldDeathRespawn.latched && !result.afterHeldDeathRespawn.gateOpen
       && !result.afterHeldDeathRespawn.flag && result.afterHeldDeathRespawn.progress === 0

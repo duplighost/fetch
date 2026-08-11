@@ -118,7 +118,7 @@ try {
       },
     );
 
-    const caveLightsOn = U.lights.length === 9 && U.lights.every((light) => light.visible);
+    const caveLightsOn = U.lights.length === 10 && U.lights.every((light) => light.visible);
     const wheelBeforeHouse = U.pump.wheel.rotation.z;
     const pistonBeforeHouse = U.pump.piston.position.y;
     F.teleport('house');
@@ -271,6 +271,10 @@ try {
     g.player.yaw = Math.atan2(-dx, -dz);
     g.player.pitch = Math.max(-1.3, Math.min(1.3, Math.atan2(dy, Math.hypot(dx, dz))));
     g.player._sync(0);
+    // This route is intentionally exercised through sim-only steps. Refresh
+    // every possible occluder and the newly revealed hatch before asking
+    // Three's raycaster to consume their world transforms.
+    g.scene.updateMatrixWorld(true);
     const hatchTarget = g._crosshairTarget()?.id || null;
     F.stepWith(1 / 120, { interactPressed: true }, false);
     F.stepWith(2.0, {}, false);
