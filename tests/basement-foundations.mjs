@@ -135,7 +135,10 @@ try {
         deathDirective === 'anchor'
           && partialBeforeDeath > 0 && partialBeforeDeath < 1
           && !heldDeath.solved && heldDeath.progress === 0 && !heldDeath.flag
-          && heldDeath.skullMode === 'returning'
+          // Death must break the anchor immediately. Over this deliberately
+          // long dead-life sample, the ordinary return may also finish its
+          // physical catch; neither returning nor held can keep weighing.
+          && ['returning', 'held'].includes(heldDeath.skullMode)
           && !afterDeathRespawn.solved && afterDeathRespawn.progress === 0
           && !afterDeathRespawn.flag && afterDeathRespawn.targetEnabled
           && afterDeathRespawn.skullMode === 'held' && afterDeathRespawn.act === 'basement',
