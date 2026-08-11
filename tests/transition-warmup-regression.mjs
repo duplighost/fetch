@@ -1534,6 +1534,8 @@ async function runPurityAndSettled(browser) {
     };
     const intervals = [];
     const purityRenders = [];
+    const slowPurityRenders = [];
+    const slowPurityObserved = [];
     const orderingErrors = [];
     const finalizerFrames = [];
     const seenFinalizers = new WeakSet();
@@ -1541,10 +1543,25 @@ async function runPurityAndSettled(browser) {
     let lastCompletedRender = null;
     const realRender = g.render;
     g.render = function measuredPurityRender(...args) {
+      const residencyBefore = g.currentGpuResidency;
+      const passCountsBefore = {
+        reduced: residencyBefore?.reducedPasses?.length || 0,
+        exact: residencyBefore?.exactPasses?.length || 0,
+        exactPreload: residencyBefore?.exactPreloadPasses?.length || 0,
+        owner: residencyBefore?.ownerPasses?.length || 0,
+        finalizer: residencyBefore?.universeFinalizePasses?.length || 0,
+      };
+      const shaderBefore = {
+        status: g.shaderWarmup?.status || null,
+        inFlight: g._shaderCompileActivity?.active || 0,
+        inFlightLabel: g.shaderWarmup?.compileInFlightLabel || null,
+        jobs: g.shaderWarmup?.compileJobs?.length || 0,
+      };
       const renderStartedAt = performance.now();
       try { return realRender.apply(this, args); }
       finally {
         const renderCompletedAt = performance.now();
+        const residencyAfter = g.currentGpuResidency;
         const row = {
           frameId: ++frameSerial,
           generation: g._webglGeneration,
@@ -1552,8 +1569,43 @@ async function runPurityAndSettled(browser) {
           startedAt: renderStartedAt,
           completedAt: renderCompletedAt,
           ms: renderCompletedAt - renderStartedAt,
+          drawCalls: g.lastRender?.drawCalls || 0,
+          worldDrawCalls: g.lastRender?.worldDrawCalls || 0,
+          heldDrawCalls: g.lastRender?.heldDrawCalls || 0,
+          reducedDetail: !!g.lastRender?.reducedDetail,
+          residencyKey: g.lastRender?.residencyKey || null,
+          bootstrapKind: g.lastRender?.bootstrapKind || null,
+          snapshotProgress: !!g.lastRender?.snapshotProgress,
+          reducedBatchSubmitted: !!g.lastRender?.reducedBatchSubmitted,
+          reducedBatchRevealed: !!g.lastRender?.reducedBatchRevealed,
+          ownerProgress: !!g.lastRender?.ownerProgress,
+          deferredProgress: !!g.lastRender?.deferredProgress,
+          ownerExactProgress: !!g.lastRender?.ownerExactProgress,
+          deferredExactProgress: !!g.lastRender?.deferredExactProgress,
+          visibleProgramDelta: g.lastRender?.visibleProgramDelta || 0,
+          visibleTextureDelta: g.lastRender?.visibleTextureDelta || 0,
+          visibleGeometryDelta: g.lastRender?.visibleGeometryDelta || 0,
+          passRanges: {
+            reduced: [passCountsBefore.reduced, residencyAfter?.reducedPasses?.length || 0],
+            exact: [passCountsBefore.exact, residencyAfter?.exactPasses?.length || 0],
+            exactPreload: [passCountsBefore.exactPreload,
+              residencyAfter?.exactPreloadPasses?.length || 0],
+            owner: [passCountsBefore.owner, residencyAfter?.ownerPasses?.length || 0],
+            finalizer: [passCountsBefore.finalizer,
+              residencyAfter?.universeFinalizePasses?.length || 0],
+          },
+          shaderBefore,
+          shaderAfter: {
+            status: g.shaderWarmup?.status || null,
+            inFlight: g._shaderCompileActivity?.active || 0,
+            inFlightLabel: g.shaderWarmup?.compileInFlightLabel || null,
+            jobs: g.shaderWarmup?.compileJobs?.length || 0,
+          },
         };
         purityRenders.push(row);
+        if (row.ms >= 80 && slowPurityRenders.length < 16) {
+          slowPurityRenders.push(row);
+        }
         lastCompletedRender = row;
         for (const entry of g.currentGpuResidency?.universeFinalizePasses || []) {
           if (seenFinalizers.has(entry)) continue;
@@ -1582,7 +1634,27 @@ async function runPurityAndSettled(browser) {
           const ordered = completed.frameId > previous.frameId
             && completed.completedAt <= observedAt
             && previous.completedAt <= previous.observedAt;
-          if (ordered) intervals.push(observedAt - previous.observedAt);
+          if (ordered) {
+            const durationMs = observedAt - previous.observedAt;
+            intervals.push(durationMs);
+            if (durationMs >= 80 && slowPurityObserved.length < 16) {
+              slowPurityObserved.push({
+                durationMs,
+                previous: {
+                  frameId: previous.frameId,
+                  startedAt: previous.startedAt,
+                  completedAt: previous.completedAt,
+                  observedAt: previous.observedAt,
+                },
+                current: {
+                  frameId: completed.frameId,
+                  startedAt: completed.startedAt,
+                  completedAt: completed.completedAt,
+                  observedAt,
+                },
+              });
+            }
+          }
           else if (orderingErrors.length < 16) {
             orderingErrors.push({ previous, current: { ...completed, observedAt } });
           }
@@ -1818,6 +1890,8 @@ async function runPurityAndSettled(browser) {
         renderCount: purityRenders.length,
         rafIntervals: intervals.length,
         orderingErrors,
+        slowRenders: slowPurityRenders,
+        slowObserved: slowPurityObserved,
         maxRenderMs: Math.max(0, ...purityRenders.map((row) => row.ms)),
         maxRenderStartIntervalMs: Math.max(0, ...purityRenders.slice(1)
           .map((row, index) => row.startedAt - purityRenders[index].startedAt)),
