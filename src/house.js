@@ -1041,7 +1041,7 @@ function bedroomAct(game) {
   });
 
   world.addFetchTarget({
-    id: 'treeKey', object: key, radius: 0.85,
+    id: 'treeKey', object: key, radius: 0.85, heldCarry: true,
     onHit(skull) {
       this.enabled = false;
       skull.grab('bedroomKey', key);
@@ -1130,7 +1130,7 @@ function nurseryAct(game) {
   const key = makeKey(M);
   key.scale.setScalar(1.4);
   world.addFetchTarget({
-    id: 'stairKey', object: key, radius: 0.7,
+    id: 'stairKey', object: key, radius: 0.7, heldCarry: true,
     onHit(skull) {
       this.enabled = false;
       skull.grab('stairKey', key);
@@ -1902,7 +1902,7 @@ function basementAct(game) {
   fireboxTarget.enabled = false;
 
   keyTarget = world.addFetchTarget({
-    id: 'hatchKey', object: key, radius: 0.7, enabled: false,
+    id: 'hatchKey', object: key, radius: 0.7, enabled: false, heldCarry: true,
     onHit(skull) {
       this.enabled = false;
       skull.grab('hatchKey', key);
@@ -4846,12 +4846,43 @@ function voidDoorAct(game) {
     transferActive: false, transferComplete: false,
     transferFrames: 0, sparkIterations: 0,
     initialized: false, skull: null,
+    carryMaterials: [], activeProgramRig: null, programSelectionInvalidations: 0,
     contextRestorePrimes: 0,
     prewarmPending: true,
     sourceAt: new THREE.Vector3(), carriedAt: new THREE.Vector3(),
     register(source) {
       this.sources.push(source);
       return source;
+    },
+    forceCarryProgramSelection() {
+      // Three r161 deliberately sets `needsLights=false` for MeshBasicMaterial,
+      // even though light cardinality remains part of every program cache key.
+      // A HELD P2 selection can therefore survive a move to the shipping WORLD
+      // P16 rig until some unrelated state (such as output color space) changes.
+      // Bump only the two finite shared ember materials at an actual rig edge;
+      // all programs and buffers are already prepared by the residency lane.
+      if (!this.initialized || !this.carryMaterials.length) return 0;
+      for (const material of this.carryMaterials) material.needsUpdate = true;
+      this.programSelectionInvalidations++;
+      return this.carryMaterials.length;
+    },
+    selectCarryProgramRig(rig, force = false) {
+      if (rig !== 'world' && rig !== 'held') return false;
+      if (!force && this.activeProgramRig === rig) return false;
+      if (!this.forceCarryProgramSelection()) return false;
+      this.activeProgramRig = rig;
+      return true;
+    },
+    invalidateCarryProgramRig() {
+      this.activeProgramRig = null;
+    },
+    syncCarryProgramRig(force = false) {
+      const carriedSkull = this.skull;
+      if (!this.initialized || !game.flags.has('ateFlame') || game.terminal
+          || !carriedSkull || carriedSkull.mode === 'gone') return false;
+      return this.selectCarryProgramRig(
+        carriedSkull.mode === 'held' ? 'held' : 'world', force,
+      );
     },
     absorb(skull, source) {
       if (!this.initialized) {
@@ -4870,6 +4901,9 @@ function voidDoorAct(game) {
       this.transferFrames = 0;
       this.sparkIterations = 0;
       this.prewarmPending = false;
+      // The hit occurs while the skull is physically outbound. Select the exact
+      // cached WORLD program before either socket ember can become visible.
+      this.selectCarryProgramRig('world', true);
       if (source?.point) this.sourceAt.copy(source.point);
       else if (source?.flame?.getWorldPosition) source.flame.getWorldPosition(this.sourceAt);
       else skull.root.getWorldPosition(this.sourceAt);
@@ -4916,6 +4950,11 @@ function voidDoorAct(game) {
       const carriedSkull = this.skull;
       if (!game.flags.has('ateFlame') || game.dead || game.terminal
           || !carriedSkull || carriedSkull.mode === 'gone') return;
+
+      // Catch/rethrow changes the camera/light signature consumed by the shared
+      // Basic materials. The edge tracker makes the version bump once, while the
+      // render-side call in main closes any update-order gap before submission.
+      this.syncCarryProgramRig();
 
       let arrival = 1;
       if (this.transferActive) {
@@ -5018,6 +5057,7 @@ function voidDoorAct(game) {
     if (flameCircuit.embers.length !== 2) {
       throw new Error(`flame carry initialized ${flameCircuit.embers.length} socket embers`);
     }
+    flameCircuit.carryMaterials = [emberOuterMat, emberCoreMat];
     flameCircuit.initialized = true;
     return true;
   };
@@ -5045,6 +5085,7 @@ function voidDoorAct(game) {
     // the first caller to re-upload them.
     if (!flameCircuit.initialized || game.flags.has('ateFlame') || game.terminal) return false;
     flameCircuit.contextRestorePrimes++;
+    flameCircuit.invalidateCarryProgramRig();
     flameCircuit.prewarmPending = true;
     for (const ember of flameCircuit.embers) {
       ember.group.scale.setScalar(0);
