@@ -184,6 +184,15 @@ class Game {
 
     this._setupRenderer();
     this._setupScene();
+    this._buildGrain();
+    this._initCurrentGpuResidency();
+    // Start only the three Stage-B-owned signatures while the remaining
+    // CPU world is assembled. Each captured WebGLProgram is polled directly so
+    // the shared material cannot make one variant accidentally certify the
+    // other. The later 1x1 renders remain the sole residency certifications.
+    this._beginReducedBootstrapCompile('mesh-basic');
+    this._beginReducedBootstrapCompile('instanced-basic');
+    this._beginReducedBootstrapCompile('grain');
     this._buildGorePool();
     this._buildImpactFx();
 
@@ -277,7 +286,6 @@ class Game {
     this.holdFillLight.layers.set(LAYER_HELD);
     this.camera.add(this.holdFillLight);
     this._buildShaderBallast();
-    this._initCurrentGpuResidency();
 
     this.input = new InputState();
     this._wireInput();
@@ -291,7 +299,6 @@ class Game {
     this.checkpoint('bedroom');
     this.world.freezeMoonShadow(this.renderer, this.scene, this.camera);
 
-    this._buildGrain();
     this._exposeDebug();
     this._scheduleShaderWarmup();
     this.bootTiming.constructedAt = performance.now();
@@ -323,6 +330,9 @@ class Game {
       // this one, so its caches are fresh when the new generation is queued.
       this._webglGeneration++;
       this._resetCurrentGpuResidency?.('context-restored');
+      this._beginReducedBootstrapCompile?.('mesh-basic');
+      this._beginReducedBootstrapCompile?.('instanced-basic');
+      this._beginReducedBootstrapCompile?.('grain');
       this._dropQuality();
       // CPU-side Object3Ds survive GL loss, their buffers do not. Re-expose
       // the existing zero-scale flame representatives and impact ring until
@@ -399,8 +409,10 @@ class Game {
         }`,
     });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.grainMat);
+    quad.name = 'grain fullscreen quad';
     quad.position.z = -0.5;
     this.grainScene.add(quad);
+    this.grainQuad = quad;
   }
 
   _buildGorePool() {
@@ -678,18 +690,10 @@ class Game {
       side: THREE.DoubleSide,
       toneMapped: false,
     });
-    this._reducedLineMaterial = new THREE.LineBasicMaterial({
-      color: 0x202829,
-      fog: true,
-      toneMapped: false,
-    });
-    this._reducedPointsMaterial = new THREE.PointsMaterial({
-      color: 0x202829,
-      size: 0.025,
-      sizeAttenuation: true,
-      fog: true,
-      toneMapped: false,
-    });
+    // Stage B deliberately owns exactly two fallback program signatures:
+    // ordinary MeshBasic and monochrome InstancedMeshBasic. Decorative lines
+    // and particles wait for the hidden exact pass; compiling or drawing them
+    // in the playable silhouette caused the measured 614 ms first Points frame.
     this._reducedWorldBackground = new THREE.Color(0x030608);
     this._reducedWorldFrustum = new THREE.Frustum();
     this._reducedWorldProjection = new THREE.Matrix4();
@@ -697,6 +701,37 @@ class Game {
     this._reducedWorldCamera = new THREE.Vector3();
     this._gpuPrimeViewport = new THREE.Vector4();
     this._gpuPrimeScissor = new THREE.Vector4();
+    this._gpuResourceIds = new WeakMap();
+    this._gpuArrayIds = new WeakMap();
+    this._nextGpuResourceId = 1;
+    this._nextGpuArrayId = 1;
+
+    // These tiny real-camera scenes certify the two normalized reduced
+    // signatures one paint at a time. Both share one trivial geometry; the
+    // InstancedMesh has no instanceColor, exactly matching production clones.
+    this._reducedBootstrapScene = new THREE.Scene();
+    this._reducedBootstrapScene.name = 'reduced signature bootstrap';
+    this._reducedBootstrapScene.fog = this.scene.fog;
+    this._reducedBootstrapRoot = new THREE.Group();
+    this._reducedBootstrapRoot.matrixAutoUpdate = false;
+    this._reducedBootstrapScene.add(this._reducedBootstrapRoot);
+    const bootstrapGeometry = new THREE.PlaneGeometry(0.008, 0.008);
+    this._reducedBootstrapMesh = new THREE.Mesh(
+      bootstrapGeometry, this._reducedWorldMaterial,
+    );
+    this._reducedBootstrapMesh.name = 'reduced MeshBasic signature';
+    this._reducedBootstrapMesh.position.set(-0.01, 0, -0.5);
+    this._reducedBootstrapMesh.frustumCulled = false;
+    this._reducedBootstrapRoot.add(this._reducedBootstrapMesh);
+    this._reducedBootstrapInstanced = new THREE.InstancedMesh(
+      bootstrapGeometry, this._reducedWorldMaterial, 1,
+    );
+    this._reducedBootstrapInstanced.name = 'reduced monochrome InstancedMeshBasic signature';
+    this._reducedBootstrapInstanced.position.set(0.01, 0, -0.5);
+    this._reducedBootstrapInstanced.setMatrixAt(0, new THREE.Matrix4());
+    this._reducedBootstrapInstanced.instanceColor = null;
+    this._reducedBootstrapInstanced.frustumCulled = false;
+    this._reducedBootstrapRoot.add(this._reducedBootstrapInstanced);
     this._resetCurrentGpuResidency('boot');
   }
 
@@ -715,6 +750,10 @@ class Game {
     progress.queued.clear();
     progress.processed.clear();
     progress.geometrySeen.clear();
+    progress.geometryFingerprints.clear();
+    progress.admissionSeen.clear();
+    progress.resourceSeen.clear();
+    progress.objectFingerprints.clear();
     progress.ownerUniverse.clear();
     progress.ownerCovered.clear();
     progress.ownerHouse.clear();
@@ -727,6 +766,9 @@ class Game {
     progress.failedObjects.clear();
     progress.failedOwners.clear();
     progress.failedDeferred.clear();
+    progress.omittedReduced.clear();
+    progress.ownerExactOnly.clear();
+    progress.deferredExactOnly.clear();
     progress.cloneFailureEvents.length = 0;
   }
 
@@ -740,6 +782,11 @@ class Game {
       owners: new Set(),
       activeKey: null,
       activeSince: performance.now(),
+      bootstrapGeneration: this._webglGeneration,
+      bootstrapStatus: 'pending',
+      bootstrapPasses: [],
+      bootstrapNext: 0,
+      bootstrapCompiles: {},
       exactPasses: [],
       reducedPasses: [],
       ownerPasses: [],
@@ -759,6 +806,540 @@ class Game {
     };
   }
 
+  _beginReducedBootstrapCompile(kind) {
+    // Deterministic suites opt into all GPU warm work with ?warmup=1. Preserve
+    // their explicit no-warmup mode instead of leaking this early submission
+    // around _scheduleShaderWarmup's test guard.
+    if (TEST_MODE && !Q.has('warmup')) return null;
+    const object = kind === 'mesh-basic'
+      ? this._reducedBootstrapMesh
+      : kind === 'instanced-basic'
+        ? this._reducedBootstrapInstanced
+        : kind === 'grain'
+          ? this.grainQuad
+          : null;
+    if (!object) return null;
+    const camera = kind === 'grain' ? this.grainCam : this.camera;
+    const targetScene = kind === 'grain' ? this.grainScene : this._reducedBootstrapScene;
+    const material = object.material;
+    if (!camera || !targetScene || !material || Array.isArray(material)) return null;
+    const residency = this.currentGpuResidency;
+    if (!residency || residency.generation !== this._webglGeneration
+        || this.renderer.getContext()?.isContextLost?.()) return null;
+    const existing = residency.bootstrapCompiles?.[kind];
+    if (existing?.generation === this._webglGeneration) {
+      return existing;
+    }
+
+    const renderer = this.renderer;
+    const startedAt = performance.now();
+    const compile = {
+      generation: this._webglGeneration,
+      kind,
+      mode: typeof renderer.compile === 'function'
+        ? 'compile-plus-exact-readiness-poll'
+        : 'direct-render',
+      status: 'pending',
+      startedAt,
+      completedAt: null,
+      submitDurationMs: 0,
+      waitDurationMs: 0,
+      submitOverBudget: false,
+      readinessPolls: 0,
+      maxReadinessPollDurationMs: 0,
+      maxSynchronousSliceMs: 0,
+      completionSliceDurationMs: 0,
+      finalizationStatus: 'pending',
+      finalizationDurationMs: 0,
+      program: null,
+      programOwner: null,
+      afterSubmission: null,
+      atCompletion: null,
+      before: {
+        programs: renderer.info.programs?.length || 0,
+        textures: renderer.info.memory.textures,
+        geometries: renderer.info.memory.geometries,
+      },
+      error: null,
+    };
+    residency.bootstrapCompiles[kind] = compile;
+
+    if (typeof renderer.compile !== 'function') {
+      compile.status = 'ready';
+      compile.finalizationStatus = 'ready';
+      compile.completedAt = performance.now();
+      compile.waitDurationMs = compile.completedAt - startedAt;
+      return compile;
+    }
+
+    let program;
+    try {
+      // compileAsync calls compile() and then repeatedly looks up the material's
+      // mutable currentProgram. Both exact signatures intentionally share one
+      // production material, so overlapping compileAsync calls would make both
+      // promises observe only the last variant. Submit each exact object root
+      // with compile(), capture its actual program immediately, and reproduce
+      // Three's nonblocking isReady poll against that immutable identity. The
+      // synchronous submission is measured and hard-gated like every other
+      // bootstrap slice; no process-cold work escapes the telemetry.
+      renderer.compile(
+        object,
+        camera,
+        targetScene,
+      );
+      program = renderer.properties?.get?.(material)?.currentProgram;
+      if (!program?.isReady) {
+        throw new Error(`compiled ${kind} WebGLProgram is unavailable after submission`);
+      }
+      Object.defineProperty(compile, 'programRef', {
+        value: program,
+        enumerable: false,
+      });
+    } catch (caught) {
+      compile.submitDurationMs = performance.now() - startedAt;
+      compile.completedAt = performance.now();
+      compile.waitDurationMs = compile.completedAt - startedAt;
+      compile.status = 'failed';
+      compile.error = `exact program submission: ${caught?.message || caught}`;
+      return compile;
+    }
+
+    compile.submitDurationMs = performance.now() - startedAt;
+    compile.submitOverBudget = compile.submitDurationMs >= 100;
+    compile.afterSubmission = {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+      program: {
+        id: program.id ?? null,
+        cacheKey: `${program.cacheKey || ''}`,
+      },
+    };
+
+    const pollExactProgram = () => {
+      if (this.currentGpuResidency !== residency
+          || residency.bootstrapCompiles?.[kind] !== compile
+          || compile.generation !== this._webglGeneration
+          || compile.status !== 'pending') return;
+      const pollStartedAt = performance.now();
+      const synchronousSliceStartedAt = compile.readinessPolls === 0
+        ? startedAt
+        : pollStartedAt;
+      compile.readinessPolls++;
+      try {
+        const ready = program.isReady() === true;
+        const pollDurationMs = performance.now() - pollStartedAt;
+        compile.maxReadinessPollDurationMs = Math.max(
+          compile.maxReadinessPollDurationMs,
+          pollDurationMs,
+        );
+        if (!ready) {
+          compile.maxSynchronousSliceMs = Math.max(
+            compile.maxSynchronousSliceMs,
+            performance.now() - synchronousSliceStartedAt,
+          );
+          setTimeout(pollExactProgram, 10);
+          return;
+        }
+        compile.completedAt = performance.now();
+        compile.waitDurationMs = compile.completedAt - startedAt;
+        compile.atCompletion = {
+          programs: renderer.info.programs?.length || 0,
+          textures: renderer.info.memory.textures,
+          geometries: renderer.info.memory.geometries,
+          completionMode: 'captured-program-isReady',
+          program: {
+            id: program.id ?? null,
+            cacheKey: `${program.cacheKey || ''}`,
+            ready: true,
+          },
+        };
+        compile.status = 'ready';
+        this._finalizeReducedBootstrapProgram(compile);
+        compile.completionSliceDurationMs = performance.now() - pollStartedAt;
+        compile.maxSynchronousSliceMs = Math.max(
+          compile.maxSynchronousSliceMs,
+          performance.now() - synchronousSliceStartedAt,
+        );
+      } catch (caught) {
+        compile.maxReadinessPollDurationMs = Math.max(
+          compile.maxReadinessPollDurationMs,
+          performance.now() - pollStartedAt,
+        );
+        compile.completedAt = performance.now();
+        compile.waitDurationMs = compile.completedAt - startedAt;
+        compile.status = 'failed';
+        compile.error = `exact program completion: ${caught?.message || caught}`;
+        compile.maxSynchronousSliceMs = Math.max(
+          compile.maxSynchronousSliceMs,
+          performance.now() - synchronousSliceStartedAt,
+        );
+      }
+    };
+    pollExactProgram();
+    return compile;
+  }
+
+  _finalizeReducedBootstrapProgram(compile) {
+    if (!compile || compile.generation !== this._webglGeneration
+        || compile.status !== 'ready' || compile.finalizationStatus !== 'pending') {
+      return compile;
+    }
+    const object = compile.kind === 'mesh-basic'
+      ? this._reducedBootstrapMesh
+      : compile.kind === 'instanced-basic'
+        ? this._reducedBootstrapInstanced
+        : compile.kind === 'grain'
+          ? this.grainQuad
+          : null;
+    const startedAt = performance.now();
+    try {
+      // WebGLProgram intentionally defers link diagnostics plus active
+      // uniform/attribute reflection until its first draw. Materialize that
+      // exact captured program on its own measured paint; the subsequent real
+      // draw still owns geometry upload and is the only residency certificate.
+      const program = compile.programRef;
+      if (!object || !program?.getUniforms || !program?.getAttributes) {
+        throw new Error(`compiled ${compile.kind} WebGLProgram is unavailable for finalization`);
+      }
+      if (compile.atCompletion?.program?.id !== (program.id ?? null)
+          || compile.atCompletion?.program?.cacheKey !== `${program.cacheKey || ''}`) {
+        throw new Error(`completed ${compile.kind} WebGLProgram identity changed before finalization`);
+      }
+      const gl = this.renderer.getContext();
+      const linkStatus = gl.getProgramParameter(program.program, gl.LINK_STATUS);
+      if (!linkStatus) {
+        const programLog = gl.getProgramInfoLog(program.program) || '(no program log)';
+        const vertexLog = gl.getShaderInfoLog(program.vertexShader) || '(no vertex log)';
+        const fragmentLog = gl.getShaderInfoLog(program.fragmentShader) || '(no fragment log)';
+        throw new Error(`${compile.kind} link failed: ${programLog}; vertex: ${vertexLog}; fragment: ${fragmentLog}`);
+      }
+
+      // Three's debug path retrieves all three driver logs even after exact
+      // readiness and LINK_STATUS have proved this built-in program complete
+      // and valid. On ANGLE/D3D11 those redundant successful log reads were the
+      // measured 121.6 ms cliff. Suppress them only for this already-validated
+      // reflection, then restore the renderer policy.
+      const debug = this.renderer.debug;
+      const previousShaderErrorCheck = debug?.checkShaderErrors;
+      if (debug) debug.checkShaderErrors = false;
+      try {
+        program.getUniforms();
+        program.getAttributes();
+      } finally {
+        if (debug) debug.checkShaderErrors = previousShaderErrorCheck;
+      }
+      const cacheKey = `${program.cacheKey || ''}`;
+      const material = object.material;
+      // Three prefixes custom ShaderMaterial cache keys with two shader-cache
+      // IDs. Those numeric IDs are deliberately rebuilt after context restore;
+      // the shader sources and every remaining program parameter are stable.
+      // Preserve the raw per-generation key for exact intra-generation checks,
+      // and expose the source-bearing semantic identity for cross-generation
+      // equality instead of pretending volatile allocator IDs are semantics.
+      const shaderIdentity = material?.isShaderMaterial ? {
+        vertexShader: material.vertexShader,
+        fragmentShader: material.fragmentShader,
+        defines: Object.entries(material.defines || {})
+          .sort(([left], [right]) => left.localeCompare(right)),
+        glslVersion: material.glslVersion || null,
+        raw: material.isRawShaderMaterial === true,
+      } : null;
+      compile.program = {
+        id: program.id ?? null,
+        name: program.name || null,
+        cacheKey,
+        semanticCacheKey: shaderIdentity
+          ? cacheKey.split(',').slice(2).join(',')
+          : cacheKey,
+        volatileCachePrefixFields: shaderIdentity ? 2 : 0,
+        shaderIdentity,
+        linkStatus,
+        diagnosticsMode: 'exact-readiness-plus-link-status',
+      };
+      compile.programOwner = {
+        object: object.name,
+        objectType: object.type,
+        isMesh: object.isMesh === true,
+        isInstancedMesh: object.isInstancedMesh === true,
+        objectUuid: object.uuid,
+        geometryUuid: object.geometry?.uuid || null,
+        materialType: object.material?.type || null,
+        materialUuid: object.material?.uuid || null,
+      };
+      compile.finalizationStatus = 'ready';
+    } catch (caught) {
+      compile.finalizationStatus = 'failed';
+      compile.status = 'failed';
+      compile.error = `compiled program finalization: ${caught?.message || caught}`;
+    } finally {
+      compile.finalizationDurationMs = performance.now() - startedAt;
+    }
+    return compile;
+  }
+
+  _reducedBootstrapReady(kind = null) {
+    const residency = this.currentGpuResidency;
+    if (!residency || residency.generation !== this._webglGeneration) return false;
+    if (kind) return residency.bootstrapPasses.some((entry) =>
+      entry.generation === this._webglGeneration
+      && entry.kind === kind && entry.error == null);
+    return residency.bootstrapStatus === 'ready';
+  }
+
+  _resumeShaderWarmupAfterBootstrap() {
+    const state = this.shaderWarmup;
+    const run = this._shaderWarmupRun;
+    const residency = this.currentGpuResidency;
+    const reducedReady = !this.started || (!!residency?.activeKey
+      && residency.reduced.has(residency.activeKey));
+    if (!state || state.status !== 'bootstrap-wait' || !run
+        || state.generation !== this._webglGeneration
+        || !this._reducedBootstrapReady()
+        || !reducedReady
+        || state.bootstrapResumeScheduled) return;
+    state.bootstrapResumeScheduled = true;
+    const handle = setTimeout(() => {
+      if (state !== this.shaderWarmup || state.generation !== this._webglGeneration) return;
+      state.bootstrapResumeScheduled = false;
+      if (state.status === 'bootstrap-wait') run();
+    }, 0);
+    this._shaderWarmupCancel = () => clearTimeout(handle);
+  }
+
+  _advanceReducedBootstrap() {
+    const residency = this.currentGpuResidency;
+    const warmup = this.shaderWarmup;
+    if (!residency || residency.generation !== this._webglGeneration
+        || !warmup || warmup.status === 'skipped' || this.terminal
+        || this.renderer.getContext()?.isContextLost?.()) return null;
+    if (residency.bootstrapStatus === 'ready' || residency.bootstrapStatus === 'failed') {
+      return null;
+    }
+    const stages = ['mesh-basic', 'instanced-basic', 'grain'];
+    const kind = stages[residency.bootstrapNext];
+    if (!kind) {
+      residency.bootstrapStatus = 'ready';
+      this._resumeShaderWarmupAfterBootstrap();
+      return null;
+    }
+
+    const compile = this._beginReducedBootstrapCompile(kind);
+    if (compile?.status === 'pending') return null;
+    if (compile?.status === 'ready' && compile.finalizationStatus === 'pending') {
+      this._finalizeReducedBootstrapProgram(compile);
+      // Keep program reflection and the real draw on separate browser tasks.
+      // durationMs later reports their maximum, so neither slice is hidden.
+      return null;
+    }
+    if (compile?.status === 'failed') {
+      const before = compile.before;
+      const compileAfter = compile.afterSubmission || {
+        programs: this.renderer.info.programs?.length || 0,
+        textures: this.renderer.info.memory.textures,
+        geometries: this.renderer.info.memory.geometries,
+      };
+      const entry = {
+        generation: this._webglGeneration,
+        kind,
+        durationMs: Math.max(
+          compile.submitDurationMs,
+          compile.maxSynchronousSliceMs,
+          compile.finalizationDurationMs,
+        ),
+        renderDurationMs: 0,
+        compileMode: compile.mode,
+        compileSubmitDurationMs: compile.submitDurationMs,
+        compileWaitDurationMs: compile.waitDurationMs,
+        compileSubmitOverBudget: compile.submitOverBudget,
+        compileReadinessPolls: compile.readinessPolls,
+        compileMaxReadinessPollDurationMs: compile.maxReadinessPollDurationMs,
+        compileMaxSynchronousSliceMs: compile.maxSynchronousSliceMs,
+        compileCompletionSliceDurationMs: compile.completionSliceDurationMs,
+        compileFinalizationDurationMs: compile.finalizationDurationMs,
+        program: compile.program,
+        programOwner: compile.programOwner,
+        compileCompletion: compile.atCompletion,
+        programDelta: compileAfter.programs - before.programs,
+        textureDelta: compileAfter.textures - before.textures,
+        geometryDelta: compileAfter.geometries - before.geometries,
+        compileProgramDelta: compileAfter.programs - before.programs,
+        compileTextureDelta: compileAfter.textures - before.textures,
+        compileGeometryDelta: compileAfter.geometries - before.geometries,
+        renderProgramDelta: 0,
+        renderTextureDelta: 0,
+        renderGeometryDelta: 0,
+        error: compile.error || `exact ${kind} asynchronous preparation failed`,
+      };
+      residency.bootstrapPasses.push(entry);
+      residency.bootstrapStatus = 'failed';
+      residency.errors.push(`reduced bootstrap ${kind}: ${entry.error}`);
+      return entry;
+    }
+
+    const renderer = this.renderer;
+    const camera = this.camera;
+    const before = compile?.before || {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+    };
+    const renderBefore = {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+    };
+    let previousTarget = null;
+    let targetRead = false;
+    const previousViewport = new THREE.Vector4();
+    const previousScissor = new THREE.Vector4();
+    let viewportRead = false;
+    let scissorRead = false;
+    let previousScissorTest = false;
+    const previousAutoClear = renderer.autoClear;
+    const previousCameraMask = camera.layers.mask;
+    const startedAt = performance.now();
+    const restoreErrors = [];
+    let error = null;
+    try {
+      previousTarget = renderer.getRenderTarget();
+      targetRead = true;
+      renderer.getViewport(previousViewport);
+      viewportRead = true;
+      renderer.getScissor(previousScissor);
+      scissorRead = true;
+      previousScissorTest = renderer.getScissorTest();
+      renderer.setRenderTarget(null);
+      renderer.setViewport(0, 0, 1, 1);
+      renderer.setScissor(0, 0, 1, 1);
+      renderer.setScissorTest(true);
+      renderer.autoClear = true;
+      if (kind === 'grain') {
+        renderer.render(this.grainScene, this.grainCam);
+      } else {
+        this._reducedBootstrapScene.background = this._reducedWorldBackground;
+        this._reducedBootstrapScene.fog = this.scene.fog;
+        camera.updateMatrixWorld(true);
+        this._reducedBootstrapRoot.matrix.copy(camera.matrixWorld);
+        this._reducedBootstrapRoot.matrixWorld.copy(camera.matrixWorld);
+        this._reducedBootstrapRoot.matrixWorldNeedsUpdate = true;
+        this._reducedBootstrapMesh.visible = kind === 'mesh-basic';
+        this._reducedBootstrapInstanced.visible = kind === 'instanced-basic';
+        camera.layers.set(0);
+        renderer.render(this._reducedBootstrapScene, camera);
+      }
+    } catch (caught) {
+      error = caught;
+    } finally {
+      camera.layers.mask = previousCameraMask;
+      if (targetRead) {
+        try { renderer.setRenderTarget(previousTarget); }
+        catch (caught) { restoreErrors.push(`target: ${caught?.message || caught}`); }
+      }
+      if (viewportRead) {
+        try { renderer.setViewport(previousViewport); }
+        catch (caught) { restoreErrors.push(`viewport: ${caught?.message || caught}`); }
+      }
+      if (scissorRead) {
+        try { renderer.setScissor(previousScissor); }
+        catch (caught) { restoreErrors.push(`scissor: ${caught?.message || caught}`); }
+      }
+      if (targetRead || viewportRead || scissorRead) {
+        try { renderer.setScissorTest(previousScissorTest); }
+        catch (caught) { restoreErrors.push(`scissor test: ${caught?.message || caught}`); }
+      }
+      renderer.autoClear = previousAutoClear;
+      this._reducedBootstrapMesh.visible = false;
+      this._reducedBootstrapInstanced.visible = false;
+    }
+
+    const checkViewport = new THREE.Vector4();
+    const checkScissor = new THREE.Vector4();
+    try {
+      renderer.getViewport(checkViewport);
+      renderer.getScissor(checkScissor);
+      if (targetRead && renderer.getRenderTarget() !== previousTarget) restoreErrors.push('target mismatch');
+      if (viewportRead && !checkViewport.equals(previousViewport)) restoreErrors.push('viewport mismatch');
+      if (scissorRead && !checkScissor.equals(previousScissor)) restoreErrors.push('scissor mismatch');
+      if ((targetRead || viewportRead || scissorRead)
+          && renderer.getScissorTest() !== previousScissorTest) restoreErrors.push('scissor-test mismatch');
+      if (renderer.autoClear !== previousAutoClear) restoreErrors.push('autoClear mismatch');
+      if (camera.layers.mask !== previousCameraMask) restoreErrors.push('camera-mask mismatch');
+    } catch (caught) {
+      restoreErrors.push(`verification: ${caught?.message || caught}`);
+    }
+    const renderDurationMs = performance.now() - startedAt;
+    const compileSubmitDurationMs = compile?.submitDurationMs || 0;
+    const compileFinalizationDurationMs = compile?.finalizationDurationMs || 0;
+    const compileMaxSynchronousSliceMs = compile?.maxSynchronousSliceMs || 0;
+    const durationMs = Math.max(
+      renderDurationMs,
+      compileSubmitDurationMs,
+      compileMaxSynchronousSliceMs,
+      compileFinalizationDurationMs,
+    );
+    const transactionError = error?.message || (restoreErrors.length ? restoreErrors.join('; ') : null);
+    const after = {
+      programs: renderer.info.programs?.length || 0,
+      textures: renderer.info.memory.textures,
+      geometries: renderer.info.memory.geometries,
+    };
+    const compileAfter = compile?.afterSubmission || before;
+    const compileProgramDelta = compileAfter.programs - before.programs;
+    const compileTextureDelta = compileAfter.textures - before.textures;
+    const compileGeometryDelta = compileAfter.geometries - before.geometries;
+    const renderProgramDelta = after.programs - renderBefore.programs;
+    const renderTextureDelta = after.textures - renderBefore.textures;
+    const renderGeometryDelta = after.geometries - renderBefore.geometries;
+    const entry = {
+      generation: this._webglGeneration,
+      kind,
+      durationMs,
+      renderDurationMs,
+      // The two exact program submissions overlap before either real render.
+      // Attribute each signature only the resources created by its measured
+      // submission and certification slices, never unrelated intervening work.
+      programDelta: compile ? compileProgramDelta + renderProgramDelta : after.programs - before.programs,
+      textureDelta: compile ? compileTextureDelta + renderTextureDelta : after.textures - before.textures,
+      geometryDelta: compile ? compileGeometryDelta + renderGeometryDelta : after.geometries - before.geometries,
+      error: transactionError,
+    };
+    if (compile) {
+      entry.compileMode = compile.mode;
+      entry.compileSubmitDurationMs = compileSubmitDurationMs;
+      entry.compileWaitDurationMs = compile.waitDurationMs;
+      entry.compileSubmitOverBudget = compile.submitOverBudget;
+      entry.compileReadinessPolls = compile.readinessPolls;
+      entry.compileMaxReadinessPollDurationMs = compile.maxReadinessPollDurationMs;
+      entry.compileMaxSynchronousSliceMs = compileMaxSynchronousSliceMs;
+      entry.compileCompletionSliceDurationMs = compile.completionSliceDurationMs;
+      entry.compileFinalizationDurationMs = compileFinalizationDurationMs;
+      entry.program = compile.program;
+      entry.programOwner = compile.programOwner;
+      entry.compileCompletion = compile.atCompletion;
+      entry.compileProgramDelta = compileProgramDelta;
+      entry.compileTextureDelta = compileTextureDelta;
+      entry.compileGeometryDelta = compileGeometryDelta;
+      entry.renderProgramDelta = renderProgramDelta;
+      entry.renderTextureDelta = renderTextureDelta;
+      entry.renderGeometryDelta = renderGeometryDelta;
+    }
+    residency.bootstrapPasses.push(entry);
+    if (entry.error) {
+      residency.bootstrapStatus = 'failed';
+      residency.errors.push(`reduced bootstrap ${kind}: ${entry.error}`);
+      return entry;
+    }
+    residency.bootstrapNext++;
+    if (residency.bootstrapNext >= stages.length) {
+      residency.bootstrapStatus = 'ready';
+      this._resumeShaderWarmupAfterBootstrap();
+    } else {
+      residency.bootstrapStatus = 'pending';
+    }
+    return entry;
+  }
+
   _makeReducedWorldProgress(key) {
     const scene = new THREE.Scene();
     scene.name = `current silhouette ${key}`;
@@ -773,6 +1354,10 @@ class Game {
       queued: new Set(),
       processed: new Set(),
       geometrySeen: new Set(),
+      geometryFingerprints: new Set(),
+      admissionSeen: new Set(),
+      resourceSeen: new Set(),
+      objectFingerprints: new Map(),
       ownerUniverse: new Set(),
       ownerCovered: new Set(),
       ownerHouse: new Set(),
@@ -785,6 +1370,9 @@ class Game {
       failedObjects: new Set(),
       failedOwners: new Set(),
       failedDeferred: new Set(),
+      omittedReduced: new Map(),
+      ownerExactOnly: new Set(),
+      deferredExactOnly: new Set(),
       cloneFailureEvents: [],
       batches: 0,
       complete: false,
@@ -798,6 +1386,8 @@ class Game {
       deferredPromotedObjects: 0,
       deferredRecorded: false,
       deferredLabel: null,
+      blockedCritical: false,
+      blockedReason: null,
     };
   }
 
@@ -870,8 +1460,14 @@ class Game {
     let added = 0;
     const enqueue = (object, preloadOnly = false, preloadOwner = null,
       preloadDeferred = null) => {
-      if ((!object.isMesh && !object.isLine && !object.isPoints)
-          || !object.geometry || !object.material || progress.queued.has(object.uuid)) return;
+      if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
+        progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
+        if (preloadOwner) progress.ownerExactOnly.add(object.uuid);
+        if (preloadDeferred) progress.deferredExactOnly.add(object.uuid);
+        return;
+      }
+      if (!object?.isMesh || !object.geometry || !object.material
+          || progress.queued.has(object.uuid)) return;
       if (!preloadOnly
           && (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0) return;
       if (!preloadOnly && object.isInstancedMesh && object.count <= 0) return;
@@ -916,11 +1512,14 @@ class Game {
     enqueue(this._impactRing, true);
     enqueue(this.goreMesh, true);
     enqueue(this.enemies?.stainPool, true);
-    this.grainScene?.traverse((object) => enqueue(object, true));
     const registerOwnerRoot = (root, kind) => {
       root?.traverse((object) => {
-        if ((!object.isMesh && !object.isLine && !object.isPoints)
-            || !object.geometry || !object.material) return;
+        if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
+          progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
+          progress.ownerExactOnly.add(object.uuid);
+          return;
+        }
+        if (!object?.isMesh || !object.geometry || !object.material) return;
         progress.ownerUniverse.add(object.uuid);
         const ownerObjects = kind === 'house' ? progress.ownerHouse : progress.ownerFinale;
         const ownerGeometries = kind === 'house'
@@ -952,8 +1551,12 @@ class Game {
     progress.deferredLabel = deferred.label;
     const registerDeferredRoot = (root) => {
       root?.traverse((object) => {
-        if ((!object.isMesh && !object.isLine && !object.isPoints)
-            || !object.geometry || !object.material) return;
+        if ((object?.isLine || object?.isPoints) && object.geometry && object.material) {
+          progress.omittedReduced.set(object.uuid, object.isPoints ? 'points' : 'line');
+          progress.deferredExactOnly.add(object.uuid);
+          return;
+        }
+        if (!object?.isMesh || !object.geometry || !object.material) return;
         progress.deferredUniverse.add(object.uuid);
         progress.deferredGeometries.add(object.geometry.uuid);
         enqueue(object, true, null, deferred.label);
@@ -977,33 +1580,14 @@ class Game {
   }
 
   _cloneReducedRenderable(object, { preloadOnly = false } = {}) {
-    let clone;
-    try { clone = object.clone(false); } catch { clone = null; }
-    // A third-party/exotic subclass is not allowed to strand the physical room
-    // in reduced mode or silently drain a mirror owner universe. Fall back to a
-    // type-correct primitive that shares the exact live BufferGeometry. This is
-    // an upload silhouette, not a gameplay clone, so subclass behaviour is
-    // intentionally irrelevant; Line/Points/Instancing draw semantics are not.
-    if (!clone) {
-      try {
-        if (object.isInstancedMesh) {
-          clone = new THREE.InstancedMesh(
-            object.geometry,
-            this._reducedWorldMaterial,
-            Math.max(1, object.instanceMatrix?.count || object.count || 1),
-          );
-        } else if (object.isPoints) clone = new THREE.Points();
-        else if (object.isLineSegments) clone = new THREE.LineSegments();
-        else if (object.isLineLoop) clone = new THREE.LineLoop();
-        else if (object.isLine) clone = new THREE.Line();
-        else if (object.isSkinnedMesh) clone = new THREE.SkinnedMesh();
-        else clone = new THREE.Mesh();
-      } catch { return null; }
-    }
-    clone.geometry = object.geometry;
-    clone.material = object.isPoints
-      ? this._reducedPointsMaterial
-      : object.isLine ? this._reducedLineMaterial : this._reducedWorldMaterial;
+    if (!object?.isMesh || object.isLine || object.isPoints) return null;
+    let clone = null;
+    try {
+      clone = object.isInstancedMesh
+        ? new THREE.InstancedMesh(object.geometry, this._reducedWorldMaterial, 1)
+        : new THREE.Mesh(object.geometry, this._reducedWorldMaterial);
+    } catch { return null; }
+    clone.name = `reduced ${object.name || object.uuid}`;
     clone.visible = true;
     clone.frustumCulled = false;
     clone.matrixAutoUpdate = false;
@@ -1013,16 +1597,10 @@ class Game {
     if (object.isInstancedMesh) {
       clone.count = preloadOnly ? Math.max(1, object.count) : object.count;
       clone.instanceMatrix = object.instanceMatrix;
-      clone.instanceColor = object.instanceColor;
-    }
-    if (object.morphTargetInfluences) {
-      clone.morphTargetInfluences = object.morphTargetInfluences;
-      clone.morphTargetDictionary = object.morphTargetDictionary;
-    }
-    if (object.isSkinnedMesh) {
-      clone.skeleton = object.skeleton;
-      clone.bindMatrix.copy(object.bindMatrix);
-      clone.bindMatrixInverse.copy(object.bindMatrixInverse);
+      // A source instanceColor is conservatively charged by admission accounting
+      // but never attached here. That keeps the fallback on one monochrome
+      // InstancedMeshBasic signature and leaves the color buffer exact-deferred.
+      clone.instanceColor = null;
     }
     return clone;
   }
@@ -1039,7 +1617,7 @@ class Game {
   }
 
   _reducedPhysicalCandidate(object) {
-    if ((!object?.isMesh && !object?.isLine && !object?.isPoints)
+    if (!object?.isMesh || object.isLine || object.isPoints
         || !object.geometry || !object.material
         || (object.layers.mask & ((1 << 0) | (1 << LAYER_MAIN_ONLY))) === 0
         || (object.isInstancedMesh && object.count <= 0)) return false;
@@ -1800,154 +2378,374 @@ class Game {
     return entry;
   }
 
+  _gpuWeakIdentity(value, map, counterName) {
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return null;
+    let id = map.get(value);
+    if (id == null) {
+      id = this[counterName]++;
+      map.set(value, id);
+    }
+    return id;
+  }
+
+  _reducedResourceRecord(attribute, role, submitted = true) {
+    if (!attribute || attribute.isGLBufferAttribute) {
+      return { error: `${role}: unsupported external or missing buffer attribute` };
+    }
+    const source = attribute.isInterleavedBufferAttribute ? attribute.data : attribute;
+    const array = source?.array;
+    if (!source || !array || !ArrayBuffer.isView(array)) {
+      return { error: `${role}: buffer has no countable typed array` };
+    }
+    const byteLength = Number(array.byteLength);
+    const byteOffset = Number(array.byteOffset || 0);
+    const count = Number(source.count ?? attribute.count);
+    const itemSize = Number(attribute.itemSize || 0);
+    const version = Number(source.version || 0);
+    if (!Number.isSafeInteger(byteLength) || byteLength < 0
+        || !Number.isSafeInteger(byteOffset) || byteOffset < 0
+        || !Number.isFinite(count) || count < 0
+        || !Number.isFinite(itemSize) || itemSize <= 0
+        || !Number.isSafeInteger(version) || version < 0) {
+      return { error: `${role}: invalid buffer dimensions or version` };
+    }
+    const sourceId = this._gpuWeakIdentity(
+      source, this._gpuResourceIds, '_nextGpuResourceId',
+    );
+    const arrayId = this._gpuWeakIdentity(
+      array, this._gpuArrayIds, '_nextGpuArrayId',
+    );
+    const stride = Number(source.stride || itemSize);
+    const meshPerAttribute = Number(attribute.meshPerAttribute || 0);
+    const key = [
+      this._webglGeneration, sourceId, version, arrayId,
+      array.constructor?.name || 'TypedArray', byteOffset, byteLength,
+      count, stride, source.usage ?? attribute.usage ?? 0,
+      source.gpuType ?? attribute.gpuType ?? 0,
+    ].join(':');
+    const mappingKey = [
+      key, itemSize, Number(attribute.offset || 0),
+      Number(attribute.normalized), meshPerAttribute,
+    ].join('@');
+    return {
+      role, key, mappingKey, byteLength, submitted, sourceId, version,
+      count, itemSize, stride, arrayType: array.constructor?.name || null,
+    };
+  }
+
+  _describeReducedEntry(entry, progress) {
+    const object = entry?.object;
+    const geometry = object?.geometry;
+    if (!object?.isMesh || object.isLine || object.isPoints || !geometry) {
+      return { error: 'only Mesh and InstancedMesh are legal reduced signatures' };
+    }
+    const resources = [];
+    const roles = [];
+    const add = (attribute, role, submitted = true) => {
+      const record = this._reducedResourceRecord(attribute, role, submitted);
+      if (record.error) throw new Error(record.error);
+      resources.push(record);
+      roles.push(`${role}=${record.mappingKey}`);
+    };
+    try {
+      if (geometry.index) add(geometry.index, 'index', true);
+      for (const name of Object.keys(geometry.attributes || {}).sort()) {
+        add(geometry.attributes[name], `attribute:${name}`, name === 'position');
+      }
+      for (const name of Object.keys(geometry.morphAttributes || {}).sort()) {
+        const list = geometry.morphAttributes[name] || [];
+        for (let index = 0; index < list.length; index++) {
+          add(list[index], `morph:${name}:${index}`, false);
+        }
+      }
+      if (object.isInstancedMesh) {
+        add(object.instanceMatrix, 'instanceMatrix');
+        if (object.instanceColor) add(object.instanceColor, 'instanceColor', false);
+      }
+    } catch (caught) {
+      return { error: caught?.message || String(caught) };
+    }
+    const position = geometry.attributes?.position;
+    const available = Number(geometry.index?.count ?? position?.count);
+    if (!Number.isSafeInteger(available) || available < 0) {
+      return { error: 'geometry has no safe indexed or position draw count' };
+    }
+    const rangeStart = Number(geometry.drawRange?.start ?? 0);
+    const rangeCountValue = geometry.drawRange?.count ?? Number.POSITIVE_INFINITY;
+    const rangeCount = rangeCountValue === Number.POSITIVE_INFINITY
+      ? Number.POSITIVE_INFINITY : Number(rangeCountValue);
+    if (!Number.isSafeInteger(rangeStart) || rangeStart < 0
+        || (rangeCount !== Number.POSITIVE_INFINITY
+          && (!Number.isSafeInteger(rangeCount) || rangeCount < 0))) {
+      return { error: 'geometry has an invalid drawRange' };
+    }
+    const drawStart = Math.min(rangeStart, available);
+    const requestedEnd = rangeCount === Number.POSITIVE_INFINITY
+      ? available : Math.min(Number.MAX_SAFE_INTEGER, drawStart + rangeCount);
+    const drawEnd = Math.min(available, requestedEnd);
+    const drawElements = Math.max(0, drawEnd - drawStart);
+    let effectiveInstances = 1;
+    if (object.isInstancedMesh) {
+      const sourceCount = Number(object.count);
+      const matrixCapacity = Number(object.instanceMatrix?.count);
+      const colorCapacity = object.instanceColor ? Number(object.instanceColor.count) : null;
+      if (!Number.isSafeInteger(sourceCount) || sourceCount < 0
+          || !Number.isSafeInteger(matrixCapacity) || matrixCapacity < 0) {
+        return { error: 'InstancedMesh has an invalid count or matrix capacity' };
+      }
+      effectiveInstances = entry.preloadOnly ? Math.max(1, sourceCount) : sourceCount;
+      if (effectiveInstances > matrixCapacity
+          || (colorCapacity != null && (!Number.isSafeInteger(colorCapacity)
+            || colorCapacity < sourceCount))) {
+        return { error: 'InstancedMesh count exceeds matrix/color capacity' };
+      }
+    }
+    const submittedElements = drawElements * effectiveInstances;
+    if (!Number.isSafeInteger(submittedElements)) {
+      return { error: 'submitted element count overflows a safe integer' };
+    }
+    const unique = new Map();
+    for (const resource of resources) {
+      const existing = unique.get(resource.key);
+      if (!existing) unique.set(resource.key, { ...resource });
+      else existing.submitted ||= resource.submitted;
+    }
+    const referencedBytes = [...unique.values()]
+      .reduce((total, resource) => total + resource.byteLength, 0);
+    const exactDeferredBytes = [...unique.values()]
+      .filter((resource) => !resource.submitted)
+      .reduce((total, resource) => total + resource.byteLength, 0);
+    const drawRangeKey = `${drawStart}:${rangeCount === Number.POSITIVE_INFINITY
+      ? 'Infinity' : rangeCount}:${drawEnd}`;
+    const geometryFingerprint = [
+      geometry.uuid, drawRangeKey, Number(geometry.morphTargetsRelative),
+      ...roles.sort(),
+    ].join('|');
+    const objectFingerprint = [
+      object.uuid, geometryFingerprint, effectiveInstances,
+      ...[...unique.values()].map((resource) =>
+        `${resource.role}:${resource.key}:${Number(resource.submitted)}`).sort(),
+    ].join('|');
+    return {
+      object, geometry, resources: [...unique.values()],
+      geometryFingerprint, objectFingerprint,
+      referencedBytes, exactDeferredBytes,
+      drawElements, effectiveInstances, submittedElements,
+      displayName: object.name || `(unnamed ${object.type} ${object.uuid})`,
+      type: object.type, objectUuid: object.uuid, geometryUuid: geometry.uuid,
+    };
+  }
+
   _submitReducedWorldBatch(progress, {
-    geometryBudget = 16, objectBudget = 32, ownerOnly = false, deferredOnly = false,
+    geometryBudget = 16,
+    objectBudget = 32,
+    byteBudget = 512 * 1024,
+    elementBudget = 16 * 1024,
+    ownerOnly = false,
+    deferredOnly = false,
   } = {}) {
     const renderer = this.renderer;
     const camera = this.camera;
     const residency = this.currentGpuResidency;
-    if (!progress || progress.key !== residency?.activeKey || !progress.scene) return null;
+    if (!progress || progress.key !== residency?.activeKey || !progress.scene
+        || residency.generation !== this._webglGeneration
+        || !this._reducedBootstrapReady('mesh-basic')
+        || !this._reducedBootstrapReady('instanced-basic')) return null;
 
-    let objects = 0;
-    let geometries = 0;
+    const queue = ownerOnly
+      ? progress.ownerQueue : deferredOnly ? progress.deferredQueue : progress.queue;
+    if (!ownerOnly && !deferredOnly && progress.blockedCritical) return null;
+    if (!queue.length) return null;
+    const batchScene = new THREE.Scene();
+    batchScene.name = 'transient reduced batch ' + progress.key;
+    batchScene.background = this._reducedWorldBackground;
+    batchScene.fog = this.scene.fog;
+    const stagedEntries = [];
+    const stagedResourceKeys = new Set();
+    const stagedGeometryKeys = new Set();
     const types = { meshes: 0, lines: 0, points: 0 };
+    let admissionBytes = 0;
+    let referencedBytes = 0;
+    let submittedResourceBytes = 0;
+    let exactDeferredBytes = 0;
+    let submittedElements = 0;
+    let maxGeometryBytes = 0;
     let preloadObjects = 0;
     let ownerPreloadObjects = 0;
     let ownerPreloadGeometries = 0;
     let deferredPreloadObjects = 0;
     let deferredPreloadGeometries = 0;
-    let geometryBytes = 0;
-    let maxGeometryBytes = 0;
-    let vertices = 0;
-    const geometrySize = (geometry) => {
-      const arrays = new Set();
-      const include = (attribute) => {
-        const array = attribute?.isInterleavedBufferAttribute
-          ? attribute.data?.array : attribute?.array;
-        if (array) arrays.add(array);
-      };
-      include(geometry?.index);
-      for (const attribute of Object.values(geometry?.attributes || {})) include(attribute);
-      for (const attributes of Object.values(geometry?.morphAttributes || {})) {
-        for (const attribute of attributes || []) include(attribute);
+    let oversize = null;
+    let stagingFailure = null;
+
+    const rollbackStaging = () => {
+      for (const staged of stagedEntries) staged.clone.removeFromParent();
+      while (batchScene.children.length) {
+        batchScene.remove(batchScene.children[batchScene.children.length - 1]);
       }
-      let bytes = 0;
-      for (const array of arrays) bytes += array.byteLength || 0;
-      return { bytes, vertices: geometry?.attributes?.position?.count || 0 };
     };
-    const transientPreloads = [];
-    const stagedEntries = [];
-    const stagedGeometryKeys = new Set();
-    const queue = ownerOnly
-      ? progress.ownerQueue : deferredOnly ? progress.deferredQueue : progress.queue;
-    let deferredCloneFailure = null;
-    while (queue.length && objects < objectBudget) {
-      const next = queue[0];
-      const geometryKey = next.object.geometry?.uuid || next.object.uuid;
-      const newGeometry = !progress.geometrySeen.has(geometryKey)
-        && !stagedGeometryKeys.has(geometryKey);
-      if (newGeometry && geometries >= geometryBudget) break;
-      queue.shift();
+    const cloneFailure = (next, queueIndex) => {
+      next.cloneFailures = (next.cloneFailures || 0) + 1;
+      const permanent = next.cloneFailures >= 3;
+      const failure = {
+        object: next.object.name || next.object.uuid,
+        objectUuid: next.object.uuid,
+        type: next.object.type,
+        owner: next.preloadOwner || null,
+        deferred: next.preloadDeferred || null,
+        attempt: next.cloneFailures,
+        permanent,
+      };
+      progress.cloneFailureEvents.push(failure);
+      if (permanent) {
+        if (ownerOnly || deferredOnly) {
+          queue.splice(queueIndex, 1);
+          progress.queued.delete(next.object.uuid);
+        }
+        if (!ownerOnly && !deferredOnly) {
+          progress.failedObjects.add(next.object.uuid);
+          progress.blockedCritical = true;
+          progress.blockedReason = 'clone:' + next.object.uuid;
+        }
+        if (next.preloadOwner) progress.failedOwners.add(next.object.uuid);
+        if (next.preloadDeferred) progress.failedDeferred.add(next.object.uuid);
+        residency.errors.push('reduced clone failed permanently: ' + next.object.uuid);
+      }
+      return failure;
+    };
+
+    for (let queueIndex = 0; queueIndex < queue.length; queueIndex++) {
+      if (stagedEntries.length >= objectBudget) break;
+      const next = queue[queueIndex];
+      const descriptor = this._describeReducedEntry(next, progress);
+      if (descriptor.error) {
+        stagingFailure = {
+          object: next.object?.name || next.object?.uuid || '(unknown)',
+          objectUuid: next.object?.uuid || null,
+          type: next.object?.type || null,
+          error: descriptor.error,
+          permanent: true,
+          accounting: true,
+        };
+        if (!ownerOnly && !deferredOnly) {
+          progress.failedObjects.add(next.object.uuid);
+          progress.blockedCritical = true;
+          progress.blockedReason = 'accounting:' + (next.object?.uuid || 'unknown');
+        } else {
+          // Hidden consumers fail closed, but a permanently uncountable entry
+          // must not spin the same full-frame queue forever. Quarantine only
+          // that owner/deferred entry; its failed set still prevents readiness.
+          queue.splice(queueIndex, 1);
+          progress.queued.delete(next.object.uuid);
+        }
+        if (next.preloadOwner) progress.failedOwners.add(next.object.uuid);
+        if (next.preloadDeferred) progress.failedDeferred.add(next.object.uuid);
+        residency.errors.push('reduced accounting blocked: '
+          + (next.object?.uuid || 'unknown') + ': ' + descriptor.error);
+        break;
+      }
+      const newResources = descriptor.resources.filter((resource) =>
+        !progress.admissionSeen.has(resource.key) && !stagedResourceKeys.has(resource.key));
+      const nextAdmissionBytes = newResources
+        .reduce((total, resource) => total + resource.byteLength, 0);
+      const nextSubmittedResourceBytes = newResources
+        .filter((resource) => resource.submitted)
+        .reduce((total, resource) => total + resource.byteLength, 0);
+      const nextExactDeferredBytes = newResources
+        .filter((resource) => !resource.submitted)
+        .reduce((total, resource) => total + resource.byteLength, 0);
+      const newGeometry = !stagedGeometryKeys.has(descriptor.geometryFingerprint);
+      const candidate = {
+        objects: stagedEntries.length + 1,
+        geometries: stagedGeometryKeys.size + Number(newGeometry),
+        bytes: admissionBytes + nextAdmissionBytes,
+        elements: submittedElements + descriptor.submittedElements,
+      };
+      const violations = [];
+      if (candidate.objects > objectBudget) violations.push('objects');
+      if (candidate.geometries > geometryBudget) violations.push('geometries');
+      if (candidate.bytes > byteBudget) violations.push('bytes');
+      if (candidate.elements > elementBudget) violations.push('submitted-elements');
+      if (violations.length && stagedEntries.length) break;
+      if (violations.length) {
+        oversize = {
+          object: descriptor.displayName,
+          name: descriptor.displayName,
+          objectUuid: descriptor.objectUuid,
+          type: descriptor.type,
+          geometryUuid: descriptor.geometryUuid,
+          reason: violations.join(', '),
+          bytes: nextAdmissionBytes,
+          submittedElements: descriptor.submittedElements,
+          limits: {
+            geometries: geometryBudget,
+            objects: objectBudget,
+            bytes: byteBudget,
+            submittedElements: elementBudget,
+          },
+        };
+      }
+
       const clone = this._cloneReducedRenderable(next.object, {
         preloadOnly: next.preloadOnly,
       });
       if (!clone) {
-        next.cloneFailures = (next.cloneFailures || 0) + 1;
-        const permanent = next.cloneFailures >= 3;
-        const failure = {
-          object: next.object.uuid,
-          type: next.object.type,
-          owner: next.preloadOwner || null,
-          deferred: next.preloadDeferred || null,
-          attempt: next.cloneFailures,
-          permanent,
-        };
-        progress.cloneFailureEvents.push(failure);
-        deferredCloneFailure = failure;
-        if (!permanent) {
-          // Retry on a later paint. Breaking instead of spinning this queue keeps
-          // a faulty object from consuming the rest of the frame budget.
-          queue.push(next);
-          break;
-        }
-        progress.queued.delete(next.object.uuid);
-        progress.processed.add(next.object.uuid);
-        // A hidden owner-universe failure must keep only that pane dark; it may
-        // not poison an otherwise complete physical room. Once an owner object
-        // is promoted into the physical queue `ownerOnly` is false, so the same
-        // failure correctly blocks both exact world reveal and pane reveal.
-        if (!ownerOnly && !deferredOnly) progress.failedObjects.add(next.object.uuid);
-        if (next.preloadOwner) progress.failedOwners.add(next.object.uuid);
-        if (next.preloadDeferred) progress.failedDeferred.add(next.object.uuid);
-        residency.errors.push(`reduced clone failed permanently: ${next.object.uuid}`);
+        stagingFailure = cloneFailure(next, queueIndex);
         break;
       }
-      progress.scene.add(clone);
-      stagedEntries.push({ next, clone, geometryKey, newGeometry });
+      batchScene.add(clone);
+      const staged = {
+        next,
+        clone,
+        descriptor,
+        newResources,
+        newGeometry,
+        fingerprint: descriptor.objectFingerprint,
+      };
+      stagedEntries.push(staged);
+      for (const resource of newResources) stagedResourceKeys.add(resource.key);
+      stagedGeometryKeys.add(descriptor.geometryFingerprint);
+      admissionBytes += nextAdmissionBytes;
+      referencedBytes += descriptor.referencedBytes;
+      submittedResourceBytes += nextSubmittedResourceBytes;
+      exactDeferredBytes += nextExactDeferredBytes;
+      submittedElements += descriptor.submittedElements;
+      maxGeometryBytes = Math.max(maxGeometryBytes, nextAdmissionBytes);
+      types.meshes++;
       if (next.preloadOnly) {
         preloadObjects++;
         if (next.preloadOwner) ownerPreloadObjects++;
         if (next.preloadDeferred) deferredPreloadObjects++;
-        transientPreloads.push(clone);
       }
-      objects++;
-      if (next.object.isPoints) types.points++;
-      else if (next.object.isLine) types.lines++;
-      else types.meshes++;
-      if (newGeometry) {
-        stagedGeometryKeys.add(geometryKey);
-        geometries++;
-        if (next.preloadOwner) ownerPreloadGeometries++;
-        if (next.preloadDeferred) deferredPreloadGeometries++;
-        const size = geometrySize(next.object.geometry);
-        geometryBytes += size.bytes;
-        maxGeometryBytes = Math.max(maxGeometryBytes, size.bytes);
-        vertices += size.vertices;
-      }
+      if (newGeometry && next.preloadOwner) ownerPreloadGeometries++;
+      if (newGeometry && next.preloadDeferred) deferredPreloadGeometries++;
+      if (oversize) break;
     }
-    if (!objects) {
-      // A failed attempt still owns this paint. In particular, a final owner
-      // entry may not fall through and certify its pane on the same frame.
-      return deferredCloneFailure ? {
+
+    if (stagingFailure) {
+      rollbackStaging();
+      return {
         key: progress.key,
         kind: ownerOnly ? 'owner-clone-retry'
           : deferredOnly ? 'deferred-clone-retry' : 'reduced-clone-retry',
         objects: 0,
         geometries: 0,
-        ownerPreloadObjects: 0,
-        ownerPreloadGeometries: 0,
-        deferredPreloadObjects: 0,
-        deferredPreloadGeometries: 0,
-        geometryDelta: 0,
-        durationMs: 0,
-        deferred: !deferredCloneFailure.permanent,
-        failed: deferredCloneFailure.permanent,
-        cloneFailure: deferredCloneFailure,
-      } : null;
+        submittedObjects: 0,
+        submittedElements: 0,
+        geometryBytes: 0,
+        types,
+        error: stagingFailure.error || null,
+        cloneFailure: stagingFailure,
+        deferred: !stagingFailure.permanent,
+        failed: !!stagingFailure.permanent,
+      };
     }
+    if (!stagedEntries.length) return null;
 
+    const submittedObjects = batchScene.children.length;
+    const persistentObjectsBefore = progress.scene.children.length;
     const startedAt = performance.now();
     const identityProgramsBefore = this._gpuIdentityProgramSnapshot();
-    const identitySources = GPU_IDENTITY_TRACE ? stagedEntries.slice(0, 64).map((staged) => {
-      const source = staged.next.object;
-      const size = geometrySize(source.geometry);
-      const materials = Array.isArray(source.material) ? source.material : [source.material];
-      return {
-        object: source.name || '(unnamed)',
-        objectType: source.type,
-        objectUuid: source.uuid,
-        geometryUuid: source.geometry?.uuid || null,
-        geometryBytes: size.bytes,
-        vertices: size.vertices,
-        newGeometry: staged.newGeometry,
-        preloadOnly: !!staged.next.preloadOnly,
-        preloadOwner: staged.next.preloadOwner || null,
-        preloadDeferred: staged.next.preloadDeferred || null,
-        materials: materials.filter(Boolean).map((material) => ({
-          name: material.name || '(unnamed)', type: material.type, uuid: material.uuid,
-        })),
-      };
-    }) : null;
     const before = {
       programs: renderer.info.programs?.length || 0,
       textures: renderer.info.memory.textures,
@@ -1955,6 +2753,8 @@ class Game {
     };
     let previousTarget = null;
     let targetRead = false;
+    const previousViewport = new THREE.Vector4();
+    const previousScissor = new THREE.Vector4();
     let viewportRead = false;
     let scissorRead = false;
     let previousScissorTest = false;
@@ -1966,9 +2766,9 @@ class Game {
     try {
       previousTarget = renderer.getRenderTarget();
       targetRead = true;
-      renderer.getViewport(this._gpuPrimeViewport);
+      renderer.getViewport(previousViewport);
       viewportRead = true;
-      renderer.getScissor(this._gpuPrimeScissor);
+      renderer.getScissor(previousScissor);
       scissorRead = true;
       previousScissorTest = renderer.getScissorTest();
       renderer.setRenderTarget(null);
@@ -1977,19 +2777,14 @@ class Game {
       renderer.setScissorTest(true);
       renderer.autoClear = true;
       camera.layers.set(0);
-      progress.scene.fog = this.scene.fog;
-      renderer.render(progress.scene, camera);
+      renderer.render(batchScene, camera);
       identityProgramResult = this._gpuIdentityProgramSummary(identityProgramsBefore, {
-        roots: [progress.scene], camera,
+        roots: [batchScene], camera,
       });
     } catch (caught) {
       error = caught;
     } finally {
       camera.layers.mask = previousMask;
-      // Preload-only skull/stage/tether clones have done their one hidden draw.
-      // Keep the accumulated current-world silhouettes, but never reveal these
-      // invisible/future story resources in the reduced playable view.
-      for (const clone of transientPreloads) clone.removeFromParent();
       if (targetRead) {
         let restored = false;
         let lastError = null;
@@ -1997,20 +2792,55 @@ class Game {
           try { renderer.setRenderTarget(previousTarget); restored = true; }
           catch (caught) { lastError = caught; }
         }
-        if (!restored) restoreErrors.push(`target: ${lastError?.message || lastError}`);
+        if (!restored) restoreErrors.push('target: ' + (lastError?.message || lastError));
       }
       if (viewportRead) {
-        try { renderer.setViewport(this._gpuPrimeViewport); }
-        catch (caught) { restoreErrors.push(`viewport: ${caught?.message || caught}`); }
+        try { renderer.setViewport(previousViewport); }
+        catch (caught) { restoreErrors.push('viewport: ' + (caught?.message || caught)); }
       }
       if (scissorRead) {
-        try { renderer.setScissor(this._gpuPrimeScissor); }
-        catch (caught) { restoreErrors.push(`scissor: ${caught?.message || caught}`); }
+        try { renderer.setScissor(previousScissor); }
+        catch (caught) { restoreErrors.push('scissor: ' + (caught?.message || caught)); }
       }
       try { renderer.setScissorTest(previousScissorTest); }
-      catch (caught) { restoreErrors.push(`scissor test: ${caught?.message || caught}`); }
+      catch (caught) { restoreErrors.push('scissor test: ' + (caught?.message || caught)); }
       renderer.autoClear = previousAutoClear;
     }
+
+    const checkViewport = new THREE.Vector4();
+    const checkScissor = new THREE.Vector4();
+    try {
+      renderer.getViewport(checkViewport);
+      renderer.getScissor(checkScissor);
+      if (targetRead && renderer.getRenderTarget() !== previousTarget) {
+        restoreErrors.push('target mismatch');
+      }
+      if (viewportRead && !checkViewport.equals(previousViewport)) {
+        restoreErrors.push('viewport mismatch');
+      }
+      if (scissorRead && !checkScissor.equals(previousScissor)) {
+        restoreErrors.push('scissor mismatch');
+      }
+      if (renderer.getScissorTest() !== previousScissorTest) {
+        restoreErrors.push('scissor-test mismatch');
+      }
+      if (renderer.autoClear !== previousAutoClear) restoreErrors.push('autoClear mismatch');
+      if (camera.layers.mask !== previousMask) restoreErrors.push('camera-mask mismatch');
+    } catch (caught) {
+      restoreErrors.push('verification: ' + (caught?.message || caught));
+    }
+    const generationStable = residency === this.currentGpuResidency
+      && residency.generation === this._webglGeneration
+      && progress.key === residency.activeKey;
+    const queuePrefixStable = stagedEntries.every((staged, index) =>
+      queue[index] === staged.next);
+    const fingerprintsStable = stagedEntries.every((staged) => {
+      const current = this._describeReducedEntry(staged.next, progress);
+      return !current.error && current.objectFingerprint === staged.fingerprint;
+    });
+    if (!generationStable) restoreErrors.push('generation/key changed during transaction');
+    if (!queuePrefixStable) restoreErrors.push('queue prefix changed during transaction');
+    if (!fingerprintsStable) restoreErrors.push('buffer fingerprint changed during transaction');
 
     const durationMs = performance.now() - startedAt;
     const entry = {
@@ -2018,58 +2848,94 @@ class Game {
       kind: ownerOnly ? 'owner-preload-batch'
         : deferredOnly ? 'deferred-preload-batch' : 'reduced-batch',
       batch: ++progress.batches,
-      objects,
-      geometries,
+      objects: stagedEntries.length,
+      submittedObjects,
+      geometries: stagedGeometryKeys.size,
       types,
       preloadObjects,
       ownerPreloadObjects,
       ownerPreloadGeometries,
       deferredPreloadObjects,
       deferredPreloadGeometries,
-      geometryBytes,
+      geometryBytes: admissionBytes,
+      referencedBytes,
+      submittedResourceBytes,
+      exactDeferredBytes,
       maxGeometryBytes,
-      vertices,
-      visibleObjects: objects - preloadObjects,
+      vertices: submittedElements,
+      submittedElements,
+      visibleObjects: stagedEntries.length - preloadObjects,
       physicalReady: residency.physical.has(progress.key),
+      oversize,
+      isolatedOversize: !!oversize,
+      persistentObjectsBefore,
       durationMs,
       programDelta: (renderer.info.programs?.length || 0) - before.programs,
       textureDelta: renderer.info.memory.textures - before.textures,
       geometryDelta: renderer.info.memory.geometries - before.geometries,
+      stateRestored: restoreErrors.length === 0,
+      generationStable,
+      fingerprintsStable,
+      queuePrefixStable,
+      committed: false,
       error: error?.message || (restoreErrors.length ? restoreErrors.join('; ') : null),
     };
     if (GPU_IDENTITY_TRACE) {
       entry.identity = {
-        sources: identitySources,
         programIdentity: identityProgramResult,
+        sources: stagedEntries.slice(0, 64).map(({ next, descriptor, newGeometry }) => ({
+          object: descriptor.displayName,
+          objectType: descriptor.type,
+          objectUuid: descriptor.objectUuid,
+          geometryUuid: descriptor.geometryUuid,
+          geometryBytes: descriptor.referencedBytes,
+          submittedElements: descriptor.submittedElements,
+          effectiveInstances: descriptor.effectiveInstances,
+          newGeometry,
+          preloadOnly: !!next.preloadOnly,
+          preloadOwner: next.preloadOwner || null,
+          preloadDeferred: next.preloadDeferred || null,
+        })),
       };
     }
     residency.reducedPasses.push(entry);
     residency.maxReducedPrimeMs = Math.max(residency.maxReducedPrimeMs, durationMs);
     if (entry.error) {
-      // Coverage is a GPU fact, not a planning fact. If the hidden draw or any
-      // renderer-state restoration failed, remove every staged silhouette and
-      // put the exact source entries back at the head of their owning queue.
-      // A context-loss race can therefore never drain/certify a district or
-      // mirror universe whose BufferGeometries did not actually cross WebGL.
-      for (const staged of stagedEntries) staged.clone.removeFromParent();
-      queue.unshift(...stagedEntries.map((staged) => staged.next));
-      residency.errors.push(`reduced:${progress.key}: ${entry.error}`);
+      rollbackStaging();
+      residency.errors.push('reduced:' + progress.key + ': ' + entry.error);
+      entry.rollbackReason = entry.error;
       return null;
     }
+
+    let persistentObjectsAdded = 0;
     for (const staged of stagedEntries) {
-      const { next, geometryKey, newGeometry } = staged;
+      const { next, clone, descriptor } = staged;
+      if (next.preloadOnly) clone.removeFromParent();
+      else {
+        progress.scene.add(clone);
+        persistentObjectsAdded++;
+      }
       progress.processed.add(next.object.uuid);
+      progress.objectFingerprints.set(next.object.uuid, descriptor.objectFingerprint);
+      progress.geometrySeen.add(descriptor.geometryUuid);
+      progress.geometryFingerprints.add(descriptor.geometryFingerprint);
+      for (const resource of descriptor.resources) {
+        progress.admissionSeen.add(resource.key);
+        if (resource.submitted) progress.resourceSeen.add(resource.key);
+      }
       if (progress.ownerUniverse.has(next.object.uuid)) {
         progress.ownerCovered.add(next.object.uuid);
       }
       if (progress.deferredUniverse.has(next.object.uuid)) {
         progress.deferredCovered.add(next.object.uuid);
       }
-      if (newGeometry) progress.geometrySeen.add(geometryKey);
     }
+    queue.splice(0, stagedEntries.length);
+    entry.persistentObjectsAdded = persistentObjectsAdded;
+    entry.persistentObjectsAfter = progress.scene.children.length;
+    entry.committed = true;
     return entry;
   }
-
   _recordOwnerGpuUniverse(progress) {
     const residency = this.currentGpuResidency;
     if (!progress || !progress.ownerUniverse.size || progress.ownerRecorded
@@ -2084,6 +2950,8 @@ class Game {
       finale: progress.ownerFinale.size,
       houseGeometries: progress.ownerHouseGeometries.size,
       finaleGeometries: progress.ownerFinaleGeometries.size,
+      exactOnlyDecorative: progress.ownerExactOnly.size,
+      exactOnlyMembers: [...progress.ownerExactOnly].sort(),
       batches: progress.batches,
       members: [...progress.ownerUniverse].sort(),
       coveredMembers: [...progress.ownerCovered].sort(),
@@ -2109,6 +2977,8 @@ class Game {
       total: progress.deferredUniverse.size,
       covered: progress.deferredCovered.size,
       geometries: progress.deferredGeometries.size,
+      exactOnlyDecorative: progress.deferredExactOnly.size,
+      exactOnlyMembers: [...progress.deferredExactOnly].sort(),
       members: [...progress.deferredUniverse].sort(),
       coveredMembers: [...progress.deferredCovered].sort(),
       promotionChecks: progress.deferredPromotionChecks,
@@ -2131,6 +3001,13 @@ class Game {
     }
     const residency = this.currentGpuResidency;
     const key = this._currentGpuResidencyKey();
+    // A bootstrap submission already owns this paint. Do not stack a real
+    // geometry upload behind it, and never draw the fallback before both Basic
+    // signatures are resident in this WebGL generation.
+    if (this._bootstrapAdvancedThisRender || !this._reducedBootstrapReady('mesh-basic')
+        || !this._reducedBootstrapReady('instanced-basic')) {
+      return { full: false, key, bootstrapPending: true };
+    }
     if (residency.activeKey !== key) {
       this._clearReducedWorldProgress();
       residency.reduced.delete(residency.activeKey);
@@ -2652,17 +3529,31 @@ class Game {
     }
     const run = () => {
       this._shaderWarmupCancel = null;
-      this._shaderWarmupRun = null;
       if (state !== this.shaderWarmup || state.generation !== this._webglGeneration) {
+        this._shaderWarmupRun = null;
         state.status = 'invalidated';
         state.reason ||= 'stale-generation';
         return;
       }
       if (this.terminal) {
+        this._shaderWarmupRun = null;
         state.status = 'skipped';
         state.reason = 'terminal';
         return;
       }
+      // The playable fallback is itself a shader consumer. Let its two tiny
+      // Basic signatures and the real grain quad cross WebGL first, one paint
+      // each, before broad district compileAsync work can contend with Wake.
+      const reducedReady = !this.started || (!!this.currentGpuResidency?.activeKey
+        && this.currentGpuResidency.reduced.has(this.currentGpuResidency.activeKey));
+      if (!this._reducedBootstrapReady() || !reducedReady) {
+        state.status = 'bootstrap-wait';
+        state.reason = this._reducedBootstrapReady()
+          ? 'reduced-silhouette-residency' : 'reduced-bootstrap';
+        this._shaderWarmupRun = run;
+        return;
+      }
+      this._shaderWarmupRun = null;
       // Chrome exposes KHR_parallel_shader_compile through compileAsync. If an
       // older renderer has only the synchronous compiler and play has already
       // begun, do not replace a later organic hitch with one giant artificial
@@ -4712,16 +5603,19 @@ class Game {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(innerWidth, innerHeight);
     }
+    const bootstrapEntry = this._advanceReducedBootstrap();
+    this._bootstrapAdvancedThisRender = !!bootstrapEntry;
     if (!this.started) {
-      // The title is real DOM key art and controls, not a reason to submit the
-      // assembled house, held pass and shadow rig before the player has even
-      // clicked. Warmup owns its tiny offscreen scenes independently. Keeping
-      // this frame GPU-empty gives the title a deterministic paint and leaves
-      // all dormant-resource primes armed for the first delivered game frame.
+      // The DOM title has already received two paint boundaries before Game is
+      // constructed. Its WebGL work is limited to one tiny Stage-B signature;
+      // the assembled house, held pass and shadow rig remain untouched.
       this.lastRender = {
         drawCalls: 0, triangles: 0,
         worldDrawCalls: 0, worldTriangles: 0,
         heldDrawCalls: 0, heldTriangles: 0,
+        grainSubmitted: false,
+        grainCertified: this._reducedBootstrapReady('grain'),
+        bootstrapKind: bootstrapEntry?.kind || null,
       };
       if (firstBootRender) this.bootTiming.firstRenderEndedAt = performance.now();
       return;
@@ -4898,6 +5792,13 @@ class Game {
       visibleProgramDelta: 0,
       visibleTextureDelta: 0,
       visibleGeometryDelta: 0,
+      grainSubmitted: false,
+      grainCertified: this._reducedBootstrapReady('grain')
+        || this.shaderWarmup?.status === 'skipped',
+      grainProgramDelta: null,
+      grainTextureDelta: null,
+      grainGeometryDelta: null,
+      bootstrapKind: bootstrapEntry?.kind || null,
     };
     this.grainMat.uniforms.uTime.value = REDUCED_MOTION ? 0 : this.time % 300;
     this.grainMat.uniforms.uFear.value = this.fx.fear;
@@ -4906,13 +5807,32 @@ class Game {
     // the last delivered frame for that bounded slice; simulation and input
     // continue, and the next paint resumes normally without the former
     // multi-second `renderer.render` stall.
-    if (!skipGpuSubmission) this.renderer.render(this.grainScene, this.grainCam);
+    const grainCertified = this._reducedBootstrapReady('grain')
+      || this.shaderWarmup?.status === 'skipped';
+    if (!skipGpuSubmission && grainCertified && !this._bootstrapAdvancedThisRender) {
+      const grainBefore = {
+        programs: this.renderer.info.programs?.length || 0,
+        textures: this.renderer.info.memory.textures,
+        geometries: this.renderer.info.memory.geometries,
+      };
+      this.renderer.render(this.grainScene, this.grainCam);
+      this.lastRender.grainSubmitted = true;
+      this.lastRender.grainProgramDelta =
+        (this.renderer.info.programs?.length || 0) - grainBefore.programs;
+      this.lastRender.grainTextureDelta =
+        this.renderer.info.memory.textures - grainBefore.textures;
+      this.lastRender.grainGeometryDelta =
+        this.renderer.info.memory.geometries - grainBefore.geometries;
+    }
     this.lastRender.visibleProgramDelta =
       (this.renderer.info.programs?.length || 0) - visibleBefore.programs;
     this.lastRender.visibleTextureDelta =
       this.renderer.info.memory.textures - visibleBefore.textures;
     this.lastRender.visibleGeometryDelta =
       this.renderer.info.memory.geometries - visibleBefore.geometries;
+    if (this.currentGpuResidency?.reducedFrames > 0) {
+      this._resumeShaderWarmupAfterBootstrap();
+    }
     this.renderer.autoClear = true;
     if (this._impactRing.userData.bootPrime && !skipGpuSubmission && !reducedDetail) {
       this._impactRing.userData.bootPrime = false;
