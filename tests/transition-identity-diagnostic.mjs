@@ -36,6 +36,82 @@ try {
       }
       if (!predicate()) throw new Error(`identity diagnostic timed out: ${label}`);
     };
+    const waitForShaderReady = async () => {
+      const generation = g._webglGeneration;
+      const snapshot = () => {
+        const shader = g.shaderWarmup;
+        const residency = g.currentGpuResidency;
+        const progress = residency?.progressive;
+        const lastJob = shader?.compileJobs?.at(-1);
+        return {
+          generation: g._webglGeneration,
+          shaderGeneration: shader?.generation ?? null,
+          status: shader?.status || null,
+          reason: shader?.reason || null,
+          recoveryRound: shader?.recoveryRound ?? null,
+          recoveryScheduled: !!shader?.recoveryScheduled,
+          setupSlices: shader?.setupSlices?.length || 0,
+          compileSlices: shader?.compileSlices?.length || 0,
+          textureSlices: shader?.textureSlices?.length || 0,
+          compileJobs: shader?.compileJobs?.length || 0,
+          compileJobsInFlight: shader?.compileJobsInFlight || 0,
+          compileInFlightLabel: shader?.compileInFlightLabel || null,
+          pendingTextures: shader?.pendingTextures || 0,
+          currentExactKey: shader?.currentExactKey || null,
+          currentExactRevision: shader?.currentExactRevision ?? null,
+          currentExactStatus: shader?.currentExactStatus || null,
+          currentExactSignatureSlices: shader?.currentExactSignatureSlices ?? null,
+          currentExactLiveSignatureSlices: shader?.currentExactLiveSignatureSlices ?? null,
+          readyVariants: shader?.readyVariants?.length || 0,
+          lastReadyVariant: shader?.readyVariants?.at(-1) || null,
+          lastJob: lastJob ? {
+            label: lastJob.label || null,
+            settledMs: lastJob.settledMs ?? null,
+            error: lastJob.error || null,
+          } : null,
+          residencyGeneration: residency?.generation ?? null,
+          activeKey: residency?.activeKey || null,
+          progressKey: progress?.key || null,
+          physical: !!(residency?.activeKey && residency.physical?.has(residency.activeKey)),
+          snapshotPhase: progress?.snapshotPhase || null,
+          snapshotSlices: progress?.snapshotSlices ?? null,
+          batches: progress?.batches ?? null,
+          queue: progress?.queue?.length || 0,
+          processed: progress?.processed?.size ?? null,
+          exactQueue: progress?.exactQueue?.length || 0,
+          exactCovered: progress?.exactCovered?.size || 0,
+          exactUniverse: progress?.exactUniverse?.size || 0,
+          exactShaderRevision: progress?.exactShaderRevision ?? null,
+          reducedPasses: residency?.reducedPasses?.length || 0,
+          exactPreloadPasses: residency?.exactPreloadPasses?.length || 0,
+          errorCount: shader?.errors?.length || 0,
+          lastError: shader?.errors?.at(-1) || null,
+        };
+      };
+      const signature = () => JSON.stringify(snapshot());
+      const hardDeadline = performance.now() + 240000;
+      let progressDeadline = performance.now() + 30000;
+      let previous = signature();
+      while (performance.now() < hardDeadline) {
+        const shader = g.shaderWarmup;
+        if (!shader || g._webglGeneration !== generation
+            || shader.generation !== generation || shader.status === 'invalidated'
+            || shader.status === 'skipped'
+            || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
+          throw new Error(`identity shader warmup entered a terminal state: ${signature()}`);
+        }
+        if (shader.status === 'ready') return;
+        const next = signature();
+        if (next !== previous) {
+          previous = next;
+          progressDeadline = performance.now() + 30000;
+        } else if (performance.now() >= progressDeadline) {
+          throw new Error(`identity shader warmup made no progress: ${next}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`identity shader warmup exceeded 240s: ${signature()}`);
+    };
     const stats = () => ({
       programs: g.renderer.info.programs?.length || 0,
       textures: g.renderer.info.memory.textures,
@@ -77,7 +153,7 @@ try {
     g._selfStep = false;
     F.teleport('house');
     if (g.skull.mode !== 'held') g.skull.holdNow();
-    await waitFor(() => g.shaderWarmup?.status === 'ready', 'shader ready');
+    await waitForShaderReady();
     await waitFor(() => g.currentGpuResidency?.physical?.has(g._currentGpuResidencyKey())
       && !g.lastRender?.reducedDetail, 'first exact house world');
     await waitFor(() => {
