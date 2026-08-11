@@ -1,10 +1,13 @@
 # FETCH — complete current walkthrough (designer's copy)
 
-This is the spoiler-complete route for the **public 2026-08-10
-`0.5.0-intruder` production release**, which supersedes the older
-`0.4.0-ossuary` release. It describes what the current source
-expects the player to learn, what is mandatory, what is optional, how failure
-recovers, and which pieces of apparent scenery are actually systemic.
+This is the spoiler-complete route for the **implemented 2026-08-10 polish
+candidate** in
+`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-polish-20260810`.
+It describes what the candidate expects the player to learn, what is mandatory,
+what is optional, how failure recovers, and which pieces of apparent scenery
+are actually systemic. It is not a production claim: the candidate is still
+uncommitted and under final QA; the public site remains `0.5.0-intruder` until
+the source/package/preview/production chain is independently completed.
 
 ## Controls and universal rules
 
@@ -38,15 +41,34 @@ The mandatory chain is a partial order rather than one compulsory room order:
 
 ```text
 bedroom key + nursery key
-  -> servant bell and three cellar boards
+  -> servant bell
 servant bell
-  -> optional early upstairs flame
-servant bell + all boards
-  -> cellar -> alternate basement-pilot flame + pump
-either flame + latched pump
-  -> incinerator -> hatch key -> grave resolution -> ossuary
-  -> forest tree/forks/mire rope -> waterfall -> Underfalls hatch -> mirror contact
+  -> guest flame may be stolen immediately or on a later return
+servant bell + all 3 cellar boards (either order)
+  -> cellar -> alternate basement-pilot flame
+either flame -> ateFlame
+continuous pump hold/cross -> pumpGalleryLatched
+ateFlame + pumpGalleryLatched
+  -> open furnace -> keep the skull held through the refusal -> ash key -> hatch
+  -> grave resolution -> physical ossuary descent/counterweight/far climb
+  -> forest tree/forks/mire rope -> ground Kneeler bow OR 3-knot canopy bypass
+  -> waterfall -> 8-stone bridge -> guided Underfalls hatch -> mirror contact
 ```
+
+Required: both opening keys; one servant-bell solution; all three cellar boards;
+either flame source; the pump hold/cross; one continuous furnace refusal; ash
+key and hatch; one graveyard resolution; the physical ossuary counterweight and
+far climb; fallen tree, both fork commitments, and mire rope; either a safe
+ground passage past the Kneeler or the three-knot canopy bypass; waterfall
+sacrifice and raised-stone crossing; Underfalls main route/hatch; mirror contact.
+
+Optional or alternate: locket; nursery mobile management; the bell method not
+chosen; the flame source not chosen; both house visitors, lag mirror, and return
+horror; kennel counterweight and responsive archive; the graveyard resolution
+not chosen and tactical hero graves; forest story objects, two secret rope
+pockets, and the three-wave forest arena; the Kneeler passage not chosen;
+Underfalls dry-return/bell-cistern shortcut. Optional means it can be skipped
+without blocking the ending, not that it is inert scenery.
 
 ## Act 0 — locked bedroom
 
@@ -153,13 +175,15 @@ The bell circuit exposes two deliberate routes to the same required state:
 - **Upstairs route:** return above the stairs and throw the skull into the tall
   candle inside the bell-opened guest room. This is the safer early pickup.
 - **Basement route:** after the bell and all three cellar boards, descend and
-  hit the conspicuous caged pilot lantern on the first landing. This is a real
-  alternate, not a secret hidden among the decorative valves.
+  hit the conspicuous raised pilot flame on the first landing. Its reflector,
+  open-center cage, and conduit toward the boiler room distinguish it from the
+  decorative hardware. This is a real alternate, not a secret hidden among the
+  valves.
 
-The first source hit dies into the skull's sockets, disables/extinguishes the
-other source atomically, and brightens the carried light. Either earns the one
-shared `ateFlame` state required by the incinerator. Taking both is neither
-possible nor necessary.
+The first source hit visibly crosses the gap into two moving flames in the
+skull's sockets, disables/extinguishes the other source atomically, and
+brightens the carried light. Either earns the one shared `ateFlame` state
+required by the incinerator. Taking both is neither possible nor necessary.
 
 ### Deterministic return horror
 
@@ -183,14 +207,18 @@ stairs, through dining, into the kitchen, and finally to the cellar boards.
 
 The kitchen cellar door is visibly nailed shut by three boards. Hit each board
 once with an outbound skull. One throw removes one plank; the returning leg
-cannot credit another. The planks tear loose with loud impacts.
+cannot credit another. The planks tear loose with loud impacts, clatter for a
+bounded moment, then retire completely instead of lying across the opened
+threshold.
 
 The first break brings the Resident. It is large and permanent: one hit buys a
 short stun, but it cannot be popped. Closed doors, alternate room connections,
 and fixed-point attack tells are the player's route-making tools. The cellar
 opens only when **both** conditions are true: all three boards are gone and the
 servant bell has released the visible brass latch. Either order reconciles to
-the same open door. The Resident does not follow into the basement.
+the same open door. On release, the bolt retracts and its guide rings fold into
+dark jamb sleeves; the open door's collider no longer blocks the player. The
+Resident does not follow into the basement.
 
 ## Act 2 — basement and under-house works
 
@@ -223,9 +251,10 @@ Enter the old pump works through the crawl-side heavy door.
    returns and the route remains open.
 
 The blind archive beyond the bridge contains six generations of mismatched pump
-hardware. It is environmental history and a safe place to inspect the result,
-not another hidden key requirement. Deep-basement culling hides the upper house
-behind the floor while preserving the real cellar sightline.
+hardware. Its wheels now answer locally when struck so they do not pose as dead
+controls, but it remains environmental history and a safe place to inspect the
+result—not another hidden key requirement. Deep-basement culling hides the
+upper house behind the floor while preserving the real cellar sightline.
 
 ### Required puzzle: incinerator refusal
 
@@ -236,9 +265,13 @@ Return to the boiler-room incinerator and use its fire door.
   hidden in the machine gallery.
 - With the flame but no latched pump, the dead pressure gauge and pump response
   point back to the under-house draft.
-- With both `ateFlame` and `pumpGalleryLatched`, throw the skull into the open
-  firebox. The furnace roars, tries, fails to burn it, and commits the refusal.
-  The jammed ash pan opens and the hatch key becomes fetchable.
+- With both `ateFlame` and `pumpGalleryLatched`, opening the fire door reveals a
+  real cavity filled by five large moving flame tongues. Throw the skull into
+  that firebox and **keep LMB held**. The same continuous offer owns the full
+  sentence: roar, burn, choke, backdraft, ash-pan kick, and exposed key.
+- Releasing before the backdraft immediately returns the skull and rearms the
+  visible firebox. Dying or leaving during the hold also cancels it; no delayed
+  callback can produce a key after an interrupted attempt.
 
 Fetch the key from the ash pan. Throw the carrying skull at the hatch padlock;
 the lock/chain visibly release. Then press E on the hatch panel. The committed
@@ -306,23 +339,27 @@ Finishing either grave route does **not** magically open the forest gate. The
 left/west mausoleum's false doorway clears, its floor slab sinks, and a stair
 throat appears.
 
-1. Enter while holding the skull. The game moves directly into the enclosed
-   under-yard route without a camera pan or input lock.
-2. Follow the dirty center track through three alternating baffles. Two shallow
+1. Enter while holding the skull. The terrain, former slab, collision, and
+   vegetation clear the same aperture; walk down all twelve visible treads under
+   normal movement. There is no hole-trigger teleport, camera pan, or input lock.
+2. Follow the dirty center track through the alternating baffles. Two shallow
    pockets contain atmosphere, not alternate solution keys. A standing witness
    turns only between looks.
 3. At the far mechanism, throw the skull into the counterweight wheel and keep
    holding. Short pulls decay when released; progress cannot be banked.
 4. One uninterrupted hold lowers the weight, drops the far exit slab, sinks the
    witness, and opens the surface iron gate with a proper gate creak.
-5. Walk through the far opening and climb the hatch. It emerges just beyond the
-   graveyard gate, faces the player into the trees, commits the forest act, and
-   takes a forest checkpoint in the same fixed step.
+5. Walk through the far opening and climb all fifteen visible rise treads. The
+   final stair reaches a separate hatch wholly beyond the graveyard gate; only
+   crossing that physical surface opening commits the forest act and takes the
+   forest checkpoint.
 
-Before solving the counterweight, walking back out of the entrance returns to
-the mausoleum safely. Inside the ossuary, exterior districts are hidden for
-performance and restored exactly on a backtrack; the far hatch intentionally
-retires the completed house/yard district.
+Before solving the counterweight, walking the same entrance stair back up
+returns to the mausoleum safely. The far emergence preserves the player's view
+and live controls rather than reseating them in a disorienting cut. Inside the
+ossuary, exterior districts are hidden for performance and restored exactly on
+a backtrack; the far hatch intentionally retires the completed house/yard
+district.
 
 ## Act 4 — the forest that makes choices permanent
 
@@ -418,17 +455,31 @@ quiet, grows the skull, and places a post-arena checkpoint. A player who keeps
 moving into the sincere clearing escapes the unfinished fight; the clearing
 retires its enemies rather than leaking a wave scheduler into the safe space.
 
-### Bell copse and Kneeler
+### Bell copse, three-knot canopy chain, and Kneeler
 
 The second optional rope pocket leads to a bell frame and marker stones all
 turned back toward the house. It uses the same visible-deadfall and held-swing
 law as the searchers' line.
 
-Near the end, the Kneeler waits beside the route. Walk quietly past it. Loud
-movement inside its wake radius makes it rise; it is faster than a walker and
-cannot be killed. After a forest death/respawn, the encounter has a 3.25-second
-grace window before the Kneeler can exist again, so the player can see, move,
-aim, or throw instead of being re-caught before input begins.
+Near the end, the Kneeler waits across the route. It is immortal, but the
+candidate now presents two explicit traversal answers:
+
+- **Ground answer:** aim at the pale burden and pronged ring carried above its
+  body. One outbound hit makes the entire Kneeler bow, not merely flash, and
+  grants a long enough fixed passage window to sprint beyond it. A quiet pass
+  before it wakes remains possible, but striking the burden is the reliable
+  authored read after it rises.
+- **Canopy answer:** the first of three visible knots begins before the Kneeler
+  and the third rejoins the trail beyond it. Throw, hold through the swing,
+  release, catch, and throw again. Each knot is a real second outbound throw:
+  players may use the marked grounded shelf between stages or make a genuine
+  midair release/catch/rethrow transfer. The chain is an alternate route, not a
+  hidden requirement layered on top of the ground answer.
+
+After a forest death/respawn, the encounter has a 3.25-second grace window
+before an unresolved Kneeler can exist again. Completing either passage keeps
+it from being rebuilt at the far checkpoint, so the player cannot be re-caught
+before input begins.
 
 The crooked final arch opens into the clearing. The Kneeler and forest pressure
 do not follow into the sincere space.
@@ -441,9 +492,10 @@ and a layered waterfall ahead. Nothing hunts here.
 
 The grown skull repeatedly turns toward the falls. Throw it into the waterfall.
 This is the one time the game's promise breaks: it vanishes and cannot be
-called. Stone steps rise one by one through the basin and the waterfall barrier
-opens. Cross the visible stones and walk through the water/rock veil into the
-cave.
+called. Eight stone steps rise one by one through the basin and the waterfall
+barrier opens. The new first stone begins close to the dry shore; none becomes
+collision before its visible top has crossed the authored threshold. Cross the
+raised stones and walk through the water/rock veil into the cave.
 
 If the optional bedroom locket was taken, it does not vanish with the skull.
 After a few breaths it appears on the shore with a chime. Inspect/use it for the
@@ -454,6 +506,15 @@ optional keepsake resolution before leaving.
 The player is now skull-less: no weapon, carried light, or ordinary fetch
 solution. Underfalls is a 125.158 m authored district whose visual floor,
 collision clamp, line of sight, and enemy navigation all use the same route.
+
+The floor itself now distinguishes direction from diversion without a HUD. A
+bounded current of bright calcite flakes points and pulses forward along the
+entire required route. The optional dry-return culvert uses five dark,
+crosswise broken slates with no forward pulse. Near the end, a vertical shaft
+and bright ceiling ring mark the real hatch from more than ten metres away;
+the preceding leg has a clear sightline to it. These signals have no collider,
+interaction, or progression state—their only job is to tell the truth about the
+space.
 
 The main path has thirteen named beats:
 
@@ -525,9 +586,14 @@ There is no puzzle prompt and no hidden combat solution. The ending is contact:
   fires once and then explicitly stops animation frames, audio, forest/cave
   loops, house/finale mirror targets, and retained warm-up resources.
 
-That is the current public route. The preceding `0.4.0-ossuary` release and site
-PR #34 are historical. The bell/pilot/crawler/pause/title revision landed
-through source [PR #17](https://github.com/duplighost/fetch/pull/17),
-Qualiacology [PR #35](https://github.com/duplighost/qualiacology/pull/35), and
-verified Netlify production deploy `6a79a4b384c0e400081ad376`; the live game is
-`https://qualiacology.com/fetch/` at `0.5.0-intruder`.
+That is the implemented candidate route. It becomes a public route only after
+the frozen-source focused/GPU/canonical gates, deterministic package, source
+merge, Qualiacology preview acceptance, production merge, and fresh live probe
+all succeed. None of those final identities exists yet for this candidate.
+
+The public baseline remains the earlier bell/pilot/crawler/pause/title revision:
+source [PR #17](https://github.com/duplighost/fetch/pull/17), Qualiacology
+[PR #35](https://github.com/duplighost/qualiacology/pull/35), and verified
+Netlify production deploy `6a79a4b384c0e400081ad376`, serving
+`https://qualiacology.com/fetch/` at `0.5.0-intruder`. See the newest
+`docs/HANDOFF.md` section for the candidate's exact unfinished release gates.

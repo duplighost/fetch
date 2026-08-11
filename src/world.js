@@ -538,7 +538,10 @@ export class World {
     const moon = new THREE.DirectionalLight(0x8098c0, 1.3);
     moon.position.set(35, 60, -25);
     moon.castShadow = true;
-    moon.shadow.mapSize.set(2048, 2048);
+    // 1024 retains a soft authored moon break without making an idle title
+    // prime allocate a 2048-square depth attachment. Never increase this again
+    // without the title + immediate-Wake D3D11 gate.
+    moon.shadow.mapSize.set(1024, 1024);
     moon.shadow.camera.left = -60; moon.shadow.camera.right = 60;
     moon.shadow.camera.top = 60; moon.shadow.camera.bottom = -60;
     moon.shadow.bias = -0.0004;
@@ -547,13 +550,97 @@ export class World {
   }
 
   freezeMoonShadow(renderer, scene, camera) {
-    renderer.shadowMap.needsUpdate = true;
-    renderer.render(scene, camera);
+    // Do not render the assembled world from the Game constructor. Besides
+    // making the title wait on a large shadow-map allocation, that eager
+    // render used the boot camera's combined WORLD + HELD mask. The first
+    // physical frame is deliberately shadow-free so DOM/title presentation
+    // wins; an idle boundary later arms exactly one layer-0 prime.
+    this._moonShadowFreezePending = true;
+    this._moonShadowPrimeArmed = false;
+    this._moonShadowPrimeInFlight = false;
+    renderer.shadowMap.needsUpdate = false;
     // Freeze the MOON only. This used to switch renderer.shadowMap.autoUpdate
     // off globally, from the bedroom, at boot — which baked the house's shadow
     // map forever and meant nothing in the rest of the game could ever cast a
     // shadow again, including the light the player carries in their hands.
+    if (this.moon) {
+      this.moon.shadow.autoUpdate = false;
+      this.moon.shadow.needsUpdate = false;
+    }
+    // Context-restored play deliberately keeps the frozen shadow unallocated.
+    // Preserving castShadow keeps the fixed shader signature exact, while a
+    // null frozen map is the safe visual fallback and cannot hitch live input.
+    if (this._moonShadowFirstWorldPainted) {
+      this._moonShadowFreezePending = false;
+      return;
+    }
+  }
+
+  _scheduleMoonShadowPrime() {
+    if (!this._moonShadowFreezePending || this._moonShadowPrimeScheduled) return;
+    const arm = () => {
+      this._moonShadowPrimeScheduled = null;
+      if (this._moonShadowFreezePending) this._moonShadowPrimeArmed = true;
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const handle = requestIdleCallback(arm, { timeout: 1800 });
+      this._moonShadowPrimeScheduled = () => {
+        if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle);
+      };
+    } else {
+      const handle = setTimeout(arm, 120);
+      this._moonShadowPrimeScheduled = () => clearTimeout(handle);
+    }
+  }
+
+  retireMoonShadowPrime() {
+    // Wake won the race with the title-idle window. A pending idle callback is
+    // no longer allowed to turn into a 1024-square shadow allocation during
+    // movement; keep castShadow itself intact so the fixed shader signature
+    // remains A1/H1/D1/S1/P16 with one directional-shadow define.
+    this._moonShadowPrimeScheduled?.();
+    this._moonShadowPrimeScheduled = null;
+    this._moonShadowPrimeArmed = false;
+    this._moonShadowPrimeInFlight = false;
+    this._moonShadowFreezePending = false;
+    if (this.moon) {
+      this.moon.shadow.autoUpdate = false;
+      this.moon.shadow.needsUpdate = false;
+    }
+    return true;
+  }
+
+  prepareMoonShadowFrame(renderer, allowPrime = true) {
+    if (!this._moonShadowFreezePending || !this._moonShadowPrimeArmed) return false;
+    if (!allowPrime) {
+      // The title-idle window was missed. Retire the request permanently for
+      // this context rather than letting the timeout land 1.8s into movement.
+      this._moonShadowPrimeArmed = false;
+      this._moonShadowFreezePending = false;
+      return false;
+    }
+    this._moonShadowPrimeArmed = false;
+    this._moonShadowPrimeInFlight = true;
+    renderer.shadowMap.needsUpdate = true;
+    if (this.moon) {
+      this.moon.shadow.autoUpdate = true;
+      this.moon.shadow.needsUpdate = true;
+    }
+    return true;
+  }
+
+  completeMoonShadowFreeze() {
+    if (!this._moonShadowFirstWorldPainted) {
+      this._moonShadowFirstWorldPainted = true;
+      this._scheduleMoonShadowPrime();
+    }
+    if (!this._moonShadowPrimeInFlight) return false;
+    this._moonShadowPrimeInFlight = false;
+    this._moonShadowFreezePending = false;
+    // Freeze the moon only. Renderer-wide autoUpdate remains enabled so later
+    // authored local shadow lights are never accidentally frozen with it.
     if (this.moon) this.moon.shadow.autoUpdate = false;
+    return true;
   }
 
   _buildCandlePool() {

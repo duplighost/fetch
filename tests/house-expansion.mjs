@@ -199,6 +199,89 @@ try {
       && !preRelayDoor.relay && !preRelayDoor.voidDoorOpen && !preRelayDoor.flameEnabled,
     'E cannot counterfeit an open void door before the required window relay', preRelayDoor);
 
+  const mirrorDeath = await page.evaluate(() => {
+    const F = window.__FETCH, g = window.__game;
+    F.teleport('house');
+    g.enemies.list.length = 0;
+    const mirror = g.houseMirror;
+    const originalTink = g.audio.glassTink;
+    let tinks = 0;
+    g.audio.glassTink = (...args) => {
+      const cue = args[0] || {};
+      // Several earlier house mechanisms can have delayed glass cues pending in
+      // the same deterministic clock. Count only the lag-mirror's authored
+      // one-shot signature so unrelated relay/door feedback cannot poison this
+      // death-lifecycle assertion.
+      if (cue.gain === 0.48 && cue.rate === 0.72) tinks++;
+      return originalTink?.apply(g.audio, args);
+    };
+    const faceMirror = () => {
+      g.player.pos.set(-1.75, 0, -11.25);
+      g.player.yaw = Math.PI / 2;
+      g.player.pitch = 0;
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player.grounded = true;
+      g.player._sync(0);
+    };
+    faceMirror();
+    for (let t = 0; t < 0.28; t += 1 / 120) F.stepWith(1 / 120, {}, false);
+    const beforeDeath = {
+      awakened: mirror.awakened,
+      watched: mirror.watched,
+      poses: mirror.poses.length,
+      tinks,
+    };
+    g.director.death(null);
+    F.stepWith(1.05, {}, false);
+    const whileDead = {
+      awakened: mirror.awakened,
+      flag: g.flags.has('houseMirrorAwake'),
+      watched: mirror.watched,
+      poses: mirror.poses.length,
+      tinks,
+    };
+    g.director.respawn();
+    F.stepWith(0.18, {}, false);
+    faceMirror();
+    for (let t = 0; t < 0.58; t += 1 / 120) F.stepWith(1 / 120, {}, false);
+    const retry = {
+      awakened: mirror.awakened,
+      flag: g.flags.has('houseMirrorAwake'),
+      watched: mirror.watched,
+      poses: mirror.poses.length,
+      tinks,
+    };
+    g.director.death(null);
+    F.stepWith(0.12, {}, true);
+    const awakenedDeathRender = {
+      active: mirror.active,
+      doubleVisible: mirror.double.visible,
+      echoVisible: mirror.echo.visible,
+      paneActive: mirror.pane.active,
+    };
+    g.director.respawn();
+    F.stepWith(0.12, {}, false);
+    g.audio.glassTink = originalTink;
+    return { beforeDeath, whileDead, retry, awakenedDeathRender };
+  });
+  report.diagnostics.mirrorDeath = mirrorDeath;
+  check(!mirrorDeath.beforeDeath.awakened
+      && mirrorDeath.beforeDeath.watched > 0.18
+      && mirrorDeath.beforeDeath.watched < 0.38
+      && mirrorDeath.beforeDeath.poses > 0
+      && !mirrorDeath.whileDead.awakened && !mirrorDeath.whileDead.flag
+      && mirrorDeath.whileDead.watched === 0 && mirrorDeath.whileDead.poses === 0
+      && mirrorDeath.whileDead.tinks === 0
+      && mirrorDeath.retry.awakened && mirrorDeath.retry.flag
+      && mirrorDeath.retry.tinks === 1 && mirrorDeath.retry.poses > 0
+      && !mirrorDeath.awakenedDeathRender.active
+      && !mirrorDeath.awakenedDeathRender.doubleVisible
+      && !mirrorDeath.awakenedDeathRender.echoVisible
+      && !mirrorDeath.awakenedDeathRender.paneActive,
+    'death freezes and clears the optional lag-mirror lesson; a living retry earns its one-shot once',
+    mirrorDeath);
+
   const windowResult = await page.evaluate(() => {
     const F = window.__FETCH, g = window.__game;
     F.start();

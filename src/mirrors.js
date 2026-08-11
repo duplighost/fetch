@@ -114,6 +114,8 @@ export class Mirrors {
     this.fogColor = new THREE.Color(fogColor);
     this.fogDensity = fogDensity;
     this.mirrors = [];
+    this.poolEpoch = 0;
+    this.onPoolChanged = null;
     this.pool = this._makePool(budget, size);
     // scratch
     this._vcam = new THREE.PerspectiveCamera();
@@ -127,9 +129,13 @@ export class Mirrors {
     this._inUpdate = false;
     this._pendingSize = 0;
     this._disposed = false;
+    this._failureSerial = 0;
+    this.lastFailure = null;
+    this.onFailure = null;
   }
 
   _makePool(budget, size) {
+    this.poolEpoch++;
     const pool = [];
     for (let i = 0; i < budget; i++) {
       const rt = new THREE.WebGLRenderTarget(size, size, {
@@ -169,57 +175,113 @@ export class Mirrors {
     if (this._disposed) return;
     if (this._inUpdate) { this._pendingSize = px; return; }
     if (px === this.size) return;
+    const previousPool = this.pool;
+    const previousEpoch = this.poolEpoch;
     this.size = px;
+    this._activeCount = 0;
     for (const m of this.mirrors) { m.setActive(false); m.material.uniforms.tDiffuse.value = null; }
     for (const rt of this.pool) rt.dispose();
     this.pool = this._makePool(this.budget, px);
+    try {
+      this.onPoolChanged?.({
+        previousPool,
+        pool: this.pool,
+        previousEpoch,
+        poolEpoch: this.poolEpoch,
+        size: this.size,
+        textureIds: this.pool.map((target) => target.texture?.uuid || 'no-texture'),
+      });
+    } catch { /* owner invalidation is advisory; panes already fail closed */ }
   }
 
   // Choose panes worth reflecting this frame and render them into the pool.
   // Call BEFORE the main render; leaves the render target at null for it.
   update(scene, camera) {
-    if (this._disposed) return;
-    if (this._pendingSize) { const s = this._pendingSize; this._pendingSize = 0; this.setSize(s); }
+    if (this._disposed) return false;
+    if (this._pendingSize) {
+      const s = this._pendingSize;
+      this._pendingSize = 0;
+      this.setSize(s);
+      // Pool replacement invalidates target/program and owner certificates.
+      // The callback above has left every pane dark and queued a rewarm; never
+      // consume the fresh uninitialised attachments in this same update call.
+      return false;
+    }
+    let outerTarget = null;
+    try { outerTarget = this.renderer.getRenderTarget(); }
+    catch (error) { this._recordFailure(error, 'read-outer-target'); return false; }
     this._inUpdate = true;
-    camera.updateMatrixWorld();
-    this._cPos.setFromMatrixPosition(camera.matrixWorld);
-    this._fwd.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
+    try {
+      camera.updateMatrixWorld();
+      this._cPos.setFromMatrixPosition(camera.matrixWorld);
+      this._fwd.set(0, 0, -1).applyQuaternion(camera.quaternion).normalize();
 
-    const cands = [];
-    for (const m of this.mirrors) {
-      m._wp.setFromMatrixPosition(m.mesh.matrixWorld);
-      m.worldNormal(m._n);
-      this._to.subVectors(m._wp, this._cPos);
-      const dist = this._to.length();
-      if (dist > this.maxDist) continue;
-      // camera must be on the front (+normal) side to see a reflection
-      const facing = -this._to.dot(m._n) / (dist || 1); // >0 when we face the front
-      if (facing <= 0.02) continue;
-      const ahead = this._to.clone().normalize().dot(this._fwd); // in front of us?
-      if (ahead < -0.35 && dist > 3.5) continue;
-      const priority = ahead * 1.6 + facing * 0.6 - dist * 0.12;
-      cands.push({ m, dist, priority });
-    }
-    cands.sort((a, b) => b.priority - a.priority);
-    const chosen = cands.slice(0, this.budget);
+      const cands = [];
+      for (const m of this.mirrors) {
+        m._wp.setFromMatrixPosition(m.mesh.matrixWorld);
+        m.worldNormal(m._n);
+        this._to.subVectors(m._wp, this._cPos);
+        const dist = this._to.length();
+        if (dist > this.maxDist) continue;
+        // camera must be on the front (+normal) side to see a reflection
+        const facing = -this._to.dot(m._n) / (dist || 1); // >0 when we face the front
+        if (facing <= 0.02) continue;
+        const ahead = this._to.clone().normalize().dot(this._fwd); // in front of us?
+        if (ahead < -0.35 && dist > 3.5) continue;
+        const priority = ahead * 1.6 + facing * 0.6 - dist * 0.12;
+        cands.push({ m, dist, priority });
+      }
+      cands.sort((a, b) => b.priority - a.priority);
+      const chosen = cands.slice(0, this.budget);
 
-    // Everything is dark glass during the reflection passes (prevents feedback and
-    // gives a clean single-bounce; fog hides that mirrors-in-mirrors read as glass).
-    for (const m of this.mirrors) m.setActive(false);
+      // Everything is dark glass during the reflection passes (prevents feedback and
+      // gives a clean single-bounce; fog hides that mirrors-in-mirrors read as glass).
+      for (const m of this.mirrors) m.setActive(false);
 
-    const rendered = [];
-    for (let i = 0; i < chosen.length; i++) {
-      const ok = this._renderPane(scene, camera, chosen[i].m, this.pool[i]);
-      if (ok) rendered.push({ m: chosen[i].m, rt: this.pool[i] });
+      const rendered = [];
+      const failureSerial = this._failureSerial;
+      for (let i = 0; i < chosen.length; i++) {
+        const ok = this._renderPane(scene, camera, chosen[i].m, this.pool[i]);
+        if (this._failureSerial !== failureSerial) break;
+        if (ok) rendered.push({ m: chosen[i].m, rt: this.pool[i] });
+      }
+      if (this._failureSerial === failureSerial) {
+        for (const entry of rendered) {
+          entry.m.material.uniforms.tDiffuse.value = entry.rt.texture;
+          entry.m.material.uniforms.uTextureMatrix.value.copy(entry.m._texMatrix);
+          entry.m.setActive(true);
+        }
+        this._activeCount = rendered.length;
+      } else this._darkenAll();
+    } catch (error) {
+      this._recordFailure(error, 'update');
+      this._darkenAll();
+    } finally {
+      try { this.renderer.setRenderTarget(outerTarget); }
+      catch (error) { this._recordFailure(error, 'restore-outer-target'); this._darkenAll(); }
+      this._inUpdate = false;
     }
-    for (const r of rendered) {
-      r.m.material.uniforms.tDiffuse.value = r.rt.texture;
-      r.m.material.uniforms.uTextureMatrix.value.copy(r.m._texMatrix);
-      r.m.setActive(true);
+    return this._activeCount > 0;
+  }
+
+  _darkenAll() {
+    this._activeCount = 0;
+    for (const mirror of this.mirrors) {
+      mirror.setActive(false);
+      mirror.material.uniforms.tDiffuse.value = null;
     }
-    this._activeCount = rendered.length;
-    this.renderer.setRenderTarget(null); // caller renders the main scene next
-    this._inUpdate = false;
+  }
+
+  _recordFailure(error, phase) {
+    const failure = {
+      serial: ++this._failureSerial,
+      phase,
+      message: error?.message || `${error}`,
+      at: performance.now(),
+    };
+    this.lastFailure = failure;
+    try { this.onFailure?.(failure); } catch { /* fail-closed callback is advisory */ }
+    return failure;
   }
 
   _renderPane(scene, camera, mirror, rt) {
@@ -272,17 +334,36 @@ export class Mirrors {
     }
 
     const r = this.renderer;
-    const prevTarget = r.getRenderTarget();
+    let prevTarget = null;
+    try { prevTarget = r.getRenderTarget(); }
+    catch (error) { this._recordFailure(error, 'read-pane-target'); return false; }
+    const scopeWasVisible = scope.visible;
+    let failure = null;
+    let failurePhase = 'bind-pane-target';
+    let rendered = false;
     scope.visible = false; // a pane must not appear in its own reflection
     try {
       r.setRenderTarget(rt);
+      failurePhase = 'clear-pane-target';
       r.clear();
+      failurePhase = 'render-pane';
       r.render(scene, vc);
+      rendered = true;
+    } catch (error) {
+      failure = error;
     } finally {
-      r.setRenderTarget(prevTarget);
-      scope.visible = true;
+      try { r.setRenderTarget(prevTarget); }
+      catch (error) {
+        failure = error;
+        failurePhase = 'restore-pane-target';
+      }
+      scope.visible = scopeWasVisible;
     }
-    return true;
+    if (failure) {
+      this._recordFailure(failure, failurePhase);
+      return false;
+    }
+    return rendered;
   }
 
   dispose() {
@@ -290,6 +371,8 @@ export class Mirrors {
     this._disposed = true;
     this._pendingSize = 0;
     this._activeCount = 0;
+    this.onFailure = null;
+    this.onPoolChanged = null;
     for (const m of this.mirrors) {
       m.setActive(false);
       m.material.uniforms.tDiffuse.value = null;

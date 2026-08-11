@@ -93,11 +93,94 @@ try {
   check(start.caveLights.every((visible) => visible === false),
     'starting from the title does not activate cave lights');
 
-  await page.waitForFunction(
-    () => window.__game.shaderWarmup.status !== 'pending',
-    null,
-    { timeout: 90000, polling: 100 },
-  );
+  await page.evaluate(async () => {
+    const g = window.__game;
+    const generation = g._webglGeneration;
+    const snapshot = () => {
+      const shader = g.shaderWarmup;
+      const residency = g.currentGpuResidency;
+      const progress = residency?.progressive;
+      const lastJob = shader?.compileJobs?.at(-1);
+      const finaleTarget = g.finale?._targetWarmState;
+      return {
+        generation: g._webglGeneration,
+        shaderGeneration: shader?.generation ?? null,
+        status: shader?.status || null,
+        reason: shader?.reason || null,
+        recoveryRound: shader?.recoveryRound ?? null,
+        recoveryScheduled: !!shader?.recoveryScheduled,
+        setupSlices: shader?.setupSlices?.length || 0,
+        compileSlices: shader?.compileSlices?.length || 0,
+        textureSlices: shader?.textureSlices?.length || 0,
+        compileJobs: shader?.compileJobs?.length || 0,
+        compileJobsInFlight: shader?.compileJobsInFlight || 0,
+        compileInFlightLabel: shader?.compileInFlightLabel || null,
+        pendingTextures: shader?.pendingTextures || 0,
+        texturesDiscovered: shader?.texturesDiscovered ?? null,
+        texturesWarmed: shader?.texturesWarmed ?? null,
+        currentExactKey: shader?.currentExactKey || null,
+        currentExactRevision: shader?.currentExactRevision ?? null,
+        currentExactStatus: shader?.currentExactStatus || null,
+        currentExactSignatureSlices: shader?.currentExactSignatureSlices ?? null,
+        currentExactLiveSignatureSlices: shader?.currentExactLiveSignatureSlices ?? null,
+        readyVariants: shader?.readyVariants?.length || 0,
+        lastReadyVariant: shader?.readyVariants?.at(-1) || null,
+        lastJob: lastJob ? {
+          label: lastJob.label || null,
+          settledMs: lastJob.settledMs ?? null,
+          error: lastJob.error || null,
+        } : null,
+        residencyGeneration: residency?.generation ?? null,
+        activeKey: residency?.activeKey || null,
+        progressKey: progress?.key || null,
+        physical: !!(residency?.activeKey && residency.physical?.has(residency.activeKey)),
+        snapshotPhase: progress?.snapshotPhase || null,
+        snapshotSlices: progress?.snapshotSlices ?? null,
+        batches: progress?.batches ?? null,
+        queue: progress?.queue?.length || 0,
+        processed: progress?.processed?.size ?? null,
+        exactQueue: progress?.exactQueue?.length || 0,
+        exactCovered: progress?.exactCovered?.size || 0,
+        exactUniverse: progress?.exactUniverse?.size || 0,
+        exactShaderRevision: progress?.exactShaderRevision ?? null,
+        reducedPasses: residency?.reducedPasses?.length ?? null,
+        exactPreloadPasses: residency?.exactPreloadPasses?.length || 0,
+        finaleTarget: finaleTarget ? {
+          generation: finaleTarget.generation ?? null,
+          status: finaleTarget.status || null,
+          index: finaleTarget.index ?? null,
+          warmed: finaleTarget.warmed ?? null,
+          failedCount: finaleTarget.failedTargets?.length || 0,
+          recoveryScheduled: !!finaleTarget.recoveryScheduled,
+        } : null,
+        errorCount: shader?.errors?.length || 0,
+        lastError: shader?.errors?.at(-1) || null,
+      };
+    };
+    const signature = () => JSON.stringify(snapshot());
+    const hardDeadline = performance.now() + 240000;
+    let progressDeadline = performance.now() + 30000;
+    let previous = signature();
+    while (performance.now() < hardDeadline) {
+      const shader = g.shaderWarmup;
+      if (!shader || g._webglGeneration !== generation
+          || shader.generation !== generation || shader.status === 'invalidated'
+          || shader.status === 'skipped'
+          || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
+        throw new Error(`performance-pool warmup entered a terminal state: ${signature()}`);
+      }
+      if (shader.status === 'ready') return;
+      const next = signature();
+      if (next !== previous) {
+        previous = next;
+        progressDeadline = performance.now() + 30000;
+      } else if (performance.now() >= progressDeadline) {
+        throw new Error(`performance-pool warmup made no progress: ${next}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`performance-pool warmup exceeded 240s: ${signature()}`);
+  });
   await page.evaluate(() => {
     // Settle ordinary lazy WebGL uploads before attributing memory movement to
     // the fragment pool itself.
@@ -261,17 +344,47 @@ try {
   check(warmup.retainedMaterials === 9,
     'warm-up retains only the nine on-demand threat materials',
     `${warmup.retainedMaterials}`);
-  const fallback = await page.evaluate(() => {
+  const fallback = await page.evaluate(async () => {
     const g = window.__game;
     const compileAsync = g.renderer.compileAsync;
     g.renderer.compileAsync = undefined;
+    let result;
     try {
-      return g._compileWarmVariant(g.grainScene, g.grainCam) === null;
+      const job = g._compileWarmVariant(g.grainScene, g.grainCam);
+      const detail = await job;
+      result = {
+        returnedPromise: !!job && typeof job.then === 'function',
+        generation: detail?.generation ?? null,
+        currentGeneration: g._webglGeneration,
+        invalidated: detail?.invalidated === true,
+        programs: detail?.programs ?? null,
+        identities: detail?.identities?.length ?? null,
+        submitDurationMs: detail?.submitDurationMs ?? null,
+        readinessPolls: detail?.readinessPolls ?? null,
+        maxSynchronousSliceMs: detail?.maxSynchronousSliceMs ?? null,
+      };
     } finally {
       g.renderer.compileAsync = compileAsync;
     }
+    return {
+      ...result,
+      compileAsyncRestored: g.renderer.compileAsync === compileAsync,
+    };
   });
-  check(fallback, 'sync renderer.compile fallback completes without a promise');
+  check(fallback.returnedPromise
+      && fallback.generation === fallback.currentGeneration
+      && fallback.invalidated === false
+      && fallback.programs > 0
+      && fallback.identities === fallback.programs
+      && Number.isFinite(fallback.submitDurationMs)
+      && fallback.submitDurationMs >= 0
+      && Number.isFinite(fallback.readinessPolls)
+      && fallback.readinessPolls > 0
+      && Number.isFinite(fallback.maxSynchronousSliceMs)
+      && fallback.maxSynchronousSliceMs >= 0
+      && fallback.compileAsyncRestored,
+  'sync renderer.compile fallback returns an awaited same-generation readiness certificate',
+  JSON.stringify(fallback));
   check(errors.length === 0, 'browser emitted no page or console errors', errors.join(' | '));
 } finally {
   await browser.close();

@@ -167,7 +167,13 @@ try {
     g.player.pos.set(9, -3, -1.5);
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
-    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
+    aimAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    // Furnace causality is a continuous held sentence. Keep the same physical
+    // throw in its mouth through burn/choke/backdraft, then release it home.
+    F.stepWith(1.8, { throwHeld: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true }, false);
+    for (let t = 0; t < 4 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {}, false);
     const guestRoute = {
       guestWasEnabled,
       guestWasFree,
@@ -466,9 +472,17 @@ try {
     walkLeg(9.8, -1.7, 10);
     useAt(10.71, -2.1, -1.52);
     F.stepWith(0.7, {}, false);
-    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
+    aimAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    for (let t = 0; t < 1.2 && !g.incinerator.offered; t += 1 / 120) {
+      F.stepWith(1 / 120, { throwHeld: true }, false);
+    }
     const incineratorAccepted = g.flags.has('skullOffered') && g.incinerator.offered;
-    for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1, {}, false);
+    for (let t = 0; t < 2 && !g.flags.has('fireRefused'); t += 0.05) {
+      F.stepWith(0.05, { throwHeld: true }, false);
+    }
+    F.stepWith(1 / 120, { throwReleased: true }, false);
+    waitHeld();
     const fireRefused = g.flags.has('fireRefused') && g.skull.mode === 'held';
 
     const ashKeyTarget = g.world.fetchTargets.find((target) => target.id === 'hatchKey');

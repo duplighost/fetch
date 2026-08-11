@@ -1,6 +1,6 @@
 {
   "name": "fetch",
-  "version": "0.5.0-intruder",
+  "version": "0.6.0-broken-promise",
   "private": true,
   "type": "module",
   "scripts": {

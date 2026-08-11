@@ -21,7 +21,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 export function buildAtmosphere(game) {
   const scene = game && game.scene;
   const stats = { drawCalls: 0, triangles: 0, instances: 0, points: 0 };
-  if (!scene) return { group: null, stats, dispose() {} };
+  if (!scene) return { group: null, districtRoots: {}, stats, dispose() {} };
 
   const root = new THREE.Group();
   root.name = 'FETCH atmosphere';
@@ -46,11 +46,22 @@ export function buildAtmosphere(game) {
   const own = (material) => { ownedMaterials.add(material); return material; };
   const ownTexture = (texture) => { ownedTextures.add(texture); return texture; };
 
+  const districtRoots = {};
+  let districtStart = root.children.length;
   buildNightSky(game, root, track, own, tickers);
+  districtRoots.sky = root.children.slice(districtStart);
+  districtStart = root.children.length;
   buildGraveyardDress(game, track, own, ownTexture);
+  districtRoots.graveyard = root.children.slice(districtStart);
+  districtStart = root.children.length;
   buildForestDress(game, track, own, tickers);
+  districtRoots.forest = root.children.slice(districtStart);
+  districtStart = root.children.length;
   buildClearingDress(game, track, own, tickers);
+  districtRoots.clearing = root.children.slice(districtStart);
+  districtStart = root.children.length;
   buildCaveDress(game, track, own, tickers);
+  districtRoots.cave = root.children.slice(districtStart);
 
   // Cave dressing shares the decorative root with the exterior for batching,
   // but it must not leak draw calls (or stars through a shell gap) into the
@@ -95,6 +106,7 @@ export function buildAtmosphere(game) {
   root.userData.stats = stats;
   return {
     group: root,
+    districtRoots,
     stats,
     dispose() {
       if (Array.isArray(game.tickers)) {

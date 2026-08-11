@@ -394,6 +394,11 @@ try {
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
     const skip = (name, details) => checks.push({ name, skipped: true, details });
 
+    // This scenario asserts the in-play HUD, camera decay, and two-pass skull
+    // render. Title-mode renders intentionally do none of those things.
+    F.start();
+    g.render();
+
     // OUR crosshair decision: a wordless 4px dot that brightens on target —
     // the one aim affordance, state carried via dataset, no words ever.
     const crosshair = document.getElementById('crosshair');

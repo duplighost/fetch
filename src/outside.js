@@ -233,6 +233,7 @@ function buildGraveyardLandmarks(game) {
   for (const [x, z, mirror] of [[15.6, 31.5, 1], [-14.6, 34.2, -1]]) {
     const g = new THREE.Group();
     g.position.set(x, 0, z);
+    const ritual = x < 0;
     const add = (geo, mat, px, py, pz) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(px, py, pz);
@@ -241,7 +242,20 @@ function buildGraveyardLandmarks(game) {
       g.add(m);
       return m;
     };
-    add(new THREE.BoxGeometry(3.6, 2.65, 0.34), stone, 0, 1.3, 1.55);
+    let rearSeal = null;
+    if (ritual) {
+      // The required mausoleum owns a real rear throat after its mechanism
+      // opens. Build the back wall as two piers, a lintel and one moving seal
+      // rather than forcing the player to descend an implausibly steep 4.2m
+      // before their head can clear a monolithic wall.
+      add(new THREE.BoxGeometry(1.22, 2.65, 0.34), stone, -1.19, 1.3, 1.55);
+      add(new THREE.BoxGeometry(1.22, 2.65, 0.34), stone, 1.19, 1.3, 1.55);
+      add(new THREE.BoxGeometry(1.22, 0.75, 0.34), stone, 0, 2.275, 1.55);
+      rearSeal = add(new THREE.BoxGeometry(1.22, 1.9, 0.34), stone, 0, 0.95, 1.55);
+      rearSeal.name = 'ritual mausoleum moving rear seal';
+    } else {
+      add(new THREE.BoxGeometry(3.6, 2.65, 0.34), stone, 0, 1.3, 1.55);
+    }
     add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, -1.62, 1.3, 0);
     add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, 1.62, 1.3, 0);
     // front wall leaves a human-width black doorway and a shallow porch.
@@ -255,8 +269,22 @@ function buildGraveyardLandmarks(game) {
     const darkness = add(new THREE.PlaneGeometry(1.04, 2.05), voidMat, 0, 1.18, -1.735);
     darkness.rotation.y = mirror < 0 ? Math.PI : 0;
     scene.add(g);
-    if (x < 0) game.ritualMausoleum = { group: g, darkness, x, z };
-    world.addCollider(x - 1.82, -0.5, z + 1.35, x + 1.82, 3, z + 1.75);
+    let rearSealCollider = null;
+    // Surface bodies meet a solid rear wall; the required west-mausoleum stair
+    // passes through an opened center seal. Closed and open visuals therefore
+    // always tell the same collision truth.
+    if (ritual) {
+      world.addCollider(x - 1.82, -0.5, z + 1.35, x - 0.58, 3, z + 1.75);
+      world.addCollider(x + 0.58, -0.5, z + 1.35, x + 1.82, 3, z + 1.75);
+      world.addCollider(x - 0.61, 1.9, z + 1.35, x + 0.61, 3, z + 1.75);
+      rearSealCollider = world.addCollider(
+        x - 0.61, -0.5, z + 1.35, x + 0.61, 1.9, z + 1.75,
+        { ossuaryRearSeal: true },
+      );
+      game.ritualMausoleum = { group: g, darkness, rearSeal, rearSealCollider, x, z };
+    } else {
+      world.addCollider(x - 1.82, 0.08, z + 1.35, x + 1.82, 3, z + 1.75);
+    }
     world.addCollider(x - 1.82, -0.5, z - 1.75, x - 1.42, 3, z + 1.75);
     world.addCollider(x + 1.42, -0.5, z - 1.75, x + 1.82, 3, z + 1.75);
     world.addCollider(x - 1.82, -0.5, z - 1.75, x - 0.5, 3, z - 1.35);
@@ -758,6 +786,8 @@ function buildOssuaryRoute(game) {
   const HALF_W = 3;
   const LENGTH = 30;
   const HEIGHT = 2.85;
+  const EXIT_Z0 = OZ + 28.36;
+  const EXIT_Z1 = OZ + 33.16;
   const routeRoot = new THREE.Group();
   routeRoot.name = 'required graveyard ossuary';
   routeRoot.visible = false;
@@ -776,6 +806,14 @@ function buildOssuaryRoute(game) {
     boneMat.emissive = new THREE.Color(0x171817);
     boneMat.emissiveIntensity = 0.28;
   }
+  // A low-value mineral edge catches the recessed lamp on every descending
+  // tread.  It is deliberately grey, not a colored objective stripe: from
+  // ordinary grave height the first steps and their downward rhythm must read
+  // even when the held skull blocks the lower centre of the frame.
+  // Bounded mid-grey stays readable under the yard's near-black lighting but
+  // remains far below the mausoleum's pale trim. Using a non-lit mineral edge
+  // prevents the closest nose from blowing out into one false white barrier.
+  const stairEdgeMat = new THREE.MeshBasicMaterial({ color: 0x59615e });
   const wetMat = new THREE.MeshStandardMaterial({
     color: 0x0a0c0b, roughness: 0.2, metalness: 0.08,
     transparent: true, opacity: 0.76, depthWrite: false,
@@ -793,14 +831,22 @@ function buildOssuaryRoute(game) {
     return world.addCollider(x - w / 2, FLOOR - 0.5, z - d / 2,
       x + w / 2, FLOOR + HEIGHT, z + d / 2, { ossuary: true });
   };
-  const addFloor = (x, z, w, d) => {
+  const addFloor = (x, z, w, d, roofEndZ = null) => {
     addMeshBox(floorMat, x, FLOOR - 0.08, z, w, 0.16, d, 'ossuary dirt floor');
-    addMeshBox(wallMat, x, FLOOR + HEIGHT + 0.12, z, w, 0.24, d, 'ossuary roof');
+    const roofStart = z - d / 2;
+    const roofEnd = roofEndZ == null ? z + d / 2 : Math.min(z + d / 2, roofEndZ);
+    if (roofEnd > roofStart + 0.02) {
+      addMeshBox(wallMat, x, FLOOR + HEIGHT + 0.12, (roofStart + roofEnd) / 2,
+        w, 0.24, roofEnd - roofStart, 'ossuary roof');
+    }
   };
 
   // Main ambulatory and two deliberately shallow pockets. They are spaces to
   // look into, not side-quest clutter or alternate solutions.
-  addFloor(OX, OZ + LENGTH / 2, HALF_W * 2, LENGTH);
+  // Leave the final shaft open above its first rising tread.  The former full
+  // thirty-metre roof visually sliced through the player's face halfway up an
+  // otherwise physical stair even though collision let them pass.
+  addFloor(OX, OZ + LENGTH / 2, HALF_W * 2, LENGTH, EXIT_Z0 - 0.14);
   addFloor(OX - 4.45, OZ + 12, 2.9, 2.6);
   addFloor(OX + 4.45, OZ + 19, 2.9, 2.6);
   world.rooms.push(
@@ -879,10 +925,130 @@ function buildOssuaryRoute(game) {
 
   // The surface mausoleum physically opens: its false black doorway clears,
   // a floor slab sinks, and a bright stair throat replaces it.
-  const surfacePit = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.48),
+  const ENTRY_Z0 = mausoleum.z - 0.42;
+  const ENTRY_Z1 = mausoleum.z + 2.78;
+  const ENTRY_PORTAL_Z = mausoleum.z + 2.56;
+  // Give the first four visible steps a human stair cadence before the shaft
+  // steepens beneath the yard. A single 4.2m / 3.2m linear flight projected
+  // every riser into one brick rectangle from eye height, despite being
+  // mechanically continuous. These two physical slopes keep the full real
+  // descent while letting the opened mouth visibly say "stairs" first.
+  const ENTRY_BREAK_U = 3 / 11;
+  const ENTRY_BREAK_Z = lerp(ENTRY_Z0, ENTRY_Z1, ENTRY_BREAK_U);
+  const ENTRY_BREAK_Y = -0.72;
+  const entryYAt = (u) => u <= ENTRY_BREAK_U
+    ? lerp(0.02, ENTRY_BREAK_Y, u / ENTRY_BREAK_U)
+    : lerp(ENTRY_BREAK_Y, FLOOR, (u - ENTRY_BREAK_U) / (1 - ENTRY_BREAK_U));
+  const BACKTRACK_Z = ENTRY_PORTAL_Z - 0.16;
+  const BACKTRACK_Y = entryYAt((BACKTRACK_Z - ENTRY_Z0) / (ENTRY_Z1 - ENTRY_Z0));
+  // The graveyard is one displaced terrain sheet. Building real stairs below
+  // that sheet is not enough: the sheet still wins the depth test and turns
+  // the opened route into a green floor/black decal. Rebuild the same modest
+  // grid with two extra x/z cuts and omit only the cell-span owned by the
+  // throat. The closed moving slab covers this aperture before the ritual;
+  // after it moves, the visible and physical opening finally tell one truth.
+  const terrainHole = {
+    x0: mausoleum.x - 0.61, x1: mausoleum.x + 0.61,
+    z0: ENTRY_Z0 - 0.16, z1: ENTRY_Z1 + 0.36,
+  };
+  const apertureClearance = {
+    x0: terrainHole.x0 - 0.65, x1: terrainHole.x1 + 0.65,
+    z0: terrainHole.z0 - 0.75, z1: terrainHole.z1 + 0.45,
+    attempted: false, removed: 0,
+  };
+  const cutTerrainOpening = () => {
+    const ground = game.graveyardGround;
+    if (!ground?.geometry || ground.userData.ossuaryOpeningCut) return;
+    const minX = -22, maxX = 26, minZ = 6, maxZ = 44;
+    const xs = [];
+    const zs = [];
+    for (let x = minX; x <= maxX + 1e-6; x += 2) xs.push(x);
+    for (let z = minZ; z <= maxZ + 1e-6; z += 2) zs.push(z);
+    xs.push(terrainHole.x0, terrainHole.x1);
+    zs.push(terrainHole.z0, terrainHole.z1);
+    xs.sort((a, b) => a - b);
+    zs.sort((a, b) => a - b);
+
+    const positions = [];
+    const uvs = [];
+    for (const z of zs) {
+      for (const x of xs) {
+        positions.push(
+          x - ground.position.x,
+          Math.sin(x * 0.23) * Math.sin(z * 0.31) * 0.22 - 0.02,
+          z - ground.position.z,
+        );
+        uvs.push((x - minX) / (maxX - minX), (z - minZ) / (maxZ - minZ));
+      }
+    }
+    const indices = [];
+    const stride = xs.length;
+    for (let zi = 0; zi < zs.length - 1; zi++) {
+      for (let xi = 0; xi < xs.length - 1; xi++) {
+        const x0 = xs[xi], x1 = xs[xi + 1];
+        const z0 = zs[zi], z1 = zs[zi + 1];
+        if (x0 >= terrainHole.x0 - 1e-6 && x1 <= terrainHole.x1 + 1e-6
+            && z0 >= terrainHole.z0 - 1e-6 && z1 <= terrainHole.z1 + 1e-6) continue;
+        const a = zi * stride + xi;
+        const b = a + 1;
+        const c = a + stride;
+        const d = c + 1;
+        // Counter-clockwise from above: grass remains FrontSide and keeps the
+        // same upward-facing normal as the PlaneGeometry it replaces.
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.name = 'graveyard terrain with ossuary stair aperture';
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    ground.geometry.dispose();
+    ground.geometry = geometry;
+    ground.userData.ossuaryOpeningCut = true;
+    ground.userData.ossuaryOpening = { ...terrainHole };
+  };
+  cutTerrainOpening();
+  const clearApertureVegetation = () => {
+    if (apertureClearance.attempted) return apertureClearance.removed;
+    apertureClearance.attempted = true;
+    // Atmosphere is mounted after buildOutside, so resolve its one decorative
+    // grass pool at the moment the route opens. It owns no colliders. Retiring
+    // only instances inside this narrow buffer prevents alpha cards from
+    // drawing across the first landing or masquerading as a branch barricade.
+    const grass = scene.getObjectByName('graveyard grass');
+    if (!grass?.isInstancedMesh) return 0;
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    for (let i = 0; i < grass.count; i++) {
+      grass.getMatrixAt(i, matrix);
+      matrix.decompose(position, quaternion, scale);
+      if (position.x < apertureClearance.x0 || position.x > apertureClearance.x1
+          || position.z < apertureClearance.z0 || position.z > apertureClearance.z1) continue;
+      position.y = -30;
+      matrix.compose(position, quaternion, scale);
+      grass.setMatrixAt(i, matrix);
+      apertureClearance.removed++;
+    }
+    if (apertureClearance.removed) {
+      grass.instanceMatrix.needsUpdate = true;
+      grass.computeBoundingSphere?.();
+    }
+    return apertureClearance.removed;
+  };
+  // Darkness belongs at the occluded seam, not across the whole stair.  The
+  // former full-length horizontal plane depth-covered every tread from normal
+  // eye height and made the new physical descent still look like a black hole.
+  const surfacePit = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.62),
     new THREE.MeshBasicMaterial({ color: 0x010202, side: THREE.DoubleSide }));
   surfacePit.rotation.x = -Math.PI / 2;
-  surfacePit.position.set(mausoleum.x, 0.035, mausoleum.z + 0.15);
+  surfacePit.position.set(mausoleum.x, FLOOR + 0.045, ENTRY_Z1 - 0.24);
+  surfacePit.name = 'ossuary descent final shadow lip';
   surfacePit.visible = false;
   scene.add(surfacePit);
   const surfaceSlab = new THREE.Mesh(new THREE.BoxGeometry(1.16, 0.16, 1.5), wallMat);
@@ -892,12 +1058,102 @@ function buildOssuaryRoute(game) {
   const stairThroat = new THREE.Group();
   stairThroat.visible = false;
   scene.add(stairThroat);
-  for (let i = 0; i < 5; i++) {
+  // This used to be five decorative treads over flat terrain followed by a
+  // coordinate swap.  The opened mausoleum now owns a real 3.2m descent: the
+  // player's ground follows these steps until a matching stone throat hides
+  // the offset-district seam.  Translation changes there; view and momentum
+  // do not.  It reads as walking under the yard, not touching a black decal.
+  for (let i = 0; i < 12; i++) {
     const tread = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.17, 0.31), wallMat);
-    tread.position.set(mausoleum.x, -0.02 - i * 0.15, mausoleum.z - 0.38 + i * 0.27);
+    const u = i / 11;
+    const treadY = entryYAt(u);
+    // Mesh top and collision ramp are the same surface; feet neither hover
+    // above a decorative step nor sink through it.
+    tread.position.set(mausoleum.x, treadY - 0.085,
+      lerp(ENTRY_Z0, ENTRY_Z1, u));
+    tread.name = `ossuary descent tread ${i + 1}`;
+    tread.castShadow = true;
+    tread.receiveShadow = true;
     stairThroat.add(tread);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.98, 0.055, 0.075), stairEdgeMat);
+    nose.position.set(mausoleum.x, treadY + 0.018,
+      lerp(ENTRY_Z0, ENTRY_Z1, u) - 0.13);
+    nose.name = `ossuary descent readable edge ${i + 1}`;
+    nose.receiveShadow = true;
+    stairThroat.add(nose);
   }
-  const entryLamp = { x: mausoleum.x, y: 0.74, z: mausoleum.z + 0.45, intensity: 0, r: 5.5 };
+  for (const side of [-1, 1]) {
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(0.16, 5.0, 3.72), wallMat);
+    cheek.position.set(mausoleum.x + side * 0.72, FLOOR / 2 + 0.45,
+      (ENTRY_Z0 + ENTRY_Z1) / 2 + 0.18);
+    cheek.name = `ossuary descent ${side < 0 ? 'west' : 'east'} cheek`;
+    cheek.castShadow = true;
+    cheek.receiveShadow = true;
+    stairThroat.add(cheek);
+    world.addCollider(
+      mausoleum.x + side * 0.72 - 0.08, FLOOR - 0.25, ENTRY_Z0 - 0.12,
+      mausoleum.x + side * 0.72 + 0.08, 1.0, ENTRY_Z1 + 0.35,
+      { ossuaryEntranceWall: true },
+    );
+  }
+  const entryLintel = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.2, 0.82), wallMat);
+  entryLintel.position.set(mausoleum.x, FLOOR + HEIGHT + 0.1, ENTRY_Z1 - 0.18);
+  entryLintel.name = 'ossuary descent final lintel';
+  entryLintel.castShadow = true;
+  entryLintel.receiveShadow = true;
+  stairThroat.add(entryLintel);
+  // Twelve readable treads do not need twelve submissions: the whole static
+  // throat shares one material and one visibility switch.
+  batchStaticGroup(stairThroat, 'ossuary surface descent');
+  let entranceGroundActive = false;
+  const activateEntranceGround = () => {
+    if (entranceGroundActive) return;
+    entranceGroundActive = true;
+    const ramp = {
+      id: 'ossuarySurfaceDescent', axis: 'z',
+      x0: mausoleum.x - 0.56, x1: mausoleum.x + 0.56,
+      z0: ENTRY_Z0, z1: ENTRY_BREAK_Z,
+      y0: 0.02, y1: ENTRY_BREAK_Y,
+    };
+    world.ramps.push(ramp);
+    world.rampById[ramp.id] = ramp;
+    const deepRamp = {
+      id: 'ossuarySurfaceDescentDeep', axis: 'z',
+      x0: mausoleum.x - 0.56, x1: mausoleum.x + 0.56,
+      z0: ENTRY_BREAK_Z, z1: ENTRY_Z1,
+      y0: ENTRY_BREAK_Y, y1: FLOOR,
+    };
+    world.ramps.push(deepRamp);
+    world.rampById[deepRamp.id] = deepRamp;
+    // The skull reaches an occluded coordinate seam before the player's feet
+    // do.  Keep the continuation of that underground throat physical in the
+    // source chart long enough for an ordinary held throw to remain in flight;
+    // otherwise surface terrain at y=0 catches the already-subterranean skull,
+    // bounces it three times, and silently puts it back in Alex's hands before
+    // he crosses.  Because groundHeightAt only accepts layers below curY, this
+    // -4.2m strip cannot create a trench for a surface-height player.
+    const outboundBuffer = {
+      id: 'ossuaryOutboundContinuity', axis: 'z',
+      x0: mausoleum.x - 0.56, x1: mausoleum.x + 0.56,
+      z0: ENTRY_Z1, z1: ENTRY_PORTAL_Z + 10,
+      y0: FLOOR, y1: FLOOR,
+    };
+    world.ramps.push(outboundBuffer);
+    world.rampById[outboundBuffer.id] = outboundBuffer;
+    // A non-basement authored room suppresses the surface terrain only inside
+    // the opened stair throat.  Before unlock this room does not exist, so the
+    // closed mausoleum can never become an invisible ground hole.
+    world.rooms.push({
+      id: 'ossuarySurfaceDescent', level: 'ossuaryPortal', floorY: FLOOR,
+      x0: mausoleum.x - 0.58, x1: mausoleum.x + 0.58,
+      z0: ENTRY_Z0, z1: ENTRY_Z1 + 0.34,
+    });
+    world.addSurface('stone', mausoleum.x - 0.7, ENTRY_Z0,
+      mausoleum.x + 0.7, ENTRY_Z1 + 0.4, FLOOR - 0.5, 0.5);
+  };
+  // Recess the source to one cheek so each nose gets a value edge and a dark
+  // return. Flat frontal light turned even genuine steps into one grey slab.
+  const entryLamp = { x: mausoleum.x - 0.52, y: 0.58, z: mausoleum.z + 1.05, intensity: 0, r: 7.2 };
   world.candles.push(entryLamp);
 
   // Final physical pawl and rising forest-side hatch.
@@ -938,6 +1194,99 @@ function buildOssuaryRoute(game) {
     routeRoot.add(rung);
   }
 
+  // The far wall now opens onto a climbed shaft rather than a threshold that
+  // silently drops the player beyond the surface gate.  The offset route and
+  // the real hatch share direction, width, value and step rhythm; their seam
+  // sits behind the final lintel and preserves the player's look and velocity.
+  const farRiseRamp = {
+    id: 'ossuaryFarRise', axis: 'z',
+    x0: OX - 1.02, x1: OX + 1.02,
+    z0: EXIT_Z0, z1: EXIT_Z1,
+    y0: FLOOR, y1: -0.08,
+  };
+  world.ramps.push(farRiseRamp);
+  world.rampById[farRiseRamp.id] = farRiseRamp;
+  world.rooms.push({
+    id: 'ossuaryFarRise', level: 'basement', floorY: FLOOR,
+    x0: OX - 1.08, x1: OX + 1.08,
+    z0: EXIT_Z0 - 0.25, z1: EXIT_Z1 + 0.28,
+  });
+  world.addSurface('stone', OX - 1.2, EXIT_Z0 - 0.3, OX + 1.2, EXIT_Z1 + 0.35,
+    FLOOR - 0.5, 0.8);
+  for (let i = 0; i < 15; i++) {
+    const u = i / 14;
+    const tread = new THREE.Mesh(new THREE.BoxGeometry(1.92, 0.16, 0.37), wallMat);
+    tread.position.set(OX, lerp(FLOOR, -0.08, u) - 0.08, lerp(EXIT_Z0, EXIT_Z1, u));
+    tread.name = `ossuary far-rise tread ${i + 1}`;
+    routeRoot.add(tread);
+  }
+  for (const side of [-1, 1]) {
+    const riseWall = addMeshBox(wallMat, OX + side * 1.18, FLOOR / 2 + 0.35,
+      (EXIT_Z0 + EXIT_Z1) / 2, 0.22, Math.abs(FLOOR) + 3.4, EXIT_Z1 - EXIT_Z0 + 0.5,
+      'ossuary far-rise wall');
+    riseWall.castShadow = false;
+    world.addCollider(OX + side * 1.04 - 0.12, FLOOR - 0.5, EXIT_Z0 - 0.25,
+      OX + side * 1.04 + 0.12, 3.2, EXIT_Z1 + 0.25, { ossuaryExitWall: true });
+  }
+  const farSky = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 2.7),
+    new THREE.MeshBasicMaterial({ color: 0x030b10, side: THREE.DoubleSide }));
+  farSky.position.set(OX, 0.62, EXIT_Z1 + 0.3);
+  routeRoot.add(farSky);
+
+  // The receiving half of the same shaft lives immediately beyond the real
+  // iron gate.  Its open slab and black mouth remain as a look-back landmark,
+  // so the player can account for where they emerged instead of discovering
+  // that the game has simply reassigned their coordinates.
+  const farSurfaceHatch = new THREE.Group();
+  farSurfaceHatch.name = 'forest-side ossuary emergence hatch';
+  // Keep the receiving hatch wholly beyond the gate plane.  Its old front rim
+  // sat almost exactly under the iron leaves, so a legitimate look-back read
+  // as stray bars hovering over an unrelated white rectangle.
+  const farHatchZ = FOREST_GATE.z + 1.9;
+  const hatchMat = M.headstone.clone();
+  // Keep the rim subordinate to the black opening.  At the old value it read
+  // as a bright rectangular prop and flattened the hatch back into a decal.
+  hatchMat.color.multiplyScalar(0.42);
+  if ('emissive' in hatchMat) {
+    hatchMat.emissive = new THREE.Color(0x292d2d);
+    hatchMat.emissiveIntensity = 0.34;
+  }
+  const farVoid = new THREE.Mesh(new THREE.PlaneGeometry(1.72, 2.2),
+    new THREE.MeshBasicMaterial({ color: 0x010202, side: THREE.DoubleSide }));
+  farVoid.rotation.x = -Math.PI / 2;
+  // Sit just above the forest terrain but below the 0.24m stone rim.  Burying
+  // this plane under the terrain turned the look-back mouth brown and made the
+  // detached iron leaves above it look like unexplained floating fragments.
+  farVoid.position.set(FOREST_GATE.x, 0.135, farHatchZ);
+  farVoid.visible = false;
+  farSurfaceHatch.add(farVoid);
+  for (const side of [-1, 1]) {
+    const rim = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 2.62), hatchMat);
+    rim.position.set(FOREST_GATE.x + side * 0.98, 0.12, farHatchZ);
+    farSurfaceHatch.add(rim);
+  }
+  const crossRim = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.24, 0.28), hatchMat);
+  crossRim.position.set(FOREST_GATE.x, 0.12, farHatchZ - 1.22);
+  farSurfaceHatch.add(crossRim);
+  const openedLid = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.18, 2.35), hatchMat);
+  // Before the counterweight pays out this is a closed, accountable object on
+  // the far side of the gate.  It opens in the world at the same rate as the
+  // slab above the final stair, so arriving here never reveals a hatch that
+  // had apparently been open for the whole graveyard sequence.
+  openedLid.position.set(FOREST_GATE.x, 0.19, farHatchZ);
+  farSurfaceHatch.add(openedLid);
+  for (let i = 0; i < 4; i++) {
+    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 1.24, 6), ironMat);
+    rung.rotation.z = Math.PI / 2;
+    rung.position.set(FOREST_GATE.x, -0.14 - i * 0.34, farHatchZ + 0.68);
+    farSurfaceHatch.add(rung);
+  }
+  farSurfaceHatch.traverse((object) => {
+    if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; }
+  });
+  scene.add(farSurfaceHatch);
+  game.graveyardLookbackRoots?.push(farSurfaceHatch);
+
   // A witness owns the final composition without blocking the route or
   // becoming another mandatory health bar. It turns only between looks and
   // sinks when the counterweight pays out.
@@ -956,16 +1305,29 @@ function buildOssuaryRoute(game) {
   witness.position.set(OX + 1.85, FLOOR, OZ + 24.2);
   routeRoot.add(witness);
 
+  const visibilityStats = {
+    enterPasses: 0, exitPasses: 0, topLevelVisits: 0, writes: 0,
+    keptLights: 0, lastVisibleLights: 0, reassertPasses: 0,
+  };
   const state = {
     origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
     unlocked: false, route: null, inOssuary: false, solved: false,
-    pulling: false, progress: 0, slabT: 0, exitT: 0,
+    pulling: false, progress: 0, slabT: 0, exitT: 0, portalCooldown: 0,
     surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider,
-    mechanism, wheel, weight, witness, target: null,
+    mechanism, wheel, weight, witness, target: null, visibility: visibilityStats,
+    entranceConnector: {
+      z0: ENTRY_Z0, z1: ENTRY_Z1, portalZ: ENTRY_PORTAL_Z,
+      backtrackZ: BACKTRACK_Z, breakZ: ENTRY_BREAK_Z, breakY: ENTRY_BREAK_Y,
+      treadCount: 12, terrainHole, apertureClearance,
+      get active() { return entranceGroundActive; },
+    },
+    farConnector: { z0: EXIT_Z0, z1: EXIT_Z1, treadCount: 15, surface: farSurfaceHatch },
     unlock(route = 'ritual') {
       if (this.unlocked) return false;
       this.unlocked = true;
       this.route = route;
+      activateEntranceGround();
+      clearApertureVegetation();
       game.flag('graveyardResolved');
       game.flag('ossuaryOpened');
       mausoleum.darkness.visible = false;
@@ -986,6 +1348,12 @@ function buildOssuaryRoute(game) {
       this.exitT = 0;
       surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
       surfaceSlab.rotation.x = 0;
+      surfaceSlab.rotation.z = 0;
+      if (mausoleum.rearSeal) {
+        mausoleum.rearSeal.position.set(0, 0.95, 1.55);
+        mausoleum.rearSeal.rotation.z = 0;
+      }
+      if (mausoleum.rearSealCollider) mausoleum.rearSealCollider.max.y = 1.9;
       surfacePit.visible = false;
       stairThroat.visible = false;
       mausoleum.darkness.visible = true;
@@ -1004,26 +1372,101 @@ function buildOssuaryRoute(game) {
   // exterior root's live visibility exactly.
   const ossuarySaved = new Map();
   let ossuaryVisibilityActive = false;
+  let ossuaryCandleSnapshot = null;
+  // Keep the renderer's bounded candle architecture, but give only two slots
+  // to this sealed district while occupied. The other six pool lights, the
+  // exterior moon and the house fills are genuinely culled; they no longer
+  // illuminate an underground room merely because all lights were exempted.
+  const ossuaryLightSlots = new Set(world.candlePool.slice(0, 2));
+  const claimOssuaryLights = () => {
+    if (ossuaryCandleSnapshot) return;
+    ossuaryCandleSnapshot = world.candles.slice();
+    world.candles.splice(0, world.candles.length, entryLamp, shaftGlow);
+    world._candleT = 0;
+    world.updateCandles(0, game.player.pos, game.time);
+    for (const light of ossuaryLightSlots) light.userData.ossuaryOwned = true;
+  };
+  const releaseOssuaryLights = () => {
+    if (!ossuaryCandleSnapshot) return;
+    world.candles.splice(0, world.candles.length, ...ossuaryCandleSnapshot);
+    ossuaryCandleSnapshot = null;
+    world._candleT = 0;
+    world.updateCandles(0, game.player.pos, game.time);
+    for (const light of ossuaryLightSlots) delete light.userData.ossuaryOwned;
+  };
   const keepInOssuary = (child) => child === game.camera
     || child === game.skull?.root
     || child === routeRoot
     || child === game._impactRing
     || child === game._impactLight
-    || child.isLight;
+    || ossuaryLightSlots.has(child);
   const syncOssuaryVisibility = () => {
     if (state.inOssuary) {
+      // Static scene ownership changes only on the entry edge. Re-walking and
+      // rewriting hundreds of top-level roots every fixed step was pure hot
+      // loop work and could fight later cullers over the same visibility bit.
+      if (ossuaryVisibilityActive) return;
       ossuaryVisibilityActive = true;
+      visibilityStats.enterPasses++;
+      claimOssuaryLights();
+      let keptLights = 0;
       for (const child of scene.children) {
-        if (keepInOssuary(child)) continue;
+        visibilityStats.topLevelVisits++;
+        if (keepInOssuary(child)) {
+          if (child.isLight && child.visible) keptLights++;
+          continue;
+        }
         if (!ossuarySaved.has(child)) ossuarySaved.set(child, child.visible);
-        child.visible = false;
+        if (child.visible) {
+          child.visible = false;
+          visibilityStats.writes++;
+        }
       }
+      visibilityStats.keptLights = keptLights;
+      visibilityStats.lastVisibleLights = scene.children
+        .filter((child) => child.isLight && child.visible).length;
       return;
     }
     if (!ossuaryVisibilityActive) return;
-    for (const [child, visible] of ossuarySaved) child.visible = visible;
+    visibilityStats.exitPasses++;
+    for (const [child, visible] of ossuarySaved) {
+      if (child.visible !== visible) {
+        child.visible = visible;
+        visibilityStats.writes++;
+      }
+    }
     ossuarySaved.clear();
     ossuaryVisibilityActive = false;
+    releaseOssuaryLights();
+    visibilityStats.lastVisibleLights = scene.children
+      .filter((child) => child.isLight && child.visible).length;
+  };
+  state.reassertVisibility = () => {
+    if (!state.inOssuary || !ossuaryVisibilityActive) return false;
+    visibilityStats.reassertPasses++;
+    // First re-hide roots already owned by the entry transaction. Act-level
+    // cullers may have restored one while respawn briefly visited its spawn.
+    for (const child of ossuarySaved.keys()) {
+      visibilityStats.topLevelVisits++;
+      if (child.visible) {
+        child.visible = false;
+        visibilityStats.writes++;
+      }
+    }
+    // A lifecycle callback may also have created a top-level cosmetic root
+    // after entry. Claim only those new children at this explicit edge.
+    for (const child of scene.children) {
+      if (keepInOssuary(child) || ossuarySaved.has(child)) continue;
+      visibilityStats.topLevelVisits++;
+      ossuarySaved.set(child, child.visible);
+      if (child.visible) {
+        child.visible = false;
+        visibilityStats.writes++;
+      }
+    }
+    visibilityStats.lastVisibleLights = scene.children
+      .filter((child) => child.isLight && child.visible).length;
+    return true;
   };
 
   const anchorPos = new THREE.Vector3(OX, FLOOR + 1.35, OZ + 26.1);
@@ -1034,7 +1477,14 @@ function buildOssuaryRoute(game) {
       if (skull.mode !== 'outbound') return 'continue';
       this.enabled = false;
       state.pulling = true;
-      skull.anchorAt(anchorPos, { maxHold: 4.5, puzzleId: 'ossuaryCounterweight' });
+      skull.anchorAt(anchorPos, {
+        maxHold: 4.5,
+        puzzleId: 'ossuaryCounterweight',
+        // This is a held pull, not a one-click switch. Releasing the tether
+        // must return the skull immediately so partial progress can visibly
+        // bleed away and be retried under the same press/hold/release law.
+        releaseable: true,
+      });
       game.impact('locked', at || anchorPos);
       game.audio.metalDrop({ pos: anchorPos, gain: 0.62, rate: 0.72 });
       return 'anchor';
@@ -1044,55 +1494,117 @@ function buildOssuaryRoute(game) {
   const eye = new THREE.Vector3();
   const look = new THREE.Vector3();
   const toWitness = new THREE.Vector3();
+  const translatePortal = (player, skull, destination) => {
+    const delta = destination.clone().sub(player.pos);
+    player.pos.copy(destination);
+    // A coordinate seam must not falsify the live tether. Carry any world-space
+    // flight/return/anchor through by the same offset, preserving its mode,
+    // direction and relative distance instead of silently requiring a recall.
+    if (skull && skull.mode !== 'held' && skull.mode !== 'gone') {
+      skull.pos.add(delta);
+      skull.prevPos.add(delta);
+      skull.anchor?.point?.add(delta);
+      if (player.swing?.point) player.swing.point.add(delta);
+      // The seam runs after the skull's ordinary update in this fixed step;
+      // move its rendered root now so there is no one-frame bone/tether ghost
+      // left behind at the source coordinates.
+      skull.root.position.copy(skull.pos);
+    }
+  };
+  const syncPortalPose = (player, skull) => {
+    player._sync(0);
+    if (skull && skull.mode !== 'held' && skull.mode !== 'gone') skull._updateTether?.();
+  };
   game.tickers.push((dt, time) => {
     let crossedFarExit = false;
+    state.portalCooldown = Math.max(0, state.portalCooldown - dt);
     state.slabT += ((state.unlocked ? 1 : 0) - state.slabT) * Math.min(1, dt * 1.6);
-    surfaceSlab.position.y = 0.11 - state.slabT * 1.06;
-    surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.72;
-    surfaceSlab.rotation.x = -state.slabT * 0.42;
-    entryLamp.intensity += ((state.unlocked ? 3.2 : 0) - entryLamp.intensity) * Math.min(1, dt * 2.4);
+    // Heave the false floor visibly aside.  Sinking it down the new stair left
+    // a bright board apparently blocking the route even after the mechanism
+    // succeeded—the same visual lie this connector exists to remove.
+    surfaceSlab.position.x = mausoleum.x - state.slabT * 1.18;
+    surfaceSlab.position.y = 0.11 + state.slabT * 0.68;
+    surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.08;
+    surfaceSlab.rotation.x = -state.slabT * 0.08;
+    surfaceSlab.rotation.z = -state.slabT * 1.02;
+    if (mausoleum.rearSeal) {
+      mausoleum.rearSeal.position.x = -state.slabT * 2.05;
+      mausoleum.rearSeal.position.y = 0.95 + state.slabT * 0.52;
+      mausoleum.rearSeal.rotation.z = -state.slabT * 0.92;
+    }
+    if (mausoleum.rearSealCollider) {
+      // Collision yields only once the visible slab has cleared a shoulder;
+      // there is no early interval where the player can phase through stone.
+      // Collapsing maxY onto the surface-floor minY is not enough here: once
+      // the player's feet descend below that plane, Player._moveAxis sees it
+      // above STEP_UP again and the supposedly open seal becomes an invisible
+      // wall halfway down the flight. Retire it below the deepest tread.
+      mausoleum.rearSealCollider.max.y = state.slabT > 0.56
+        ? FLOOR - 1 : 1.9;
+    }
+    entryLamp.intensity += ((state.unlocked ? 4.4 : 0) - entryLamp.intensity) * Math.min(1, dt * 2.4);
 
     const player = game.player;
     const p = player.pos;
     const skull = game.skull;
-    // Crossing the black stair throat swaps to an enclosed offset district on
-    // the same act. There is no prompt, camera pan, or input lock.
-    if (state.unlocked && !state.inOssuary && game.act === 'graveyard'
-      && skull?.mode === 'held'
+    const traversalContextLive = !game.dead && !player.frozen && !player.movementLocked;
+    // Crossing the final tread swaps between two matching, occluded stone
+    // throats.  Unlike the old threshold, the player has physically descended
+    // four metres first.  Preserve look and horizontal momentum: a portal seam
+    // is an implementation detail, never permission to steer Alex's camera.
+    if (traversalContextLive
+      && state.unlocked && !state.inOssuary && game.act === 'graveyard'
+      && skull?.mode !== 'gone'
       && Math.abs(p.x - mausoleum.x) < 0.58
-      && p.z > mausoleum.z - 0.12 && p.z < mausoleum.z + 1.2 && p.y > -1) {
+      && p.z > ENTRY_PORTAL_Z && p.z < ENTRY_Z1 + 0.5
+      && p.y < FLOOR + 0.72 && state.portalCooldown <= 0) {
       state.inOssuary = true;
-      p.set(OX, FLOOR, OZ + 0.85);
-      player.vel.set(0, 0, 0);
+      translatePortal(player, skull, new THREE.Vector3(OX, FLOOR, OZ + 0.85));
       player.fallV = 0;
       player.grounded = true;
-      player.yaw = 0;
-      player.pitch = 0;
-      player._sync(0);
+      state.portalCooldown = 0.42;
+      syncPortalPose(player, skull);
       game.enemies.clear((enemy) => enemy.graveArena || enemy.gravePressure);
       game.flag('ossuaryEntered');
       game.checkpoint('graveyard');
       game.audio.stoneGrind({ pos: new THREE.Vector3(OX, FLOOR, OZ), gain: 0.34, rate: 0.54 });
     }
-    if (state.inOssuary && !state.solved && p.z < OZ + 0.28 && skull?.mode === 'held') {
+    if (traversalContextLive
+      && state.inOssuary && !state.solved && p.z < OZ + 0.28
+      && skull?.mode !== 'gone' && state.portalCooldown <= 0) {
       state.inOssuary = false;
-      p.set(mausoleum.x, 0.04, mausoleum.z - 1.2);
-      player.vel.set(0, 0, 0);
+      translatePortal(player, skull,
+        // Return just outside the seam on a matching lower tread.  The former
+        // destination remained inside the entry trigger, so pausing to look
+        // around for 0.42s silently swallowed the player back underground.
+        new THREE.Vector3(mausoleum.x, BACKTRACK_Y, BACKTRACK_Z));
       player.fallV = 0;
       player.grounded = true;
-      player.yaw = Math.PI;
-      player._sync(0);
+      state.portalCooldown = 0.42;
+      syncPortalPose(player, skull);
       game.checkpoint('graveyard');
     }
 
-    const anchored = skull?.mode === 'anchored'
+    let anchored = skull?.mode === 'anchored'
       && skull.anchor?.puzzleId === 'ossuaryCounterweight';
     if (!state.solved) {
-      if (anchored) state.progress = Math.min(1, state.progress + dt / 1.7);
+      // An anchor belongs to one living, occupied pull. Browser button state
+      // can remain physically held across death, focus loss, or an act change;
+      // none of those may keep paying a mechanism in a room the player no
+      // longer controls. Cancel in source before progress is evaluated, so a
+      // nearly-complete dead-life pull cannot ghost-commit on this frame.
+      const pullContextLive = !game.dead && game.act === 'graveyard' && state.inOssuary;
+      if (anchored && !pullContextLive) {
+        skull.anchor = null;
+        skull.beginReturn('snap');
+        anchored = false;
+        state.pulling = false;
+      }
+      if (pullContextLive && anchored) state.progress = Math.min(1, state.progress + dt / 1.7);
       else state.progress = Math.max(0, state.progress - dt * 1.4);
       if (!anchored && skull?.mode === 'held') {
         state.pulling = false;
-        state.target.enabled = true;
+        state.target.enabled = pullContextLive;
       }
     }
     wheel.rotation.x = state.progress * TAU * 1.45;
@@ -1114,6 +1626,14 @@ function buildOssuaryRoute(game) {
     state.exitT += ((state.solved ? 1 : 0) - state.exitT) * Math.min(1, dt * 1.8);
     exitSlab.position.y = FLOOR + 1.33 - state.exitT * 3.1;
     exitSlab.rotation.z = state.exitT * 0.08;
+    farVoid.visible = state.exitT > 0.08;
+    openedLid.position.set(
+      lerp(FOREST_GATE.x, FOREST_GATE.x - 1.45, state.exitT),
+      lerp(0.19, 0.86, state.exitT),
+      lerp(farHatchZ, farHatchZ + 0.62, state.exitT),
+    );
+    openedLid.rotation.z = lerp(0, -1.02, state.exitT);
+    openedLid.rotation.y = lerp(0, 0.09, state.exitT);
 
     if (state.inOssuary) {
       const camPos = game.camera.getWorldPosition(eye);
@@ -1125,23 +1645,28 @@ function buildOssuaryRoute(game) {
     witness.position.y += (((state.solved ? FLOOR - 1.9 : FLOOR) - witness.position.y)
       * Math.min(1, dt * 1.2));
 
-    if (state.inOssuary && state.solved && p.z > OZ + 28.45 && skull?.mode === 'held') {
+    if (traversalContextLive
+      && state.inOssuary && state.solved && p.z > EXIT_Z1 - 0.24
+      && p.y > -0.8 && skull?.mode !== 'gone' && state.portalCooldown <= 0) {
       state.inOssuary = false;
-      p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 0.55);
-      player.vel.set(0, 0, 0);
+      // Seat the feet just beyond the far rim, never on the decorative black
+      // mouth itself.  The hatch remains one step behind for an immediate
+      // look-back, while the player arrives on honest forest ground.
+      const forestMouth = game.forest?.posAt?.(1.78, 0)
+        || new THREE.Vector3(FOREST_GATE.x, 0, FOREST_GATE.z + 2.78);
+      forestMouth.y = game.forest?.heightAt?.(forestMouth.x, forestMouth.z) ?? 0.12;
+      translatePortal(player, skull, forestMouth);
       player.fallV = 0;
       player.grounded = true;
-      // The hatch rises beyond the gate. Face into the new chapter instead of
-      // back toward the completed 1,000-draw yard, and commit the forest act
-      // in this same fixed step rather than exposing one graveyard frame.
-      player.yaw = Math.PI;
-      player.pitch = 0;
-      player._sync(0);
+      state.portalCooldown = 0.42;
+      // The climbed hatch rises beyond the gate. Commit the forest in this
+      // fixed step, but retain the exact view the player carried up the shaft.
+      syncPortalPose(player, skull);
       game.flag('ossuaryExited');
       game.director.setAct('forest');
-      game.forest?.recentre(player.pos);
+      game.forest?.reseat(player.pos.x, player.pos.z);
       game.checkpoint('forest');
-      game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
+      game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, farHatchZ), gain: 0.46, rate: 0.8 });
       crossedFarExit = true;
     }
     routeRoot.visible = state.inOssuary;
@@ -1872,6 +2397,11 @@ export class Forest {
     this._sealPos = new THREE.Vector3();
     this._sealScale = new THREE.Vector3();
     this._sealQuat = new THREE.Quaternion();
+    this.runtimeStats = {
+      storyLivePasses: 0, storyInactiveEdges: 0,
+      sealActiveVisits: 0, nonForestEarlyOuts: 0,
+    };
+    this._storyRuntimeActive = null;
 
     this._buildFlora(rng);
     this._buildSealPool();
@@ -1879,6 +2409,7 @@ export class Forest {
     this._setpieces();
     this._buildForestLandmarks();
     this._buildOptionalRopes();
+    this._buildCanopyChain();
     this._buildForestStoryProps();
 
     this.detailRoots = scene.children.slice(detailStart);
@@ -2031,6 +2562,7 @@ export class Forest {
     // new spatial life.
     if (this.sealAnim && this.sealMesh) {
       this.sealAnim.length = 0;
+      if (this._sealActive) this._sealActive.length = 0;
       this.sealMesh.count = 0;
       this.sealMesh.instanceMatrix.needsUpdate = true;
       this._sealPlaced = -999;
@@ -3144,6 +3676,7 @@ export class Forest {
       const state = {
         ...spec,
         index,
+        fork: spec.forkId ? this.forks.find((candidate) => candidate.id === spec.forkId) : null,
         root,
         moving,
         glowMat,
@@ -3207,17 +3740,36 @@ export class Forest {
     if (!props?.length) return;
     const game = this.game;
     const live = game.act === 'forest' && !game.dead && !game.terminal && !game.endingTail;
+    if (!live) {
+      // The inactive edge owns all cleanup once. Bedroom, graveyard, clearing,
+      // cave and mirror frames do not need to allocate/sort a silent candidate
+      // list or rewrite eight already-disabled targets forever.
+      if (this._storyRuntimeActive !== false) {
+        this._storyRuntimeActive = false;
+        this.runtimeStats.storyInactiveEdges++;
+        for (const prop of props) {
+          if (prop.target) prop.target.enabled = false;
+          prop.visualLevel = 0;
+          prop.glowMat.emissiveIntensity = 0.04;
+          prop.stopLoop();
+        }
+      }
+      return;
+    }
+    this._storyRuntimeActive = true;
+    this.runtimeStats.storyLivePasses++;
     const playerPos = game.player.pos;
-    const candidates = [];
+    let firstProp = null, firstDistance = Infinity;
+    let secondProp = null, secondDistance = Infinity;
     for (const prop of props) {
-      const fork = prop.forkId && this.forks.find((candidate) => candidate.id === prop.forkId);
+      const fork = prop.fork;
       const wrongCommittedBranch = !!(fork?.selected && fork.selected !== prop.side);
       const behindSeal = prop.s <= this.sealS + 0.8;
-      const canSpeak = live && !prop.silenced && !wrongCommittedBranch && !behindSeal;
+      const canSpeak = !prop.silenced && !wrongCommittedBranch && !behindSeal;
       // A swept skull target obeys the same reachability law as its sound.
       // Otherwise a held throw could collect a dead appliance through the
       // newly knitted rejected mouth or from behind the cumulative seal.
-      if (!prop.silenced && prop.target) prop.target.enabled = canSpeak;
+      if (prop.target) prop.target.enabled = canSpeak;
       const targetVisual = canSpeak ? 1 : 0;
       prop.visualLevel += (targetVisual - prop.visualLevel) * Math.min(1, dt * (targetVisual ? 3.6 : 7.5));
       prop.glowMat.emissiveIntensity = 0.04 + prop.visualLevel * 0.58;
@@ -3245,19 +3797,36 @@ export class Forest {
         (playerPos.y + 1.2) - prop.targetPos.y,
         playerPos.z - prop.targetPos.z,
       );
-      if (distance <= prop.audibleRadius) candidates.push({ prop, distance });
-      else prop.stopLoop();
+      if (distance > prop.audibleRadius) {
+        prop.stopLoop();
+        continue;
+      }
+      // Stable two-nearest selection without a fresh candidate array, sort,
+      // slice, map and Set on every fixed step.
+      if (!firstProp || distance < firstDistance
+        || (distance === firstDistance && prop.index < firstProp.index)) {
+        secondProp = firstProp;
+        secondDistance = firstDistance;
+        firstProp = prop;
+        firstDistance = distance;
+      } else if (!secondProp || distance < secondDistance
+        || (distance === secondDistance && prop.index < secondProp.index)) {
+        secondProp = prop;
+        secondDistance = distance;
+      }
     }
-    candidates.sort((a, b) => a.distance - b.distance || a.prop.index - b.prop.index);
-    const desired = new Set(candidates.slice(0, 2).map((candidate) => candidate.prop));
     for (const prop of props) {
-      if (!desired.has(prop)) prop.stopLoop();
+      if (prop !== firstProp && prop !== secondProp) prop.stopLoop();
     }
     if (!game.audio.ready) return;
-    for (const { prop } of candidates.slice(0, 2)) {
-      if (prop.loop) continue;
-      prop.loop = game.audio.forestStoryLoop?.(prop.kind, prop.targetPos, {
-        gain: prop.gain, ref: 8.5, roll: 1.12, verb: 0.38,
+    if (firstProp && !firstProp.loop) {
+      firstProp.loop = game.audio.forestStoryLoop?.(firstProp.kind, firstProp.targetPos, {
+        gain: firstProp.gain, ref: 8.5, roll: 1.12, verb: 0.38,
+      }) || null;
+    }
+    if (secondProp && !secondProp.loop) {
+      secondProp.loop = game.audio.forestStoryLoop?.(secondProp.kind, secondProp.targetPos, {
+        gain: secondProp.gain, ref: 8.5, roll: 1.12, verb: 0.38,
       }) || null;
     }
   }
@@ -3277,6 +3846,8 @@ export class Forest {
     scene.add(this.sealMesh);
     this.sealCap = N;
     this.sealAnim = [];                  // {x, z, h, t, dur} — t<0 is stagger delay
+    // sealAnim remains cumulative history; only unfinished entries stay hot.
+    this._sealActive = [];
     this._sealPlaced = -999;
     this._sealCreakT = 0;
     this._lookWindow = 0;
@@ -3299,13 +3870,16 @@ export class Forest {
       // trunks across the full corridor width AND its shoulders — a wall, not a picket
       for (let k = 0; k < 4 && this.sealAnim.length < this.sealCap; k++) {
         const lat = (k / 3 - 0.5) * 2 * (hw + 1.2) + rng.range(-0.6, 0.6);
-        this.sealAnim.push({
+        const seal = {
+          index: this.sealAnim.length,
           x: sm.x + -sm.tz * lat + rng.range(-0.4, 0.4),
           z: sm.z + sm.tx * lat + rng.range(-0.4, 0.4),
           h: rng.range(4.5, 8.5),
           t: instant ? 1 : -rng.range(0, 0.5),
           dur: rng.range(1.9, 3.0),
-        });
+        };
+        this.sealAnim.push(seal);
+        if (!instant) this._sealActive.push(seal);
         spawned++;
       }
     }
@@ -3330,23 +3904,36 @@ export class Forest {
     }
   }
 
-  syncBackDistrictCulling(force = null) {
+  syncBackDistrictCulling(force = null, { reapply = false } = {}) {
+    // The sealed under-yard owns every exterior visibility bit while occupied.
+    // A respawn briefly visits the graveyard act spawn before restoring its
+    // saved underground pose; do not let this independent culler restore one
+    // exterior slab a frame after the ossuary lifecycle edge re-hid it.
+    if (this.game.ossuary?.inOssuary) return;
     const act = this.game.act;
     const pastGate = force ?? (act === 'forest' || act === 'clearing'
       || act === 'cave' || act === 'mirror'
       || (act === 'graveyard' && !this.game.ossuary?.inOssuary
         && this.game.player.pos.z > FOREST_GATE.z - 0.45));
-    if (pastGate === this.backDistrictCullActive) return;
-    this.backDistrictCullActive = pastGate;
+    if (pastGate === this.backDistrictCullActive && !reapply) return;
     if (pastGate) {
-      this.backDistrictVisibility.clear();
+      // Underfalls temporarily owns every exterior visibility bit. Its
+      // deliberate restore at the cave-to-Finale edge can therefore re-expose
+      // roots while this culler is still semantically active. A forced reapply
+      // must re-hide them without replacing the original pre-gate snapshot;
+      // otherwise a later restore would remember the accidental visible state.
+      if (!this.backDistrictCullActive) this.backDistrictVisibility.clear();
       for (const root of this.backDistrictRoots) {
         if (root.parent !== this.game.scene) continue;
-        this.backDistrictVisibility.set(root, root.visible);
+        if (!this.backDistrictVisibility.has(root)) {
+          this.backDistrictVisibility.set(root, root.visible);
+        }
         root.visible = false;
       }
+      this.backDistrictCullActive = true;
       return;
     }
+    this.backDistrictCullActive = false;
     for (const [root, visible] of this.backDistrictVisibility) {
       if (root.parent === this.game.scene) root.visible = visible;
     }
@@ -3366,18 +3953,41 @@ export class Forest {
         root.visible = detailsVisible && this._detailBaseVisibility.get(root) !== false;
       }
     }
+    if (this.game.act !== 'forest') {
+      this._updateForestStoryProps(0);
+      // A last row can still be rising on the exact frame the clearing takes
+      // ownership. Stamp it once at its final matrix, retire the worklist, and
+      // keep every later non-forest frame to visibility/culling edge work only.
+      if (this._sealActive.length) {
+        const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
+        for (const a of this._sealActive) {
+          a.t = 1;
+          mtx.compose(v.set(a.x, a.h / 2, a.z), q, sv.set(1.2, a.h, 1.2));
+          this.sealMesh.setMatrixAt(a.index, mtx);
+        }
+        this._sealActive.length = 0;
+        this.sealMesh.instanceMatrix.needsUpdate = true;
+      }
+      this.runtimeStats.nonForestEarlyOuts++;
+      return;
+    }
     this._writeForkClosures(dt);
     this._updateForestStoryProps(dt);
     const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
-    this.sealAnim.forEach((a, i) => {
-      if (a.t >= 1) return;
+    for (let activeIndex = this._sealActive.length - 1; activeIndex >= 0; activeIndex--) {
+      const a = this._sealActive[activeIndex];
+      this.runtimeStats.sealActiveVisits++;
       a.t = Math.min(1, a.t + dt / a.dur);
       const e = a.t < 0 ? 0 : smoothstep(0, 1, a.t);
       mtx.compose(v.set(a.x, -a.h / 2 + e * a.h, a.z), q, sv.set(1.2, a.h, 1.2));
-      this.sealMesh.setMatrixAt(i, mtx);
+      this.sealMesh.setMatrixAt(a.index, mtx);
       dirty = true;
-    });
+      if (a.t >= 1) {
+        const last = this._sealActive.pop();
+        if (activeIndex < this._sealActive.length) this._sealActive[activeIndex] = last;
+      }
+    }
     if (dirty) this.sealMesh.instanceMatrix.needsUpdate = true;
     this._sealCreakT -= dt;
     // the look-back reward: face the wall that ate the path and the forest
@@ -4009,7 +4619,10 @@ export class Forest {
     }
 
     game.tickers.push((dt) => {
-      if (game.act !== 'forest') return;
+      // Discovery is a player-facing one-shot, not a corpse proximity sensor.
+      // Keep both the hidden flag and its authored sound available for the
+      // living retry after the death veil lifts.
+      if (game.act !== 'forest' || game.dead) return;
       for (const line of optionalRopes) {
         const open = game.flags.has(`${line.flag}:latched`);
         line.boundary.openT = clamp(line.boundary.openT + (open ? dt * 2.8 : -dt * 3.6), 0, 1);
@@ -4029,6 +4642,156 @@ export class Forest {
       }
     });
     this.optionalRopes = optionalRopes;
+  }
+
+  _buildCanopyChain() {
+    const game = this.game;
+    const { world, scene, mats: M, audio } = game;
+    const up = new THREE.Vector3(0, 1, 0);
+    const root = new THREE.Group();
+    root.name = 'reachable Kneeler canopy bypass chain';
+    root.userData.noBatch = true;
+
+    const ropeMat = M.curtain.clone();
+    if (ropeMat.color) ropeMat.color.multiplyScalar(1.62);
+    const knotMat = M.bone.clone();
+    if (knotMat.color) knotMat.color.multiplyScalar(0.92);
+    if ('emissive' in knotMat) {
+      knotMat.emissive = new THREE.Color(0x4b4940);
+      knotMat.emissiveIntensity = 0.46;
+    }
+    const scarMat = M.headstone.clone();
+    if (scarMat.color) scarMat.color.multiplyScalar(0.78);
+
+    const addSegment = (a, b, radius, mat, sides = 6) => {
+      const d = b.clone().sub(a);
+      const len = d.length();
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.06, len, sides), mat);
+      mesh.position.copy(a).add(b).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(up, d.divideScalar(Math.max(0.001, len)));
+      mesh.castShadow = radius > 0.055;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+      return mesh;
+    };
+    const grounded = (s, lat = 0) => {
+      const p = this.posAt(s, lat);
+      p.y = this.heightAt(p.x, p.z);
+      return p;
+    };
+
+    // Put the first knot squarely over the normal approach—not behind a side
+    // wall—and rejoin before the crooked clearing arch.  Each flight ends over
+    // honest trail ground, leaving room for release, catch and the next throw.
+    const startS = Math.max(this.arenaS() + 21, this.length - 28);
+    const rawStages = [
+      { id: 'lower-bough', fromS: startS, anchorS: startS + 5.1, landingS: startS + 8.3, lat: -0.72, h: 4.65 },
+      { id: 'burden-crossing', fromS: startS + 7.5, anchorS: startS + 12.7, landingS: startS + 15.8, lat: 0.74, h: 5.05 },
+      // Finish left-high after the right-hand burden crossing.  Centering this
+      // far knot on the path hid it exactly behind knot two / the held skull
+      // from the ordinary approach, so the route looked like it stopped over
+      // the giant.  The alternating silhouette now previews the full escape.
+      { id: 'escape-bough', fromS: startS + 15.0, anchorS: startS + 20.7,
+        landingS: Math.min(this.length - 4.5, startS + 23.0), lat: -0.92, h: 5.55 },
+    ];
+    const stages = [];
+    rawStages.forEach((spec, index) => {
+      const start = grounded(spec.fromS, index === 0 ? 0 : rawStages[index - 1].lat * 0.45);
+      const landing = grounded(spec.landingS, spec.lat * 0.45);
+      const pivot = grounded(spec.anchorS, spec.lat);
+      pivot.y += spec.h;
+      const side = index % 2 ? 1 : -1;
+      const supportBase = grounded(spec.anchorS - 0.4, side * (this.baseHalfW[Math.round(spec.anchorS)] + 0.65));
+      const supportTop = supportBase.clone().add(new THREE.Vector3(0, spec.h + 2.1, 0));
+      const shoulder = pivot.clone().add(new THREE.Vector3(0, 1.12, 0));
+      addSegment(supportBase, supportTop, 0.22, M.bark, 7);
+      addSegment(supportTop, shoulder, 0.1, M.bark, 6);
+      const rope = addSegment(shoulder, pivot, 0.034, ropeMat, 5);
+      rope.name = `canopy chain rope ${index + 1}`;
+      // Later knots must remain readable from the ordinary first approach,
+      // where perspective and held-skull occlusion otherwise reduced the
+      // second and third steps to accidental pixels.
+      const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.19 + index * 0.018, 0), knotMat);
+      knot.position.copy(pivot);
+      knot.scale.set(1, 1.45, 1);
+      knot.name = `canopy chain pale knot ${index + 1}`;
+      root.add(knot);
+
+      // Scraped root-crowns are visual landing sentences, not fake platforms:
+      // terrainHeightFn supports the exact same coordinates beneath them.
+      const landingScar = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.07, 5, 11), scarMat);
+      landingScar.rotation.x = Math.PI / 2;
+      landingScar.rotation.z = index * 0.58;
+      landingScar.scale.set(1.25, 0.72, 1);
+      landingScar.position.copy(landing).setY(landing.y + 0.055);
+      landingScar.name = `canopy chain landing scar ${index + 1}`;
+      root.add(landingScar);
+
+      const stage = {
+        ...spec, index, start, pivot, landing, knot, rope,
+        latchedFlag: `forestCanopy:${index + 1}:latched`,
+        landedFlag: `forestCanopy:${index + 1}:landed`,
+        target: null,
+      };
+      stage.target = world.addFetchTarget({
+        id: `forestRope:canopy:${index + 1}`, object: knot, pos: pivot, radius: 1.08,
+        enabled: index === 0,
+        onHit(skull) {
+          // A dead/frozen body can still carry the browser's last held-button
+          // bit through the remainder of this fixed step. Never mint a latch
+          // flag—or a later checkpoint—from that stale flight.
+          if (game.dead || game.act !== 'forest'
+            || game.player.frozen || game.player.movementLocked) return 'return';
+          if (skull.mode !== 'outbound' || game.player.swing) return 'continue';
+          if (index > 0 && !game.flags.has(stages[index - 1].latchedFlag)) return 'return';
+          skull.anchorAt(pivot, { swing: true, maxHold: 5.6, canopyStage: index + 1 });
+          game.player.beginSwing(pivot, { maxT: 5.6 });
+          game.flag(stage.latchedFlag);
+          chain.progress = Math.max(chain.progress, index + 1);
+          if (stages[index + 1]) stages[index + 1].target.enabled = true;
+          game.impact('locked', pivot);
+          audio?.creak?.({ pos: supportTop, gain: 0.54, rate: 0.92 - index * 0.08 });
+          return 'anchor';
+        },
+      });
+      stages.push(stage);
+    });
+
+    const chain = {
+      root, stages, startS, endS: stages[stages.length - 1].landingS,
+      kneelerS: stages[1].anchorS + 0.45,
+      progress: 0, completed: false,
+    };
+    scene.add(root);
+    game.tickers.push((dt, time) => {
+      const traversalLive = game.act === 'forest' && !game.dead
+        && !game.player.frozen && !game.player.movementLocked;
+      if (!traversalLive) {
+        // Disable stale earned targets during the death veil. The next living
+        // forest tick deterministically restores only what prior latch flags
+        // honestly earned.
+        for (const stage of stages) stage.target.enabled = false;
+        return;
+      }
+      for (const stage of stages) {
+        const earned = stage.index === 0 || game.flags.has(stages[stage.index - 1].latchedFlag);
+        stage.target.enabled = earned;
+        stage.rope.rotation.z = Math.sin(time * 0.72 + stage.index * 1.7) * 0.012;
+        if (!game.flags.has(stage.latchedFlag) || game.flags.has(stage.landedFlag)) continue;
+        if (!game.player.grounded || game.player.swing || game.skull.mode !== 'held') continue;
+        const projection = this.project(game.player.pos.x, game.player.pos.z);
+        if (!projection || projection.s < stage.landingS - 2.2
+          || projection.s > stage.landingS + 4.1) continue;
+        game.flag(stage.landedFlag);
+        game.checkpoint('forest');
+        if (stage.index === stages.length - 1) {
+          chain.completed = true;
+          game.flag('forestCanopyCleared');
+          audio?.stoneGrind?.({ pos: stage.landing, gain: 0.3, rate: 1.45 });
+        }
+      }
+    });
+    this.canopyChain = chain;
   }
 }
 
@@ -4118,7 +4881,9 @@ export function buildClearing(game) {
   const motes = new THREE.Points(moteGeo, new THREE.PointsMaterial({
     color: 0xcfe8d8, size: 0.06, transparent: true, opacity: 0.7, sizeAttenuation: true,
   }));
-  motes.frustumCulled = false;
+  motes.name = 'clearing pale glow-motes';
+  moteGeo.computeBoundingSphere();
+  motes.frustumCulled = true;
   scene.add(motes);
   game.tickers.push((dt, t) => { motes.position.y = Math.sin(t * 0.5) * 0.3; });
 
@@ -4128,10 +4893,18 @@ export function buildClearing(game) {
   game.waterfallBarrier = world.addCollider(C.x - 3.2, -2, C.z + 19.55, C.x + 3.2, 20, C.z + 20.35);
   game.bridgeBarrier = game.waterfallBarrier; // retained debug/older-test name
   game.bridgeStones = [];
-  for (let i = 0; i < 7; i++) {
+  // The former first stone began 1.8m beyond the dry lip.  Add a true near
+  // step at the basin edge, then retain the seven-stone rhythm across the
+  // water. terrainHeightFn reads this same array, so every visible top is
+  // physical ground rather than a mesh the capsule falls through.
+  const bridgeZ = [7.18, ...Array.from({ length: 7 }, (_, i) => 8.8 + i * 1.72)];
+  for (let i = 0; i < bridgeZ.length; i++) {
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
-    st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + 8.8 + i * 1.72);
-    st.rotation.y = i * 0.73;
+    st.position.set(C.x + Math.sin((i - 1) * 1.7) * 0.34, -1.4, C.z + bridgeZ[i]);
+    st.rotation.y = (i - 1) * 0.73;
+    st.name = i === 0 ? 'near-shore waterfall stepping stone' : `waterfall stepping stone ${i + 1}`;
+    st.userData.bridgeIndex = i;
+    st.userData.nearShore = i === 0;
     st.castShadow = true;
     st.receiveShadow = true;
     scene.add(st);

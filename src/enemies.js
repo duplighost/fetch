@@ -16,7 +16,7 @@ const KIND = {
     hit: { y0: 0.24, y1: 2.02, r: 0.46, shoulderY: 1.72, shoulderR: 0.62, headY: 2.14, headR: 0.3 },
   },
   kneeler: {
-    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 0.4, scale: 2.4,
+    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 2.65, scale: 2.4,
     windup: 2.2, strike: 1.02, strikeRadius: 1.48, recovery: 0.9, lunge: 1.16,
     hit: { y0: 0.22, y1: 3.58, r: 0.9, shoulderY: 3.12, shoulderR: 1.15, headY: 3.38, headR: 0.68 },
   },
@@ -38,7 +38,14 @@ const DROWNED_CHOIR = Object.freeze({
   recovery: 1.25,
 });
 
-const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x16141a };
+const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x24262b };
+// A high-value bone burden is the Kneeler's wordless affordance.  It is not a
+// health-bar weak point—the creature remains unkillable—but it gives the eye a
+// throw-sized target and collapses with the body for a long, visible passage
+// window.  Brightness and shape carry the rule; hue never has to.
+const KNEELER_MARK_MAT = new THREE.MeshLambertMaterial({
+  color: 0xb6ad96, emissive: 0x39362c, emissiveIntensity: 0.42,
+});
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 // More than the whole authored graveyard fight, with room for the house and
@@ -61,6 +68,7 @@ const FIGURE_GEO = {
   coat: new THREE.CylinderGeometry(0.46, 0.7, 1, 7),
   slab: new THREE.BoxGeometry(1, 1, 1),
   spike: new THREE.ConeGeometry(0.5, 1, 5),
+  ring: new THREE.TorusGeometry(0.5, 0.09, 6, 16),
 };
 {
   // One shared pall gives the walker a corpse under cloth, not a tombstone.
@@ -551,11 +559,16 @@ function buildResident(g, mat, limbs) {
 function buildKneeler(g, mat, limbs) {
   // A load-bearing animal silhouette rather than a scaled walker: enormous
   // shoulder shelf, bowed spine, low forward face, and forelimbs made to plant.
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.08, -0.12, 0.46, 0.52, 0.4, -0.32);
-  addPart(g, FIGURE_GEO.sphere, mat, 0, 1.47, -0.25, 0.54, 0.47, 0.42);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.38, -0.04, 0.28, 0.78, 0.3, 0, 0, Math.PI / 2);
+  // Keep the loaded shoulders, head and planted arms under one articulation.
+  // A successful throw can therefore make the whole readable mass bow instead
+  // of merely flashing a marker while the four-metre body stays upright.
+  const upper = new THREE.Group();
+  g.add(upper);
+  addPart(upper, FIGURE_GEO.capsule, mat, 0, 1.08, -0.12, 0.46, 0.52, 0.4, -0.32);
+  addPart(upper, FIGURE_GEO.sphere, mat, 0, 1.47, -0.25, 0.54, 0.47, 0.42);
+  addPart(upper, FIGURE_GEO.capsule, mat, 0, 1.38, -0.04, 0.28, 0.78, 0.3, 0, 0, Math.PI / 2);
   for (let i = -1; i <= 1; i++) {
-    addPart(g, FIGURE_GEO.spike, mat, i * 0.16, 1.79 - Math.abs(i) * 0.08, -0.28,
+    addPart(upper, FIGURE_GEO.spike, mat, i * 0.16, 1.79 - Math.abs(i) * 0.08, -0.28,
       0.1, 0.42 - Math.abs(i) * 0.08, 0.1, -0.35);
   }
 
@@ -565,7 +578,23 @@ function buildKneeler(g, mat, limbs) {
   addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.3, 0.25, 0.31);
   addPart(head, FIGURE_GEO.slab, mat, 0, -0.17, 0.17, 0.27, 0.14, 0.32, -0.18);
   addEyes(head, 0.095, 0.025, 0.29, 0.04, 0.018);
-  g.add(head);
+  upper.add(head);
+
+  // The pale load-ring sits between the enormous shoulders where it can be
+  // read on approach and struck from either the ground lane or the first rope.
+  // Three broken prongs turn its collapse into a silhouette change, not merely
+  // a shader flash.
+  const burden = new THREE.Group();
+  burden.position.set(0, 1.62, 0.18);
+  const ring = addPart(burden, FIGURE_GEO.ring, KNEELER_MARK_MAT,
+    0, 0, 0, 0.42, 0.5, 0.22, 0, 0, 0.08);
+  const prongs = [];
+  for (const i of [-1, 0, 1]) {
+    prongs.push(addPart(burden, FIGURE_GEO.spike, KNEELER_MARK_MAT,
+      i * 0.18, 0.38 - Math.abs(i) * 0.06, -0.02,
+      0.07, 0.3 - Math.abs(i) * 0.04, 0.07, i * 0.12));
+  }
+  upper.add(burden);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
@@ -574,7 +603,7 @@ function buildKneeler(g, mat, limbs) {
     addPart(armP, FIGURE_GEO.limb, mat, 0, -0.52, 0.16, 0.18, 0.56, 0.16, -0.12);
     addPart(armP, FIGURE_GEO.sphere, mat, 0, -1.04, 0.27, 0.28, 0.17, 0.34);
     limbs.arms.push(armP);
-    g.add(armP);
+    upper.add(armP);
 
     const legP = new THREE.Group();
     legP.position.set(s * 0.25, 0.72, -0.28);
@@ -584,6 +613,13 @@ function buildKneeler(g, mat, limbs) {
     limbs.legs.push(legP);
     g.add(legP);
   }
+  head.userData.kneeler = {
+    upper, head, burden, ring, prongs,
+    basePosition: burden.position.clone(),
+    headBase: head.position.clone(),
+    headRotation: head.rotation.clone(),
+    armBaseZ: limbs.arms.map((arm) => arm.rotation.z),
+  };
   return head;
 }
 
@@ -599,7 +635,11 @@ function makeFigure(kind) {
       : buildWalker(g, mat, limbs);
   g.scale.setScalar(spec.scale);
   // Contract consumed by gait and stun code: keep these exact keys stable.
-  g.userData = { mat, head, limbs, walker: head.userData.walker || null };
+  g.userData = {
+    mat, head, limbs,
+    walker: head.userData.walker || null,
+    kneeler: head.userData.kneeler || null,
+  };
   return g;
 }
 
@@ -768,6 +808,30 @@ export class Enemies {
     this._spawnSerial = 0;
     this._graveClaimRecovery = 0;
 
+    // Gameplay creates these actors at authored reveal edges. Their geometry
+    // kit is shared, but a shader-only synthetic compile does not upload that
+    // geometry or build the geometry/program binding state used by the first
+    // real draw. Keep one inert, never-parented representative of each family
+    // for the transition residency system to submit under its bounded current,
+    // future-district and reflection-target transactions. Spawned actors remain
+    // ordinary independent entities; the representatives only retain their
+    // shared buffers/programs and are never updated, heard or made visible.
+    this._gpuResidencyRoots = new Map();
+    for (const kind of ['walker', 'resident', 'kneeler', 'choir']) {
+      const root = kind === 'choir' ? makeDrownedChoir() : makeFigure(kind);
+      root.name = `future ${kind} GPU residency prototype`;
+      root.userData.fetchGpuResidencyPrototype = kind;
+      let renderableIndex = 0;
+      root.traverse((object) => {
+        if ((!object.isMesh && !object.isLine && !object.isPoints)
+            || !object.geometry || !object.material) return;
+        object.name ||= `future ${kind} ${object.type.toLowerCase()} ${renderableIndex}`;
+        renderableIndex++;
+      });
+      root.updateMatrixWorld(true);
+      this._gpuResidencyRoots.set(kind, root);
+    }
+
     // One dynamic instance pool owns every pop stain for this game lifecycle.
     // It deliberately survives ordinary death/respawn so the graveyard keeps
     // the player's history; resetStains() is the explicit full-reset boundary.
@@ -786,6 +850,24 @@ export class Enemies {
     this._stainQuaternion = new THREE.Quaternion();
     this._stainScale = new THREE.Vector3();
     this._stainEuler = new THREE.Euler();
+  }
+
+  gpuResidencyRoots(kinds = []) {
+    return [...new Set(kinds
+      .map((kind) => this._gpuResidencyRoots.get(kind))
+      .filter(Boolean))];
+  }
+
+  disposeGpuResidencyRoots() {
+    for (const [kind, root] of this._gpuResidencyRoots) {
+      if (kind === 'choir') {
+        for (const material of root.userData.ownedMaterials || []) material.dispose();
+      } else {
+        root.userData.mat?.dispose?.();
+      }
+      root.removeFromParent();
+    }
+    this._gpuResidencyRoots.clear();
   }
 
   stainState() {
@@ -1382,7 +1464,12 @@ export class Enemies {
           // convulsion + dimming — never a hue change
           const k = Math.sin(e.stunT * 34) * 0.12;
           e.mesh.rotation.z = k;
-          e.mesh.userData.mat.color.setScalar(0.06 + Math.abs(k));
+          // The ordinary bodies can carry this whole-material pulse. On the
+          // four-metre Kneeler it blew every primitive to featureless white at
+          // passage distance, so its pale burden owns the short flash while
+          // the articulated bow supplies the readable state change.
+          if (e.kind === 'kneeler') e.mesh.userData.mat.color.setHex(BASE_COLOR.kneeler);
+          else e.mesh.userData.mat.color.setScalar(0.06 + Math.abs(k));
           if (e.stunT <= 0) {
             e.mesh.rotation.z = 0;
             e.mesh.rotation.x = 0;
@@ -1434,6 +1521,7 @@ export class Enemies {
         }
       }
       if (e.kind === 'walker') this._poseWalker(e, dt, graveClaims.has(e));
+      if (e.kind === 'kneeler') this._poseKneeler(e, dt);
       if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
       if (e.graveRiseT > 0 && e.state !== 'dying') {
@@ -1474,6 +1562,15 @@ export class Enemies {
             e.state = 'stunned';
             e.stunT = e.spec.stun;
             e.recoilT = 0.12;
+            if (e.kind === 'kneeler') {
+              e.yieldCount = (e.yieldCount || 0) + 1;
+              game.flag('kneelerYielded');
+              // The impact is a temporary structural surrender, not damage:
+              // stone-and-wood weight drops, the pale burden folds, and the
+              // resulting 2.65-second bow is long enough to sprint through.
+              game.audio.stoneGrind({ pos: e.pos, gain: 0.58, rate: 0.52, verb: 0.72 });
+              game.audio.creak({ pos: e.pos, gain: 0.46, rate: 0.58, verb: 0.62 });
+            }
             if (!e.knockV) e.knockV = new THREE.Vector3();
             e.knockV.set(travX / travL, 0, travZ / travL)
               .multiplyScalar(clamp(speed * 0.03, 0.45, 0.9));
@@ -2118,6 +2215,56 @@ export class Enemies {
     }
     W.shroud.rotation.z = twitch * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
     W.shroud.rotation.x = -0.08 - striking * 0.1;
+  }
+
+  _poseKneeler(e, dt) {
+    const K = e.mesh.userData.kneeler;
+    if (!K) return;
+    const yielded = e.state === 'stunned' ? 1 : 0;
+    const waking = e.state === 'wind'
+      ? clamp((e.windT || 0) / Math.max(0.001, e.spec.windup), 0, 1)
+      : (e.state === 'chase' || e.state === 'strike' ? 1 : 0);
+    const pulse = 0.5 + 0.5 * Math.sin(this.game.time * (yielded ? 3.2 : 1.35));
+    const impactFlash = yielded ? clamp((e.recoilT || 0) / 0.12, 0, 1) : 0;
+    K.burden.position.set(
+      K.basePosition.x,
+      K.basePosition.y - yielded * 0.46 + waking * 0.06,
+      K.basePosition.z + yielded * 0.18,
+    );
+    K.burden.rotation.set(yielded * 0.88, 0, Math.sin(this.game.time * 2.1) * 0.025);
+    K.burden.scale.set(
+      1 + waking * 0.08 + impactFlash * 0.13,
+      1 - yielded * 0.38 + impactFlash * 0.05,
+      1 + yielded * 0.12 + impactFlash * 0.13,
+    );
+    // This is the actual passage affordance: the shoulder shelf folds forward,
+    // the face drops below its old line, and both forelimbs splay into the
+    // ground.  It resolves by motion and silhouette even in monochrome.
+    K.upper.position.y = damp(K.upper.position.y, yielded ? -0.16 : 0, yielded ? 16 : 7, dt);
+    K.upper.position.z = damp(K.upper.position.z, yielded ? 0.2 : 0, yielded ? 16 : 7, dt);
+    K.upper.rotation.x = damp(K.upper.rotation.x, yielded ? 0.62 : 0, yielded ? 18 : 6, dt);
+    K.head.position.y = damp(K.head.position.y,
+      K.headBase.y - yielded * 0.24, yielded ? 18 : 7, dt);
+    K.head.position.z = damp(K.head.position.z,
+      K.headBase.z + yielded * 0.16, yielded ? 18 : 7, dt);
+    K.head.rotation.x = damp(K.head.rotation.x,
+      K.headRotation.x - yielded * 0.48, yielded ? 18 : 7, dt);
+    for (const [i, arm] of e.mesh.userData.limbs.arms.entries()) {
+      if (yielded) {
+        arm.rotation.x = damp(arm.rotation.x, -0.92, 18, dt);
+        arm.rotation.z = damp(arm.rotation.z,
+          K.armBaseZ[i] + (i ? 0.34 : -0.34), 18, dt);
+      } else if (e.state !== 'strike' && e.state !== 'chase') {
+        arm.rotation.x = damp(arm.rotation.x, 0, 6, dt);
+        arm.rotation.z = damp(arm.rotation.z, K.armBaseZ[i], 6, dt);
+      }
+    }
+    KNEELER_MARK_MAT.emissiveIntensity = 0.32 + waking * 0.24
+      + pulse * (yielded ? 0.08 : 0.05) + impactFlash * 0.9;
+    for (const [i, prong] of K.prongs.entries()) {
+      prong.rotation.z = (i - 1) * 0.12 + (i - 1) * yielded * 0.58;
+      prong.scale.y = (0.3 - Math.abs(i - 1) * 0.04) * (1 - yielded * 0.22);
+    }
   }
 
   _graveMausoleumAt(pos) {

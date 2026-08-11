@@ -1,4 +1,163 @@
-# HANDOFF — 2026-08-10, bell/pilot/intruder recovery (CURRENT, DEPLOYED)
+# HANDOFF — 2026-08-10, basement/back-half/transition polish (CURRENT CANDIDATE)
+
+Read `AGENTS.md` first. This section is the current handoff for the isolated
+worktree
+`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-polish-20260810`,
+branch `codex/fetch-polish-20260810`, based on
+`c6b486e723f1f265d6aecb3d7ee7c52f454e957e`.
+
+The gameplay changes below are implemented in the working candidate. They are
+not yet a frozen-source release: the tree is uncommitted, the final serial GPU
+and browser matrix is still in progress, no deterministic package has been
+made, no source/site PR or deploy preview exists, and production still serves
+the previously verified `0.5.0-intruder`. Do not turn an earlier green focused
+run, a screenshot, or a locally booting edit into a shipping claim.
+
+For the spoiler-complete route, use `docs/WALKTHROUGH.md`. For Alex's report-to-
+change ledger, use `docs/PLAYTEST-1.md`. This file owns release boundaries,
+evidence, and the exact work remaining.
+
+## Playable route and dependency truth
+
+The house is a partial order. There is no random second skull throw and no
+hidden mandatory archive control:
+
+```text
+bedroom key + nursery key
+  -> ring the servant bell (direct throw; exterior trolley remains an alternate)
+ring the bell
+  -> guest flame may be stolen immediately or at any later house visit
+ring the bell + break all 3 cellar boards (either order)
+  -> cellar opens -> visible basement pilot becomes the alternate flame source
+either real flame source -> ateFlame
+hold the pump winch through the crossing -> pumpGalleryLatched
+ateFlame + pumpGalleryLatched
+  -> open furnace -> keep the skull held in the fire through the refusal
+  -> ash pan kicks out -> fetch key -> unlock and use hatch
+```
+
+- The three detached cellar boards now clatter briefly, retire completely in
+  the authored window, and leave the open doorway collider and sightline clear.
+  The released bell bolt and guide rings fold into jamb sleeves instead of
+  continuing to resemble a second blockage.
+- The first basement landing presents a raised, moving pilot flame against a
+  reflector with an open cage center. A visible conduit runs toward the furnace.
+  One outbound hit transfers fire across the gap into two animated socket flames
+  carried on the skull; the unused flame source extinguishes atomically.
+- The pump has a grounded frame, bearings, feet, a sweeping pressure gauge, and
+  travelling pressure collars. The bridge still uses the sacred throw/hold/
+  release grammar: early release rewinds; reaching the far pawl latches it.
+- Archive wheels remain optional environmental history, but now answer locally
+  with visible/mechanical feedback. They do not mint a progression flag or
+  secretly reveal the key.
+- With both prerequisites, the open furnace has a real cavity and five large,
+  moving flame tongues. The skull must remain continuously held in the fire
+  through burn, choke, backdraft, pan kick, and key exposure. Early release or
+  death cancels and visibly rearms the attempt; no orphaned timer can eject a
+  ghost key later.
+
+The back half is physical and keeps view/input live:
+
+```text
+grave ritual or loud clear
+  -> opened mausoleum terrain aperture
+  -> 12-tread physical descent
+  -> uninterrupted ossuary counterweight hold
+  -> 15-tread physical far rise and forest-side hatch
+  -> fallen tree + 2 committed forks + required mire rope
+  -> ground Kneeler bow OR 3-knot canopy bypass
+  -> waterfall sacrifice -> 8-stone crossing
+  -> guided Underfalls main route -> ceiling hatch -> mirror contact
+```
+
+- The graveyard no longer hands the player through a hole or magically past the
+  gate. The terrain, slab, vegetation, and collision retire around a real stair;
+  the far end is a separate climb to a hatch wholly beyond the gate. Backtracking
+  through the entrance remains physical before the counterweight is solved.
+- The huge forest Kneeler now tells the truth at a high-value burden silhouette:
+  one skull hit makes its whole body bow and grants a usable ground passage. It
+  remains immortal. The alternate route is three reachable rope knots over and
+  beyond it; players may land between throws or catch and rethrow in midair.
+- The clearing now begins its waterfall bridge with a real eighth stepping stone
+  near the dry shore. Its visible rise and collision threshold are the same
+  state, and the raised bridge survives the clearing checkpoint.
+- Underfalls uses one bounded, animated high-value calcite current to point along
+  the required route. The optional dry culvert uses a separate dark crosswise
+  cadence, and the final hatch owns a distant vertical light shaft and ring with
+  an unobstructed sightline. These cues are non-colliding, non-interactive, and
+  wordless; they do not become another HUD.
+
+## Existing `0.5.0-intruder` features preserved
+
+- Escape/P and the real fallback pause button freeze simulation, director beats,
+  held skull/rope state, finale time, CSS motion, camera shake, and WebAudio.
+  Resume drops paused wall time; Restart from Checkpoint preserves solved state.
+- The title still uses the content-addressed 1280×720 intruder key art. Active
+  play remains wordless; title, pause, retry, and the returning end title are the
+  allowed non-playing text surfaces.
+- The scullery-window figure still advances only while genuinely watched,
+  freezes between looks, recoils before player overlap, and gates no progression.
+
+## Transition and context-recovery candidate
+
+The candidate replaces first-entry shader/FBO surprises with bounded, act-aware
+warmup and a fixed light signature. It keeps one 20-light world rig
+(ambient 1 + hemisphere 1 + directional 1 + spot 1 + point 16), a separate
+two-point held pass, one directional shadow slot, preallocated flame/impact
+resources, bounded shader representatives plus current-act physical residency,
+and fail-closed house/finale reflections. Context restore restarts the current
+act first instead of depending on a future title idle.
+
+This paragraph describes the implemented architecture, **not final performance
+evidence**. The acceptance gate is the serial system-Chrome/D3D11 matrix in
+`tests/transition-warmup-regression.mjs`, including immediate-Wake races, every
+district seam, context loss in house/cave/finale, injected mirror failures,
+first-visible resource deltas, frame bounds, and a 2,400-step cave soak. The
+flame transfer has a separate four-page normal/restored guest/pilot allocation
+gate. Both must pass on the final frozen source before release.
+
+## Candidate evidence and release blockers
+
+Completed evidence that remains useful but is not sufficient by itself:
+
+- Earlier focused runs accepted the physical back half at **39/39** and
+  Underfalls guidance at **19/19**, both with zero browser errors.
+- Earlier broad runs reached canonical `autotest` **24/24**, `regressions`
+  **50/50**, eight-act smoke, and the full **38-milestone** playthrough on a
+  prior working edit. Later transition/flame source changes mean all of these
+  must be rerun from the final frozen tree.
+- Accepted review plates exist for the opened ossuary descent/far emergence,
+  three-knot transfer and Kneeler routes, near-shore stone, and three Underfalls
+  wayfinding views. The basement pilot and open furnace still require fresh
+  final-source plates after the newest flame/aperture work.
+
+Before this section can become a release handoff, fill every item with fresh
+evidence from one frozen commit:
+
+1. Run all candidate-focused commands listed in `AGENTS.md`, serially where they
+   own system Chrome/D3D11. Record final counts, timings, budgets, and zero-error
+   status; replace the work-in-progress evidence above.
+2. Run the four canonical gates on that same source: **24 autotest**, **50
+   regressions**, **eight acts**, and **38 real-input milestones**. Repeat the
+   complete playthrough if any shipping source changes afterward.
+3. Inspect fresh basement and back-half plates at original resolution. In
+   particular, the pilot must read as fire and the open furnace must read as a
+   cavity full of flame, not rivets or a painted black panel.
+4. Assign the release version, commit identity, and source commit/PR. None exists
+   for this candidate yet.
+5. Build the standalone archive twice; record entry count, raw/ZIP bytes, exact
+   SHA-256, clean-extraction byte comparison, boot identity, and integrity
+   negatives. No current-candidate package exists yet.
+6. Sync the exact frozen source into a fresh Qualiacology worktree while
+   preserving its shell, title/card assets, metadata, home pill, vendor files,
+   and cache rules. Record preview PR/deploy and its fresh acceptance probe.
+7. Merge only after acceptance, then record the production merge/deploy, live
+   version/hash/header evidence, and a new zero-error production probe. Until
+   then `https://qualiacology.com/fetch/` remains the old release.
+
+---
+
+# HANDOFF — 2026-08-10, bell/pilot/intruder recovery (HISTORICAL PRODUCTION BASELINE)
 
 Read `AGENTS.md` first. This section supersedes every release-state claim below.
 Alex's public playtest of `0.4.0-ossuary` exposed a real human-route failure:
@@ -13,7 +172,7 @@ The `0.5.0-intruder` repair landed through source
 artifact, Qualiacology preview, site merge, and production deployment were then
 verified independently below. No one state is inferred from another.
 
-## Current repaired house contract
+## `0.5.0-intruder` repaired house contract
 
 The house is a partial-order mechanism, not one misleading single-file queue:
 
