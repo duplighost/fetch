@@ -1136,6 +1136,103 @@ export class GameAudio {
     this.duck(0.5, 1.6);
   }
 
+  flameSteal(opts = {}) {
+    // A small flame does not merely wink out: it is audibly pulled across the
+    // room and seats in the skull with two hot, glassy ticks. This is the
+    // wordless hand-off between the required source and the carried state.
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.25, 0.9, 0.48);
+    const breath = ctx.createBufferSource(); breath.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(520, t);
+    bp.frequency.exponentialRampToValueAtTime(3100, t + 0.48);
+    const bg = ctx.createGain();
+    bg.gain.setValueAtTime(0.0001, t);
+    bg.gain.exponentialRampToValueAtTime(0.42, t + 0.3);
+    bg.gain.exponentialRampToValueAtTime(0.0001, t + 0.72);
+    breath.connect(bp).connect(bg).connect(out);
+    breath.start(t); breath.stop(t + 0.78);
+    for (const [delay, frequency, peak] of [[0.42, 1180, 0.25], [0.51, 1620, 0.17]]) {
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      o.frequency.setValueAtTime(frequency, t + delay);
+      o.frequency.exponentialRampToValueAtTime(frequency * 0.72, t + delay + 0.16);
+      const g = ctx.createGain();
+      this._env(g, t + delay, peak, 0.002, 0.22);
+      o.connect(g).connect(out);
+      o.start(t + delay); o.stop(t + delay + 0.28);
+    }
+  }
+
+  pressureSurge(opts = {}) {
+    // A pressure line waking: retained pipe-body thump, travelling steam, then
+    // a hard pawl seat. It is deliberately unlike a generic key/unlock sound.
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 2.1, 0.92, 0.56);
+    const body = ctx.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(68, t);
+    body.frequency.exponentialRampToValueAtTime(38, t + 0.72);
+    const bodyGain = ctx.createGain();
+    this._env(bodyGain, t, 0.7, 0.008, 0.72);
+    body.connect(bodyGain).connect(out);
+    body.start(t); body.stop(t + 0.82);
+
+    const steam = ctx.createBufferSource(); steam.buffer = this._noiseBuf; steam.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass';
+    hp.frequency.setValueAtTime(420, t + 0.08);
+    hp.frequency.exponentialRampToValueAtTime(2600, t + 0.92);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.exponentialRampToValueAtTime(0.34, t + 0.32);
+    sg.gain.setTargetAtTime(0.18, t + 0.72, 0.24);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.42);
+    steam.connect(hp).connect(sg).connect(out);
+    steam.start(t); steam.stop(t + 1.5);
+    for (const [delay, frequency] of [[0.92, 420], [1.05, 310], [1.2, 220]]) {
+      const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = frequency;
+      const g = ctx.createGain(); this._env(g, t + delay, 0.13, 0.002, 0.07);
+      o.connect(g).connect(out); o.start(t + delay); o.stop(t + delay + 0.1);
+    }
+  }
+
+  steamSpit(opts = {}) {
+    // Harmless archive valves answer a throw locally without pretending to be
+    // another progression switch.
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 0.75, 0.72, 0.32);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(3100 * (opts.rate ?? 1), t);
+    bp.frequency.exponentialRampToValueAtTime(920 * (opts.rate ?? 1), t + 0.42);
+    const g = ctx.createGain(); this._env(g, t, 0.38, 0.004, 0.46);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t); src.stop(t + 0.52);
+  }
+
+  ashEject(opts = {}) {
+    // Drawer kick + unmistakable small iron key ringing in the exposed pan.
+    // This punctuation lands while the offered skull is still in the fire.
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.25, 1, 0.46);
+    const thump = ctx.createOscillator(); thump.type = 'sine';
+    thump.frequency.setValueAtTime(105, t);
+    thump.frequency.exponentialRampToValueAtTime(42, t + 0.24);
+    const tg = ctx.createGain(); this._env(tg, t, 0.82, 0.003, 0.3);
+    thump.connect(tg).connect(out); thump.start(t); thump.stop(t + 0.38);
+    for (const [delay, frequency, peak] of [
+      [0.08, 1820, 0.24], [0.19, 2440, 0.18], [0.34, 1370, 0.13],
+    ]) {
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      o.frequency.setValueAtTime(frequency, t + delay);
+      o.frequency.exponentialRampToValueAtTime(frequency * 0.72, t + delay + 0.28);
+      const g = ctx.createGain(); this._env(g, t + delay, peak, 0.002, 0.42);
+      o.connect(g).connect(out); o.start(t + delay); o.stop(t + delay + 0.5);
+    }
+  }
+
   whisper(opts = {}) {
     if (!this._ready) return;
     this._play(this._whisperBuf, {

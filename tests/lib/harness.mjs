@@ -76,7 +76,9 @@ export async function launchBrowser() {
 export async function openPage(browser, url, { width = 1280, height = 800, quiet = true } = {}) {
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
   const errors = [];
-  page.on('pageerror', e => { errors.push('pageerror: ' + (e && e.message || e)); });
+  page.on('pageerror', e => {
+    errors.push('pageerror: ' + (e?.stack || e?.message || e));
+  });
   page.on('console', m => {
     if (/favicon/i.test(m.text())) return;
     if (m.type() === 'error') errors.push('console.error: ' + m.text());

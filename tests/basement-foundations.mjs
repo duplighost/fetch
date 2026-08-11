@@ -111,6 +111,37 @@ try {
         },
       );
 
+      const deathPos = target.object.getWorldPosition(g.player.pos.clone());
+      F.setSkull(deathPos.x, deathPos.y, deathPos.z, 0, 0, 0, 'outbound');
+      const deathDirective = target.onHit.call(target, g.skull);
+      F.stepWith(0.58, { throwHeld: true }, false);
+      const partialBeforeDeath = puzzle.progress;
+      g.director.death(null);
+      F.stepWith(1.55, { throwHeld: true }, false);
+      const heldDeath = {
+        solved: puzzle.solved, state: puzzle.state, progress: puzzle.progress,
+        flag: g.flags.has('crawlSecretSolved'), targetEnabled: target.enabled,
+        skullMode: g.skull.mode,
+      };
+      g.director.respawn();
+      F.stepWith(0.25, {}, false);
+      const afterDeathRespawn = {
+        solved: puzzle.solved, state: puzzle.state, progress: puzzle.progress,
+        flag: g.flags.has('crawlSecretSolved'), targetEnabled: target.enabled,
+        skullMode: g.skull.mode, act: g.act,
+      };
+      check(
+        'death while the optional counterweight remains physically held cannot ghost-solve it',
+        deathDirective === 'anchor'
+          && partialBeforeDeath > 0 && partialBeforeDeath < 1
+          && !heldDeath.solved && heldDeath.progress === 0 && !heldDeath.flag
+          && heldDeath.skullMode === 'returning'
+          && !afterDeathRespawn.solved && afterDeathRespawn.progress === 0
+          && !afterDeathRespawn.flag && afterDeathRespawn.targetEnabled
+          && afterDeathRespawn.skullMode === 'held' && afterDeathRespawn.act === 'basement',
+        { deathDirective, partialBeforeDeath, heldDeath, afterDeathRespawn },
+      );
+
       const retryPos = target.object.getWorldPosition(g.player.pos.clone());
       F.setSkull(retryPos.x, retryPos.y, retryPos.z, 0, 0, 0, 'outbound');
       const heldDirective = target.onHit.call(target, g.skull);
@@ -131,8 +162,44 @@ try {
           flags: [...g.flags].filter((f) => f.startsWith('crawl')),
         },
       );
-      F.stepWith(0.05, { throwHeld: false }, false);
-      F.stepWith(2.5, {}, false);
+      const revealAtDeath = {
+        t: puzzle.revealT,
+        ballZ: puzzle.ball.position.z,
+        punctuated: g.flags.has('crawlSecretPunctuated'),
+      };
+      g.director.death(null);
+      F.stepWith(1.35, { throwHeld: true }, false);
+      const revealWhileDead = {
+        t: puzzle.revealT,
+        ballZ: puzzle.ball.position.z,
+        punctuated: g.flags.has('crawlSecretPunctuated'),
+        skullMode: g.skull.mode,
+      };
+      g.director.respawn();
+      F.stepWith(0.12, {}, false);
+      const revealAfterRespawn = puzzle.revealT;
+      F.stepWith(1.25, {}, false);
+      const revealCompleted = {
+        t: puzzle.revealT,
+        ballZ: puzzle.ball.position.z,
+        punctuated: g.flags.has('crawlSecretPunctuated'),
+        ballKnocked: !!puzzle.ballKnocked,
+        knockPlayed: puzzle.revealKnock,
+        whisperPlayed: puzzle.revealWhisper,
+      };
+      check(
+        'death pauses the solved kennel tableau so the living re-entry receives its ball, knock and whisper',
+        revealAtDeath.t > 0 && revealAtDeath.t < 0.5 && !revealAtDeath.punctuated
+          && Math.abs(revealWhileDead.t - revealAtDeath.t) < 1e-6
+          && Math.abs(revealWhileDead.ballZ - revealAtDeath.ballZ) < 1e-6
+          && !revealWhileDead.punctuated && revealWhileDead.skullMode !== 'anchored'
+          && revealAfterRespawn > revealAtDeath.t
+          && revealCompleted.t > 1.15 && revealCompleted.ballZ > 1.2
+          && revealCompleted.punctuated && revealCompleted.ballKnocked
+          && revealCompleted.knockPlayed && revealCompleted.whisperPlayed,
+        { revealAtDeath, revealWhileDead, revealAfterRespawn, revealCompleted },
+      );
+      F.stepWith(1.2, {}, false);
       check(
         'release after the latch returns the skull without closing the reveal',
         g.skull.mode === 'held'

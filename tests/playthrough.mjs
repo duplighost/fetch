@@ -236,8 +236,14 @@ try {
     walkTo(5, -3, 6); walkTo(9.8, -1.7, 10);         // boiler room; the one warm thing in it
     useAt(10.71, -2.1, -1.52);                       // open the incinerator's mouth
     F.stepWith(0.7);
-    throwAt(11.0, -2.1, -1.5, 0.35);                 // try to burn it. try.
-    for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1);
+    // Try to burn it—and keep holding the same physical throw while the fire
+    // burns, chokes, and backdrafts. Releasing early now correctly cancels.
+    aimAt(11.0, -2.1, -1.5);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    for (let t = 0; t < 2.4 && !g.flags.has('fireRefused'); t += 0.05) {
+      F.stepWith(0.05, { throwHeld: true });
+    }
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false });
     waitHeld(5);
     beat('fire-refused-the-skull', g.flags.has('fireRefused') && g.skull.mode === 'held', g.skull.getState());
     throwAt(10.5, -2.65, -1.5, 0.35);                // the key was in the ash all along
@@ -399,9 +405,14 @@ try {
     walkTo(-4.0, 23.5, 22);
     walkTo(-11.5, 25.0, 18);
     walkTo(-14.6, 31.6, 35);
-    walkTo(-14.6, 33.4, 12);
-    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) {
-      const dx = -14.6 - g.player.pos.x, dz = 34.8 - g.player.pos.z;
+    const entranceConnector = g.ossuary.entranceConnector;
+    walkTo(-14.6, entranceConnector.z0 - 0.22, 12);
+    // Walk the opened floor all the way down.  The old bot aimed at z=34.8,
+    // which happened to cross the retired flat trigger but did not describe
+    // the new physical stair or prove that a player could reach its seam.
+    for (let t = 0; t < 6 && !g.flags.has('ossuaryEntered'); t += 0.1) {
+      const dx = -14.6 - g.player.pos.x;
+      const dz = entranceConnector.z1 + 0.25 - g.player.pos.z;
       g.player.yaw = Math.atan2(-dx, -dz);
       F.stepWith(0.1, { moveZ: 1 });
     }
@@ -425,8 +436,17 @@ try {
       && g.graveyardGate.opening && g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
     F.stepWith(1 / 120, { throwReleased: true });
     waitHeld();
-    walkTo(-70, 19.0, 12);
-    for (let t = 0; t < 3 && !g.flags.has('ossuaryExited'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
+    const farConnector = g.ossuary.farConnector;
+    walkTo(g.ossuary.origin.x, farConnector.z0 - 0.22, 12);
+    // The chapter handoff now sits above a real 4.1m rise.  Keep steering up
+    // its authored axis until the surface seam is crossed; no direct threshold
+    // placement and no three-second assumption from the former flat floor.
+    for (let t = 0; t < 8 && !g.flags.has('ossuaryExited'); t += 0.1) {
+      const dx = g.ossuary.origin.x - g.player.pos.x;
+      const dz = farConnector.z1 + 0.35 - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+    }
     beat('ossuary-exits-outside-the-surface-gate',
       g.flags.has('ossuaryExited') && !g.ossuary.inOssuary,
       { player: g.player.pos.toArray(), gateOpening: g.graveyardGate.opening });

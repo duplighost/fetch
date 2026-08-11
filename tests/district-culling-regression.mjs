@@ -86,6 +86,24 @@ try {
         caveCullActive: cave.visibility.active,
       };
     };
+    const walkOpenedDescent = () => {
+      const c = ossuary.entranceConnector;
+      const mausoleum = g.ritualMausoleum;
+      const z = c.z0 - 0.18;
+      g.player.pos.set(mausoleum.x, g.world.groundHeightAt(mausoleum.x, z, 2), z);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player.grounded = true;
+      g.player.yaw = Math.PI;
+      g.player._sync(0);
+      let elapsed = 0;
+      while (!ossuary.inOssuary && elapsed < 6) {
+        F.stepWith(0.05, { moveZ: 1 }, false);
+        g.enemies.clear();
+        elapsed += 0.05;
+      }
+      return elapsed;
+    };
 
     F.start();
     const expectedForestVisible = expectedCount(forest.detailRoots, forest._detailBaseVisibility);
@@ -236,14 +254,17 @@ try {
       { ...houseAfterCave, visibilityDiff: caveRestoreDiff, ceiling: 450 },
     );
 
-    // Exercise the actual unlocked mausoleum entry and its authored backtrack
-    // exit.  Snapshot at the exact surface pose the exit returns to, so any
-    // difference is the ossuary culler rather than a positional forest rule.
+    // Exercise the actual unlocked mausoleum stair and its authored backtrack
+    // exit.  The old regression put the player directly on both retired magic
+    // thresholds; walking the physical connector keeps culling evidence tied
+    // to the path a player can really take.
     enter('graveyard');
     ossuary.unlock('culling-regression');
     g.skull.holdNow();
     const mausoleum = g.ritualMausoleum;
-    g.player.pos.set(mausoleum.x, g.world.groundHeightAt(mausoleum.x, mausoleum.z - 1.2, 3), mausoleum.z - 1.2);
+    const entrance = ossuary.entranceConnector;
+    g.player.pos.set(mausoleum.x,
+      g.world.groundHeightAt(mausoleum.x, entrance.z0 - 0.18, 3), entrance.z0 - 0.18);
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;
@@ -251,9 +272,7 @@ try {
     settle();
     const beforeOssuary = snapshotVisibility();
 
-    g.player.pos.set(mausoleum.x, 0.04, mausoleum.z + 0.4);
-    g.player._sync(0);
-    F.step(1 / 120, 1, false);
+    const entranceWalkT = walkOpenedDescent();
     g.enemies.clear();
     const ossuaryDrawSamples = [];
     for (let i = 0; i < 3; i++) {
@@ -275,24 +294,48 @@ try {
       drawSamples: ossuaryDrawSamples,
       visibleTopLevel: g.scene.children.filter((child) => child.visible).length,
       leaks: ossuaryLeaks,
+      entranceWalkT,
     };
     check(
       'the occupied ossuary hides every exterior top-level root and stays below the render ceiling',
       ossuaryInside.inOssuary
+        && ossuaryInside.entranceWalkT > 0.6 && ossuaryInside.entranceWalkT < 5.9
         && ossuaryInside.routeVisible
         && ossuaryInside.leaks.length === 0
         && ossuaryInside.drawCalls > 0 && ossuaryInside.drawCalls < 450,
       { ...ossuaryInside, ceiling: 450 },
     );
 
-    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 0.1);
-    g.player.vel.set(0, 0, 0);
-    g.player.fallV = 0;
-    g.player.grounded = true;
+    F.stepWith(0.45, {}, false);
+    g.player.yaw = 0;
+    g.player.pitch = -0.17;
     g.player._sync(0);
-    F.step(1 / 120, 1, false);
-    F.step(1 / 120, 1, false);
+    const backtrackView = { yaw: g.player.yaw, pitch: g.player.pitch };
+    let backtrackWalkT = 0;
+    while (ossuary.inOssuary && backtrackWalkT < 3) {
+      F.stepWith(0.05, { moveZ: 1 }, false);
+      g.enemies.clear();
+      backtrackWalkT += 0.05;
+    }
+    let backtrackClimbT = 0;
+    let backtrackClimbedY = g.player.pos.y;
+    while (!ossuary.inOssuary && g.player.pos.z > entrance.z0 - 0.2
+      && backtrackClimbT < 4.5) {
+      F.stepWith(0.05, { moveZ: 1 }, false);
+      g.enemies.clear();
+      backtrackClimbedY = Math.max(backtrackClimbedY, g.player.pos.y);
+      backtrackClimbT += 0.05;
+    }
     g.enemies.clear();
+    const preservedBacktrackView = Math.abs(g.player.yaw - backtrackView.yaw) < 0.002
+      && Math.abs(g.player.pitch - backtrackView.pitch) < 0.002;
+    // Match the regression's original outward-facing render composition only
+    // after proving that the physical climb itself never turned the camera.
+    // This keeps the 450-draw comparison apples-to-apples while the focused
+    // gate separately owns the exact south-facing traversal pose.
+    g.player.yaw = Math.PI;
+    g.player.pitch = 0;
+    g.player._sync(0);
     const backtrackDrawSamples = [];
     for (let i = 0; i < 3; i++) {
       g.render();
@@ -306,10 +349,18 @@ try {
       drawCalls: g.lastRender.drawCalls,
       drawSamples: backtrackDrawSamples,
       visibilityDiff: ossuaryRestoreDiff,
+      backtrackWalkT,
+      backtrackClimbT,
+      backtrackClimbedY,
+      preservedBacktrackView,
     };
     check(
-      'the real ossuary backtrack exit restores every saved exterior visibility bit exactly',
+      'the real ossuary backtrack stair climbs out and restores every saved exterior visibility bit exactly',
       !ossuaryAfter.inOssuary
+        && ossuaryAfter.backtrackWalkT > 0.1 && ossuaryAfter.backtrackWalkT < 2.9
+        && ossuaryAfter.backtrackClimbT > 0.6 && ossuaryAfter.backtrackClimbT < 4.4
+        && ossuaryAfter.backtrackClimbedY > -0.22
+        && ossuaryAfter.preservedBacktrackView
         && !ossuaryAfter.routeVisible
         && ossuaryAfter.visibilityDiff.length === 0
         && ossuaryAfter.drawCalls > 0 && ossuaryAfter.drawCalls < 450,
@@ -323,16 +374,23 @@ try {
     const beforeLookbackVisibility = new Map(
       (g.graveyardLookbackRoots || []).map((root) => [root, root.visible]),
     );
-    g.player.pos.set(mausoleum.x, 0.04, mausoleum.z + 0.4);
-    g.player._sync(0);
-    F.step(1 / 120, 1, false);
+    F.stepWith(0.45, {}, false);
+    const forwardEntranceWalkT = walkOpenedDescent();
     ossuary.solved = true;
-    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 28.6);
+    ossuary.exitCollider.max.y = ossuary.exitCollider.min.y;
+    const far = ossuary.farConnector;
+    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, far.z0 - 0.18);
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;
+    g.player.yaw = Math.PI;
     g.player._sync(0);
-    F.step(1 / 120, 1, false);
+    let farRiseWalkT = 0;
+    while (!g.flags.has('ossuaryExited') && farRiseWalkT < 8) {
+      F.stepWith(0.05, { moveZ: 1 }, false);
+      g.enemies.clear();
+      farRiseWalkT += 0.05;
+    }
     g.enemies.clear();
     const forwardDrawSamples = [];
     for (let i = 0; i < 3; i++) {
@@ -381,10 +439,14 @@ try {
       changedLookbackRoots,
       backDistrictCullActive: forest.backDistrictCullActive,
       checkpoint: g.lastCheckpoint,
+      forwardEntranceWalkT,
+      farRiseWalkT,
     };
     check(
       'the solved far-hatch exit commits the forest and retires only completed back-district roots',
       ossuaryForward.act === 'forest'
+        && ossuaryForward.forwardEntranceWalkT > 0.6
+        && ossuaryForward.farRiseWalkT > 0.8 && ossuaryForward.farRiseWalkT < 7.9
         && !ossuaryForward.inOssuary
         && !ossuaryForward.routeVisible
         && ossuaryForward.exitedFlag

@@ -1002,13 +1002,16 @@ export class Skull {
       // grammar as every other throw. It also keeps facing you while it holds,
       // because it is still your light and you are still going to need it.
       this.root.lookAt(this.camera.getWorldPosition(_anchorLook));
-      if (!ctx.throwHeld && a.t > 0.06) {
-        this.anchor = null;
-        this.beginReturn('snap');
-        return;
-      }
     } else {
       this.root.rotation.y += dt * 0.4;
+    }
+    // Physical puzzle clamps may opt into the same press/hold/release promise
+    // as rope anchors without also turning the player into a swing. A quick
+    // tap therefore recalls the skull instead of silently waiting out maxHold.
+    if ((a.swing || a.releaseable) && !ctx.throwHeld && a.t > 0.06) {
+      this.anchor = null;
+      this.beginReturn('snap');
+      return;
     }
     // failsafe: never hang forever
     if (a.t > (a.maxHold || 3.5)) {
@@ -1087,6 +1090,12 @@ export class Skull {
   }
 
   _checkTargets(ctx) {
+    // Flight and return animation continue beneath the death veil so the skull
+    // never freezes in mid-air. Interactions do not. A target hit is an authored
+    // state commit (keys, boards, flames, ropes, exits), and an already-flying
+    // skull must not spend one after the player has died or control has passed
+    // into a terminal/transition state.
+    if (ctx?.interactionsLive === false) return;
     // swept segment prevPos→pos vs target spheres
     const seg = W.a.copy(this.pos).sub(this.prevPos);
     const segLen = seg.length();
