@@ -484,30 +484,46 @@ export class Director {
     const p = g.player.pos;
     const inNursery = p.x < -4 && p.y > 3 && p.z > -2;
     mb.wound = Math.max(0, mb.wound - dt / 55);
+    // The thing in the corner IS the creature now. It used to be a bare
+    // capsule that grew for eleven seconds and was then deleted at scale 0.96
+    // so a full-size walker could be spawned in its place — the reveal
+    // swapped objects at the punchline, which is exactly the moment Alex was
+    // watching ("i watched it before it expanded. that was cool"). The real
+    // walker now drags itself out of the nursery floor on the same slow
+    // clock, and what he watched rise is what winds up and comes.
     if (mb.wound > 0.03) {
       this._boxTh = (this._boxTh || 0) - dt;
       if (this._boxTh <= 0) {
         this._boxTh = 0.34 / (0.5 + mb.wound * 0.5);
         g.audio.glassTink({ pos: mb.mesh.position, gain: 0.12 + mb.wound * 0.15, rate: 0.9 + mb.wound * 0.3, verb: 0.6 });
       }
-      if (mb.thing) { mb.thing.scale.setScalar(Math.max(0.001, mb.thing.scale.x - dt * 0.4)); if (mb.thing.scale.x <= 0.01) { g.scene.remove(mb.thing); mb.thing = null; } }
+      // rewinding the box sends it back down
+      if (mb.walker && !mb.spawned) {
+        mb.walker.graveRiseT = Math.min(mb.walker.graveRiseDur, mb.walker.graveRiseT + dt * 2.4);
+        if (mb.walker.graveRiseT >= mb.walker.graveRiseDur) {
+          g.enemies.clear((e) => e === mb.walker);
+          mb.walker = null;
+        }
+      }
     } else if (inNursery) {
       // while the box is silent, something in the corner is taller than it was
-      if (!mb.thing) {
-        const m = new THREE.Mesh(
-          new THREE.CapsuleGeometry(0.3, 1.5, 4, 8),
-          new THREE.MeshLambertMaterial({ color: 0x0b0a10 }));
-        m.position.set(-11.2, 4.6, 5.3);
-        m.scale.setScalar(0.001);
-        g.scene.add(m);
-        mb.thing = m;
+      if (!mb.walker) {
+        mb.walker = g.enemies.spawn('walker', -11.2, 5.3, 'dormant', 4.6);
+        mb.walker.graveRiseDur = 11.5;
+        mb.walker.graveRiseT = 11.5;
+        mb.walker.riseFrozen = true;      // this clock belongs to the music box
+        // squash-only: the nursery floor is the ground floor's ceiling, so a
+        // sunken body would hang into the room below for eleven seconds
+        mb.walker.riseSquashOnly = true;
       }
-      mb.thing.scale.setScalar(Math.min(1, mb.thing.scale.x + dt * 0.09));
-      if (mb.thing.scale.x > 0.96 && !mb.spawned) {
+      mb.walker.graveRiseT = Math.max(0, mb.walker.graveRiseT - dt);
+      if (mb.walker.graveRiseT <= 0 && !mb.spawned) {
         mb.spawned = true;
-        g.scene.remove(mb.thing); mb.thing = null;
+        mb.walker.riseFrozen = false;
+        mb.walker.state = 'wind';
+        mb.walker.windT = 0;
+        mb.walker = null;
         g.audio.sting(0.7);
-        g.enemies.spawn('walker', -10.5, 4.8, 'wind', 4.6);   // the nursery storey
       }
     }
   }

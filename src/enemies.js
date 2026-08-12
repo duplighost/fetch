@@ -853,6 +853,22 @@ export class Enemies {
     this.game.scene.add(mesh);
     this.list.push(e);
     (this.game.spawnLog ||= []).push([kind, state, Math.round(x), Math.round(z), +this.game.time.toFixed(1)]);
+    // EVERY active body arrives by dragging itself out of the ground. Alex's
+    // two favourite enemy moments are both partial bodies — hands through a
+    // wall, "slowly coming up from the floor... that was cool" — and his
+    // verdict on the fully-revealed shape is that it isn't scary. So the
+    // reveal is now the default entrance, not a graveyard special case:
+    // popped into existence at full height is the one thing a body never
+    // does. Dormant spawns skip it (they are furniture until noticed), and
+    // callers that stage their own arrival (the arena's waves, the nursery's
+    // slow rise) override the fields after spawn returns.
+    if (state !== 'dormant' && state !== 'standing') {
+      e.graveRiseDur = 1.15;
+      e.graveRiseT = e.graveRiseDur;
+      if (this.game.act !== 'graveyard' && this.game.audio.ready) {
+        this.game.audio.walkerRise({ pos: e.pos, gain: 0.3, rate: 0.86, verb: 0.5 });
+      }
+    }
     return e;
   }
 
@@ -1159,7 +1175,10 @@ export class Enemies {
       // ---- state machine ----
       switch (e.state) {
         case 'dormant':
-          // statue-still until you have PASSED it, or it hears you
+          // statue-still until you have PASSED it, or it hears you.
+          // A body whose rise an author is pacing (riseFrozen) cannot be
+          // startled awake half out of the floor.
+          if (e.riseFrozen) break;
           if (sameLevel && dist < 3.2 && player.noise > 0.5) { e.state = 'wind'; e.windT = 0; }
           break;
         case 'standing': {
@@ -1508,9 +1527,24 @@ export class Enemies {
       if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
       if (e.graveRiseT > 0 && e.state !== 'dying') {
-        e.graveRiseT = Math.max(0, e.graveRiseT - dt);
+        // The emerge, not an elevator. Position alone read as riding a
+        // platform; a body dragging itself out of the ground is compressed
+        // and fighting: it starts squashed and unfolds, it shudders
+        // laterally with the effort, and the jaw hangs open until it is out.
+        // riseFrozen lets an author (the nursery) own the clock.
+        if (!e.riseFrozen) e.graveRiseT = Math.max(0, e.graveRiseT - dt);
         const remaining = e.graveRiseT / Math.max(0.001, e.graveRiseDur || 1.1);
-        e.mesh.position.y -= remaining * remaining * 1.35;
+        const up = 1 - remaining;
+        // squash-only bodies (the nursery: its floor is someone's ceiling)
+        // grow from a crouch instead of sinking through the storey below
+        if (!e.riseSquashOnly) e.mesh.position.y -= remaining * remaining * 1.35;
+        e.mesh.scale.y = e.spec.scale * ((e.riseSquashOnly ? 0.06 : 0.34) + (e.riseSquashOnly ? 0.94 : 0.66) * up);
+        e.mesh.position.x = e.pos.x + Math.sin(up * 31 + e.serial) * 0.055 * remaining;
+        e.mesh.position.z = e.pos.z + Math.cos(up * 24 + e.serial) * 0.04 * remaining;
+        const w = e.mesh.userData.walker;
+        if (w?.jaw) w.jaw.rotation.x = w.jaw.userData.baseRotation.x + 0.5 * remaining;
+      } else if (e.mesh.scale.y !== e.spec.scale) {
+        e.mesh.scale.y = e.spec.scale;
       }
       if (e.state !== 'dormant' && e.state !== 'dying' && dist > 0.1) {
         e.mesh.rotation.y = Math.atan2(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
