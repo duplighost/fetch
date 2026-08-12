@@ -1893,6 +1893,28 @@ export class Forest {
         widen: 5.55, span: 10.5,
       },
     ];
+    // THE CHAIN (STATE-OF-PLAY §8, verb 3; Alex, twice: "there should be more
+    // swingy things in the forest that you can use consecutively"). Five knots
+    // on the centreline of the straightest run in the forest — s 163→204 bows
+    // less than 0.08 m at these gaps — each knot placed inside the previous
+    // one's lamp. The numbers are laws, not taste:
+    //   height 7.0  — a latch anchor LIFTS only while 30·sin(elev) > 14, i.e.
+    //                 the pivot must sit ≥ 0.53 × horizontal reach above the
+    //                 eye. 7 m over an ~8 m latch clears it; the old ravine
+    //                 pivot at 3.4 never did, and held swings sank.
+    //   gaps ≤ 9    — the skull's carried lamp reaches 11.5 m, and while the
+    //                 skull is ANCHORED the lamp hangs at the knot: each knot
+    //                 lights exactly the next one. That is the whole tutorial —
+    //                 no HUD, no words, no hue.
+    // The seed knot at s=65 teaches the link before it is required: its arc
+    // releases the player ~8 m from the searchers-line pocket knot, one
+    // comfortable throw, on the forest's other straightest stretch.
+    this.chain = {
+      seedS: 65,
+      knotS: [165, 173, 182, 191, 200],
+      height: 7.0,
+      widen: 1.35, widenAt: 182, span: 26,
+    };
     // Keep the ordinary corridor separate from its authored side-pocket ground.
     // `halfW` still describes all rendered/grounded space; clampPlayer decides
     // which one-sided pocket has been earned through the matching skull latch.
@@ -1900,6 +1922,10 @@ export class Forest {
       const t = i / this.length;
       let w = lerp(2.4, 1.5, smoothstep(0, 0.35, t)) * (0.9 + 0.2 * Math.sin(i * 0.29));
       w += 9 * Math.exp(-(((i - this.arenaS()) / 14) ** 2));       // the arena bulge
+      // the chain's aisle: the run of consecutive swings gets a wider lane, in
+      // the same Gaussian idiom as the pockets, so an arc's lateral drift is
+      // landing room instead of an invisible clamp fight
+      w += this.chain.widen * Math.exp(-(((i - this.chain.widenAt) / this.chain.span) ** 2));
       return w;
     });
     this.halfW = this.baseHalfW.map((base, i) => {
@@ -1929,6 +1955,7 @@ export class Forest {
     this._setpieces();
     this._buildForestLandmarks();
     this._buildOptionalRopes();
+    this._buildChain();
     this._buildForestStoryProps();
 
     this.detailRoots = scene.children.slice(detailStart);
@@ -2518,6 +2545,12 @@ export class Forest {
     })();
 
     const trunks = [], canopies = [], branches = [], shrubs = [], roots = [], sideMasses = [];
+    // The chain's flight envelope: no centreline canopy and no cross-branches
+    // near a knot — a 7 m pivot swing needs the air above the road. The RNG is
+    // still consumed exactly as before and only the RESULT is discarded, so
+    // every other tree in the forest stays where it has always been.
+    const chainS = this.chain ? [this.chain.seedS, ...this.chain.knotS] : [];
+    const nearChain = (i) => chainS.some((s) => Math.abs(i - s) < 3);
     for (let i = 2; i < this.length - 2; i += 2) {
       const hw = this.halfW[i];
       for (const side of [-1, 1]) {
@@ -2542,10 +2575,14 @@ export class Forest {
         // enormous solid object directly over the camera centreline.
         const side = rng.chance(0.5) ? -1 : 1;
         const p = at(i, side * (0.45 + hw * rng.range(0.24, 0.48)));
-        canopies.push({
+        const blob = {
           x: p.x, y: rng.range(8.0, 10.3), z: p.z,
           sc: rng.range(1.05, 1.62), tint: rng.range(0.65, 0.94),
-        });
+        };
+        // a 1.62-scale blob at y 8.0 has a lower edge near 6.4 m — it would
+        // swallow a 7.0 m chain knot. rng fully consumed above; only the push
+        // is withheld.
+        if (!nearChain(i)) canopies.push(blob);
       }
       // and branches knit across it, low enough to duck under
       if (rng.chance(0.13)) {
@@ -2557,7 +2594,9 @@ export class Forest {
         mid.y += rng.range(-0.48, 0.62);
         mid.x += -a.tz * rng.range(-0.65, 0.65);
         mid.z += a.tx * rng.range(-0.65, 0.65);
-        branches.push({ a: av, b: mid }, { a: mid, b: bv });
+        // the player passes through 2.9-4.3 m at the bottom of every chain
+        // arc; a knit branch there is a clothesline. rng consumed as before.
+        if (!nearChain(i)) branches.push({ a: av, b: mid }, { a: mid, b: bv });
       }
     }
     // shrub walls line the corridor — the surfaces you actually walk between.
@@ -2566,6 +2605,9 @@ export class Forest {
       21, this.ravineS() - 13, this.ravineS() + 18,
       this.arenaS(), this.length - 11,
       ...this.secretPockets.map((pocket) => pocket.centerS),
+      // the chain's support trunks each get the same silhouette slot every
+      // authored landmark gets — a knot buried in shrub cards is no road sign
+      ...chainS,
     ];
     for (let i = 2; i < this.length - 2; i += 1) {
       if (rng.chance(0.25)) continue;
@@ -3066,6 +3108,98 @@ export class Forest {
     }
     this.forkClosureMesh.instanceMatrix.needsUpdate = true;
     this._forkClosuresWritten = true;
+  }
+
+  // THE CHAIN — five reusable centreline knots plus the seed link. Same art
+  // vocabulary as the optional-rope pockets (support trunk, bough, dropped
+  // line, pale knot), but on the road rather than beside it: off-line knots
+  // are secrets, on-line knots are the route. Everything static bakes into
+  // two InstancedMeshes so five anchors cost two draw calls, not twenty-five.
+  _buildChain() {
+    const game = this.game;
+    const { world, scene, mats: M, audio } = game;
+    const up = new THREE.Vector3(0, 1, 0);
+    const ropeMat = M.curtain.clone();
+    if (ropeMat.color) ropeMat.color.multiplyScalar(1.35);
+    const knotMat = M.headstone.clone();
+    if (knotMat.color) knotMat.color.multiplyScalar(0.86);
+    if ('emissive' in knotMat) {
+      knotMat.emissive = new THREE.Color(0x2c3134);
+      knotMat.emissiveIntensity = 0.24;
+    }
+
+    const segs = [];
+    const seg = (a, b, radius) => {
+      const d = b.clone().sub(a);
+      const len = d.length();
+      const q = new THREE.Quaternion().setFromUnitVectors(up, d.clone().divideScalar(len));
+      segs.push({ p: a.clone().add(b).multiplyScalar(0.5), q, len, radius });
+    };
+    const ground = (v) => { v.y = this.heightAt(v.x, v.z); return v; };
+
+    const knots = [];
+    const links = [];
+    const addLink = (s, index) => {
+      const i = clamp(Math.round(s), 0, this.length - 1);
+      const pivot = ground(this.posAt(s, 0));
+      pivot.y += this.chain.height;
+      // support trunk at the corridor edge, alternating sides so the aisle
+      // reads as a lane you pass through rather than a fence
+      const side = index % 2 ? 1 : -1;
+      const base = ground(this.posAt(s - 0.7, side * (this.halfW[i] - 0.45)));
+      const top = base.clone().add(new THREE.Vector3(0, this.chain.height + 1.35, 0));
+      seg(base, top, 0.27);
+      seg(top, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), 0.12);
+      seg(pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.026);
+      knots.push(pivot.clone());
+
+      const flag = `forestChain:${index}`;
+      const target = world.addFetchTarget({
+        id: `forestChain:${index}`, pos: pivot.clone(), radius: 0.92,
+        onHit(skull) {
+          // Same guard as the pocket knots: a fresh outbound throw latches,
+          // a returning skull passes, and a live swing is never stolen.
+          // The target NEVER retires — the chain is a road, not a set-piece.
+          if (skull.mode !== 'outbound' || game.player.swing) return 'continue';
+          skull.anchorAt(pivot, { swing: true, maxHold: 5.8 });
+          game.player.beginSwing(pivot, { maxT: 5.8 });
+          game.flag(`${flag}:latched`);
+          if (audio?.creak) audio.creak({ pos: pivot, gain: 0.5, rate: 0.82 + index * 0.045 });
+          return 'anchor';
+        },
+      });
+      links.push({ s, pivot: pivot.clone(), target });
+    };
+
+    addLink(this.chain.seedS, 5);          // the teacher: hands to the searchers-line pocket
+    this.chain.knotS.forEach((s, k) => addLink(s, k));
+
+    const wood = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(1, 1.08, 1, 7), M.bark, segs.length);
+    const mtx = new THREE.Matrix4();
+    const sc = new THREE.Vector3();
+    segs.forEach((it, i) => {
+      mtx.compose(it.p, it.q, sc.set(it.radius, it.len, it.radius));
+      wood.setMatrixAt(i, mtx);
+    });
+    wood.instanceMatrix.needsUpdate = true;
+    wood.castShadow = true;
+    wood.receiveShadow = true;
+    wood.name = 'chain supports and lines';
+    scene.add(wood);
+
+    const knotGeo = new THREE.DodecahedronGeometry(0.13, 0);
+    const knotMesh = new THREE.InstancedMesh(knotGeo, knotMat, knots.length);
+    const kq = new THREE.Quaternion();
+    knots.forEach((p, i) => {
+      mtx.compose(p, kq, sc.set(1.0, 1.35, 1.0));
+      knotMesh.setMatrixAt(i, mtx);
+    });
+    knotMesh.instanceMatrix.needsUpdate = true;
+    knotMesh.name = 'chain pale knots';
+    scene.add(knotMesh);
+
+    this.chainLinks = links;
   }
 
   _buildForestStoryProps() {

@@ -643,6 +643,64 @@ try {
     return { checks, diagnostics: { sideLat: sideProjection?.lat ?? null, half } };
   });
 
+  await scenario('forest-chain', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('forest');
+    F.stepWith(1 / 120, {}, false);
+    const forest = g.forest;
+
+    // (a) THE CHAIN IS NEVER THE ONLY ROUTE. Walk the whole chain run on foot
+    // with no throws: a missed link must be a landing, never a soft-lock.
+    const startPos = forest.posAt(160, 0);
+    g.player.pos.set(startPos.x, forest.heightAt(startPos.x, startPos.z), startPos.z);
+    forest.recentre(g.player.pos);
+    g.player._sync(0);
+    for (let t = 0; t < 30; t += 0.1) {
+      const pr = forest.project(g.player.pos.x, g.player.pos.z);
+      if (!pr || pr.s > 205 || g.dead) break;
+      const ahead = forest.posAt(Math.min(forest.length - 1, (pr?.s ?? 160) + 4), 0);
+      g.player.yaw = Math.atan2(-(ahead.x - g.player.pos.x), -(ahead.z - g.player.pos.z));
+      F.stepWith(0.1, { moveZ: 1, run: true }, false);
+    }
+    const walkedS = forest.project(g.player.pos.x, g.player.pos.z)?.s ?? -1;
+    check('the chain run is walkable on foot with no throws',
+      walkedS > 205 && !g.dead, { walkedS, dead: g.dead });
+
+    // (b) the chain's anchors never retire: every knot target enabled after use
+    const knots = g.world.fetchTargets.filter((t) => String(t.id).startsWith('forestChain'));
+    check('all six chain targets exist and stay enabled',
+      knots.length === 6 && knots.every((t) => t.enabled !== false),
+      { count: knots.length, enabled: knots.map((t) => t.enabled !== false) });
+
+    // (c) DEATH MID-CHAIN RESTORES CLEAN: kill the player airborne on a link
+    // and assert the swing is gone, the respawn is grounded and on-trail.
+    const link = forest.chainLinks.find((l) => l.s === 182);
+    g.player.pos.set(link.pivot.x, forest.heightAt(link.pivot.x, link.pivot.z), link.pivot.z - 6);
+    forest.recentre(g.player.pos);
+    g.player._sync(0);
+    F.setSkull(link.pivot.x, link.pivot.y, link.pivot.z, 0, 0, 0, 'outbound');
+    const directive = link.target.onHit.call(link.target, g.skull);
+    F.stepWith(0.4, { throwHeld: true }, false);
+    const midSwing = !!g.player.swing;
+    g.director.death(null);
+    F.stepWith(1.2, {}, false);
+    g.director.respawn();
+    F.stepWith(0.2, {}, false);
+    const pr = forest.project(g.player.pos.x, g.player.pos.z);
+    check('death mid-chain drops the rope and restores a grounded on-trail pose',
+      directive === 'anchor' && midSwing
+      && g.player.swing === null && !g.dead
+      && pr && Math.abs(pr.lat) < forest.halfW[Math.round(pr.s)] + 0.5,
+      { directive, midSwing, swing: g.player.swing, dead: g.dead, s: pr?.s, lat: pr?.lat });
+
+    return { checks };
+  });
+
   await scenario('forest-checkpoint', () => {
     const F = window.__FETCH;
     const g = window.__game;
