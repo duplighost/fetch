@@ -181,6 +181,28 @@ export class World {
     for (const [lv, x0, z0, x1, z1] of (T.floorHoles || [])) {
       this.floorHoles.push({ level: lv, x0: wx(x0), z0: wz(z0), x1: wx(x1 + 1), z1: wz(z1 + 1) });
     }
+
+    // ------------------------------------------------------- the nav graph
+    // The compiler already knows the house's whole topology — rooms per cell,
+    // which edges carry doors, where the floor is missing — and then threw it
+    // away, leaving the enemies to steer by straight lines toward doors that
+    // happened to be open. Persist it. Cells store room ids; doorAt is filled
+    // in by _spawnDoor as the walls are emitted; holes are cells a walking
+    // body must never be routed across (the stair shafts).
+    this.houseNav = { ox: OX, oz: OZ, cs: CS, levels: {} };
+    for (const lv of Object.keys(T.levels)) {
+      const cells = new Map();
+      for (const [k, room] of cellMaps[lv]) cells.set(k, room.id);
+      const holes = new Set();
+      for (const [hlv, x0, z0, x1, z1] of (T.floorHoles || [])) {
+        if (hlv !== lv) continue;
+        for (let cx = x0; cx <= x1; cx++)
+          for (let cz = z0; cz <= z1; cz++) holes.add(cx + ',' + cz);
+      }
+      this.houseNav.levels[lv] = {
+        floorY: T.levels[lv].floor, cells, holes, doorAt: new Map(),
+      };
+    }
     const ceilHoles = (T.ceilHoles || []).map(([lv, x0, z0, x1, z1]) =>
       ({ lv, x0: wx(x0), z0: wz(z0), x1: wx(x1 + 1), z1: wz(z1 + 1) }));
 
@@ -390,7 +412,56 @@ export class World {
     const door = new Door(this, cut, H, mid, fixed, floor, h, w, t);
     this.doors.push(door);
     if (cut.opts.id) this.doorById[cut.opts.id] = door;
+    // register the door on its graph edge, so routing can ask "what stands
+    // between these two cells" instead of scanning every door by distance
+    const level = this.houseNav?.levels?.[cut.lv];
+    if (level && cut.orient != null) {
+      door.edge = { lv: cut.lv, orient: cut.orient, ex: cut.ex, ez: cut.ez };
+      level.doorAt.set(cut.orient + '|' + cut.ex + ',' + cut.ez, door);
+    }
     return door;
+  }
+
+  // Which nav cell is this world position in? null when outside the house or
+  // between storeys. The 1.2 m band matches the door-scan tolerance the
+  // enemies already use for "same storey".
+  houseCellAt(x, z, y) {
+    const nav = this.houseNav;
+    if (!nav) return null;
+    const cx = Math.floor((x - nav.ox) / nav.cs);
+    const cz = Math.floor((z - nav.oz) / nav.cs);
+    for (const lv of Object.keys(nav.levels)) {
+      const level = nav.levels[lv];
+      if (Math.abs(level.floorY - y) > 1.2) continue;
+      const key = cx + ',' + cz;
+      if (!level.cells.has(key) || level.holes.has(key)) continue;
+      return { lv, cx, cz };
+    }
+    return null;
+  }
+
+  // Can a walking body cross from (cx,cz) one cell in `dir`? Interior edges of
+  // one room are open; edges between rooms are walls unless a door sits on
+  // them, and a door counts only if it is open — or merely unlocked, for a
+  // body that can work a knob. Exterior edges and holes never pass.
+  housePassable(lv, cx, cz, dir, canOpenDoors, excludeDoor = null) {
+    const level = this.houseNav?.levels?.[lv];
+    if (!level) return false;
+    const [o, ex, ez] = dir === 'N' ? ['H', cx, cz]
+      : dir === 'S' ? ['H', cx, cz + 1]
+        : dir === 'W' ? ['V', cx, cz]
+          : ['V', cx + 1, cz];
+    const nx = dir === 'W' ? cx - 1 : dir === 'E' ? cx + 1 : cx;
+    const nz = dir === 'N' ? cz - 1 : dir === 'S' ? cz + 1 : cz;
+    const here = level.cells.get(cx + ',' + cz);
+    const there = level.cells.get(nx + ',' + nz);
+    if (!here || !there) return false;
+    if (level.holes.has(nx + ',' + nz)) return false;
+    if (here === there) return true;
+    const door = level.doorAt.get(o + '|' + ex + ',' + ez);
+    if (!door || door === excludeDoor) return false;
+    if (door.open) return true;
+    return canOpenDoors && !door.locked;
   }
 
   _slabWithHoles(mat, x0, z0, x1, z1, cy, th, holes) {
@@ -831,6 +902,8 @@ export class Door {
     if (this.open) {
       this.setOpen(false);
       game.audio.doorClose({ pos: this.group.position });
+      // closing a door in a pursuer's face is a verb — let the enemies feel it
+      game.enemies?.onDoorClosed?.(this);
       return;
     }
     if (this.locked === 'never') {

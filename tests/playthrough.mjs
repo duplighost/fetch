@@ -55,13 +55,45 @@ try {
         const dx = x - g.player.pos.x, dz = z - g.player.pos.z;
         if (Math.hypot(dx, dz) < 0.7) return true;
         if (g.dead) return false;
-        g.player.yaw = Math.atan2(-dx, -dz);
+        // The house is inhabited now. A pursuer whose body blocks the path
+        // (or whose contact is about to land) gets the real answer mid-walk:
+        // a quiet stun-throw, exactly what a player does. Then keep walking.
+        if (g.act === 'house' && g.skull.mode === 'held') {
+          const res = g.director._liveResident?.() || g.director.resident;
+          if (res && res.state !== 'stunned' && res.state !== 'dying') {
+            const rd = Math.hypot(res.pos.x - g.player.pos.x, res.pos.z - g.player.pos.z);
+            if (rd < 3.4 && Math.abs(res.pos.y - g.player.pos.y) < 1.8) {
+              const ry = g.player.yaw, rp = g.player.pitch;
+              aimAt(res.pos.x, res.pos.y + 1.4, res.pos.z);
+              F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+              F.stepWith(0.35, { throwHeld: true });
+              F.stepWith(1 / 120, { throwReleased: true });
+              waitHeld();
+              g.player.yaw = ry; g.player.pitch = rp; g.player._sync(0);
+              t += 1.2;
+            }
+          }
+        }
+        g.player.yaw = Math.atan2(-(x - g.player.pos.x), -(z - g.player.pos.z));
         F.stepWith(0.1, { moveZ: 1, run });
         t += 0.1;
       }
       return Math.hypot(x - g.player.pos.x, z - g.player.pos.z) < 1.5;
     };
     const useAt = (x, y, z) => { aimAt(x, y, z); F.stepWith(1 / 120, { interactPressed: true }); };
+    // The house is inhabited from early in the act now, so the bot plays the
+    // intended answer instead of assuming an empty stage: a quiet stun-throw
+    // whenever the Resident presses in. This exercises the real mechanic (the
+    // stun) rather than weakening the gate.
+    const fendOff = (radius = 7.5) => {
+      const res = g.director._liveResident?.() || g.director.resident;
+      if (!res || g.dead) return;
+      const d = Math.hypot(res.pos.x - g.player.pos.x, res.pos.z - g.player.pos.z);
+      if (d > radius || res.state === 'stunned' || g.skull.mode !== 'held') return;
+      throwAt(res.pos.x, res.pos.y + 1.4, res.pos.z, 0.25);
+      F.stepWith(0.3);
+      waitHeld();
+    };
     const fightNearbyWalkers = (range = 12) => {
       for (let i = 0; i < 10; i++) {
         if (g.dead) return;
@@ -126,6 +158,9 @@ try {
     walkTo(1, -9.3, 12);                           // down the flight to ground
     walkTo(1, -11, 6); walkTo(-1, -11, 7); walkTo(-1, -9, 6); // entry -> foyer
     walkTo(-4.8, -9, 8); walkTo(-10.3, -9, 12);    // living-room aperture
+    // The relay is ~10 s of held anchor with the skull away — the one window
+    // where the bot cannot defend itself. Put the Resident down first.
+    fendOff(12);
     g.player.yaw = Math.PI / 2;
     g.player.pitch = -0.015;
     g.player._sync(0);
@@ -148,14 +183,18 @@ try {
       && g.flags.has('voidDoorOpen'));
 
     walkTo(-4.8, 1, 10); walkTo(-3.2, 1, 6); walkTo(-1, 1, 7);
+    fendOff();
     walkTo(-1, -3, 8); walkTo(-1, -11, 12); walkTo(1, -11, 7); walkTo(1, -8.8, 7);
+    fendOff();
     throwAt(5.3, 4.95, -7, 0.6);
     for (let t = 0; t < 4 && !g.flags.has('ateFlame'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('the-skull-ate-a-flame', g.flags.has('ateFlame'), g.skull.getState());
     walkTo(1, -10.8, 6); walkTo(2.5, -11.5, 8);    // entry
+    fendOff();
     walkTo(3.4, -11, 6); walkTo(4.8, -11, 6);      // dining door
     walkTo(7, -10, 8); walkTo(7, -6.7, 8); walkTo(7, -5.2, 6);   // kitchen door
+    fendOff();
     walkTo(9, -2, 8); walkTo(9, 0.5, 8);           // kitchen
     beat('reached-kitchen', Math.abs(g.player.pos.x - 9.5) < 2 && g.player.pos.y < 0.5, [g.player.pos.x, g.player.pos.y, g.player.pos.z]);
     snap('01-kitchen');
