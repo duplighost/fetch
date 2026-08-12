@@ -235,6 +235,17 @@ try {
     beat('in-the-basement', g.act === 'basement' && !g.director.resident, { act: g.act });
     snap('02-basement');
 
+    // Fire has one home now: the pilot is COLD until the guest flame's embers
+    // are carried down and offered to it, and the furnace refuses to wake
+    // until the pilot burns. This is the leg that makes the void-door beat
+    // necessary instead of skippable.
+    walkTo(8.2, 5.2, 8);
+    throwAt(7, -2.1, 5.31, 0.35);
+    for (let t = 0; t < 4 && !g.flags.has('pilotLit'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('carried-the-fire-down-and-lit-the-pilot', g.flags.has('pilotLit'),
+      { pilotLit: g.flags.has('pilotLit'), ateFlame: g.flags.has('ateFlame') });
+
     // ---- ACT 2: basement -----------------------------------------------
     walkTo(5, 4, 10); walkTo(-0.6, 3.6, 12);         // west along the webs
     walkTo(-1, 2.8, 6); walkTo(-1, 1.2, 6);          // storeroom door

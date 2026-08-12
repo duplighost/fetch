@@ -33,6 +33,7 @@ try {
       F.start();
       F.teleport('basement');
       g.flag('ateFlame');
+      g.flag('pilotLit');
       g.flag('pumpGalleryLatched');
       const fireDoor = g.world.interactables.find((o) => o.userData.inter?.id === 'incineratorDoor');
       fireDoor.userData.inter.action();

@@ -1415,53 +1415,99 @@ function buildBasementPilot(game, B) {
     cageRing.rotation.x = Math.PI / 2;
     pilot.add(cageRing);
   }
-  const pilotGlow = { x: 7, y: B + 1.08, z: 5.3, intensity: 1.0, r: 4.8 };
+  // THE PILOT IS COLD. It used to be a second, fully equal flame source — a
+  // duplicate faucet on the same ateFlame flag the guest candle grants,
+  // sitting directly on the forced basement route with a self-advertising
+  // cue. Whichever the player touched first won, so the void-door beat Alex
+  // has now asked about THREE times was, by construction, skippable — and
+  // most runs skipped it, because the natural route never goes back
+  // upstairs. Now fire has one home: the bell opens the door, the door
+  // lights the candle, the skull eats THAT flame, and the ember-carrying
+  // skull is what lights this pilot. The beat is necessary because the
+  // furnace refuses to wake until the pilot burns (pilotLit).
+  const pilotGlow = { x: 7, y: B + 1.08, z: 5.3, intensity: 0, r: 4.8 };
   world.candles.push(pilotGlow);
+  flame.visible = false;
 
-  const source = { id: 'basement-pilot', flame, glow: pilotGlow, target: null };
+  // The ignition made visible: fire runs UP the brass line into the house's
+  // circuit. Sequenced per segment, so give each its own material.
+  const riserFire = brass.clone(); riser.material = riserFire;
+  const elbowFire = brass.clone(); elbow.material = elbowFire;
+  const headerFire = brass.clone(); header.material = headerFire;
+  const BRASS_BASE = new THREE.Color(0x8c6d31);
+  const BRASS_HOT = new THREE.Color(0xf0b45a);
+  const BRASS_WARM = new THREE.Color(0xa9853d);
+  const travel = { t: -1 };
+  game.tickers.push((dt) => {
+    if (travel.t < 0) return;
+    travel.t = Math.min(1, travel.t + dt / 2.2);
+    const seg = (mat, a, b) => {
+      const k = clamp((travel.t - a) / (b - a), 0, 1);
+      const pulse = Math.sin(k * Math.PI);
+      mat.color.copy(BRASS_BASE).lerp(k >= 1 ? BRASS_WARM : BRASS_HOT, k >= 1 ? 1 : pulse);
+    };
+    seg(riserFire, 0.0, 0.5);
+    seg(elbowFire, 0.5, 0.72);
+    seg(headerFire, 0.72, 1.0);
+  });
+
+  const riserTop = new THREE.Vector3(7.42, B + 2.44, 5.56);
   const target = world.addFetchTarget({
-    id: 'basementPilotFlame', object: flame, radius: 0.76,
+    id: 'basementPilotFlame', object: wick, radius: 0.76,
     onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
-      if (game.flags.has('ateFlame')) return 'return';
-      game.windowRelay?.complete?.('basement-pilot', at || flame.getWorldPosition(new THREE.Vector3()));
-      const absorbed = game.flameCircuit?.absorb?.(skull, source);
-      if (!absorbed) return 'return';
+      const pos = wick.getWorldPosition(new THREE.Vector3());
+      // The anti-dead-save valve survives, unconditionally: striking the
+      // pilot rings the house-wide circuit even cold, so a basement-first
+      // player still opens the void door upstairs.
+      game.windowRelay?.complete?.('basement-pilot', at || pos);
+      if (game.flags.has('pilotLit')) return 'return';
+      if (!game.flags.has('ateFlame')) {
+        // Cold iron answer — and the pointer: three knocks travelling UP the
+        // brass line, the last at the ceiling, toward where fire lives.
+        game.impact('locked', at || pos);
+        game.audio.lockedRattle({ pos: pilot.position, gain: 0.58, rate: 0.7 });
+        [
+          [new THREE.Vector3(7.42, B + 1.2, 5.56), 0.28, 0.92],
+          [new THREE.Vector3(7.42, B + 2.2, 5.56), 0.62, 0.8],
+          [riserTop, 0.98, 0.68],
+        ].forEach(([knockPos, delay, rate]) => {
+          game.after(delay, () => game.audio.knock({ pos: knockPos, gain: 0.46, rate }), { global: true });
+        });
+        return 'return';
+      }
+      // The skull arrives carrying the guest flame's embers: the wick takes.
+      game.flag('pilotLit');
       game.flag('basementPilotUsed');
-      game.audio.fireChoke({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.52, rate: 0.72 });
-      game.audio.metalDrop({ pos: pilot.position, gain: 0.5, rate: 1.35 });
+      flame.visible = true;
+      travel.t = 0;
+      game.impact('break', at || pos);
+      game.audio.fireRoar({ pos, gain: 0.34, rate: 1.2 });
+      game.after(0.5, () => game.audio.metalDrop({ pos: riserTop, gain: 0.42, rate: 1.1 }), { global: true });
       return 'return';
     },
   });
-  source.target = target;
-  game.flameCircuit?.register?.(source);
   const state = {
-    group: pilot, flame, target, source,
-    wasVisible: flame.visible, cueT: 0.8, pulse: 0,
+    group: pilot, flame, target,
+    pulse: 0,
+    // "Bring it HERE." Fires only while the skull already carries fire and
+    // the pilot is still dark — a cold, empty-handed player gets the upward
+    // knocks from a direct hit instead, never a beacon to a dead fixture.
     nudge() {
-      if (game.flags.has('ateFlame')) return;
+      if (!game.flags.has('ateFlame') || game.flags.has('pilotLit')) return;
       this.pulse = 1.35;
-      this.cueT = Math.max(this.cueT, 2.8);
-      game.audio.glassTink({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.5, rate: 0.62 });
+      game.audio.glassTink({ pos: wick.getWorldPosition(new THREE.Vector3()), gain: 0.5, rate: 0.62 });
     },
   };
   game.basementPilot = state;
   game.tickers.push((dt, time) => {
-    const active = !game.flags.has('ateFlame') && target.enabled;
+    const lit = game.flags.has('pilotLit');
     state.pulse = Math.max(0, state.pulse - dt);
     flame.scale.set(0.7, 1.32 + Math.sin(time * 15) * 0.13, 0.7);
-    flame.material.opacity = active
-      ? 0.88 + Math.sin(time * 19) * 0.08
-      : 0;
-    pilotGlow.intensity = active
-      ? 0.94 + Math.sin(time * 9) * 0.12 + state.pulse * 0.7
-      : 0;
-    if (game.act !== 'basement' || !active || game.dead) return;
-    state.cueT -= dt;
-    if (state.cueT <= 0) {
-      state.cueT = 5.2;
-      game.audio.glassTink({ pos: flame.getWorldPosition(new THREE.Vector3()), gain: 0.2, rate: 0.78 });
-    }
+    flame.material.opacity = lit ? 0.88 + Math.sin(time * 19) * 0.08 : 0;
+    pilotGlow.intensity = lit
+      ? 0.94 + Math.sin(time * 9) * 0.12
+      : state.pulse * 0.7;
   });
 }
 
@@ -1659,7 +1705,7 @@ function basementAct(game) {
       // pump instead of passing through a gameplay-looking dead prop.
       fireboxTarget.enabled = true;
       game.audio.thud({ pos: incPos, gain: 0.42, rate: 0.56 });
-      if (!game.flags.has('ateFlame')) game.after(0.18, () => game.basementPilot?.nudge?.());
+      if (!game.flags.has('pilotLit')) game.after(0.18, () => game.basementPilot?.nudge?.());
     }
   });
   world.registerInteract(panBox, 'ashPan', () => {
@@ -1717,7 +1763,7 @@ function basementAct(game) {
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
   game.tickers.push((dt, t) => {
-    const hasDraft = game.flags.has('ateFlame') && game.flags.has('pumpGalleryLatched');
+    const hasDraft = game.flags.has('pilotLit') && game.flags.has('pumpGalleryLatched');
     if (!incin.awake && hasDraft) {
       incin.awake = true;
       game.flag('incineratorAwake');

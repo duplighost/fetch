@@ -161,6 +161,16 @@ try {
     g.flag('pumpGalleryLatched');
     F.teleport('basement');
     g.enemies.clear();
+    // The carried fire must be OFFERED to the cold pilot before the furnace
+    // will wake — this is the necessary link the duplicate source used to
+    // bypass. Real throw at the wick, same as a player.
+    const pilotColdBeforeCarry = !g.flags.has('pilotLit') && !g.basementPilot.flame.visible;
+    g.player.pos.set(7, -3, 3.55);
+    g.player.vel.set(0, 0, 0);
+    g.player._sync(0);
+    const wickPos = g.basementPilot.target.object.getWorldPosition(g.player.pos.clone());
+    throwAt(wickPos.x, wickPos.y, wickPos.z, 0.45);
+    const pilotLitByCarry = g.flags.has('pilotLit') && g.basementPilot.flame.visible;
     const fireDoor = g.world.interactables.find((object) => object.userData.inter?.id === 'incineratorDoor');
     fireDoor.userData.inter.action();
     F.stepWith(0.25, {}, false);
@@ -175,7 +185,8 @@ try {
       guestSource,
       guestHitModes,
       allSourceTargetsDisabled: g.flameCircuit.sources.every((source) => !source.target.enabled),
-      pilotDisabled: !g.basementPilot.target.enabled && !g.basementPilot.flame.visible,
+      pilotColdBeforeCarry,
+      pilotLitByCarry,
       atomicExtinction: g.flameCircuit.sources.every((source) => source.glow.intensity === 0
         && !g.world.candles.includes(source.glow)
         && !g.world.candlePool.some((light) => light.userData.c === source.glow)),
@@ -215,10 +226,11 @@ try {
       && bellAndLatch.guestRoute.guestHitModes.length === 1
       && bellAndLatch.guestRoute.guestHitModes[0] === 'outbound'
       && bellAndLatch.guestRoute.allSourceTargetsDisabled
-      && bellAndLatch.guestRoute.pilotDisabled
+      && bellAndLatch.guestRoute.pilotColdBeforeCarry
+      && bellAndLatch.guestRoute.pilotLitByCarry
       && bellAndLatch.guestRoute.atomicExtinction
       && bellAndLatch.guestRoute.incineratorAccepted,
-    'the bell exposes a non-free upstairs flame branch whose exact lower-stair throw lands outbound once and powers the drafted incinerator',
+    'the bell exposes the one flame; carried down it lights the cold pilot, and only then does the drafted incinerator accept',
     bellAndLatch.guestRoute);
 
   await freshPage();
@@ -396,8 +408,14 @@ try {
       return complete;
     };
 
+    // THE PILOT IS COLD NOW. It stopped being a second flame source (that
+    // duplicate made the void-door beat skippable, and Alex asked about that
+    // beat three separate times). A cold hit is the anti-dead-save valve —
+    // it rings the house circuit so the flame room upstairs opens — but fire
+    // itself has one home, and the pilot lights only from a skull already
+    // carrying it.
     const pilot = g.basementPilot;
-    const pilotWasEnabled = pilot?.target.enabled && pilot.flame.visible;
+    const pilotWasEnabled = pilot?.target.enabled && !pilot.flame.visible;
     F.stepWith(0.9, {}, false);
     const pilotWasFree = g.flags.has('ateFlame');
     const pilotPos = pilot.target.object.getWorldPosition(g.player.pos.clone());
@@ -406,11 +424,27 @@ try {
     const reachedPilotApproach = walkTo(5.2, 3.55, 6) && walkTo(7, 3.55, 8);
     const reachedPilot = leftRespawnStairsForPilot && reachedPilotApproach;
     throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
-    const pilotAbsorbed = g.flags.has('ateFlame');
-    const source = g.flameCircuit?.source ?? null;
+    waitHeld();
+    const coldRefused = !g.flags.has('ateFlame') && !g.flags.has('pilotLit');
+    const coldValve = g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpen');
     const afterFlameDeath = dieAndRetry();
-    const flamePersisted = g.flags.has('ateFlame')
-      && !pilot.target.enabled && !pilot.flame.visible;
+    const coldPersisted = !g.flags.has('ateFlame') && !g.flags.has('pilotLit')
+      && pilot.target.enabled && !pilot.flame.visible;
+
+    // Carry fire down and light it. The real guest-candle steal is the other
+    // page's subject; this page's subject is the pilot's two-state contract.
+    g.flag('ateFlame');
+    const leftRespawnStairsForRelight = walkStairRoute('relight');
+    const reachedRelight = walkTo(5.2, 3.55, 6) && walkTo(7, 3.55, 8);
+    throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
+    waitHeld();
+    const pilotIgnited = g.flags.has('pilotLit') && pilot.flame.visible
+      && g.flags.has('basementPilotUsed');
+    // Die once more so the works route starts from the respawn stairs the way
+    // it was choreographed — and so this page also proves the lit pilot
+    // SURVIVES death (the flame is a committed world state, not a life state).
+    const afterIgniteDeath = dieAndRetry();
+    const pilotLitPersisted = g.flags.has('pilotLit') && pilot.flame.visible;
 
     // Continue from the real basement checkpoint on foot. The lower flame must
     // feed the same physical pump, furnace, ash-key, and hatch route as the
@@ -526,14 +560,15 @@ try {
       reachedPilot,
       pilotWasEnabled,
       pilotWasFree,
-      pilotAbsorbed,
-      source,
-      pilotUsed: g.flags.has('basementPilotUsed'),
+      coldRefused,
+      coldValve,
       afterFlameDeath,
-      flamePersisted,
-      atomicExtinction: g.flameCircuit.sources.every((flameSource) => flameSource.glow.intensity === 0
-        && !g.world.candles.includes(flameSource.glow)
-        && !g.world.candlePool.some((light) => light.userData.c === flameSource.glow)),
+      coldPersisted,
+      leftRespawnStairsForRelight,
+      reachedRelight,
+      pilotIgnited,
+      afterIgniteDeath,
+      pilotLitPersisted,
       basementWalkLegs,
       pumpAnchored,
       pumpReturned,
@@ -572,17 +607,20 @@ try {
       && basementBranch.leftRespawnStairsForWorks
       && basementBranch.reachedPilot
       && basementBranch.pilotWasEnabled && !basementBranch.pilotWasFree
-      && basementBranch.pilotAbsorbed
-      && basementBranch.source === 'basement-pilot'
-      && basementBranch.pilotUsed
+      && basementBranch.coldRefused
+      && basementBranch.coldValve
       && basementBranch.afterFlameDeath.alive
       && basementBranch.afterFlameDeath.act === 'basement'
-      && basementBranch.flamePersisted
-      && basementBranch.atomicExtinction,
-    'the deliberate basement flame remains physical and recoverable across descent and post-flame deaths',
+      && basementBranch.coldPersisted
+      && basementBranch.leftRespawnStairsForRelight
+      && basementBranch.reachedRelight
+      && basementBranch.pilotIgnited
+      && basementBranch.afterIgniteDeath.alive
+      && basementBranch.pilotLitPersisted,
+    'the cold pilot refuses fire but rings the circuit, survives death cold, and lights only from a carried flame',
     basementBranch);
   check(basementBranch.incineratorAccepted,
-    'the non-free basement flame branch independently powers the drafted incinerator',
+    'the relit pilot is what powers the drafted incinerator',
     basementBranch);
   check(basementBranch.basementWalkLegs.every((leg) => leg.reached)
       && basementBranch.pumpAnchored
@@ -653,9 +691,15 @@ try {
     return result;
   });
   report.diagnostics.earlyBasement = earlyBasement;
-  check(!earlyBasement.freeBeforeThrow && earlyBasement.ateFlame
+  // The pilot no longer GRANTS the flame — it is cold, and fire lives
+  // upstairs behind the door this same throw opens. The un-strandable
+  // property survives in its new form: the cold hit rings the whole circuit
+  // (windowRelaySolved), which opens the void door and lights the guest
+  // candle, so the save always has a route to fire — one that now runs
+  // through the beat Alex asked three times to make necessary.
+  check(!earlyBasement.freeBeforeThrow && !earlyBasement.ateFlame
       && earlyBasement.relaySolved && earlyBasement.source === 'basement-pilot'
-      && earlyBasement.pilotUsed && !earlyBasement.targetEnabled
+      && !earlyBasement.pilotUsed && earlyBasement.targetEnabled
       && !earlyBasement.flameVisible && earlyBasement.bellRings === 1
       && earlyBasement.skullMode === 'held',
     'an impossible early-basement state still demands a throw, rings the circuit, and cannot strand the save',

@@ -39,10 +39,10 @@ The mandatory chain is a partial order rather than one compulsory room order:
 bedroom key + nursery key
   -> servant bell and three cellar boards
 servant bell
-  -> optional early upstairs flame
+  -> guest-room flame (the ONE flame; the basement pilot is cold until fed)
 servant bell + all boards
-  -> cellar -> alternate basement-pilot flame + pump
-either flame + latched pump
+  -> cellar -> carry the fire down to the pilot (pilotLit) + pump
+lit pilot + latched pump
   -> incinerator -> hatch key -> grave resolution -> ossuary
   -> forest tree/forks/mire rope -> waterfall -> Underfalls hatch -> mirror contact
 ```
@@ -86,8 +86,8 @@ floor rather than swapping in from a placeholder. The player can leave, rewind
 the mobile, stun the result, or accept the chase.
 
 The guest room and upper landing are no longer empty future-work flags. They
-hold the safer upstairs flame route and the later return-horror path, but a
-second deliberate flame route exists on the basement landing.
+hold the game's ONE flame and the later return-horror path; the basement
+landing's caged pilot is where that flame must be carried and spent.
 
 ## Act 1 — ground-floor house
 
@@ -145,20 +145,27 @@ inhabitant follows the player's recorded pose about a second late, then catches
 up. It cannot hurt the player and does not steal input; its purpose is to teach
 the house's observation grammar before the finale.
 
-### Required state: steal one flame
+### Required state: steal the flame and carry it down
 
-The bell circuit exposes two deliberate routes to the same required state:
+Fire has ONE home now (the second, equal basement source made the whole
+bell -> void-door beat skippable, and Alex asked about that beat three
+separate times). The required chain:
 
-- **Upstairs route:** return above the stairs and throw the skull into the tall
-  candle inside the bell-opened guest room. This is the safer early pickup.
-- **Basement route:** after the bell and all three cellar boards, descend and
-  hit the conspicuous caged pilot lantern on the first landing. This is a real
-  alternate, not a secret hidden among the decorative valves.
+1. **The bell opens the door.** Ring the study bell (or complete the window
+   relay, or strike the cold basement pilot — all ring the same circuit).
+   The unreachable stair door swings and, a breath later, the candle behind
+   it catches: the light in the doorway is new, and it is the bell's doing.
+2. **Steal that flame.** Throw the skull into the guest candle from the
+   stairs. It dies into the sockets (`ateFlame`) and the carried light warms.
+3. **Carry it down and light the pilot.** The caged pilot lantern on the
+   first basement landing is COLD — struck empty-handed it answers as iron
+   and knocks travel up its brass line toward where fire lives. Struck by
+   the ember-carrying skull, the wick takes (`pilotLit`), and the fire runs
+   visibly up the riser into the furnace circuit.
 
-The first source hit dies into the skull's sockets, disables/extinguishes the
-other source atomically, and brightens the carried light. Either earns the one
-shared `ateFlame` state required by the incinerator. Taking both is neither
-possible nor necessary.
+The incinerator will not wake until the pilot burns. A cold pilot hit is
+never wasted: it rings the house circuit, so a basement-first player has
+opened the flame room upstairs without knowing it yet.
 
 ### Deterministic return horror
 
@@ -195,8 +202,8 @@ the same open door. The Resident does not follow into the basement.
 
 The old straight boiler-key solution is gone. The hatch key exists in the ash,
 but the player must make the whole house breathe before the incinerator will
-refuse the skull and expose it. If the upstairs flame was skipped, the first
-landing's bright caged pilot is the intentional second flame route.
+refuse the skull and expose it. If the flame has not yet been stolen and carried down, the first
+landing's caged pilot is where the carried flame must be spent (it is cold and dark until then; striking it cold rings the house circuit).
 
 ### Existing basement threats and optional crawl secret
 
@@ -230,7 +237,7 @@ behind the floor while preserving the real cellar sightline.
 
 Return to the boiler-room incinerator and use its fire door.
 
-- Without the stolen flame, an outbound throw produces a cold choke and nudges
+- Until the pilot burns, an outbound throw produces a cold choke and nudges
   the nearby basement pilot so the missing dependency is visible rather than
   hidden in the machine gallery.
 - With the flame but no latched pump, the dead pressure gauge and pump response
