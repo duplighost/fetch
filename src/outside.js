@@ -813,7 +813,9 @@ function buildOssuaryRoute(game) {
   );
   world.addZone('graveyard', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
     FLOOR - 2, FLOOR + HEIGHT + 1);
-  world.addSurface('stone', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
+  // Dirt, because the floor IS dirt (floorMat = M.dirt): footsteps that said
+  // stone on a soil floor were a small lie underfoot for the whole corridor.
+  world.addSurface('dirt', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
     FLOOR - 2, FLOOR + HEIGHT + 1);
 
   // Side shells leave one human-width opening into each pocket.
@@ -857,6 +859,66 @@ function buildOssuaryRoute(game) {
     stain.position.set(OX + Math.sin(i * 2.4) * 1.35, FLOOR + 0.012, OZ + 3 + i * 3.5);
     routeRoot.add(stain);
   }
+  // A light rhythm for the 30 m tube: one dim descriptor behind each baffle,
+  // so the corridor reads as three rooms instead of one unlit pipe. Candle
+  // DESCRIPTORS only — the pooled lights carry them; the census never moves.
+  baffleZ.forEach((z, i) => {
+    world.candles.push({
+      x: OX + (i % 2 === 0 ? 1.35 : -1.35), y: FLOOR + 1.7, z: z + 1.1,
+      intensity: 0.5, r: 4.4,
+    });
+  });
+
+  // Authored remains between the baffles — the ossuary earns its name. Wall
+  // recesses of stacked long-bones with a skull seated on each stack, all in
+  // two instanced draws inside routeRoot.
+  {
+    const boneGeo = new THREE.CapsuleGeometry(0.045, 0.5, 3, 6);
+    const skullGeo = new THREE.DodecahedronGeometry(0.13, 0);
+    const bonePos = [];
+    const skullPos = [];
+    const niches = [
+      [OX - HALF_W + 0.32, OZ + 4.1, 1], [OX + HALF_W - 0.32, OZ + 10.6, -1],
+      [OX - HALF_W + 0.32, OZ + 17.9, 1], [OX + HALF_W - 0.32, OZ + 24.9, -1],
+      [OX - HALF_W + 0.32, OZ + 26.6, 1],
+    ];
+    for (const [nx, nz, face] of niches) {
+      const rows = 4 + (Math.abs(Math.round(nz)) % 3);
+      for (let r = 0; r < rows; r++) {
+        for (let k = 0; k < 3; k++) {
+          bonePos.push({
+            x: nx + face * 0.02 * r, y: FLOOR + 0.09 + r * 0.1,
+            z: nz - 0.36 + k * 0.36 + (r % 2) * 0.09,
+            roll: (r % 3 - 1) * 0.08,
+          });
+        }
+      }
+      skullPos.push({ x: nx + face * 0.05, y: FLOOR + 0.09 + rows * 0.1 + 0.1, z: nz, yaw: face * (0.5 + (Math.round(nz) % 3) * 0.4) });
+    }
+    const boneMesh = new THREE.InstancedMesh(boneGeo, boneMat, bonePos.length);
+    const m4 = new THREE.Matrix4();
+    const qq = new THREE.Quaternion();
+    const ee = new THREE.Euler();
+    const ss = new THREE.Vector3(1, 1, 1);
+    bonePos.forEach((p, i) => {
+      qq.setFromEuler(ee.set(0, 0, Math.PI / 2 + p.roll));
+      m4.compose(new THREE.Vector3(p.x, p.y, p.z), qq, ss);
+      boneMesh.setMatrixAt(i, m4);
+    });
+    boneMesh.instanceMatrix.needsUpdate = true;
+    boneMesh.name = 'ossuary stacked long-bones';
+    routeRoot.add(boneMesh);
+    const skullMesh = new THREE.InstancedMesh(skullGeo, boneMat, skullPos.length);
+    skullPos.forEach((p, i) => {
+      qq.setFromEuler(ee.set(0, p.yaw, 0));
+      m4.compose(new THREE.Vector3(p.x, p.y, p.z), qq, ss);
+      skullMesh.setMatrixAt(i, m4);
+    });
+    skullMesh.instanceMatrix.needsUpdate = true;
+    skullMesh.name = 'ossuary seated skulls';
+    routeRoot.add(skullMesh);
+  }
+
   const ribGeo = new THREE.TorusGeometry(0.44, 0.035, 4, 10, Math.PI);
   const ribs = new THREE.InstancedMesh(ribGeo, boneMat, 30);
   ribs.name = 'ossuary instanced ribs';

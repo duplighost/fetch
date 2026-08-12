@@ -2016,7 +2016,13 @@ function buildCrawlCounterweightSecret(game, B) {
     pulley.position.set(x, B + 2.23, cradleBase.z);
     scene.add(pulley);
   }
-  const cableGeo = new THREE.CylinderGeometry(0.014, 0.014, 1, 5);
+  // REAL CHAIN, not thread. The 1.4 cm cables were invisible at three metres
+  // in skull-light, so cradle -> pulleys -> shutter never read as one machine
+  // — Alex's screenshot label: "contraption is unclear what it activates".
+  // Triple-thick cores plus visible links the ticker keeps spaced along the
+  // moving runs.
+  const cableGeo = new THREE.CylinderGeometry(0.042, 0.042, 1, 6);
+  const linkGeo = new THREE.TorusGeometry(0.075, 0.02, 5, 10);
   const cradleCable = new THREE.Mesh(cableGeo, wornIron);
   cradleCable.name = 'crawl-counterweight-cable';
   scene.add(cradleCable);
@@ -2025,8 +2031,28 @@ function buildCrawlCounterweightSecret(game, B) {
   topCable.scale.y = Math.abs(-11.12 - cradleBase.x);
   topCable.position.set((cradleBase.x - 11.12) / 2, B + 2.23, cradleBase.z);
   scene.add(topCable);
+  for (let k = 0; k < 5; k++) {
+    const link = new THREE.Mesh(linkGeo, wornIron);
+    link.position.set(cradleBase.x + (-11.12 - cradleBase.x) * (k + 0.5) / 5, B + 2.23, cradleBase.z);
+    link.rotation.y = (k % 2) * Math.PI / 2;
+    scene.add(link);
+  }
   const shutterCable = new THREE.Mesh(cableGeo, wornIron);
   scene.add(shutterCable);
+  const cradleLinks = [];
+  const shutterLinks = [];
+  for (let k = 0; k < 4; k++) {
+    const a = new THREE.Mesh(linkGeo, wornIron);
+    a.rotation.x = Math.PI / 2;
+    a.rotation.z = (k % 2) * Math.PI / 2;
+    scene.add(a);
+    cradleLinks.push(a);
+    const b = new THREE.Mesh(linkGeo, wornIron);
+    b.rotation.x = Math.PI / 2;
+    b.rotation.z = (k % 2) * Math.PI / 2;
+    scene.add(b);
+    shutterLinks.push(b);
+  }
 
   // Behind the shutter: not a reward icon, but an authored reason to have
   // looked. A small dog died curled around the ball it was never allowed to
@@ -2121,6 +2147,10 @@ function buildCrawlCounterweightSecret(game, B) {
   puzzle.target = target;
 
   const solvePos = new THREE.Vector3(-11.12, B + 1.15, -7.78);
+  // the pre-solve leak: a low, dim glow behind the shutter's foot — pooled
+  // candle descriptor, so the census never moves
+  const sliverGlow = { x: -11.7, y: B + 0.35, z: -7.78, intensity: 0, r: 2.6 };
+  world.candles.push(sliverGlow);
   game.tickers.push((dt, time) => {
     const skull = game.skull;
     const weighing = skull && skull.mode === 'anchored'
@@ -2171,11 +2201,43 @@ function buildCrawlCounterweightSecret(game, B) {
     shutterCable.visible = shutterCableLength > 0.04;
     shutterCable.scale.y = Math.max(0.03, shutterCableLength);
     shutterCable.position.set(-11.12, (cableTop + shutterCableBottom) / 2, cradleBase.z);
+    // keep the visible links spaced along the two moving runs
+    cradleLinks.forEach((link, k) => {
+      link.position.set(cradleBase.x,
+        cradleCableBottom + (cableTop - cradleCableBottom) * (k + 0.5) / cradleLinks.length,
+        cradleBase.z);
+    });
+    shutterLinks.forEach((link, k) => {
+      link.visible = shutterCable.visible;
+      link.position.set(-11.12,
+        shutterCableBottom + Math.max(0.04, shutterCableLength) * (k + 0.5) / shutterLinks.length,
+        cradleBase.z);
+    });
+
+    // THE HOLD IS TAUGHT WITHOUT A WORD. While the skull's weight works, the
+    // mechanism strains audibly — rate climbing with progress — and letting
+    // go early slams the shutter back with a bang. One failed attempt teaches
+    // the whole rule.
+    if (weighing) {
+      puzzle._strainT = (puzzle._strainT || 0) - dt;
+      if (puzzle._strainT <= 0) {
+        puzzle._strainT = 0.34;
+        game.audio.creak({ pos: solvePos, gain: 0.3 + puzzle.progress * 0.25, rate: 0.55 + puzzle.progress * 0.5 });
+      }
+    } else if (puzzle._wasWeighing && !puzzle.solved && puzzle.holdTime > 0.1) {
+      game.audio.stoneGrind({ pos: solvePos, gain: 0.62, rate: 1.4 });
+      game.shake(0.12);
+    }
+    puzzle._wasWeighing = weighing;
 
     const lit = puzzle.solved ? 1 : 0;
     lamp.intensity += ((lit ? 18 + Math.sin(time * 13) * 1.3 : 0) - lamp.intensity) * Math.min(1, dt * 2.5);
     lampCore.material.opacity += ((lit ? 0.92 : 0.035) - lampCore.material.opacity) * Math.min(1, dt * 3.5);
     coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0);
+    // A sliver of somewhere leaks under the shutter BEFORE the solve: the
+    // player can see there is a place back there worth opening. Dim enough
+    // that the opened room still lands as a reveal.
+    sliverGlow.intensity = puzzle.solved ? 0 : 0.22 + Math.sin(time * 7) * 0.03;
   });
 }
 // ------------------------------------------------ window-to-window relay
@@ -3873,6 +3935,20 @@ function buildPumpGallery(game) {
   // to the machine that earned it without becoming a bright ceiling scribble.
   pipeBetween(new THREE.Vector3(-19.15, B + 2.28, 5.58),
     new THREE.Vector3(-13.42, B + 2.28, 5.58), 0.075);
+  // The archive's one honestly activatable thing: a bright collar-valve on
+  // the ceiling main. Hit it and the whole room answers — every needle
+  // swings, one stand knocks back — so the six mute pressure vessels are
+  // revealed as gauges on one line rather than six dead props. Repeatable,
+  // grants nothing: this is the room explaining itself.
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.045, 8, 16), oldBrass);
+  collar.position.set(-16.3, B + 2.28, 5.58);
+  collar.rotation.y = Math.PI / 2;
+  scene.add(collar);
+  const collarWheel = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.022, 6, 14), oldBrass);
+  collarWheel.position.set(-16.3, B + 2.02, 5.58);
+  collarWheel.rotation.x = Math.PI / 2;
+  scene.add(collarWheel);
+  world.candles.push({ x: -16.3, y: B + 2.05, z: 5.3, intensity: 0.45, r: 3.2 });
   pipeBetween(new THREE.Vector3(-19.55, B + 2.12, -8.65),
     new THREE.Vector3(-19.55, B + 2.12, 1.45), 0.07);
   for (const z of [-7.4, -4.9, -2.2, 0.55]) {
@@ -4165,6 +4241,27 @@ function buildPumpGallery(game) {
       gain: 0.52, rate: 0.58 }));
   };
 
+  world.addFetchTarget({
+    id: 'archiveCollar', pos: new THREE.Vector3(-16.3, B + 2.28, 5.58), radius: 0.62,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      // the line takes the blow: every gauge in the room swings, one stand
+      // answers loudly, and the first hit permanently tips it — the room is
+      // visibly different because of something the player did
+      route.surgeT = 1.7;
+      game.impact('locked', at || collar.position);
+      game.audio.metalDrop({ pos: collar.position, gain: 0.6, rate: 0.9 });
+      game.after(0.3, () => game.audio.knock({ pos: pumpStands[2].group.position, gain: 0.55, rate: 0.5 }));
+      if (!game.flags.has('archiveCollarStruck')) {
+        game.flag('archiveCollarStruck');
+        pumpStands[2].group.rotation.z += 0.075;
+        pumpStands[2].group.position.y -= 0.03;
+        game.after(0.65, () => game.audio.creak({ pos: pumpStands[2].group.position, gain: 0.5, rate: 0.5 }));
+      }
+      return 'return';
+    },
+  });
+
   // This district looks east beneath the entire furnished house. WebGL has no
   // occlusion culling, so without a sector mask it submitted hundreds of fully
   // ceiling-hidden props whenever the player faced the bridge. Capture the
@@ -4325,17 +4422,24 @@ function buildPumpGallery(game) {
       game.audio.knock({ pos: winch.position, gain: 0.38, rate: 0.54 });
       game.after(0.34, () => game.audio.creak({ pos: cradle.position, gain: 0.32, rate: 0.58 }));
     }
-    if (route.latched) {
+    // The wake begins the first frame the player is actually IN the archive,
+    // not at bridge-latch minutes earlier: the staggered mechanical sentence
+    // — wheels creeping, needles arguing — used to play to an empty room, so
+    // by the time Alex walked in it was a wall of already-spinning props
+    // ("confusing back room where nothing seeems to be activatable"). Now he
+    // watches it wake up. And it does not run forever: the sentence finishes,
+    // then only a struck collar (below) stirs it again.
+    route.surgeT = Math.max(0, (route.surgeT || 0) - dt);
+    if (route.latched && archiveDetailVisible) {
       route.archiveWake += dt;
       for (let i = 0; i < pumpStands.length; i++) {
         const pump = pumpStands[i];
-        const wake = clamp((route.archiveWake - i * 0.16) * 1.3, 0, 1);
-        // Pressure wakes in a staggered mechanical sentence: wheels creep and
-        // needles argue with them. Nothing tracks the player like an enemy, but
-        // the whole archive starts working only after the player enters it.
+        const wake = clamp((route.archiveWake - i * 0.16) * 1.3, 0, 1)
+          * clamp(1.6 - route.archiveWake * 0.09, 0.12, 1)   // it settles
+          + route.surgeT * 0.9;                              // a hit stirs it
         pump.wheel.rotation.z += dt * wake * (i % 2 ? -0.22 : 0.28);
         for (let n = 0; n < pump.needles.length; n++) {
-          pump.needles[n].rotation.z = -1.95 + wake * (1.12
+          pump.needles[n].rotation.z = -1.95 + clamp(wake, 0, 1.4) * (1.12
             + Math.sin(time * (1.4 + i * 0.11) + pump.phase + n) * 0.16);
         }
       }
