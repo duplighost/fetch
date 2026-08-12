@@ -2121,8 +2121,17 @@ export class Forest {
     const originalPr = this.project(original.x, original.z);
     const safe = this.safeRespawnPad(requestedS);
     const originalGround = this.heightAt(original.x, original.z);
+    // The lateral tolerance is the corridor's own width at this s, not a
+    // fixed 0.35. That constant dated from when the ravine rope skimmed the
+    // player along the centreline; with a pivot high enough to actually lift
+    // (see the ravine anchor), a legitimate landing can be a metre or more
+    // off-centre on ground the player can stand on — and snapping such a
+    // checkpoint to the pad broke exact-restore. Where the corridor is
+    // narrow this still clamps exactly as before.
+    const latIdx = clamp(Math.round(requestedS), 0, this.length - 1);
+    const latLimit = Math.max(0.35, (this.halfW[latIdx] ?? 0.8) - 0.45);
     const exactPoseIsSafe = originalPr
-      && Math.abs(originalPr.lat) <= 0.35
+      && Math.abs(originalPr.lat) <= latLimit
       && Math.abs(safe.s - requestedS) < 1e-3
       && Number.isFinite(original.y)
       && Math.abs(original.y - originalGround) <= 0.4;
