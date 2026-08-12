@@ -926,12 +926,34 @@ class Game {
 
   detachBoard(b) {
     b.userData.off = true;
-    const spin = (Math.random() - 0.5) * 6;
+    // A plank that comes off the door has to end up somewhere that reads as
+    // OFF. This used to sink it straight down at a constant 3 m/s and stop it
+    // at y = 0.15 -- still upright, still spanning the doorway, still at the
+    // exact x it was nailed at. Three throws later the player had an open
+    // cellar door with three planks standing in the gap. Alex: "basement door
+    // has theses in front of it even after opening it."
+    //
+    // Now it falls under gravity, tumbles onto its face, and comes to rest
+    // flat on the kitchen floor a little back from the threshold, clear of the
+    // walk line. The ticker retires itself once it has settled instead of
+    // living forever as a no-op.
+    const spin = (Math.random() - 0.5) * 7;
+    const driftX = (Math.random() - 0.5) * 0.85;
+    const restY = 0.05;                                   // half its thickness: lying flat
+    const restZ = b.position.z - (0.44 + Math.random() * 0.34);
+    const settle = { t: 0, v: 0, done: false };
     this.tickers.push((dt) => {
-      if (b.position.y <= 0.15) return;
-      b.position.y -= dt * 3;
-      b.position.x += dt * (Math.random() - 0.3);
-      b.rotation.z += dt * spin;
+      if (settle.done) return;
+      settle.t += dt;
+      settle.v += dt * 9.2;
+      b.position.y = Math.max(restY, b.position.y - settle.v * dt);
+      const grounded = b.position.y <= restY + 1e-4;
+      if (!grounded) b.position.x += dt * driftX;
+      // tumble onto its face and STAY there, rather than spinning for ever
+      b.rotation.x = damp(b.rotation.x, Math.PI / 2, 3.6, dt);
+      b.position.z = damp(b.position.z, restZ, 3.4, dt);
+      b.rotation.z += dt * spin * Math.max(0, 1 - settle.t / 0.75);
+      if (grounded && settle.t > 1.1) settle.done = true;
     });
   }
 

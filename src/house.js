@@ -1508,13 +1508,44 @@ function basementAct(game) {
   flue.position.set(0.22, 2.12, -0.12);
   inc.add(flue);
   // firebox cavity + ember bed, visible when the door swings
+  // BackSide, and this is the whole of "it never shows the fire". The cavity
+  // was a solid FrontSide box, so the face nearest the player -- the one right
+  // behind the open fire door -- was a black wall drawn in front of everything
+  // it was supposed to contain. The ember bed has been sitting inside it,
+  // invisible, since it was written. Rendering only the interior turns the box
+  // back into what it is called: a cavity you can see into.
   const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.66, 0.5),
-    new THREE.MeshBasicMaterial({ color: 0x0a0503 }));
+    new THREE.MeshBasicMaterial({ color: 0x0a0503, side: THREE.BackSide }));
   cavity.position.set(0, 0.9, 0.26);
   inc.add(cavity);
   const embers = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.34), emberMat);
   embers.position.set(0, 0.62, 0.3);
   inc.add(embers);
+  // ACTUAL FIRE. Alex: "This thing in the basement has a puzzle that is
+  // supposed to turn it on with fire. it never shows the fire" -- and he was
+  // right, literally: the firebox held a black cavity and a flat ember slab,
+  // and the only thing that ever changed was that slab's COLOUR. He is
+  // colourblind, so a hue ramp on a motionless box is not a state he can read
+  // at all; it stayed a black rectangle in his screenshot, captioned "after
+  // the puzzle, fire should be here".
+  //
+  // These are real tongues that grow out of the bed, lean, and flicker at
+  // different rates. Height, motion and brightness carry the whole read, which
+  // is the only kind that reaches him. They cost no light: the furnace already
+  // owns a world.candles entry, so its illumination runs through the pooled
+  // candle lights and cannot disturb the pinned shader light census.
+  const flameMat = new THREE.MeshBasicMaterial({
+    color: 0xffd9a0, transparent: true, opacity: 0.9, depthWrite: false,
+  });
+  const flames = [];
+  for (let i = 0; i < 5; i++) {
+    const f = new THREE.Mesh(new THREE.ConeGeometry(0.052, 0.26, 6), flameMat);
+    f.position.set(-0.16 + i * 0.08, 0.66, 0.3 + ((i % 2) - 0.5) * 0.07);
+    f.scale.setScalar(0.0001);
+    f.visible = false;
+    inc.add(f);
+    flames.push(f);
+  }
   // the fire door, hinged at its left edge; vent slits glow while it's shut
   const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.78, 0.06), sootDark);
   doorFrame.position.set(0, 0.9, 0.475);
@@ -1685,7 +1716,7 @@ function basementAct(game) {
   keyTarget.enabled = false;
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
-  game.tickers.push((dt) => {
+  game.tickers.push((dt, t) => {
     const hasDraft = game.flags.has('ateFlame') && game.flags.has('pumpGalleryLatched');
     if (!incin.awake && hasDraft) {
       incin.awake = true;
@@ -1703,6 +1734,21 @@ function basementAct(game) {
     gaugeNeedle.rotation.z += (gaugeGoal - gaugeNeedle.rotation.z) * Math.min(1, dt * 4.6);
     const lit = clamp(glow.intensity / 1.3, 0.05, 2.2);
     emberMat.color.setRGB(1 * lit * 0.55 + 0.03, 0.3 * lit * 0.45 + 0.01, 0.08 * lit * 0.3);
+    // The fire itself, driven off the same one number the glow is. Each tongue
+    // runs its own two-rate flicker so the mass never pulses as one object.
+    const fire = clamp((glow.intensity - 0.09) / 2.3, 0, 1.55);
+    for (let i = 0; i < flames.length; i++) {
+      const f = flames[i];
+      const flick = 0.74 + Math.sin(t * (7.3 + i * 2.1) + i * 1.7) * 0.19
+        + Math.sin(t * (16.5 + i * 3.4)) * 0.07;
+      const h = fire * flick;
+      f.visible = h > 0.03;
+      if (!f.visible) continue;
+      f.scale.set(0.72 + h * 0.42, h, 0.72 + h * 0.42);
+      f.position.y = 0.655 + h * 0.115;
+      f.rotation.z = Math.sin(t * (3.1 + i * 0.8) + i) * 0.15 * h;
+    }
+    flameMat.opacity = clamp(0.5 + fire * 0.45, 0, 0.96);
     if (incin.doorOpen && hinge.rotation.y > -1.85) hinge.rotation.y = Math.max(-1.85, hinge.rotation.y - dt * 3.2);
     if (incin.refused && pan.position.z < 0.66) pan.position.z = Math.min(0.66, pan.position.z + dt * 1.4);
     // the skull dreads the open mouth: chatter spikes as you carry it close

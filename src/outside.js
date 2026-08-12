@@ -4128,15 +4128,27 @@ export function buildClearing(game) {
   game.waterfallBarrier = world.addCollider(C.x - 3.2, -2, C.z + 19.55, C.x + 3.2, 20, C.z + 20.35);
   game.bridgeBarrier = game.waterfallBarrier; // retained debug/older-test name
   game.bridgeStones = [];
-  for (let i = 0; i < 7; i++) {
+  // Eight, not seven. The arithmetic run of seven ends at dz 19.12 while the
+  // far bank does not begin until dz ~20.5, and the basin floor between them
+  // is at -3.3 -- so the last thing the crossing asked of the player was a
+  // stride over open deep water at the exact point the stones stop helping.
+  // Alex marked that spot: "one more stone here is needed". The eighth breaks
+  // the sequence deliberately, sitting closer than 1.72 m, because it is
+  // bridging to a bank rather than continuing a rhythm.
+  //
+  // Worth knowing before retuning the run: the first five stones sit on the
+  // shallow shelf (ground 0.37, stone top 0.12), so they are scenery. Only the
+  // stones past dz 16.5 are load-bearing, and there were two of them.
+  const bridgeZ = [8.8, 10.52, 12.24, 13.96, 15.68, 17.4, 19.12, 20.42];
+  bridgeZ.forEach((dz, i) => {
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
-    st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + 8.8 + i * 1.72);
+    st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + dz);
     st.rotation.y = i * 0.73;
     st.castShadow = true;
     st.receiveShadow = true;
     scene.add(st);
     game.bridgeStones.push(st);
-  }
+  });
 
   // the target behind the curtain of water
   world.addFetchTarget({
