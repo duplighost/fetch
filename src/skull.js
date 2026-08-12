@@ -380,12 +380,16 @@ export class Skull {
           0.006,
           0.062 + rootArc[i],
           fingerScale[i],
-          (i - 1.5) * 0.075,
+          (i - 1.5) * 0.105,
         );
         f.phase = i * 0.9;
         this._fingers.push(f);
       }
-      const thumb = mkFinger(hand, side * -0.055, 0.012, 0.013, 1.12, side * -0.95);
+      // The thumb is the single strongest "this is a hand" cue, and it used to
+      // point straight into the gap between the two hands, where the other
+      // hand's fingers hid it completely. Raised onto the top of the palm and
+      // swung further across so it breaks the finger line in silhouette.
+      const thumb = mkFinger(hand, side * -0.058, 0.028, 0.004, 1.12, side * -0.72);
       // A thumb is a short, thick opposing mass, not a fifth long finger.
       // Scaling its existing rig preserves the animation contract while making
       // the cradle silhouette unmistakably human.
@@ -400,12 +404,38 @@ export class Skull {
       return hand;
     };
 
+    // Framing, which is the whole of Alex's "these do not look like human
+    // hands". The palm, the thumb, the knuckle line and the wrist are the four
+    // things that say HAND, and every one of them used to sit below the bottom
+    // of the screen: the frame cut at the first knuckle, so all the player ever
+    // saw was eight parallel tubes. The geometry was already right — it was
+    // never on camera. Raised into frame, turned out of the edge-on yaw that
+    // hid the backs of the hands, and separated so they read as two hands
+    // rather than one mass.
+    // TWO POSES, not one compromise. Cradling and empty want opposite things
+    // from the camera and the old single pose served only the first:
+    //
+    //   CRADLE - the hands come in behind and under the skull to hold it, so
+    //     most of each hand is hidden by the thing it is holding. Correct.
+    //   EMPTY  - nothing is hiding them any more and they are the only thing
+    //     on screen. Held in the cradle pose they read as eight parallel
+    //     tubes: the frame cuts at the first knuckle, the palms and thumbs are
+    //     below the bottom of the screen, and the fingers point at the camera
+    //     end-on. That is Alex's "these do not look like human hands".
+    //
+    // So the hands turn over when the skull leaves: they drop, open outward,
+    // and roll until the backs, the knuckle line and both thumbs are in frame.
+    // It costs nothing and it reads as relief — the grip letting go — which is
+    // the state the player is in anyway.
     const L = mkHand(-1);
-    L.position.set(-0.118, -0.2, 0.035);
-    L.rotation.set(-0.7, 0.78, 0.3);
     const R = mkHand(1);
-    R.position.set(0.118, -0.2, 0.035);
-    R.rotation.set(-0.7, -0.78, -0.3);
+    this._handPose = {
+      hands: [L, R],
+      cradle: { x: 0.114, y: -0.168, z: 0.052, rx: -0.58, ry: 0.71, rz: 0.27 },
+      empty: { x: 0.133, y: -0.147, z: 0.043, rx: -0.33, ry: 0.50, rz: 0.15 },
+      t: 0,   // 0 = cradle, 1 = empty
+    };
+    this._applyHandPose(0);
     hold.add(L, R);
 
     // forearms: sleeves running off the bottom corners of the frame — the
@@ -500,6 +530,22 @@ export class Skull {
       * stateGain;
   }
 
+  // Blend the two authored hand poses. side = -1 mirrors in x and in both of
+  // the rotations that carry handedness.
+  _applyHandPose(t) {
+    const P = this._handPose;
+    if (!P) return;
+    const c = P.cradle, e = P.empty;
+    const x = lerp(c.x, e.x, t), y = lerp(c.y, e.y, t), z = lerp(c.z, e.z, t);
+    const rx = lerp(c.rx, e.rx, t), ry = lerp(c.ry, e.ry, t), rz = lerp(c.rz, e.rz, t);
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      P.hands[i].position.set(side * x, y, z);
+      P.hands[i].rotation.set(rx, -side * ry, -side * rz);
+    }
+    P.t = t;
+  }
+
   _updateHands(dt) {
     // grip target: cradling when held, tightening with threat, open when empty
     const held = this.mode === 'held';
@@ -508,6 +554,10 @@ export class Skull {
       : 1;
     const target = held ? (0.5 + this.threat * 0.42) * catchClose : 0.08;
     this._grip = damp(this._grip, target, held ? 6 : 3, dt);
+    // The hands turn over on the same signal as the grip, so opening and
+    // rolling over are one gesture rather than two. Closing is quicker than
+    // opening: a catch should feel caught, a throw should feel let go of.
+    this._applyHandPose(damp(this._handPose ? this._handPose.t : 0, held ? 0 : 1, held ? 7 : 3.4, dt));
     this._handT = (this._handT || 0) + dt;
     const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
     for (const f of this._fingers) {
