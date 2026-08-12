@@ -1484,8 +1484,14 @@ function buildCaveDress(game, track, own, tickers) {
       const routeT = d / len;
       const floorY = ay + (by - ay) * routeT;
       const halfW = aw + (bw - aw) * routeT;
+      // 0.88 of the chamber radius used to delete the trail across every
+      // chamber -- roughly forty metres of it, including the whole chapel
+      // crossing. The trail therefore vanished at the biggest rooms, which are
+      // exactly the places the player has to choose a direction. Only the
+      // middle of a chamber is kept clear now, where the machines actually
+      // stand; the crystals continue along the route's edge past them.
       if (layout?.chambers?.some((chamber) =>
-        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.88)) continue;
+        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.42)) continue;
       const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
       const grow = 0.52 + 0.95 * t;
       const bright = 0.38 + 0.62 * t;
@@ -1502,16 +1508,62 @@ function buildCaveDress(game, track, own, tickers) {
       }
     }
   }
-  const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, crystalMatrices.length);
+  // The brightening half of this trail was a no-op, and it is the half that
+  // was supposed to replace the illegal cyan. setColorAt writes per-instance
+  // colour into vColor, and r161's color_fragment is exactly
+  // `diffuseColor.rgb *= vColor` -- it never touches totalEmissiveRadiance.
+  // Out here the crystals sit mostly beyond the reach of any light, so
+  // EMISSIVE is the visible term and the authored 0.38 -> 1.00 gradient was
+  // modulating an albedo nobody was lighting. The size gradient worked; the
+  // brightness gradient did not exist.
+  //
+  // Per-instance emissive needs either a shader patch or separate materials.
+  // Separate materials, because they are in the scene from boot and so are
+  // covered by the boot warmup, and because nothing here should risk the
+  // pinned shader census for two extra draw calls against a 700 budget.
+  // The three tiers stay nested under ONE batch keeping the original name,
+  // because that name is how the district culler recognises cave dressing
+  // (see caveNames above) and how the culling regression counts batches.
+  // Hiding the group hides all three.
+  // The first tier keeps the canonical name and the other two hang off it,
+  // rather than a wrapper Group: buildCaveDress only receives `track`, which
+  // both parents into the atmosphere root AND counts a draw call, so a Group
+  // would bill one draw call for something that draws nothing. Children
+  // inherit visibility, so hiding tier one still sleeps the whole trail.
+  const crystalGeo = new THREE.OctahedronGeometry(1, 0);
+  let trailRoot = null;
+  const TIERS = [
+    { max: 0.34, emissive: 0.20 },
+    { max: 0.67, emissive: 0.55 },
+    { max: 1.01, emissive: 1.15 },
+  ];
   const tintCol = new THREE.Color();
-  crystalMatrices.forEach((matrix, i) => {
-    crystals.setMatrixAt(i, matrix);
-    crystals.setColorAt(i, tintCol.setScalar(crystalTints[i]));
+  TIERS.forEach((tier, ti) => {
+    const lo = ti === 0 ? -1 : TIERS[ti - 1].max;
+    const idx = [];
+    for (let i = 0; i < crystalMatrices.length; i++) {
+      const t = (crystalTints[i] - 0.38) / 0.62;          // back to 0..1 route position
+      if (t > lo && t <= tier.max) idx.push(i);
+    }
+    if (!idx.length) return;
+    const mat = own(crystalMat.clone());
+    mat.emissiveIntensity = crystalMat.emissiveIntensity * tier.emissive;
+    const mesh = new THREE.InstancedMesh(crystalGeo, mat, idx.length);
+    idx.forEach((src, k) => {
+      mesh.setMatrixAt(k, crystalMatrices[src]);
+      mesh.setColorAt(k, tintCol.setScalar(crystalTints[src]));
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    finishInstances(mesh, false, false);
+    track(mesh, idx.length);   // parents into the atmosphere root, counts the draw call
+    if (!trailRoot) {
+      trailRoot = mesh;
+      mesh.name = 'cave mica trail (grows toward the way out)';
+    } else {
+      mesh.name = `cave mica trail tier ${ti + 1} of 3`;
+      trailRoot.add(mesh);     // reparented off the root, under the named batch
+    }
   });
-  if (crystals.instanceColor) crystals.instanceColor.needsUpdate = true;
-  finishInstances(crystals, false, false);
-  crystals.name = 'cave mica trail (grows toward the way out)';
-  track(crystals, crystalMatrices.length);
 
   if (layout) {
     // The interior keeps changing its water vocabulary: wall leaks at the
