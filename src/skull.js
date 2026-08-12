@@ -679,6 +679,22 @@ export class Skull {
   vanish() {
     // the waterfall. it does not come back.
     this.mode = 'gone';
+    // Its LIGHTS must not leave with it, though. skull.root carries the
+    // carried lantern and the ember socket light, and pulling that subtree out
+    // of the scene drops two point lights out of the shader light census --
+    // which makes three.js recompile every lit material in the game. Measured
+    // at four to seven seconds of hard freeze landing precisely on the one
+    // beat the whole act is built to deliver. Park them in the pinned census
+    // root instead, muted: no pixel changes, the count never moves.
+    const lightRoot = this.world?.lightRoot;
+    if (lightRoot) {
+      const carried = [];
+      this.root.traverse((o) => { if (o.isLight) carried.push(o); });
+      for (const light of carried) {
+        lightRoot.attach(light);
+        light.visible = false;   // World.pinLight mutes to black, never hides
+      }
+    }
     if (this.root.parent) this.root.parent.remove(this.root);
     this.tether.visible = false;
     this.audio.skullMoanStop();

@@ -35,7 +35,7 @@ try {
       poolLength: g.gorePool.length,
       poolMeshes: g.scene.children.filter((o) => o.userData?.fetchGorePool).length,
       sceneChildren: g.scene.children.length,
-      caveLights: g.underfalls.lights.map((light) => light.visible),
+      caveLights: g.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
       candles: g.world.candlePool.map((light) => ({ visible: light.visible, intensity: light.intensity })),
       enemyTrace: {
         enemies: g.enemies.list.length,
@@ -51,7 +51,7 @@ try {
   check(initial.pool.capacity === 64 && initial.poolLength === 64,
     'impact fragment storage is a fixed 64-slot pool');
   check(initial.poolMeshes === 1, 'one resident InstancedMesh owns every impact fragment');
-  check(initial.caveLights.every((visible) => visible === false),
+  check(initial.caveLights.every((emitting) => emitting === false),
     'Underfalls lights are restored before the page becomes ready');
   check(initial.candles.every((light) => light.visible),
     'all candle-pool lights remain resident');
@@ -78,7 +78,7 @@ try {
       elapsedMs: performance.now() - before,
       started: g.started,
       titleHidden: g.el.title.classList.contains('hidden'),
-      caveLights: g.underfalls.lights.map((light) => light.visible),
+      caveLights: g.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
     };
   });
   check(start.started && start.titleHidden,
@@ -90,7 +90,7 @@ try {
       && start.preStartTrace.spawnLog === initial.enemyTrace.spawnLog,
     'warm-up restores enemy, Choir, serial, and spawn-log gameplay state',
     `${JSON.stringify(initial.enemyTrace)} -> ${JSON.stringify(start.preStartTrace)}`);
-  check(start.caveLights.every((visible) => visible === false),
+  check(start.caveLights.every((emitting) => emitting === false),
     'starting from the title does not activate cave lights');
 
   await page.waitForFunction(
@@ -251,12 +251,12 @@ try {
   const warmup = await page.evaluate(() => ({
     ...window.__game.shaderWarmup,
     retainedMaterials: window.__game._shaderWarmMaterials?.length || 0,
-    caveLights: window.__game.underfalls.lights.map((light) => light.visible),
+    caveLights: window.__game.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
   }));
   check(warmup.status === 'ready',
     'ordinary, hidden-threat/cave, and grain shader variants finish warming',
     `${warmup.mode}; errors=${warmup.errors.join(' | ') || 'none'}`);
-  check(warmup.caveLights.every((visible) => visible === false),
+  check(warmup.caveLights.every((emitting) => emitting === false),
     'async completion leaves the Underfalls light rig inactive');
   check(warmup.retainedMaterials === 9,
     'warm-up retains only the nine on-demand threat materials',

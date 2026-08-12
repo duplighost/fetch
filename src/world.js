@@ -546,6 +546,139 @@ export class World {
     this.moon = moon;
   }
 
+  // ------------------------------------------------------------ light census
+  //
+  // three.js keys every shader program on the number of VISIBLE lights of each
+  // type: WebGLRenderer.compile and .render both gather them with
+  // traverseVisible, and the counts land in the program cache key. FETCH used
+  // to change that census four times in a playthrough --
+  //
+  //     bedroom..graveyard  17 point, 1 spot
+  //     forest, clearing    16 point, 0 spot   (the wreck's headlight goes with
+  //                                             the culled graveyard district)
+  //     cave                24 point, 0 spot   (Underfalls adds nine)
+  //     mirror              19 point, 0 spot
+  //
+  // -- and each change made the driver recompile EVERY lit material in the
+  // game. Measured with tools/probe-hitch.mjs against the shipping build:
+  // 3.4s entering the house, 4.8s entering the forest, 3.3s entering the cave,
+  // 4.7s entering the mirror room, and multi-second stalls the first time a
+  // skull hit revealed something new. Twenty-seven seconds of freeze in one
+  // playthrough, all of it in seven frames, every one of them coinciding with
+  // new programs. That is Alex's "lag/freeze when entering areas", his
+  // "loading new areas just about always freezes it for a little too long",
+  // and his "a lot of the things that you hit with the skull to activate
+  // freeze the game for a number of seconds" -- one bug wearing three hats.
+  //
+  // The census is PINNED rather than warmed. Warming means paying the same
+  // compile cost at boot; pinning means never paying it at all, because there
+  // is only ever one program set. _buildCandlePool already discovered this
+  // rule for the eighth-candle boundary; this generalises it to every light.
+  //
+  // Two things are required, and one alone is not enough:
+  //   1. Hiding a light must not remove it from the census. `visible = false`
+  //      still reads as intent everywhere in the codebase, but it now mutes
+  //      the light to black instead of dropping it out of traverseVisible.
+  //      A black light contributes nothing to any pixel.
+  //   2. A light must not sit inside a subtree that district culling hides,
+  //      because traverseVisible stops at the hidden root and the light leaves
+  //      the census without anyone touching the light. Static lights are
+  //      therefore lifted into one never-hidden container. Lights that ride a
+  //      moving carrier (the skull, the camera, an enemy) stay where they are;
+  //      no district culler ever hides those.
+  pinLightCensus(scene, carriers = []) {
+    const root = this.lightRoot = new THREE.Group();
+    root.name = 'pinned light census';
+    scene.add(root);
+
+    const lights = [];
+    scene.traverse((o) => { if (o.isLight) lights.push(o); });
+    const ridesACarrier = (light) => {
+      for (let p = light; p; p = p.parent) if (carriers.includes(p)) return true;
+      return false;
+    };
+
+    for (const light of lights) {
+      // attach() preserves the world transform, so a lifted light keeps the
+      // exact position its district placed it at.
+      if (!ridesACarrier(light)) root.attach(light);
+      this.pinLight(light);
+    }
+    this.pinnedLights = lights;
+    return lights.length;
+  }
+
+  // Lights for things that come and go. A creature that builds its own lamp
+  // and takes it away again moves the census twice -- once when it arrives and
+  // once when it leaves -- and each move recompiles the whole game. Loaners are
+  // created here, at boot, so they are counted exactly once and forever; a
+  // borrower only ever REPARENTS one, which the census cannot see.
+  reserveLoanLights(count, colour = 0xffffff, distance = 8, decay = 1.8) {
+    this.loanLights = [];
+    for (let i = 0; i < count; i++) {
+      const light = new THREE.PointLight(colour, 0, distance, decay);
+      light.name = `loan light ${i}`;
+      light.userData.onLoan = false;
+      this.loanLights.push(light);
+      this.scene?.add(light) ?? null;
+    }
+    return this.loanLights;
+  }
+
+  // Borrow one and parent it wherever it needs to ride. Returns null when the
+  // reserve is exhausted, and callers must treat that as "no lamp", never as a
+  // reason to construct one.
+  loanLight(borrower, { colour, intensity = 0, distance, decay } = {}) {
+    const light = this.loanLights?.find((l) => !l.userData.onLoan);
+    if (!light) return null;
+    light.userData.onLoan = true;
+    if (colour != null) light.userData.loanColour = colour;
+    if (distance != null) light.distance = distance;
+    if (decay != null) light.decay = decay;
+    light.intensity = intensity;
+    light.visible = true;
+    if (colour != null) light.color.setHex(colour);
+    borrower.add(light);          // reparent: the scene still contains it
+    return light;
+  }
+
+  returnLight(light) {
+    if (!light?.userData?.onLoan) return;
+    light.userData.onLoan = false;
+    light.intensity = 0;
+    light.visible = false;        // muted, not removed
+    light.position.set(0, 0, 0);
+    this.lightRoot.add(light);    // reparent home, never remove
+  }
+
+  // Mute-instead-of-hide, applied to one light. Safe to call on lights created
+  // after boot (the finale's clones, an enemy's lamp) so they join the same
+  // discipline -- though a light that is ADDED to the scene mid-run still
+  // changes the census by existing, which is why those are pre-created.
+  pinLight(light) {
+    if (!light?.isLight || light.userData.censusPinned) return light;
+    light.userData.censusPinned = true;
+
+    let muted = !light.visible;
+    // Muting by colour rather than by intensity leaves every existing
+    // `light.intensity = ...` writer in the codebase working untouched --
+    // the candle pool's flicker, the wreck headlight's dying stutter, the
+    // finale's head lamp ramp. Only skullLight ever writes a light colour and
+    // it is never muted.
+    const lit = light.color.clone();
+    const apply = () => { if (muted) light.color.setRGB(0, 0, 0); else light.color.copy(lit); };
+    apply();
+
+    Object.defineProperty(light, 'visible', {
+      configurable: true,
+      // Always true: the census must not move. Nothing in FETCH reads a
+      // light's visibility to make a decision.
+      get: () => true,
+      set: (v) => { muted = !v; apply(); },
+    });
+    return light;
+  }
+
   freezeMoonShadow(renderer, scene, camera) {
     renderer.shadowMap.needsUpdate = true;
     renderer.render(scene, camera);

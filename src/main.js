@@ -233,6 +233,17 @@ class Game {
     this.player.yaw = spawn.yaw;
     this.player._sync(0);
     this.checkpoint('bedroom');
+    this._buildImpactFx();
+    // One loaner covers the Drowned Choir, the only creature that carries its
+    // own lamp. Reserved BEFORE the census is pinned so it is counted with
+    // everything else and never has to be created mid-run.
+    this.world.reserveLoanLights(1);
+    // Pin the shader light census before anything renders. Everything that
+    // owns a light is built by now: house, outside, underfalls, atmosphere,
+    // the finale's dresser and lamp, and the skull's own ember. The carriers
+    // are the three things that MOVE a light, and district culling never
+    // touches them.
+    this.world.pinLightCensus(this.scene, [this.camera, this.skull.root]);
     this.world.freezeMoonShadow(this.renderer, this.scene, this.camera);
 
     this._buildGrain();
@@ -395,10 +406,22 @@ class Game {
   }
 
   _beginShaderWarmup(state) {
-    // compileAsync still performs scene traversal synchronously. Never point it
-    // at FETCH's enormous assembled world: build a tiny scene that shares the
-    // exact materials from representative ordinary, hidden-threat and cave
-    // objects, then let the driver finish those programs in parallel.
+    // With the light census pinned (World.pinLightCensus) there is exactly ONE
+    // shader program set for the whole game, so this no longer has to guess at
+    // representative light counts by assembling a synthetic scene of cloned
+    // lights -- it compiles the real, assembled world once.
+    //
+    // renderer.compile() walks materials with scene.traverse(), which ignores
+    // visibility, so a single pass over the live scene covers the house, the
+    // basement, the graveyard, the forest, the clearing and all of Underfalls
+    // without moving the player, changing act state, or touching the director.
+    // The old curated-scene approach compiled the wrong light-count keys and
+    // covered 122 of the ~230 programs the game actually uses; the rest were
+    // paid for mid-play, which is what Alex felt as the freezes.
+    //
+    // The only meshes traverse() cannot see are the figures built on demand.
+    // They are spawned into the real scene for the duration of the synchronous
+    // pass and removed immediately afterwards, exactly as before.
     state.status = 'pending';
     state.startedAt = performance.now();
     const jobs = [];
@@ -414,24 +437,17 @@ class Game {
         state.errors.push(`${label}: ${error?.message || error}`);
       }
     };
-    const warmScene = new THREE.Scene();
-    warmScene.fog = this.scene.fog;
-    warmScene.environment = this.scene.environment;
-    const warmCamera = new THREE.PerspectiveCamera(60, 1, 0.1, 20);
-    warmCamera.layers.set(0);
-    warmScene.add(warmCamera);
+
     const warmEntities = [];
-    const warmChoirLights = [];
     const spawnSerial = this.enemies._spawnSerial;
     const previousChoir = this.enemies.choir;
     const hadSpawnLog = Object.prototype.hasOwnProperty.call(this, 'spawnLog');
     const spawnLogLength = this.spawnLog?.length || 0;
     try {
-      // Ordinary figures and the Drowned Choir are built on demand, so no boot
-      // scene object can stand in for their exact Lambert/custom programs. Make
-      // one bounded set, immediately remove every gameplay trace, and retain
-      // only its nine materials after compilation so later real spawns reuse
-      // the driver's programs instead of hitching on first sight.
+      // Ordinary figures and the Drowned Choir are built on demand, so nothing
+      // already in the boot scene carries their exact Lambert/custom programs.
+      // Make one bounded set, compile with it present, then remove every
+      // gameplay trace and retain only its materials.
       for (const kind of ['walker', 'resident', 'kneeler']) {
         warmEntities.push(this.enemies.spawn(
           kind, this.player.pos.x, this.player.pos.z, 'dormant', this.player.pos.y + 1,
@@ -445,7 +461,38 @@ class Game {
       }
     } catch (error) {
       state.errors.push(`threat-setup: ${error?.message || error}`);
+    }
+
+    try {
+      // The world pass. Everything the player will ever walk through.
+      compile(this.scene, this.camera, 'world');
+
+      // The held layer is a second camera pass with its own light set (the
+      // viewmodel lamps live on LAYER_HELD), so it owns a distinct program key.
+      const heldCamera = this.camera.clone();
+      heldCamera.layers.set(LAYER_HELD);
+      compile(this.scene, heldCamera, 'held');
+
+      // The mirror room renders the scene into a linear-space render target,
+      // and the colour space is part of the program key -- so every material
+      // reflected in the finale needs a second program. Compiling against the
+      // real target here is what keeps the last act from stalling.
+      // Both mirror pools build identical UnsignedByteType targets, so warming
+      // against either one produces the linear-space key the other needs.
+      const reflectionTarget = this.finale?.mirrors?.pool?.[0] || null;
+      if (reflectionTarget) {
+        const previousTarget = this.renderer.getRenderTarget();
+        this.renderer.setRenderTarget(reflectionTarget);
+        compile(this.scene, this.camera, 'reflection');
+        this.renderer.setRenderTarget(previousTarget);
+      }
+
+      compile(this.grainScene, this.grainCam, 'grain');
+    } catch (error) {
+      state.errors.push(`setup: ${error?.message || error}`);
     } finally {
+      // Remove the stand-ins the instant the synchronous compile is done. The
+      // driver's remaining link work needs no scene objects.
       for (const entity of warmEntities) {
         const index = this.enemies.list.indexOf(entity);
         if (index >= 0) this.enemies.list.splice(index, 1);
@@ -458,77 +505,6 @@ class Game {
       if (hadSpawnLog) this.spawnLog.length = spawnLogLength;
       else delete this.spawnLog;
     }
-    for (const entity of warmEntities) {
-      entity.mesh.visible = true;
-      if (entity.kind === 'choir') {
-        entity.mesh.traverse((object) => {
-          if (!object.isLight) return;
-          object.visible = false;
-          warmChoirLights.push(object);
-        });
-      }
-      warmScene.add(entity.mesh);
-    }
-    const addSharedClone = (object) => {
-      if (!object) return;
-      const clone = object.clone(true);
-      clone.visible = true;
-      warmScene.add(clone);
-    };
-    const sources = [
-      this.finale?.figure,
-      this.houseMirror?.double,
-      this.houseMirror?.echo,
-      this.underfalls?.displacement?.root,
-      this.underfalls?.pump?.group,
-      this.underfalls?.sluice?.group,
-      this.underfalls?.secret?.group,
-      ...(this.windowRelay?.visitor?.stages || []),
-    ];
-    const caveLights = new Set(this.underfalls?.lights || []);
-    const caveLightClones = [];
-    let skullLightClone = null;
-    try {
-      for (const source of sources) addSharedClone(source);
-
-      // A single live instance makes the pooled MeshStandardMaterial part of
-      // the representative scene without touching the shipping pool's count.
-      const warmGore = new THREE.InstancedMesh(this.goreGeo, this.goreMat, 1);
-      warmGore.setMatrixAt(0, new THREE.Matrix4());
-      warmGore.count = 1;
-      warmScene.add(warmGore);
-
-      // Clone the resident ordinary light rig. Shared materials receive the
-      // same light-count program keys without moving or exposing game objects.
-      this.scene.traverseVisible((object) => {
-        if (!object.isLight || caveLights.has(object)) return;
-        const clone = object.clone(false);
-        if (object === this.skullLight) skullLightClone = clone;
-        warmScene.add(clone);
-      });
-      for (const light of caveLights) {
-        const clone = light.clone(false);
-        clone.visible = false;
-        caveLightClones.push(clone);
-        warmScene.add(clone);
-      }
-
-      compile(warmScene, warmCamera, 'ordinary');
-      // Waterfall loss removes the skull and its world light before Underfalls
-      // and the finale. Compile that late-game reflection count separately.
-      if (skullLightClone) skullLightClone.visible = false;
-      warmCamera.layers.set(0);
-      warmCamera.layers.enable(LAYER_DOUBLE);
-      compile(warmScene, warmCamera, 'hidden-threat');
-      warmCamera.layers.set(0);
-      for (const light of caveLightClones) light.visible = true;
-      compile(warmScene, warmCamera, 'cave-lights');
-      for (const light of warmChoirLights) light.visible = true;
-      compile(warmScene, warmCamera, 'cave-threat');
-      compile(this.grainScene, this.grainCam, 'grain');
-    } catch (error) {
-      state.errors.push(`setup: ${error?.message || error}`);
-    }
 
     const finish = () => {
       const retainedMaterials = warmEntities.flatMap((entity) =>
@@ -540,7 +516,6 @@ class Game {
       } else {
         this._shaderWarmMaterials = retainedMaterials;
       }
-      warmScene.clear();
       state.status = state.errors.length ? 'degraded' : 'ready';
       state.completedAt = performance.now();
       state.durationMs = state.completedAt - state.startedAt;
@@ -839,15 +814,33 @@ class Game {
     if (pos) this._impactFx(kind, pos);
   }
 
+  // Built at boot, never lazily. This used to construct itself on the first
+  // impact — which added a point light to a live scene and so changed the
+  // shader light census, making the driver recompile every lit material in the
+  // game. The first thing the player hit therefore froze for several seconds,
+  // wherever in the game that happened to be. That is Alex's "a lot of the
+  // things that you hit with the skull to activate freeze the game for a
+  // number of seconds": one lazy allocation, felt everywhere.
+  _buildImpactFx() {
+    this._impactLight = new THREE.PointLight(0xd8cbb0, 0, 7, 1.8);
+    this._impactLight.name = 'impact bloom';
+    this.scene.add(this._impactLight);
+  }
+
   _impactFx(kind, pos) {
     // contact bloom + ring at the point of impact — brightness and motion
     // carry the meaning, never hue. outward ring = hurt; inward = locked.
-    if (!this._impactLight) {
-      this._impactLight = new THREE.PointLight(0xd8cbb0, 0, 7, 1.8);
-      this.scene.add(this._impactLight);
+    //
+    // The LIGHT is built at boot (_buildImpactFx) because adding a light to a
+    // live scene changes the shader light census and recompiles every lit
+    // material in the game — so the first thing the player ever hit used to
+    // freeze for seconds. The ring is only a mesh, costs the census nothing,
+    // and is still built on demand.
+    if (!this._impactRing) {
       this._impactRing = new THREE.Mesh(
         new THREE.RingGeometry(0.16, 0.21, 24),
         new THREE.MeshBasicMaterial({ color: 0xcfd6da, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+      this._impactRing.name = 'impact ring';
       this.scene.add(this._impactRing);
     }
     this._impactLight.position.copy(pos);

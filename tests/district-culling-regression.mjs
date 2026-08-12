@@ -82,7 +82,13 @@ try {
         drawCalls: g.lastRender.drawCalls,
         forestVisible: visibleCount(forest.detailRoots),
         caveVisible: visibleCount(cave.renderRoots),
-        caveLights: cave.lights.filter((light) => light.visible).length,
+        // Counted by EMISSION, not scene-graph visibility. The shader light
+        // census is pinned (World.pinLightCensus) because changing the number
+        // of visible lights recompiles every lit material in the game, so a
+        // sleeping district light is now black and resident rather than
+        // absent. Emission is the stronger test: it fails for a light left in
+        // the scene AND for one left burning.
+        caveLights: cave.lights.filter((light) => light.color.getHex() !== 0 && light.intensity > 0).length,
         caveCullActive: cave.visibility.active,
       };
     };
@@ -93,7 +99,13 @@ try {
     check(
       'district registries are bounded, disjoint, and retain authored base visibility',
       forest.detailRoots.length >= 20
-        && cave.renderRoots.length >= 8
+        // Was >= 8 when renderRoots still swept up the district's nine point
+        // lights along with its geometry. They are now excluded (a light
+        // sleeps by going black, not by leaving the scene), so the real
+        // geometry-root count is 6. The guard's job is unchanged: catch a
+        // registry that has silently collapsed to nothing.
+        && cave.renderRoots.length >= 5
+        && cave.renderRoots.every((root) => !root.isLight)
         && !forest.detailRoots.some((root) => cave.renderRoots.includes(root))
         && expectedForestVisible > 0
         && expectedCaveVisible > 0
@@ -153,7 +165,7 @@ try {
       'the grave gate approach restores the exact authored forest-detail set without waking the cave',
       graveGate.forestVisible === expectedForestVisible
         && visibleCount(cave.renderRoots) === 0
-        && cave.lights.every((light) => !light.visible)
+        && cave.lights.every((light) => light.color.getHex() === 0 || light.intensity === 0)
         && graveGate.drawCalls > 0 && graveGate.drawCalls < 450,
       { ...graveGate, ceiling: 450 },
     );

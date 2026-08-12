@@ -1279,7 +1279,13 @@ export function buildUnderfalls(game) {
   // chapel, sluice, hatch or spray geometry belongs in an exterior render.
   // Remember each root's live visibility so one-shot cave beats survive a
   // leave/re-entry, then remove the whole district until the cave act begins.
-  state.renderRoots = scene.children.slice(renderStart);
+  // Lights are excluded: they are already owned by state.lights below, and
+  // they are the one kind of child whose scene-graph visibility is not a
+  // rendering decision. The shader light census is pinned (see
+  // World.pinLightCensus), so a district light sleeps by going black and stays
+  // resident — leaving it in a list called renderRoots would both
+  // double-manage it and make "how much of the cave is drawn" uncountable.
+  state.renderRoots = scene.children.slice(renderStart).filter((root) => !root.isLight);
   state.renderVisibility = new Map(state.renderRoots.map((root) => [root, root.visible]));
   state.renderActive = false;
   for (const root of state.renderRoots) root.visible = false;

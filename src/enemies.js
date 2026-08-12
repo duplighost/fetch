@@ -603,7 +603,7 @@ function makeFigure(kind) {
   return g;
 }
 
-function makeDrownedChoir() {
+function makeDrownedChoir(world) {
   const g = new THREE.Group();
   const voidMat = new THREE.MeshLambertMaterial({
     color: 0x010305, transparent: true, opacity: 0.015, depthWrite: false,
@@ -749,9 +749,15 @@ function makeDrownedChoir() {
   const droplets = new THREE.Points(CHOIR_GEO.drops, dropMat);
   droplets.frustumCulled = false;
   g.add(droplets);
-  const light = new THREE.PointLight(0xddecef, 0, 6, 1.8);
-  light.position.set(0, 1.45, 0.2);
-  g.add(light);
+  // Borrowed, never built. A lamp that arrives with the creature and leaves
+  // with it moves the shader light census twice, and every move recompiles
+  // every lit material in the game — a multi-second freeze landing exactly on
+  // the reveal this creature exists to deliver. world.loanLight() reparents a
+  // light that has been in the scene since boot, which the census cannot see.
+  // If the reserve is somehow empty the Choir simply has no lamp; it must not
+  // fall back to constructing one.
+  const light = world?.loanLight?.(g, { colour: 0xddecef, distance: 6, decay: 1.8 }) || null;
+  if (light) light.position.set(0, 1.45, 0.2);
   g.userData = {
     drownedChoir: true,
     voidMat, skinMat, wetMat, rimMat, mouthVoidMat, dropMat,
@@ -861,7 +867,7 @@ export class Enemies {
     const y = source.y != null
       ? source.y
       : game.world.groundHeightAt(source.x, source.z, game.player.pos.y + 2);
-    const mesh = makeDrownedChoir();
+    const mesh = makeDrownedChoir(game.world);
     const e = {
       kind: 'choir',
       spec: DROWNED_CHOIR,
@@ -1001,6 +1007,10 @@ export class Enemies {
     // The Choir owns five per-lifecycle transparent materials. Dispose only
     // what the entity owns so three-wave retries do not grow GPU memory.
     if (e.kind === 'choir') {
+      // Hand the lamp back before the body goes. Removing the mesh with the
+      // light still parented to it would take the light out of the scene and
+      // move the census, which is the whole thing loaning exists to prevent.
+      this.game.world.returnLight?.(e.mesh.userData.light);
       for (const material of e.mesh.userData.ownedMaterials || []) material.dispose();
     } else if (e.mesh.userData.mat) {
       e.mesh.userData.mat.dispose();
@@ -1838,8 +1848,10 @@ export class Enemies {
     U.mouthVoidMat.opacity = 0.001 + reveal * 0.92;
     U.dropMat.uniforms.uOpacity.value = 0.001 + reveal * 0.72;
     U.dropMat.uniforms.uSize.value = 0.032 + reveal * 0.052;
-    U.light.intensity = reveal * (2.5 + pressure * 5.6);
-    U.light.distance = 4.2 + reveal * 2.3;
+    if (U.light) {
+      U.light.intensity = reveal * (2.5 + pressure * 5.6);
+      U.light.distance = 4.2 + reveal * 2.3;
+    }
     U.droplets.rotation.y = e.phase * (0.22 + pressure * 0.9);
     U.droplets.position.y = Math.sin(e.phase * 2.7) * 0.055;
 
