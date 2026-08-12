@@ -33,7 +33,7 @@ const BOOT_MODULE_AT = performance.now();
 let BOOT_TITLE_INTERACTIVE_AT = null;
 let BOOT_TITLE_PAINT_OPPORTUNITY_AT = null;
 const _impV = new THREE.Vector3();
-const VERSION = '0.6.0-broken-promise';
+const VERSION = '0.6.1-first-light';
 const GORE_CAP = 64;
 
 // ------------------------------------------------------------------- input
@@ -6597,8 +6597,22 @@ class Game {
           equal: baseline ? equal && signatureEntries === baseline.size : true,
         };
       };
-      const currentProgress = this.currentGpuResidency?.progressive;
-      if (currentProgress?.key === this.currentGpuResidency?.activeKey) {
+      // The live view can appear at ANY moment relative to this itinerary:
+      // the player may click Wake before, during, or long after these
+      // chapters. 0.6.0 shipped this capture as a one-shot check at a fixed
+      // position, which silently skipped when Wake came late — certification
+      // then required a variant nobody was ever going to compile, and the
+      // screen stayed on the dark silhouette forever. Keep the capture
+      // re-armable instead: it is retried between chapters and from the
+      // post-itinerary tail, and no-ops until a live residency exists.
+      const captureCurrentViewExact = async () => {
+        if (!isCurrent()) return false;
+        if (state.readyVariants.includes('current-view-exact')) return true;
+        const currentProgress = this.currentGpuResidency?.progressive;
+        if (!currentProgress
+            || currentProgress.key !== this.currentGpuResidency?.activeKey) {
+          return true; // nothing live yet — stay armed, try again later
+        }
         const currentKey = currentProgress.key;
         const currentRevision = currentProgress.exactShaderRevision;
         const currentRoots = [...new Set([...currentProgress.exactObjects.values()]
@@ -6624,15 +6638,15 @@ class Game {
         const currentSignature = await currentExactSignature(currentProgress, {
           phase: 'pre', key: currentKey, revision: currentRevision,
         });
-        if (!currentSignature) return;
+        if (!currentSignature) return false;
         if (currentSignature.stale) {
           restartStaleCurrentExact();
-          return;
+          return false;
         }
         state.currentExactSignatureEntries = currentSignature.entries;
         state.currentExactSignatureSlices = currentSignature.slices;
-        if (!await discover('current-view', currentRoots)) return;
-        if (!await warmPendingTextures('current-view')) return;
+        if (!await discover('current-view', currentRoots)) return false;
+        if (!await warmPendingTextures('current-view')) return false;
         const currentRepresentatives = [...new Set(currentRoots.map((object) =>
           warmSignatures.get(this._shaderWarmObjectSignature(object))).filter(Boolean))];
         state.currentExactRepresentatives = currentRepresentatives.length;
@@ -6640,12 +6654,12 @@ class Game {
         if (!await compileVariant('current-view-exact', fixedWorldRig, {
           representatives: currentRepresentatives,
           deferReady: true,
-        })) return;
+        })) return false;
         const liveSignature = await currentExactSignature(currentProgress, {
           phase: 'post', key: currentKey, revision: currentRevision,
           baseline: currentSignature.fingerprints,
         });
-        if (!liveSignature) return;
+        if (!liveSignature) return false;
         state.currentExactLiveSignatureEntries = liveSignature.entries;
         state.currentExactLiveSignatureSlices = liveSignature.slices;
         const liveProgress = this.currentGpuResidency?.progressive;
@@ -6654,11 +6668,13 @@ class Game {
             || liveProgress.exactShaderRevision !== currentRevision
             || this.currentGpuResidency?.activeKey !== currentKey) {
           restartStaleCurrentExact();
-          return;
+          return false;
         }
         markVariantReady('current-view-exact');
         state.currentExactStatus = 'ready';
-      }
+        return isCurrent();
+      };
+      if (!await captureCurrentViewExact()) return;
       const houseTargetReady = await warmHouseMirrorTarget();
       if (!await discover('static-world', rootsByLabel.get('static-world'), { reflection: true })) return;
       if (!await discover('house-mirror', rootsByLabel.get('house-mirror'))) return;
@@ -6684,6 +6700,7 @@ class Game {
           'music-box-figure', 'future-walker', 'future-resident',
         ).filter((representative) => !coreRepresentativeSet.has(representative)),
       })) return;
+      if (!await captureCurrentViewExact()) return;
       if (houseTargetReady) {
         const reflectionTarget = this.houseMirror?.pool?.pool?.[0];
         if (!reflectionTarget
@@ -6711,6 +6728,7 @@ class Game {
         { representatives: repsFor('static-world', 'grave', 'skull') })) return;
       if (!await compileVariant('ordinary', fixedWorldRig,
         { representatives: coldRepsFor('static-world', 'house', 'grave', 'atmosphere', 'skull', 'dynamic') })) return;
+      if (!await captureCurrentViewExact()) return;
       for (const kind of ['walker', 'resident', 'kneeler']) {
         let entity = null;
         if (!await runSlice('setup', `synthetic:${kind}`, () => {
@@ -6723,6 +6741,7 @@ class Game {
       if (!await warmPendingTextures('forest')) return;
       if (!await compileVariant('forest', fixedWorldRig,
         { representatives: repsFor('static-world', 'forest', 'atmosphere', 'enemy', 'skull', 'dynamic') })) return;
+      if (!await captureCurrentViewExact()) return;
       if (!await discover('clearing', rootsByLabel.get('clearing'))) return;
       if (!await warmPendingTextures('clearing')) return;
       if (!await compileVariant('clearing', fixedWorldRig,
@@ -6741,6 +6760,7 @@ class Game {
         { representatives: repsFor('static-world', 'cave', 'atmosphere', 'dynamic') })) return;
       if (!await compileVariant('cave-threat', fixedWorldRig,
         { representatives: repsFor('static-world', 'cave', 'atmosphere', 'choir', 'dynamic') })) return;
+      if (!await captureCurrentViewExact()) return;
 
       if (!await discover('finale-room', rootsByLabel.get('finale-room'), { reflection: true })) return;
       if (!await discover('finale-figure', rootsByLabel.get('finale-figure'), { reflection: true })) return;
@@ -6760,6 +6780,19 @@ class Game {
 
       await Promise.all(jobs);
       await targetWarmPromise;
+      // Itinerary complete — but the player may still be sitting on the
+      // title, or Wake may have landed after the last chapter boundary.
+      // Hold the capture armed until the live view exists and certifies,
+      // instead of concluding without the one variant certification needs.
+      // Invalidation or a lost generation ends the wait like any other await.
+      while (isCurrent() && !state.readyVariants.includes('current-view-exact')) {
+        if (!await captureCurrentViewExact()) return;
+        if (state.readyVariants.includes('current-view-exact')) break;
+        await Promise.race([
+          new Promise((resolve) => setTimeout(resolve, 250)),
+          invalidation,
+        ]);
+      }
     })().catch((error) => {
       if (isCurrent()) state.errors.push(`pipeline: ${error?.message || error}`);
     });
@@ -7781,6 +7814,12 @@ class Game {
     if (!skipGpuSubmission) {
       if (reducedDetail) {
         worldInfo = this._renderReducedCurrentWorld(residencyPass.key);
+        // The grain pass below runs with the renderer's default auto-clear,
+        // which ERASED this completed silhouette frame and presented black —
+        // the full-detail branch survives only because it disables auto-clear
+        // for its own held pass. Same contract here; the end-of-render
+        // cleanup restores autoClear for the next frame. (Codex's find.)
+        this.renderer.autoClear = false;
       } else {
         this.camera.layers.set(0);
         this.camera.layers.enable(LAYER_MAIN_ONLY);
