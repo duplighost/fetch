@@ -1148,7 +1148,8 @@ function buildOssuaryRoute(game) {
       game.flag('ossuaryCleared');
       game.flag('graveyardCleared');
       game.graveyardGate?.openGate?.('ossuary');
-      exitCollider.max.y = exitCollider.min.y;
+      // (the exit collider is not collapsed here — it tracks the sinking
+      // slab in the ticker below, so the way opens when the stone is gone)
       game.audio.metalDrop({ pos: anchorPos, gain: 0.88, rate: 0.62 });
       game.audio.duck(0.2, 2.8);
       game.checkpoint('graveyard');
@@ -1156,6 +1157,13 @@ function buildOssuaryRoute(game) {
     state.exitT += ((state.solved ? 1 : 0) - state.exitT) * Math.min(1, dt * 1.8);
     exitSlab.position.y = FLOOR + 1.33 - state.exitT * 3.1;
     exitSlab.rotation.z = state.exitT * 0.08;
+    // The collider follows the STONE, not the solve flag. It used to collapse
+    // on the solve frame while the slab spent the next two seconds visibly
+    // sinking — so the wall was walk-through-able while it still filled the
+    // corridor, which is precisely the "you touch a wall to exit" feel Alex
+    // reported. Open only once the slab's top has sunk below the floor.
+    const slabTop = exitSlab.position.y + 1.325;
+    exitCollider.max.y = slabTop < FLOOR + 0.05 ? exitCollider.min.y : FLOOR + HEIGHT;
 
     if (state.inOssuary) {
       const camPos = game.camera.getWorldPosition(eye);

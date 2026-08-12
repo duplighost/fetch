@@ -420,11 +420,22 @@ try {
     beat('ossuary-counterweight-catches-the-skull',
       g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryCounterweight');
     F.stepWith(1.9, { throwHeld: true });
+    // The exit collider now tracks the sinking slab instead of collapsing on
+    // the solve frame — the old assertion here (collider open at solve time)
+    // asserted a walk-through-visible-stone bug as if it were correct. The
+    // behavioural truths: the solve happens, AND the way is still shut while
+    // the stone still fills the corridor, AND it opens within a bounded time.
     beat('held-counterweight-opens-gate-and-exit',
       g.flags.has('graveyardCleared') && g.flags.has('ossuaryCleared')
-      && g.graveyardGate.opening && g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
+      && g.graveyardGate.opening
+      && g.ossuary.exitCollider.max.y > g.ossuary.exitCollider.min.y);
     F.stepWith(1 / 120, { throwReleased: true });
     waitHeld();
+    for (let t = 0; t < 4 && g.ossuary.exitCollider.max.y > g.ossuary.exitCollider.min.y; t += 0.1) {
+      F.stepWith(0.1, {}, false);
+    }
+    beat('exit-slab-sank-and-opened-the-way',
+      g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
     walkTo(-70, 19.0, 12);
     for (let t = 0; t < 3 && !g.flags.has('ossuaryExited'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
     beat('ossuary-exits-outside-the-surface-gate',
