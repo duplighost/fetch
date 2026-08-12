@@ -1349,6 +1349,7 @@ function buildCaveDress(game, track, own, tickers) {
     rockMat.emissiveIntensity = 0.23;
   }
   const rockMatrices = [];
+  const rockTiers = [];   // 0 = floor course, 3 = ceiling course — the value ladder
 
   for (let leg = 0; leg < path.length - 1; leg++) {
     const [ax, az, ay = 0, aw = 2.2] = path[leg];
@@ -1371,6 +1372,7 @@ function buildCaveDress(game, track, own, tickers) {
         // remains just outside the authored 1.65m movement spine.
         for (const layerY of [0.48, 1.38, 2.28, 3.14]) {
           const sc = rng.range(0.42, 0.64);
+          rockTiers.push([0.48, 1.38, 2.28, 3.14].indexOf(layerY));
           rockMatrices.push(compose(
             x + nx * side * (halfW + rng.range(0.92, 1.28)),
             floorY + layerY + rng.range(-0.16, 0.16),
@@ -1382,6 +1384,7 @@ function buildCaveDress(game, track, own, tickers) {
       }
       if (i % 2 === 0) {
         const sc = rng.range(0.44, 0.66);
+        rockTiers.push(3);
         rockMatrices.push(compose(x + rng.range(-halfW * 0.58, halfW * 0.58), floorY + 4.62, z + rng.range(-halfW * 0.58, halfW * 0.58),
           rng.range(-0.24, 0.24), rng.range(0, TAU), rng.range(-0.24, 0.24), sc * 1.35, sc * 0.58, sc * 1.12));
       }
@@ -1394,6 +1397,7 @@ function buildCaveDress(game, track, own, tickers) {
         const a = i / n * TAU;
         for (const layerY of [0.58, 1.72, 2.86, 4.02]) {
           const scale = rng.range(0.46, 0.68);
+          rockTiers.push([0.58, 1.72, 2.86, 4.02].indexOf(layerY));
           rockMatrices.push(compose(
             chamber.x + Math.cos(a) * (chamber.r + rng.range(1.02, 1.42)),
             chamber.y + layerY + rng.range(-0.14, 0.14),
@@ -1405,11 +1409,36 @@ function buildCaveDress(game, track, own, tickers) {
       }
     }
   }
-  const caveRocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockMatrices.length);
-  rockMatrices.forEach((matrix, i) => caveRocks.setMatrixAt(i, matrix));
-  finishInstances(caveRocks, true, true);
-  caveRocks.name = 'cave broken wall skin';
-  track(caveRocks, rockMatrices.length);
+  // The value ladder (textures.js's own law: pale > ceiling > walls > floors).
+  // One flat material made 1165 wall stones read as undifferentiated noise —
+  // floor course and ceiling course were the same grey, so the eye had no
+  // horizon anywhere in the district. Four courses, brightest at the floor,
+  // darkening upward; the gradient lives in BOTH diffuse and emissive so it
+  // survives the stretches no light reaches. First tier keeps the canonical
+  // name and carries the other three, so the district culler still finds one
+  // batch.
+  const rockGeoCave = new THREE.DodecahedronGeometry(1, 0);
+  const TIER_VALUE = [1.0, 0.84, 0.7, 0.56];
+  let caveRocks = null;
+  TIER_VALUE.forEach((value, tier) => {
+    const idx = [];
+    for (let i = 0; i < rockMatrices.length; i++) if (rockTiers[i] === tier) idx.push(i);
+    if (!idx.length) return;
+    const mat = own(rockMat.clone());
+    mat.color.multiplyScalar(value);
+    if ('emissiveIntensity' in mat) mat.emissiveIntensity = rockMat.emissiveIntensity * value;
+    const mesh = new THREE.InstancedMesh(rockGeoCave, mat, idx.length);
+    idx.forEach((src, k) => mesh.setMatrixAt(k, rockMatrices[src]));
+    finishInstances(mesh, true, true);
+    track(mesh, idx.length);
+    if (!caveRocks) {
+      caveRocks = mesh;
+      mesh.name = 'cave broken wall skin';
+    } else {
+      mesh.name = `cave broken wall skin course ${tier + 1}`;
+      caveRocks.add(mesh);
+    }
+  });
 
   if (layout?.chambers) {
     const capMatrices = layout.chambers.map((chamber) => compose(

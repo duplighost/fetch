@@ -488,11 +488,59 @@ function addFloorAndShell(game, layout) {
       0.54, 5.15, seg.length + 1.1, yaw);
   }
 
-  // Chamber floors are broad and honest. The clamp's matching discs are the
-  // only boundary; low visual rings outside them make the silhouette legible.
+  // THE WET LINE. One pale, slightly raised ribbon runs the whole MAIN route
+  // and none of the culvert: the way forward is the wet way, told in value
+  // and geometry, never in hue. This is the single strongest answer to
+  // Alex's "just has you walking through rocks and random things" — the
+  // route now draws itself on the floor. One cloned material = one draw
+  // call for the entire ribbon (world.box merges by material).
+  const wetStone = M.headstone.clone();
+  wetStone.userData.underfalls = true;   // cave visibility keeps tagged materials
+  wetStone.color.setHex(0x9fb0b4);
+  if ('roughness' in wetStone) wetStone.roughness = 0.22;
+  if ('emissive' in wetStone) {
+    wetStone.emissive = new THREE.Color(0x232c30);
+    wetStone.emissiveIntensity = 0.5;
+  }
+  for (const seg of layout.mainSegments) {
+    const n = Math.max(2, Math.ceil(seg.length / 0.9));
+    const yaw = Math.atan2(seg.dx, seg.dz);
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const w = lerp(seg.a.w, seg.b.w, t);
+      world.box(wetStone,
+        lerp(seg.a.x, seg.b.x, t), lerp(seg.a.y, seg.b.y, t) + 0.012,
+        lerp(seg.a.z, seg.b.z, t),
+        2 * clamp(w * 0.4, 0.8, 1.55), 0.05, (seg.length / n + 0.08) * 0.98, yaw);
+    }
+  }
+
+  // Chamber floors are broad and honest. Each used to be one big SQUARE slab
+  // at r*1.72 while the walkable clamp is a DISC of radius r: at the chapel
+  // that meant over two metres of visible floor you could not walk on at the
+  // corners, and rim gaps of invisible floor at the edge midpoints — "random
+  // things" in floor form. One instanced sixteen-gon disc per chamber now
+  // matches the clamp within 2%, with no coplanar overlaps to shimmer.
+  {
+    const discGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
+    const discs = new THREE.InstancedMesh(discGeo, M.rock, layout.chambers.length);
+    const m4 = new THREE.Matrix4();
+    const q0 = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    layout.chambers.forEach((chamber, i) => {
+      m4.compose(
+        new THREE.Vector3(chamber.x, chamber.y - 0.14, chamber.z),
+        q0, sc.set(chamber.r * 1.02, 0.28, chamber.r * 1.02));
+      discs.setMatrixAt(i, m4);
+    });
+    discs.instanceMatrix.needsUpdate = true;
+    discs.receiveShadow = true;
+    discs.name = 'underfalls chamber floor discs';
+    discs.userData.underfalls = true;
+    discs.frustumCulled = false;   // unit-geometry bounds sit at the origin
+    game.scene.add(discs);
+  }
   for (const chamber of layout.chambers) {
-    world.box(M.rock, chamber.x, chamber.y - 0.14, chamber.z,
-      chamber.r * 1.72, 0.28, chamber.r * 1.72);
     // The atmosphere layer adds an irregular low-poly vault for appearance;
     // this square backing is the light-tight structural shell beneath it. Its
     // overlap reaches beyond the wall ring, so no camera angle can expose the
@@ -503,6 +551,119 @@ function addFloorAndShell(game, layout) {
     chamberCaps++;
   }
   layout.shell = { routeRoofs, chamberCaps };
+
+  // ---- wayfinding tier -----------------------------------------------------
+  // Alex's "rocks and random things" is a hierarchy problem: nothing in the
+  // district said THIS way. Three additions, all pale (value, not hue), all
+  // instanced, none collidable.
+  const paleMark = M.headstone.clone();
+  paleMark.color.setHex(0xa8b4b6);
+  if ('emissive' in paleMark) {
+    paleMark.emissive = new THREE.Color(0x2b3336);
+    paleMark.emissiveIntensity = 0.35;
+  }
+
+  // 1. A pale stalagmite marker on the OUTSIDE of every hard turn (>45°), so
+  //    the route's four real decisions each own a landmark. The 135° hairpin
+  //    at the east ambulatory — the darkest, most-missed turn in the district
+  //    — gets the tallest.
+  {
+    const marks = [];
+    const main = layout.main;
+    for (let i = 1; i < main.length - 1; i++) {
+      const a = main[i - 1], b = main[i], c = main[i + 1];
+      const inD = new THREE.Vector2(b.x - a.x, b.z - a.z).normalize();
+      const outD = new THREE.Vector2(c.x - b.x, c.z - b.z).normalize();
+      const turn = Math.acos(clamp(inD.dot(outD), -1, 1)) * 180 / Math.PI;
+      if (turn < 45) continue;
+      // outside-of-turn bisector: away from where the route bends
+      const bis = new THREE.Vector2(inD.x - outD.x, inD.y - outD.y);
+      if (bis.lengthSq() < 1e-6) continue;
+      bis.normalize();
+      const off = b.w + 1.1;
+      marks.push({
+        x: b.x + bis.x * off, y: b.y, z: b.z + bis.y * off,
+        h: 4.2 + Math.min(1.0, (turn - 45) / 90),
+      });
+    }
+    if (marks.length) {
+      const geo = new THREE.ConeGeometry(0.34, 1, 6);
+      geo.translate(0, 0.5, 0);
+      const mesh = new THREE.InstancedMesh(geo, paleMark, marks.length);
+      const m4 = new THREE.Matrix4();
+      const q0 = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      marks.forEach((p, i) => {
+        m4.compose(new THREE.Vector3(p.x, p.y, p.z), q0, sc.set(1, p.h, 1));
+        mesh.setMatrixAt(i, m4);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.name = 'underfalls turn markers';
+      mesh.userData.underfalls = true;
+      mesh.frustumCulled = false;
+      game.scene.add(mesh);
+    }
+  }
+
+  // 2. Paired pale jambs where the main route crosses a chamber rim: rooms
+  //    get doorways, so entering and leaving one reads as an event.
+  {
+    const jambs = [];
+    for (const seg of layout.mainSegments) {
+      for (const chamber of layout.chambers) {
+        // segment param t where |seg(t) - centre| = r
+        const fx = seg.a.x - chamber.x, fz = seg.a.z - chamber.z;
+        const A = seg.dx * seg.dx + seg.dz * seg.dz;
+        const Bq = 2 * (fx * seg.dx + fz * seg.dz);
+        const Cq = fx * fx + fz * fz - chamber.r * chamber.r;
+        const disc = Bq * Bq - 4 * A * Cq;
+        if (disc <= 0) continue;
+        const sq = Math.sqrt(disc);
+        for (const t of [(-Bq - sq) / (2 * A), (-Bq + sq) / (2 * A)]) {
+          if (t <= 0.02 || t >= 0.98) continue;
+          const x = seg.a.x + seg.dx * t, z = seg.a.z + seg.dz * t;
+          const y = lerp(seg.a.y, seg.b.y, t);
+          const w = lerp(seg.a.w, seg.b.w, t);
+          const nx = seg.dz / seg.length, nz = -seg.dx / seg.length;
+          for (const side of [-1, 1]) {
+            jambs.push({ x: x + nx * side * (w + 0.55), y, z: z + nz * side * (w + 0.55) });
+          }
+        }
+      }
+    }
+    if (jambs.length) {
+      const geo = new THREE.BoxGeometry(0.3, 1, 0.3);
+      geo.translate(0, 0.5, 0);
+      const mesh = new THREE.InstancedMesh(geo, paleMark, jambs.length);
+      const m4 = new THREE.Matrix4();
+      const q0 = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      jambs.forEach((p, i) => {
+        m4.compose(new THREE.Vector3(p.x, p.y, p.z), q0, sc.set(1, 2.6, 1));
+        mesh.setMatrixAt(i, m4);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.name = 'underfalls chamber doorjambs';
+      mesh.userData.underfalls = true;
+      mesh.frustumCulled = false;
+      game.scene.add(mesh);
+    }
+  }
+
+  // 3. The fork reads without moving a node: the wet ribbon already runs only
+  //    the main way, and the optional culvert now wears a dry, DARK lintel
+  //    low across its mouth — clearly a place, clearly not the way onward.
+  {
+    const mouth = layout.secret[0];
+    const next = layout.secret[1];
+    if (mouth && next) {
+      const yaw = Math.atan2(next.x - mouth.x, next.z - mouth.z);
+      const dryDark = M.rock.clone();
+      dryDark.userData.underfalls = true;
+      dryDark.color.multiplyScalar(0.55);
+      world.box(dryDark, mouth.x, mouth.y + 2.24, mouth.z, 3.1, 0.34, 0.5, yaw);
+    }
+  }
 }
 
 function addColliderCylinder(world, x, z, r, y0, y1, role) {
@@ -540,12 +701,12 @@ function addInstances(parent, geometry, material, matrices, {
 
 function buildRouteLights(game, layout, state) {
   const lights = [
-    [layout.entrance.x + 0.8, 2.45, layout.entrance.z + 3.2, 0x7f9ca5, 28, 14],
-    [layout.named['intake apse'].x, 2.75, layout.named['intake apse'].z, 0x91b2b8, 38, 16],
-    [layout.named['pump approach'].x, 2.55, layout.named['pump approach'].z, 0x64777e, 20, 12],
+    [layout.entrance.x + 0.8, 2.45, layout.entrance.z + 3.2, 0x7f9ca5, 13.5, 20],
+    [layout.named['intake apse'].x, 2.75, layout.named['intake apse'].z, 0x91b2b8, 18, 22],
+    [layout.named['pump approach'].x, 2.55, layout.named['pump approach'].z, 0x64777e, 9.5, 18],
   ];
   for (const [x, y, z, color, intensity, distance] of lights) {
-    const light = markUnderfalls(new THREE.PointLight(color, intensity, distance, 1.82));
+    const light = markUnderfalls(new THREE.PointLight(color, intensity, distance, 1.15));
     light.position.set(x, y, z);
     game.scene.add(light);
     state.lights.push(light);
@@ -697,12 +858,12 @@ function buildPumpChapel(game, layout, state) {
   }
   world.candles.push({ x: altarX, y: 1.05, z: altarZ, intensity: 1.6, r: 5.2 });
 
-  const light = new THREE.PointLight(0xa8ccd4, 68, 19, 1.8);
+  const light = new THREE.PointLight(0xa8ccd4, 32.5, 26, 1.15);
   markUnderfalls(light);
   light.position.set(altarX, 2.5, altarZ);
   scene.add(light);
   state.lights.push(light);
-  const naveLight = new THREE.PointLight(0x718c96, 27, 16, 1.65);
+  const naveLight = new THREE.PointLight(0x718c96, 13, 24, 1.15);
   markUnderfalls(naveLight);
   naveLight.position.set(C.x, C.y + 3.25, C.z);
   scene.add(naveLight);
@@ -804,17 +965,17 @@ function buildSluice(game, layout, state) {
     { name: 'sluice gate teeth', castShadow: true, receiveShadow: true });
 
   const high = layout.overflow;
-  const highLight = new THREE.PointLight(0xd6eef0, 48, 16, 1.9);
+  const highLight = new THREE.PointLight(0xd6eef0, 23, 26, 1.15);
   markUnderfalls(highLight);
   highLight.position.set(high.x, high.y + 2.1, high.z);
   scene.add(highLight);
   state.lights.push(highLight);
-  const midLight = new THREE.PointLight(0x9fbec4, 34, 13, 1.82);
+  const midLight = new THREE.PointLight(0x9fbec4, 16, 22, 1.15);
   markUnderfalls(midLight);
   midLight.position.set(layout.upperSluice.x, layout.upperSluice.y + 2.15, layout.upperSluice.z);
   scene.add(midLight);
   state.lights.push(midLight);
-  const lowerLight = new THREE.PointLight(0x8aa9b1, 32, 14, 1.8);
+  const lowerLight = new THREE.PointLight(0x8aa9b1, 15.5, 26, 1.15);
   markUnderfalls(lowerLight);
   lowerLight.position.set(layout.lowerSluice.x, layout.lowerSluice.y + 2.35, layout.lowerSluice.z);
   scene.add(lowerLight);
@@ -895,7 +1056,7 @@ function buildBellCistern(game, layout, state) {
   dryRing.position.set(C.x, C.y + 0.025, C.z);
   group.add(dryRing);
   world.candles.push({ x: C.x - 2.4, y: C.y + 1.05, z: C.z + 1.8, intensity: 1.25, r: 4.5 });
-  const bellLight = new THREE.PointLight(0xd7a468, 28, 8.5, 1.9);
+  const bellLight = new THREE.PointLight(0xd7a468, 13.5, 12, 1.15);
   markUnderfalls(bellLight);
   bellLight.position.set(C.x - 0.6, C.y + 2.25, C.z + 0.5);
   scene.add(bellLight);
@@ -1082,7 +1243,9 @@ function installCaveVisibility(game, state) {
     // shared rock batch at boot. Keeping that one batch costs one call; the
     // hundreds of distant house/basement prop meshes do not belong in a cave
     // render merely because the camera happens to face southwest.
-    || (child.isMesh && child.material === game.mats.rock);
+    || (child.isMesh && child.material === game.mats.rock)
+    // materials the district authored for itself (wet ribbon, dry lintel)
+    || (child.isMesh && child.material?.userData?.underfalls);
 
   game.tickers.push(() => {
     const inCave = game.act === 'cave';
