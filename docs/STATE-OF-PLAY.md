@@ -1,12 +1,15 @@
-# FETCH — current state of play, 2026-08-10 polish candidate
+# FETCH — current state of play, 2026-08-11 first-light repair
 
-> **IMPLEMENTED CANDIDATE; FINAL QA AND RELEASE CHAIN PENDING.** Work is in
-> `C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-polish-20260810`
-> on `codex/fetch-polish-20260810`, based on
-> `c6b486e723f1f265d6aecb3d7ee7c52f454e957e`. The candidate is currently
-> uncommitted and retains the old package version. It has no deterministic
-> archive, source PR, site preview, or production deploy. The public site still
-> serves the previously verified `0.5.0-intruder` release.
+> **0.6.0-broken-promise SHIPPED BLACK.** The 2026-08-10 release passed every
+> canonical suite and still presented a black screen after Wake on the real
+> player path — two composing renderer bugs, invisible to all `?test=1`
+> gates. Read `docs/FIRST-LIGHT-POSTMORTEM.md` before touching the warmup,
+> residency, or reduced-detail systems. The repair (reduced-compositor
+> `autoClear` + re-armable current-view capture) lives on
+> `claude/first-light`, gated by the new **`node tests/first-light.mjs`** —
+> a real-pixel, real-click gate that is now the fifth mandatory gate
+> alongside smoke / autotest / regressions / playthrough. A renderer that is
+> counters-green can be pixels-black; never certify a release without it.
 
 This file is the compact engineering map. Use `docs/WALKTHROUGH.md` for the
 spoiler route, the newest `docs/HANDOFF.md` section for evidence/release work,
