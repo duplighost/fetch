@@ -906,21 +906,51 @@ function buildOssuaryRoute(game) {
   mechanism.userData.noBatch = true;
   mechanism.position.set(OX, FLOOR, OZ + 26.2);
   routeRoot.add(mechanism);
+  // MOUNTED, not hovering. Alex photographed this thing and wrote "attactch to
+  // wall with another piece" — and he was right twice over: the wheel hung at
+  // y 1.35 in the middle of a six-metre corridor with nothing touching it, and
+  // the chain ran from y 1.8 to y 3.5 through a ceiling that is at 2.85. It
+  // now has an axle into the east wall, a bearing plate where it lands, a
+  // plinth carrying it off the floor, and a corbel the counterweight hangs
+  // from. The machine is the same machine; it is just bolted to the room.
+  const WALL_X = HALF_W - 0.1;
+  const wheelGroup = new THREE.Group();
+  wheelGroup.position.set(0, 1.35, 0.1);
+  mechanism.add(wheelGroup);
   const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.075, 8, 24), ironMat);
-  wheel.position.set(0, 1.35, 0.1);
   wheel.rotation.y = Math.PI / 2;
-  mechanism.add(wheel);
+  wheelGroup.add(wheel);
   for (let i = 0; i < 6; i++) {
     const spoke = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.98, 5), ironMat);
-    spoke.position.set(0, 1.35, 0.1);
+    // Parented to the wheel now. The spokes used to be siblings with a fixed
+    // rotation while only the torus turned, so the one moving part in the room
+    // read as a smooth ring sliding inside a static star.
     spoke.rotation.x = i / 6 * Math.PI;
-    mechanism.add(spoke);
+    wheelGroup.add(spoke);
   }
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, WALL_X - 0.05, 8), ironMat);
+  axle.rotation.z = Math.PI / 2;
+  axle.position.set((WALL_X - 0.05) / 2, 1.35, 0.1);
+  mechanism.add(axle);
+  const bearing = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.62, 0.62), ironMat);
+  bearing.position.set(WALL_X - 0.02, 1.35, 0.1);
+  mechanism.add(bearing);
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.7, 0.46), ironMat);
+  plinth.position.set(0, 0.35, 0.1);
+  mechanism.add(plinth);
+  const yoke = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.075, 0.62, 6), ironMat);
+  yoke.position.set(0, 1.0, 0.1);
+  mechanism.add(yoke);
+  // the corbel the counterweight hangs off, running back to the same wall
+  const CORBEL_Y = 2.62;
+  const corbel = new THREE.Mesh(new THREE.BoxGeometry(WALL_X - 1.0, 0.15, 0.24), ironMat);
+  corbel.position.set(1.15 + (WALL_X - 1.15) / 2, CORBEL_Y, 0);
+  mechanism.add(corbel);
   const weight = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.82, 0.5), ironMat);
-  weight.position.set(1.15, 2.15, 0);
+  weight.position.set(1.15, 1.66, 0);
   mechanism.add(weight);
   const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.7, 6), ironMat);
-  chain.position.set(1.15, 2.65, 0);
+  chain.position.set(1.15, CORBEL_Y - 0.275, 0);
   mechanism.add(chain);
   const exitSlab = new THREE.Mesh(new THREE.BoxGeometry(HALF_W * 2 - 0.35, 2.65, 0.34), wallMat);
   exitSlab.userData.noBatch = true;
@@ -1066,7 +1096,13 @@ function buildOssuaryRoute(game) {
       player.vel.set(0, 0, 0);
       player.fallV = 0;
       player.grounded = true;
-      player.yaw = 0;
+      // Face DOWN the corridor. Player forward is (-sin yaw, -cos yaw), so
+      // yaw 0 looks along -z while the ossuary runs +z from OZ to OZ+28 --
+      // the arrival put the player's nose against the wall behind the stair
+      // throat, in the dark, with the entire authored route out of shot.
+      // Alex screenshotted the result: an almost black frame, captioned
+      // "passage through graveyard opens up to you facing a wall".
+      player.yaw = Math.PI;
       player.pitch = 0;
       player._sync(0);
       game.enemies.clear((enemy) => enemy.graveArena || enemy.gravePressure);
@@ -1095,10 +1131,16 @@ function buildOssuaryRoute(game) {
         state.target.enabled = true;
       }
     }
-    wheel.rotation.x = state.progress * TAU * 1.45;
-    weight.position.y = 2.15 - state.progress * 1.34;
-    chain.scale.y = 1 + state.progress * 0.78;
-    chain.position.y = 2.65 - state.progress * 0.34;
+    // The chain now PAYS OUT from a fixed corbel instead of growing in both
+    // directions from its own middle: its top stays bolted where it hangs and
+    // the weight rides its bottom end down. The old maths ran the chain from
+    // y 1.8 to y 3.5 at rest, through a ceiling that is at 2.85, and the two
+    // parts never stayed connected to each other.
+    wheelGroup.rotation.x = state.progress * TAU * 1.45;
+    const payout = 0.55 + state.progress * 1.1;
+    chain.scale.y = payout / 1.7;
+    chain.position.y = CORBEL_Y - payout / 2;
+    weight.position.y = CORBEL_Y - payout - 0.41;
     if (!state.solved && state.progress >= 1) {
       state.solved = true;
       state.pulling = false;
