@@ -3676,8 +3676,21 @@ export class Forest {
         // over the ground beyond it means holding carries you up and across,
         // and letting go drops you where the old scripted launch used to put
         // you — same destination, except now you fly there under your own arc.
-        const pivot = new THREE.Vector3(landing.x, 3.4, landing.z);
-        skull.anchorAt(pivot, { swing: true, maxHold: 7 });
+        //
+        // Height 6.9, not 3.4, and the reason is arithmetic: the rope can only
+        // LIFT while the line to the pivot is steeper than asin(GRAV/PULL) =
+        // asin(14/30) = 27.8°. From the near lip, 3.4 m of rise over 7-11 m of
+        // run is 17-26° — always below threshold — so a player who held on
+        // skimmed at ankle height (measured: max rise 0.83 m over the whole
+        // arc) and was then pendulum-hauled BACKWARDS across the gash they had
+        // just crossed. At 6.9 m the latch line starts at 32-44°: holding
+        // climbs, releasing keeps the arc, and the verb this anchor exists to
+        // teach behaves like the one Alex asked to see reused.
+        const pivot = new THREE.Vector3(landing.x, 6.9, landing.z);
+        // 6, matching beginSwing's default maxT below — the skull's hold
+        // used to outlive the player's swing by a full second, leaving it
+        // anchored in the air over a player already walking away.
+        skull.anchorAt(pivot, { swing: true, maxHold: 6 });
         game.flag('ropeLatched');
         audio.creak({ pos: rope.position, gain: 0.6 });
         game.player.beginSwing(pivot);

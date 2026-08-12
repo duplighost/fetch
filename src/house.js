@@ -4331,8 +4331,19 @@ function voidDoorAct(game) {
   flame.position.y = 1.52;
   flame.scale.set(0.65, 1.8, 0.65);
   stand.add(flame);
-  const glow = { x: 5.3, y: F + 1.55, z: -7, intensity: 1.6, r: 5 };
+  // DARK until the door opens. This glow used to be born at 1.6, and pool
+  // candles are unshadowed point lights, so the candle's light leaked through
+  // the closed door into the stair shaft from the first minute of the game --
+  // meaning the bell "opening" the door produced literally zero light change
+  // anywhere the player could stand. Alex, on his third time asking about this
+  // beat: "it is unclear what this does." The candle now lights BECAUSE the
+  // door opened: climb the stairs after the bell and there is a lit doorway
+  // where there was a dark one. Brightness and motion, never hue.
+  const glow = { x: 5.3, y: F + 1.55, z: -7, intensity: 0, r: 5 };
   world.candles.push(glow);
+  const unlitFlameScale = flame.scale.clone();
+  flame.scale.setScalar(0.0001);           // no flame on a dead candle
+  game.voidDoorGlow = glow;                // deterministic observability
 
   // The upstairs candle and basement pilot feed one required flame circuit.
   // Whichever visible source the player uses first atomically extinguishes
@@ -4420,6 +4431,23 @@ function voidDoorAct(game) {
     game.flag('voidDoorOpen');
     if (source === 'windowRelay') game.flag('voidDoorOpenedByRelay');
     flameTarget.enabled = true;
+    // The candle catches as the door swings: a breath of delay, then the
+    // flame grows in and the glow ramps. From the stairwell this is the
+    // point of the beat -- the door you cannot reach now has light behind
+    // it, and the light was not there before you rang the bell.
+    game.after(0.55, () => {
+      game.audio.fireRoar({ pos: stand.position, gain: 0.16, rate: 1.35 });
+      const grow = { t: 0 };
+      game.tickers.push((dt) => {
+        // absorb() extinguishes this candle by hiding the flame and zeroing
+        // the glow; if that happens mid-ramp the ramp must lose, not refight.
+        if (grow.t >= 1 || !flame.visible) { grow.t = 1; return; }
+        grow.t = Math.min(1, grow.t + dt / 1.6);
+        glow.intensity = 1.6 * grow.t;
+        const s = 0.25 + 0.75 * grow.t;
+        flame.scale.set(unlitFlameScale.x * s, unlitFlameScale.y * s, unlitFlameScale.z * s);
+      });
+    }, { global: true });
     return true;
   };
   const rattleDoor = (at = null) => {
