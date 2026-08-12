@@ -33,7 +33,7 @@ const BOOT_MODULE_AT = performance.now();
 let BOOT_TITLE_INTERACTIVE_AT = null;
 let BOOT_TITLE_PAINT_OPPORTUNITY_AT = null;
 const _impV = new THREE.Vector3();
-const VERSION = '0.6.1-first-light';
+const VERSION = '0.6.2-full-wake';
 const GORE_CAP = 64;
 
 // ------------------------------------------------------------------- input
@@ -7726,7 +7726,27 @@ class Game {
     const residencyPass = this._prepareCurrentGpuResidency({
       bootstrapReadyAtRenderStart,
     });
-    const reducedDetail = !residencyPass.full;
+    let reducedDetail = !residencyPass.full;
+    // FULL WAKE: at generation 0 — the ordinary page load — the game never
+    // shows the reduced silhouette. It renders the authored world from the
+    // first started frame, exactly as 0.5.0 shipped, eating the one-time
+    // driver compile behind the wake fade. This was tried, measured, removed
+    // in favor of the "playable silhouette", and then REINSTATED on real
+    // play evidence: the silhouette cannot draw the HELD pass, so the skull
+    // — the player's light, weapon, and key-fetcher — is invisible in the
+    // player's own hands, and live play (throws change the exact-shader
+    // revision) can keep re-invalidating certification so the silhouette
+    // never resolves. A dark-but-responsive FETCH without a visible skull
+    // is not a degraded FETCH; it is not FETCH. The warmup and residency
+    // machinery still runs underneath and fully governs generation > 0
+    // (context loss/restore), which is what it was built for.
+    // Deterministic suites (?test=1) skip warmup and never take this branch;
+    // tests/first-light.mjs asserts both this path and the restored-context
+    // silhouette path on real pixels.
+    const fullWake = reducedDetail && this.started
+      && this._webglGeneration === 0
+      && this.shaderWarmup?.status !== 'skipped';
+    if (fullWake) reducedDetail = false;
     const districtShaderShielded = this._shaderDistrictRenderShielded();
     this._syncShaderTransitionShield(districtShaderShielded);
     // KHR_parallel_shader_compile is allowed to work while an already-resident
@@ -7737,11 +7757,13 @@ class Game {
     // this paint. Preserve the already-presented reduced canvas and submit the
     // first full exact frame on the following paint; drawing even the reduced
     // silhouette here stacked two honest sub-100ms passes into one >100ms rAF.
-    const skipGpuSubmission = districtShaderShielded
+    // Full wake overrides the pauses: at boot nothing has ever been presented,
+    // so "preserve the previous canvas" would preserve pure black.
+    const skipGpuSubmission = !fullWake && (districtShaderShielded
       || !!residencyPass.justCertified
       || !!residencyPass.justReduced
       || !!residencyPass.snapshotProgress
-      || !!residencyPass.finalizationProgress;
+      || !!residencyPass.finalizationProgress);
     let visibleBefore = {
       programs: this.renderer.info.programs?.length || 0,
       textures: this.renderer.info.memory.textures,

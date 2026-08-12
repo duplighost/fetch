@@ -115,6 +115,35 @@ it legitimately runs (context restore), and (c) no disqualifying event-loop
 stall occurred. It samples pixels from a passive rAF observer registered
 after the game's own loop — the harness never drives the renderer itself.
 
+## Epilogue — the same night, after 0.6.1 went live
+
+0.6.1 passed the strengthened gate and a production pixel verify, and then
+failed the only test that has never lied: Alex playing his own game.
+
+- The reduced silhouette **cannot draw the HELD pass** — the world pass and
+  the held-view pass are separate depth passes, and
+  `_renderReducedCurrentWorld` only renders the former. The skull — the
+  player's light, weapon, and key-fetcher — was invisible in his own hands
+  for the entire certification window. For this game specifically, the
+  fallback hides the one object that cannot be hidden.
+- A follow-up probe then "proved" a fourth failure mode (full detail black
+  under input). **Retracted.** That probe read the canvas outside the frame
+  task, which with `preserveDrawingBuffer: false` is black by construction —
+  it read known-good 0.5.0 as black too. Tonight produced three invalid
+  instruments alongside four real bugs; treat every new probe as guilty
+  until it correctly measures a known-good build.
+- Alex called the revert. Production returned to `0.5.0-intruder`
+  (site merge `e6df546`), play-verified with a valid same-task probe:
+  world visible 2.17 s after Wake, 100 % of played seconds visible while
+  walking and throwing. **That is the acceptance bar 0.6.x must now meet:
+  the play-during-boot pixel gate green AND Alex's hands on a preview.**
+- The `full-wake` candidate (render the authored world from the first
+  started frame at generation 0; machinery governs restored contexts only)
+  is parked on `claude/full-wake-parked` with the v4 gate. It is untested
+  against the acceptance bar. Whoever picks it up: your gate must first
+  read known-good 0.5.0 as visible and shipped 0.6.0 as black, or your gate
+  is the next invalid instrument.
+
 ## Lessons this repo should keep
 
 1. **A counters-green renderer can be pixels-black.** Any gate that certifies
