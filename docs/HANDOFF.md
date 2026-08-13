@@ -1,4 +1,69 @@
-# HANDOFF - 2026-08-13 late, THE OSSUARY CLIMB (SOURCE COMPLETE - NOT DEPLOYED)
+# HANDOFF - 2026-08-13 night, Alex's website-build feedback (THE NEW SPEC)
+
+Alex played the LIVE Codex-pass build (site PR #52, pre-ossuary) and sent
+notes. His words are the spec; quotes verbatim. He explicitly prefers playing
+builds on the website — deploy verified work promptly rather than stockpiling.
+Same message approved deploying the ossuary climb (site PR #53, now live).
+
+## Done immediately (branch claude/chain-light-and-first-stone)
+
+- "In the forest i think those swingy things need to be lit up more to see
+  them better." — THIRD statement on chain visibility. ropeMat now carries
+  emissive (0x2a3134 @ 0.85) so the line reads regardless of what light
+  reaches it; knots up to color x1.18 / emissive 0x434d51 @ 0.6. Pixel A/B:
+  the dropped-line window went 23.8 -> 36.8 mean luminance (bark was 12.0).
+  Road stays brighter than pocket secrets.
+- "the extra rock should be added closest to where the player has to step
+  onto the first rock." — the 8th stone fixed the FAR-bank stride; the entry
+  stride (shelf lip at dz~16.5 to the first load-bearing stone at 17.4, over
+  the drop-off) was the same shape unfixed. A NINTH stone sits at dz 16.55.
+  Inserted in spatial order so the stone-by-stone rise wave stays a wave
+  (rise delay is index-based; cosmetic x-wobble of the last three stones
+  shifts a few tens of cm, all strides verified <= 1.72 m).
+
+## Open — needs design + in-game verification, not a quick patch
+
+1. TROLLEY, THIRD TIME: "The basement/house puzzle on the website now is
+   still unclear. I'm not sure if you have to use the window tool to do that
+   part. the bell is exposed in the other window anyway and you can hit it."
+   The BEHAVIOR is verified correct (bell throw is primary; trolley optional)
+   — the problem is the trolley does not READ as optional. Make the machine
+   say "shortcut, not lock". Repeat = priority.
+2. ARCHIVE BACK ROOM: "That last room in the basement with all the dials and
+   knobs and machines and the light. does that require you to do anything? i
+   wasn't able to tell. things showed no effect that was clear enough." It is
+   optional (non-key reward; the collar valve answers one hit). The answer
+   effect must get much louder/clearer — current wake+needle answer did not
+   land in his playthrough.
+3. MACHINE GROUNDING: "The turning wheel to lower the gate in the basement
+   still has a back part that just floats and isn't connected to a wall...
+   The cage where you have to throw the skull into to raise the thing and
+   activate a light would look better if... like all the stuff was attached
+   by some wires on the floor or something across those basement puzzles."
+   Find the floating rear piece in-game first; then run floor
+   cables/conduit connecting cage -> lamp -> mechanism across the basement
+   puzzles (the kennel/crawl-secret vocabulary already has the chain kit).
+4. VOID-DOOR CANDLE ROOM: "that room has a candle or light you hit to turn
+   out... I do like how this room plays the role. but it is unclear. you
+   should probably be turning the candle/light on instead of off. and there
+   should be some sign that the fire moves or is wired up to something in
+   there." The flame-circuit fiction (fire has ONE home) is right but the
+   transfer does not read — show the fire MOVING (skull visibly carries it,
+   or a conduit/trail), and reconsider the on/off polarity of the read.
+5. NEW CONTENT: "If you could add some more creepy things that climb into
+   random windows when you look through, it would be pretty cool." Port the
+   scullery-window watched-crawler pattern to more windows, randomized.
+
+## Confirmed good (do not churn)
+
+- "The graveyard stuff is working pretty well."
+- "THe ending room is working perfectly as far as i can tell."
+- He has NOT yet played: the ossuary climb/pockets (went live after these
+  notes), the enemy resculpts/audio/scream in anger, the brighter chain.
+
+---
+
+# HANDOFF - 2026-08-13 late, THE OSSUARY CLIMB (MERGED - LIVE via site PR #53)
 
 Read `AGENTS.md` first. Branch `claude/ossuary-climb` off `claude/to-fix-aug12`.
 The one remaining unbuilt item from Alex's list is built: the ossuary far exit

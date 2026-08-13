@@ -3696,11 +3696,20 @@ export class Forest {
     const up = new THREE.Vector3(0, 1, 0);
     const ropeMat = M.curtain.clone();
     if (ropeMat.color) ropeMat.color.multiplyScalar(1.48);
+    // Alex, after playing the brightened lines: "those swingy things need to
+    // be lit up more to see them better." Reflected value depends on what
+    // light reaches the rope; emissive is the read that survives the canopy.
+    // Value only — the colourblind law — and the ROAD stays brighter than the
+    // pocket secrets so the hierarchy holds.
+    if ('emissive' in ropeMat) {
+      ropeMat.emissive = new THREE.Color(0x2a3134);
+      ropeMat.emissiveIntensity = 0.85;
+    }
     const knotMat = M.headstone.clone();
-    if (knotMat.color) knotMat.color.multiplyScalar(1.06);
+    if (knotMat.color) knotMat.color.multiplyScalar(1.18);
     if ('emissive' in knotMat) {
-      knotMat.emissive = new THREE.Color(0x394145);
-      knotMat.emissiveIntensity = 0.38;
+      knotMat.emissive = new THREE.Color(0x434d51);
+      knotMat.emissiveIntensity = 0.6;
     }
 
     const segs = [];
@@ -4955,7 +4964,12 @@ export function buildClearing(game) {
   // Worth knowing before retuning the run: the first five stones sit on the
   // shallow shelf (ground 0.37, stone top 0.12), so they are scenery. Only the
   // stones past dz 16.5 are load-bearing, and there were two of them.
-  const bridgeZ = [8.8, 10.52, 12.24, 13.96, 15.68, 17.4, 19.12, 20.42];
+  //
+  // The NINTH sits at the shelf lip (dz 16.55) — "the extra rock should be
+  // added closest to where the player has to step onto the first rock." The
+  // crossing's entry stride was the shelf edge to dz 17.4 over the drop-off,
+  // the exact shape of the far-bank problem the eighth already solved.
+  const bridgeZ = [8.8, 10.52, 12.24, 13.96, 15.68, 16.55, 17.4, 19.12, 20.42];
   bridgeZ.forEach((dz, i) => {
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
     st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + dz);
