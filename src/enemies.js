@@ -1351,7 +1351,14 @@ export class Enemies {
             e._losT = 0;
             e._losClear = false;
           }
-          if (!observed && d2 < 30 && dist > 0.9) {
+          // e.tether (opt-in, metres from e.home) bounds the unobserved creep:
+          // a tethered Standing One closes while your back is turned but never
+          // leaves its post. The ossuary resident uses it — the corridor's
+          // baffles break line of sight constantly, and an unbounded creep
+          // would convert every look-away into a corridor-length pursuit.
+          const tethered = e.tether
+            && Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z) >= e.tether;
+          if (!observed && d2 < 30 && dist > 0.9 && !tethered) {
             toP.normalize();
             this._moveWithPush(e, toP.x * 0.85 * dt, toP.z * 0.85 * dt);
             e.phase += dt * 2.2;                 // silent gait — no footsteps. worse.

@@ -1,4 +1,16 @@
-# FETCH — current state of play, 2026-08-10 bell/pilot/intruder recovery
+# FETCH — current state of play
+
+> **2026-08-13 (newest):** the Codex six-notes pass (darkness/creatures/sound)
+> is LIVE on the site via qualiacology PR #52. The ossuary under-yard now has
+> its REAL exit: a two-flight masonry climb up a shaft, a chained deck hatch
+> the counterweight unbolts, a forest-side arrival mouth, a kennel false-back
+> in the west pocket, live resonant-grave niches in the east pocket, and the
+> Standing Kind as the corridor's tethered resident. `regressions` is now
+> **64 checks** (two new ossuary scenarios); `playthrough` climbs the shaft
+> for real. Read the newest `docs/HANDOFF.md` section for exact evidence and
+> release state before touching anything.
+
+# 2026-08-10 bell/pilot/intruder recovery (HISTORICAL)
 
 > **CURRENT SOURCE TRUTH; NOT YET RELEASED AT THIS HEADING.** Alex's live
 > `0.4.0-ossuary` playtest found that the human house route was unclear and

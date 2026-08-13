@@ -1,4 +1,89 @@
-# HANDOFF - 2026-08-13, Codex feedback pass (MERGED - AWAITING ALEX ON SITE PR #52)
+# HANDOFF - 2026-08-13 late, THE OSSUARY CLIMB (SOURCE COMPLETE - NOT DEPLOYED)
+
+Read `AGENTS.md` first. Branch `claude/ossuary-climb` off `claude/to-fix-aug12`.
+The one remaining unbuilt item from Alex's list is built: the ossuary far exit
+is a real climb, and the empty pockets are inhabited. Alex approved building it
+("the next task sounds excellent — do both") the same day the Codex pass went
+live via site PR #52.
+
+## What exists now (src/outside.js unless noted)
+
+- **THE CLIMB.** Past the sinking slab the corridor becomes a 6.9 m-tall
+  shaft: flight A (11 treads, east side) to a solid landing, a 90° turn,
+  flight B (6 treads, under the cap wall) to a hatch platform — hand-authored
+  treads + colliders in `routeRoot`, plus plain `world.ramps` records
+  (`ossuaryFlightA`/`B`) and three new `world.rooms` rects for ground truth.
+  The old three decorative rungs are gone. Parapets are stepped visuals with
+  solid collider bands. The swap to the forest fires only at the TOP
+  (`p.y > FLOOR+3.05`, on the platform, `exitT > 0.98`, skull held), masked
+  by the deck mouth exactly like the entry throat.
+- **THE HATCH.** A deck at `FLOOR+5.25` with one mouth over the platform; an
+  iron lid, chain X, hasp and fat brass padlock beneath (the basement bilco
+  language). Everything — slab, chain drop, lid swing, mouth glow, forest-side
+  arrival — derives parametrically from `state.exitT`, so the director restore
+  seats the whole far end with `exitT = 1` (`director.js` now forces it; the
+  old restore left the exit re-sealing for a second).
+- **THE ARRIVAL.** A stone curb-and-lid mouth at the forest gate
+  (`FOREST_GATE.z + 0.3`), flush and shut until the payout, standing open
+  over a voidMat throat after. The player lands past it facing the forest and
+  can turn around and see the hole. Registered in `graveyardLookbackRoots` so
+  back-district culling keeps it; a `skullPass` collider walks the player
+  around the hole. Relocation target moved to `FOREST_GATE.z + 1.35`.
+- **THE WEST POCKET (kennel false-back).** Bars the skull passes and the
+  player never (instanced bars + `skullPass` collider), a cradle fetch-target
+  (`ossuaryKennelCradle`, outbound-only, `anchorAt` swing), hold-to-weigh
+  1.25 s with 1.8× bleed, strain creaks that rise with progress, a slam +
+  shake on early release, a shutter that rises on smoothstep, and behind it
+  the SEATED ONE — the old capsule witness moved into the wall, head tilted,
+  one bone arm reaching — under a cold pre-created PointLight (intensity 0 at
+  birth, census-safe) with a pre-solve light seam. `game.ossuaryKennel`,
+  flag `ossuaryKennelSolved`.
+- **THE EAST POCKET (resonant niches).** Three quarter-scale minis of the
+  resonant graves in voidMat-backed niches, wearing the surface graves'
+  settled/bowed silhouettes LIVE off `game.resonantGraves[i].credit` —
+  silhouette and value only, no hue.
+- **THE RESIDENT.** The corridor's witness is now a real Standing Kind
+  (`spawn('walker', …, 'standing')`, `e.ossuaryResident`), posted west of the
+  last baffle's forced east gap. New opt-in `e.tether` (enemies.js) bounds its
+  unobserved creep to 2.2 m of its post: it closes while your back is turned
+  but never leaves its station — a walk of glances, not a corridor pursuit,
+  and deterministically safe for the playthrough bot. It is spared from the
+  district visibility seal by `mesh.userData.keepInOssuary`, cleared on
+  backtrack, and LAID TO REST (`enemies._layToRest`) when the counterweight
+  pays out.
+- **LIGHT CENSUS FIX.** `keepInOssuary` now spares `world.lightRoot`: the
+  pinned census container is a Group, not a light, and hiding it dropped the
+  entire census out of `traverseVisible` — re-triggering the exact
+  whole-scene shader recompile the pin exists to prevent, and unlighting the
+  district's own candles. The district-culling whitelist mirrors this.
+
+## Verification (all uncontended, this branch)
+
+- `smoke` all acts green; graveyard 424 draws (arrival hatch +10), zero errors.
+- `autotest` 24/24. `regressions` **64/64** (two NEW scenarios: ossuary-climb
+  — throat swap, resident law, forced-restore seating, grounded input-driven
+  climb with monotone ascent; ossuary-kennel — anchor through bars, hold
+  latches, skull returns, bars still stop the player).
+- `playthrough` 40/40 — the bot now slaloms the baffles and CLIMBS both
+  flights for real (`ossuary-exits-up-the-shaft-climb`, climbPeakY proof).
+- `district-culling` 12/12 (far-hatch drive updated to the platform; zero
+  leaks with the sealed shaft void). `failure-state` 20/20 untouched.
+- `tools/probe-ossuary.mjs` rewritten end-to-end: real counterweight solve
+  (throw/anchor/hold), real kennel solve, input-driven climb, arrival — and
+  nine framed screenshots in `tests/shots/ossuary-*.png`. Exit code is real.
+
+## Not done / next
+
+- Alex's play pass. Then the site lane for this branch: merge to
+  `claude/to-fix-aug12`, copy `src/` to qualiacology, parity audit,
+  `fetch-boot-check`, preview, **his approval**, merge. Production currently
+  = the Codex pass (site PR #52) WITHOUT the ossuary climb.
+- The ossuary side pockets' audio is reused stock (creak/grind/knock/whisper);
+  if Alex wants bespoke voices there, that is a new ask.
+
+---
+
+# HANDOFF - 2026-08-13, Codex feedback pass (MERGED - LIVE via site PR #52)
 
 Read `AGENTS.md` first. This section supersedes the completion and branch-state
 claims below it. The implementation was written on `codex/fetch-aug13-handoff-pass`

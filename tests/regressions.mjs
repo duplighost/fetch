@@ -584,6 +584,129 @@ try {
     };
   });
 
+  await scenario('ossuary-climb', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.ossuary.unlock('regression');
+    g.skull.holdNow();
+    const m = g.ritualMausoleum;
+    g.player.pos.set(m.x, 0.04, m.z + 0.4);
+    g.player._sync(0);
+    F.stepWith(0.3, {});
+    check('the mausoleum throat swaps into the district',
+      g.ossuary.inOssuary === true, { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    check('the resident is the real Standing Kind, spared by the district seal',
+      !!g.ossuary.resident && g.enemies.list.includes(g.ossuary.resident)
+      && g.ossuary.resident.standing === true
+      && g.ossuary.resident.mesh.userData.keepInOssuary === true
+      && g.ossuary.resident.mesh.visible === true
+      && g.world.lightRoot.visible === true,
+      { state: g.ossuary.resident?.state });
+
+    // force the solve exactly the way the director restore does: exitT is
+    // the ONE number, and it must seat slab + hatch + arrival together
+    g.ossuary.solved = true;
+    g.ossuary.exitT = 1;
+    F.stepWith(0.4, {});
+    check('a forced restore seats slab, hatch lid and arrival mouth from exitT alone',
+      g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y
+      && g.ossuary.lidPivot.rotation.x > 1.6
+      && g.ossuary.arrival.pivot.rotation.x < -1.7,
+      { lid: +g.ossuary.lidPivot.rotation.x.toFixed(2),
+        arrival: +g.ossuary.arrival.pivot.rotation.x.toFixed(2) });
+
+    // the climb is driven by INPUT only; y rises through real ground contact.
+    // The corridor's three baffles alternate sides — slalom them the way the
+    // playthrough bot does, then take flight A, the turn, and flight B.
+    const OX = g.ossuary.origin.x;
+    const OZ = g.ossuary.origin.z;
+    const waypoints = [
+      [OX + 1.8, OZ + 8.6], [OX - 1.8, OZ + 15.6], [OX + 1.8, OZ + 23.2],
+      [OX + 1.75, OZ + 30.2], [OX + 1.75, OZ + 33.6], [OX - 2.45, OZ + 34.65],
+    ];
+    const samples = [];
+    let regressed = 0;
+    let wp = 0;
+    for (let t = 0; t < 40 && !g.flags.has('ossuaryExited'); t += 0.1) {
+      const p = g.player.pos;
+      const target = waypoints[Math.min(wp, waypoints.length - 1)];
+      const dx = target[0] - p.x;
+      const dz = target[1] - p.z;
+      if (Math.hypot(dx, dz) < 0.8 && wp < waypoints.length - 1) wp++;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+      const y = g.player.pos.y;
+      if (samples.length && y < samples[samples.length - 1] - 0.3) regressed++;
+      samples.push(+y.toFixed(2));
+    }
+    const peak = Math.max(...samples);
+    check('the far exit is a grounded climb to the hatch, not a plane swap',
+      g.flags.has('ossuaryExited') && g.act === 'forest'
+      && peak > g.ossuary.origin.floor + 3.0 && regressed === 0,
+      { peak, regressed, act: g.act, pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    return { checks, diagnostics: { climbTail: samples.slice(-10) } };
+  });
+
+  await scenario('ossuary-kennel', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.ossuary.unlock('regression');
+    g.skull.holdNow();
+    const m = g.ritualMausoleum;
+    g.player.pos.set(m.x, 0.04, m.z + 0.4);
+    g.player._sync(0);
+    F.stepWith(0.3, {});
+    const OX = g.ossuary.origin.x;
+    const OZ = g.ossuary.origin.z;
+    const FLOOR = g.ossuary.origin.floor;
+
+    // stand at the west pocket mouth and throw at the cradle behind the bars
+    g.player.pos.set(OX - 2.6, FLOOR, OZ + 12);
+    const cradleY = FLOOR + 1.02;
+    const dx = (OX - 4.75) - g.player.pos.x;
+    const dz = (OZ + 12) - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dx, -dz);
+    g.player.pitch = Math.atan2(cradleY - (g.player.pos.y + 1.62), Math.hypot(dx, dz));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    for (let k = 0; k < 150 && g.skull.mode !== 'anchored'; k++) {
+      F.stepWith(1 / 60, { throwHeld: true });
+    }
+    check('the cradle catches an outbound skull through the bars',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryKennel',
+      { mode: g.skull.mode });
+    F.stepWith(1.5, { throwHeld: true });
+    check('a held weight raises the shutter and latches the kennel',
+      g.flags.has('ossuaryKennelSolved') && g.ossuaryKennel.solved
+      && g.ossuaryKennel.shutter.position.y > FLOOR + 2.2,
+      { shutterY: +g.ossuaryKennel.shutter.position.y.toFixed(2) });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('the skull returns home through the bars', g.skull.mode === 'held',
+      { mode: g.skull.mode });
+    for (let t = 0; t < 2; t += 0.1) {
+      g.player.yaw = Math.PI / 2;
+      F.stepWith(0.1, { moveZ: 1 });
+    }
+    check('the bars still stop the player after the solve',
+      g.player.pos.x > OX - 3.8, { x: +g.player.pos.x.toFixed(2) });
+
+    return { checks, diagnostics: null };
+  });
+
   await scenario('forest-mouth-boundary', () => {
     const F = window.__FETCH;
     const g = window.__game;
