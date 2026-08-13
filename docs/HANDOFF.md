@@ -1,3 +1,93 @@
+# HANDOFF - 2026-08-13, Codex feedback pass (CURRENT SOURCE - NOT DEPLOYED)
+
+Read `AGENTS.md` first. This section supersedes the completion and branch-state
+claims below it. The implementation is on `codex/fetch-aug13-handoff-pass`,
+based on `origin/claude/to-fix-aug12` at `3960e8f`. It has been verified and is
+ready for human feel review, but it has **not** been copied to Qualiacology,
+previewed, merged, or deployed. The public site is still the August 12 build.
+
+## Alex's six notes - current truth
+
+1. **First-floor trolley:** verified before touching. The ordinary study-bell
+   throw is the intended primary solution and completes the relay directly;
+   the window trolley remains a working optional alternate. Both paths are
+   independently covered, so no progression logic changed.
+2. **Odd basement light:** rebuilt the kennel and archive presentations around
+   their existing physical sources. The kennel's existing cold fixture now has
+   a bracket, hood, visible seam, restrained pre-solve light, and a slow shared
+   breath. The archive cage now hangs from a ceiling stem/canopy; the orphan
+   collar glow is gone, the metal itself reads, and the real pooled source
+   breathes slowly. The resident light census is unchanged.
+3. **Awkward forest:** preserved every derived chain position, height, launch,
+   and swing law. Rope and knot values now read by brightness/shape; each real
+   road-knot catch gives one quiet positional rope creak toward the next knot.
+   There is no HUD, magnetism, control theft, or hue-only instruction.
+4. **Feel-around-dark waterfall cave:** raised the cave ambient floor from
+   `0.30` to `0.42` (still below the forest), strengthened and widened the
+   neutral wet route, raised turn/jamb value, and made the final hatch/frame/
+   chains readable by material value. No light was added or toggled.
+5. **Freakier enemies:** retained Walker gameplay and horde cost while giving
+   it deterministic secondary-body snaps; rebuilt the Resident as an uneven
+   doorway/yoke body with a physical sternum seam; rebuilt the sole Kneeler as
+   a collapsed load-bearing animal with crooked planted forelimbs and a lateral
+   jaw. Enemy loops and wind tells are now kind-specific, inharmonic, irregular,
+   spatial sounds rather than interchangeable noise.
+6. **Odd scream:** replaced the clean synth gliss with a sucked inhale,
+   staggered inharmonic throats, moving formants, pitch breaks, tooth/tear
+   transients, and collapsing body. Removed the redundant adjacent graveyard
+   sting and shortened/softened the mix duck so the scream owns one beat.
+
+`tools/shot-enemy.mjs` is now a real nine-frame presentation gate: all three
+enemy kinds, three production states each, settled authored act ambient/fog
+and skull light, deliberately neutral transient fear/vignette, no held-skull
+model occlusion, exact projected mesh bounds, recorded lighting values, and
+browser-error failure. It writes PNGs plus `report.json` under
+`tests/shots/enemy-presentation/`.
+
+## Verification on the final source
+
+- `node tests/smoke.mjs` - all acts and budgets pass, zero browser errors.
+- `node tests/autotest.mjs` - 24/24, zero browser errors.
+- `node tests/regressions.mjs` - 54/54, zero skipped.
+- `node tests/playthrough.mjs` - 40/40 milestones; bedroom through ending.
+- `node tests/house-critical-path-regression.mjs` - direct bell path passes.
+- `node tests/house-expansion.mjs` - trolley alternate and basement rooms pass.
+- `node tests/basement-foundations.mjs` - 8/8.
+- `node tests/underfalls-expansion.mjs` - 13/13.
+- `node tests/horror-expansion.mjs` - 16/16.
+- `node tests/creature-audio-regression.mjs` - 11/11; live WebAudio graph
+  coverage for all creature loops/tells and the scream, plus exactly-once
+  tell/fallback and arena scream/no-adjacent-sting routes (Chrome output device
+  muted only).
+- `node tests/forest-nervous-system-regression.mjs` - 9/9; cold start
+  `181.2 ms`, audio bake `74.5 ms`.
+- `node tests/render-perf.mjs` - real D3D11 pass; forest GPU p95 `11.12 ms`,
+  delivered-frame p95 `16.8 ms`, zero context/browser errors.
+- `node tools/probe-chain.mjs` - all five road knots caught, end to end.
+- `node tools/probe-underfalls.mjs` - seven story-valid vistas, zero errors,
+  maximum 179 draws / 71,837 triangles.
+- `node tools/shot-enemy.mjs` - 9/9 fully framed, zero browser errors.
+
+One early four-browser batch produced a harness navigation timeout and a cold
+forest timing miss under GPU contention. Nothing was waived: the processes
+were allowed to clear and the affected gates passed cleanly in serial. The
+numbers above are the uncontended final runs.
+
+## Still not done
+
+- Human, unmuted speaker/headphone review of the new enemy loops, wind tells,
+  and scream. The focused headless gate executes a live WebAudio graph while
+  Chrome's output device is muted; it proves wiring and stability, not taste
+  or listening comfort.
+- One uninterrupted human forest/chain and cave traversal for final feel. The
+  deterministic traversal and pixel gates are green, but they do not get the
+  last word on awkwardness or delicious darkness.
+- The planned real ossuary shaft climb and the empty ossuary side pockets.
+- Qualiacology copy, source/site parity audit, Netlify preview boot gate, merge,
+  and canonical-domain verification. Do not call this live until those happen.
+
+---
+
 # HANDOFF — 2026-08-12, the to-fix sweep (CURRENT — LIVE ON THE SITE)
 
 Read `AGENTS.md` first. Short version: Alex sent a to-fix list with

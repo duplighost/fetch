@@ -2109,13 +2109,24 @@ function buildCrawlCounterweightSecret(game, B) {
     remains.add(seam);
   }
 
-  const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), coreMat.clone());
+  // The same cold fixture supplies both the pre-solve seam and the revealed
+  // room. Keeping one physical source avoids the old orange-under-door /
+  // pinprick-white-lamp contradiction without changing the light census.
+  const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.078, 10, 7), coreMat.clone());
   lampCore.name = 'crawl-secret-lamp';
-  lampCore.position.set(-10.86, B + 1.82, -7.1);
+  lampCore.position.set(-11.54, B + 1.68, -7.1);
   scene.add(lampCore);
   const lamp = new THREE.PointLight(0xd9e2de, 0, 5.5, 1.8);
   lamp.position.copy(lampCore.position);
   scene.add(lamp);
+  const lampBracket = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.032, 0.22, 7), wornIron);
+  lampBracket.position.set(-11.64, B + 1.68, -7.1);
+  lampBracket.rotation.z = Math.PI / 2;
+  scene.add(lampBracket);
+  const lampHood = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.18, 9, 1, true), wornIron);
+  lampHood.position.set(-11.57, B + 1.77, -7.1);
+  lampHood.rotation.z = -Math.PI / 2;
+  scene.add(lampHood);
 
   const puzzle = {
     id: 'crawlCounterweight', state: 'idle', solved: false,
@@ -2147,10 +2158,16 @@ function buildCrawlCounterweightSecret(game, B) {
   puzzle.target = target;
 
   const solvePos = new THREE.Vector3(-11.12, B + 1.15, -7.78);
-  // the pre-solve leak: a low, dim glow behind the shutter's foot — pooled
-  // candle descriptor, so the census never moves
-  const sliverGlow = { x: -11.7, y: B + 0.35, z: -7.78, intensity: 0, r: 2.6 };
-  world.candles.push(sliverGlow);
+  // The cold wall fixture leaks through one visible seam before the solve.
+  // It is geometry plus the already-created lamp, so the census never moves.
+  const sliverMat = new THREE.MeshBasicMaterial({
+    color: 0xd9e2de, transparent: true, opacity: 0.36,
+    depthWrite: false, toneMapped: false,
+  });
+  const sliverCore = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.045, 1.46), sliverMat);
+  sliverCore.name = 'crawl-secret-light-seam';
+  sliverCore.position.set(-11.085, B + 0.275, -7.78);
+  scene.add(sliverCore);
   game.tickers.push((dt, time) => {
     const skull = game.skull;
     const weighing = skull && skull.mode === 'anchored'
@@ -2230,14 +2247,17 @@ function buildCrawlCounterweightSecret(game, B) {
     }
     puzzle._wasWeighing = weighing;
 
-    const lit = puzzle.solved ? 1 : 0;
-    lamp.intensity += ((lit ? 18 + Math.sin(time * 13) * 1.3 : 0) - lamp.intensity) * Math.min(1, dt * 2.5);
-    lampCore.material.opacity += ((lit ? 0.92 : 0.035) - lampCore.material.opacity) * Math.min(1, dt * 3.5);
+    const breath = Math.sin(time * 2.1);
+    const lampTarget = puzzle.solved ? 14.5 + breath * 0.65 : 2.4 + breath * 0.18;
+    lamp.intensity += (lampTarget - lamp.intensity) * Math.min(1, dt * 2.5);
+    const coreTarget = puzzle.solved ? 0.8 + breath * 0.035 : 0.18 + breath * 0.018;
+    lampCore.material.opacity += (coreTarget - lampCore.material.opacity) * Math.min(1, dt * 3.5);
+    const seamTarget = puzzle.solved ? 0 : 0.34 + breath * 0.025;
+    sliverMat.opacity += (seamTarget - sliverMat.opacity) * Math.min(1, dt * 4.5);
     coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0);
     // A sliver of somewhere leaks under the shutter BEFORE the solve: the
     // player can see there is a place back there worth opening. Dim enough
     // that the opened room still lands as a reveal.
-    sliverGlow.intensity = puzzle.solved ? 0 : 0.22 + Math.sin(time * 7) * 0.03;
   });
 }
 // ------------------------------------------------ window-to-window relay
@@ -3940,15 +3960,21 @@ function buildPumpGallery(game) {
   // swings, one stand knocks back — so the six mute pressure vessels are
   // revealed as gauges on one line rather than six dead props. Repeatable,
   // grants nothing: this is the room explaining itself.
-  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.045, 8, 16), oldBrass);
+  // The collar reads by its own metal value under the room's caged lamp. The
+  // previous invisible point source beside it made a second orange pool with
+  // no fixture, so the activatable object looked like it glowed by magic.
+  const collarRead = oldBrass.clone();
+  collarRead.color.setHex(0x9b906e);
+  collarRead.emissive = new THREE.Color(0x17140d);
+  collarRead.emissiveIntensity = 0.48;
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.045, 8, 16), collarRead);
   collar.position.set(-16.3, B + 2.28, 5.58);
   collar.rotation.y = Math.PI / 2;
   scene.add(collar);
-  const collarWheel = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.022, 6, 14), oldBrass);
+  const collarWheel = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.022, 6, 14), collarRead);
   collarWheel.position.set(-16.3, B + 2.02, 5.58);
   collarWheel.rotation.x = Math.PI / 2;
   scene.add(collarWheel);
-  world.candles.push({ x: -16.3, y: B + 2.05, z: 5.3, intensity: 0.45, r: 3.2 });
   pipeBetween(new THREE.Vector3(-19.55, B + 2.12, -8.65),
     new THREE.Vector3(-19.55, B + 2.12, 1.45), 0.07);
   for (const z of [-7.4, -4.9, -2.2, 0.55]) {
@@ -4018,6 +4044,14 @@ function buildPumpGallery(game) {
   archiveLamp.name = 'blind-archive-caged-lamp';
   archiveLamp.position.set(-16.25, B + 2.12, 4.72);
   scene.add(archiveLamp);
+  // Rigid stem and ceiling canopy: the light belongs to the architecture now,
+  // rather than floating a handspan below the ceiling.
+  const archiveStem = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.027, 0.3, 7), iron);
+  archiveStem.position.y = 0.17;
+  archiveLamp.add(archiveStem);
+  const archiveCanopy = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.06, 10), iron);
+  archiveCanopy.position.y = 0.32;
+  archiveLamp.add(archiveCanopy);
   const shade = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.25, 12, 1, true), iron);
   shade.rotation.x = Math.PI;
   shade.position.y = -0.08;
@@ -4033,7 +4067,8 @@ function buildPumpGallery(game) {
     cage.position.set(Math.cos(a) * 0.095, -0.22, Math.sin(a) * 0.095);
     archiveLamp.add(cage);
   }
-  world.candles.push({ x: -16.25, y: B + 1.91, z: 4.72, intensity: 0.72, r: 4.7 });
+  // The room's one pooled source sits exactly inside the visible cage.
+  world.candles.push({ x: -16.25, y: B + 1.91, z: 4.72, intensity: 0.52, r: 4.7 });
 
   const tankGeo = new THREE.CylinderGeometry(0.25, 0.28, 1, 12);
   const capGeo = new THREE.SphereGeometry(0.26, 12, 7);
@@ -4413,8 +4448,9 @@ function buildPumpGallery(game) {
     jawTop.position.y += ((route.latched ? 0.08 : 0.28) - jawTop.position.y) * Math.min(1, dt * 7);
     jawBottom.position.y += ((route.latched ? -0.08 : -0.28) - jawBottom.position.y) * Math.min(1, dt * 7);
     water.material.opacity = 0.78 + Math.sin(time * 0.8) * 0.035;
-    archiveLampCore.material.opacity = 0.5 + Math.sin(time * 17.3) * 0.055
-      + Math.sin(time * 6.1) * 0.035;
+    // Slow pressure-breath, not the old frantic electronic flicker. The pooled
+    // light still owns a restrained flame variation, both from this fixture.
+    archiveLampCore.material.opacity = 0.72 + Math.sin(time * 1.85) * 0.035;
 
     if (!route.heard && game.act === 'basement'
       && game.player.pos.distanceTo(new THREE.Vector3(-12.2, B, -3)) < 5.2) {

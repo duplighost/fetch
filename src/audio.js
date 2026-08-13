@@ -584,81 +584,116 @@ export class GameAudio {
       if (this._enemyBufs.walker) return;
     this._enemyBufs = {
       walker: {
-        // far: dry skeletal clicks + a dark ragged breath
-        far: this._loopBuf(0.923, (d, sr, n) => {
-          let lpv = 0;
+        // Far: one asymmetrical lung drags through a loose jaw. The events do
+        // not share a clock, so this reads as a body occupying the room rather
+        // than a short sound-effect loop restarting beside the player.
+        far: this._loopBuf(1.37, (d, sr, n) => {
+          let dark = 0;
+          const clicks = [0.08, 0.34, 0.79, 1.13].map((at) => at + R() * 0.055);
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const w = R() * 2 - 1; lpv += 0.045 * (w - lpv);
-            const breathe = 0.35 + 0.65 * Math.max(0, Math.sin(TAU * 1.083 * t)) ** 2;
-            let s = lpv * 2.2 * breathe * 0.32;
-            const ph = fract(t * 6.5);
-            if (ph < 0.06) s += w * Math.exp(-ph * 120) * 0.5;
-            d[i] = s;
+            const w = fixedNoise(i, 11);
+            dark += 0.032 * (w - dark);
+            const lung = 0.14 + Math.max(0, Math.sin(TAU * (t / 1.37 - 0.11))) ** 1.8 * 0.86;
+            let s = dark * 1.9 * lung * 0.36;
+            for (let k = 0; k < clicks.length; k++) {
+              const age = t - clicks[k];
+              if (age >= 0 && age < 0.075) {
+                const snap = Math.exp(-age * (54 + k * 8));
+                s += (Math.sin(TAU * (310 + k * 97) * age) * 0.42 + (w - dark) * 0.46) * snap;
+              }
+            }
+            d[i] = s * 0.78;
           }
         }),
-        // close pressure (Behind You chaserClose): pulse-gated chest + teeth
-        close: this._loopBuf(0.32, (d, sr, n) => {
+        // Close: two chest pulses fall slightly out of phase with a held,
+        // stop-motion tooth tremor. Locomotion stays smooth; only the mouth is
+        // allowed to sound mechanically discontinuous.
+        close: this._loopBuf(0.71, (d, sr, n) => {
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const pulse = 0.58 + Math.sin(TAU * 11 * t) * 0.34;
-            const chest = Math.sin(TAU * 78 * t) * 0.62;
-            const teeth = Math.sin(TAU * 430 * t) * 0.2;
-            d[i] = (chest + teeth) * pulse * 0.58;
+            const p0 = Math.exp(-fract(t / 0.355) * 10.5);
+            const p1 = Math.exp(-fract((t + 0.083) / 0.403) * 13);
+            const chest = Math.sin(TAU * (72 + Math.sin(TAU * 1.4 * t) * 5) * t) * (p0 * 0.48 + p1 * 0.22);
+            const held = Math.sin((Math.floor(t * 14) + 3) * 12.9898) > 0.15 ? 1 : 0.12;
+            const teeth = Math.sin(TAU * 477 * t) * held * 0.11;
+            d[i] = chest + teeth;
           }
         }),
       },
       resident: {
-        // far: slow heavy drone with a wood-creak character riding the swell
-        far: this._loopBuf(1.6, (d, sr, n) => {
-          let ph = 0;
+        // Far: several incompatible fundamentals bend through the house, with
+        // real stick-slip transients embedded in the mass. It should sound as
+        // though the frame is speaking through the Resident, not like a synth
+        // pad assigned to a monster.
+        far: this._loopBuf(2.2, (d, sr, n) => {
+          let wood = 0;
+          const breaks = [0.42 + R() * 0.08, 1.36 + R() * 0.12, 1.91 + R() * 0.06];
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const swell = 0.5 + 0.5 * Math.sin(TAU * 0.625 * t);
-            const body = (Math.sin(TAU * 43 * t) * 0.55 + Math.sin(TAU * 64.7 * t) * 0.2) * (0.45 + swell * 0.55);
-            ph += (TAU * (74 - 18 * swell)) / sr;
-            const stick = fract(t * (11 - swell * 6)) < 0.5 ? 1 : 0.25;
-            const creakv = (Math.sin(ph) * 0.4 + (R() * 2 - 1) * 0.12) * stick * swell * 0.3;
-            d[i] = body * 0.42 + creakv;
+            const swell = 0.26 + Math.max(0, Math.sin(TAU * (t / 2.2 - 0.16))) ** 1.45 * 0.74;
+            const body = Math.sin(TAU * (41.5 * t + Math.sin(TAU * 0.31 * t) * 1.8)) * 0.34
+              + Math.sin(TAU * 61.3 * t + 1.7) * 0.19
+              + Math.sin(TAU * 89.1 * t + 4.2) * 0.08;
+            const w = fixedNoise(i, 17); wood += 0.055 * (w - wood);
+            let snap = 0;
+            for (const at of breaks) {
+              const age = t - at;
+              if (age >= 0 && age < 0.14) snap += (w - wood) * Math.exp(-age * 23) * 0.72;
+            }
+            d[i] = body * swell + snap;
           }
         }),
-        close: this._loopBuf(0.7, (d, sr, n) => {
+        close: this._loopBuf(0.94, (d, sr, n) => {
+          let throat = 0;
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const breath = 0.48 + Math.sin(TAU * 1.43 * t) * 0.12;
-            const sub = Math.sin(TAU * 42 * t) * 0.45;
-            const rough = Math.sin(TAU * 96 * t) * 0.14;
-            d[i] = (sub + rough) * breath;
+            const breath = 0.22 + Math.max(0, Math.sin(TAU * (t / 0.94 - 0.12))) ** 1.4 * 0.78;
+            const flutter = 0.54 + Math.sin(TAU * 19.4 * t + Math.sin(TAU * 2.1 * t)) * 0.21;
+            const voices = Math.sin(TAU * 38.5 * t) * 0.36
+              + Math.sin(TAU * 57.8 * t + 0.8) * 0.19
+              + Math.sin(TAU * 87.4 * t + 2.3) * 0.09;
+            const w = fixedNoise(i, 23); throat += 0.09 * (w - throat);
+            d[i] = voices * breath * flutter + throat * breath * 0.18;
           }
         }),
       },
       kneeler: {
-        // far: huge slow sub thumps + wet blips
-        far: this._loopBuf(1.4, (d, sr, n) => {
-          let lpv = 0;
-          const blips = [];
-          for (let k = 0; k < 5; k++) blips.push(R() * 1.25);
+        // Far: body weight lands on an irregular three-beat gait while small,
+        // much faster contacts scramble above it. Size comes from the split
+        // between those time scales, not simply turning up a sub oscillator.
+        far: this._loopBuf(1.82, (d, sr, n) => {
+          let wet = 0;
+          const loads = [0.02, 0.73 + R() * 0.08, 1.34 + R() * 0.09];
+          const skitters = [0.19, 0.31, 0.96, 1.07, 1.55, 1.66].map((at) => at + R() * 0.035);
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const cyc = t % 0.7;
-            const thump = Math.exp(-cyc * 7);
-            const sub = Math.sin(TAU * 37 * t) * thump * 0.85 + Math.sin(TAU * 18.5 * t) * 0.18;
-            const w = R() * 2 - 1; lpv += 0.06 * (w - lpv);
-            let wet = 0;
-            for (const b of blips) if (t > b && t < b + 0.09) wet += lpv * 6 * Math.sin(Math.PI * (t - b) / 0.09);
-            d[i] = sub * 0.7 + wet * 0.22;
+            let body = Math.sin(TAU * 18.2 * t) * 0.08;
+            for (const at of loads) {
+              const age = t - at;
+              if (age >= 0 && age < 0.38) {
+                body += Math.sin(TAU * (38 - age * 31) * age) * Math.exp(-age * 8) * 0.78;
+              }
+            }
+            const w = fixedNoise(i, 29); wet += 0.12 * (w - wet);
+            let feet = 0;
+            for (const at of skitters) {
+              const age = t - at;
+              if (age >= 0 && age < 0.055) feet += (w - wet) * Math.exp(-age * 72) * 0.62;
+            }
+            d[i] = body + feet;
           }
         }),
-        close: this._loopBuf(0.8, (d, sr, n) => {
-          let lpv = 0;
+        close: this._loopBuf(0.96, (d, sr, n) => {
+          let gorge = 0;
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const breath = 0.5 + Math.sin(TAU * 1.25 * t) * 0.14;
-            const sub = Math.sin(TAU * 34 * t) * 0.55;
-            const rough = Math.sin(TAU * 68 * t) * 0.18;
-            const w = R() * 2 - 1; lpv += 0.08 * (w - lpv);
-            const gargle = lpv * 4 * Math.max(0, Math.sin(TAU * 7.5 * t)) ** 3 * 0.4;
-            d[i] = (sub + rough) * breath + gargle;
+            const breath = 0.3 + Math.max(0, Math.sin(TAU * (t / 0.96 - 0.08))) ** 1.7 * 0.7;
+            const sub = Math.sin(TAU * (31.5 + Math.sin(TAU * 1.04 * t) * 2.5) * t) * 0.43;
+            const w = fixedNoise(i, 31); gorge += 0.075 * (w - gorge);
+            const heldStep = Math.sin((Math.floor(t * 22) + 9) * 78.233) > 0.22 ? 1 : 0.08;
+            const scrape = (w - gorge) * heldStep * 0.22;
+            d[i] = sub * breath + gorge * breath * 0.27 + scrape;
           }
         }),
       },
@@ -1537,45 +1572,128 @@ export class GameAudio {
   skullScream(pos) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus({ pos }, 4.5, 1, 0.9); // long verb tail
-    // formant-ish wail: saw source through parallel voice-band peaks
-    const src = ctx.createOscillator(); src.type = 'sawtooth';
-    src.frequency.setValueAtTime(150, t);
-    src.frequency.exponentialRampToValueAtTime(330, t + 0.5);
-    src.frequency.setValueAtTime(330, t + 1.4);
-    src.frequency.exponentialRampToValueAtTime(120, t + 2.6);
-    const vib = ctx.createOscillator(); vib.frequency.value = 6.5;
-    const vg = ctx.createGain(); vg.gain.value = 12;
-    vib.connect(vg).connect(src.frequency);
-    const srcG = ctx.createGain();
-    srcG.gain.setValueAtTime(0.0001, t);
-    srcG.gain.exponentialRampToValueAtTime(0.9, t + 0.08);
-    srcG.gain.exponentialRampToValueAtTime(0.5, t + 1.8);
-    srcG.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
-    src.connect(srcG);
-    for (const [f, q, g0] of [[640, 8, 0.5], [1150, 9, 0.38], [2600, 11, 0.2]]) {
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
-      const bg = ctx.createGain(); bg.gain.value = g0;
-      srcG.connect(bp); bp.connect(bg).connect(out);
+    const out = this._bus({ pos, ref: 3.2, roll: 1.25 }, 3.4, 0.76, 0.68);
+
+    // The old cue was one clean sawtooth glissando through fixed formants: a
+    // perfectly legible synthesizer patch wearing a scream moustache. This is
+    // the skull finding several incompatible throats at once. A sucked inhale
+    // establishes breath first; three inharmonic voices tear loose at slightly
+    // different times, lose their pitch, and collapse into the body below.
+    const inhale = ctx.createBufferSource(); inhale.buffer = this._noiseBuf;
+    const inhaleBP = ctx.createBiquadFilter(); inhaleBP.type = 'bandpass'; inhaleBP.Q.value = 0.72;
+    inhaleBP.frequency.setValueAtTime(360, t);
+    inhaleBP.frequency.exponentialRampToValueAtTime(2350, t + 0.34);
+    const inhaleG = ctx.createGain();
+    inhaleG.gain.setValueAtTime(0.0001, t);
+    inhaleG.gain.exponentialRampToValueAtTime(0.32, t + 0.27);
+    inhaleG.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    inhale.connect(inhaleBP).connect(inhaleG).connect(out);
+    inhale.start(t); inhale.stop(t + 0.5);
+
+    const start = t + 0.24;
+    const voices = [
+      { at: 0,     f0: 118, peak: 213, end: 71,  gain: 0.27, type: 'triangle', phase: 0.1 },
+      { at: 0.045, f0: 147, peak: 274, end: 93,  gain: 0.2,  type: 'sine',     phase: 1.7 },
+      { at: 0.11,  f0: 189, peak: 326, end: 111, gain: 0.13, type: 'triangle', phase: 3.4 },
+    ];
+    for (const voice of voices) {
+      const at = start + voice.at;
+      const o = ctx.createOscillator(); o.type = voice.type;
+      o.frequency.setValueAtTime(voice.f0, at);
+      o.frequency.exponentialRampToValueAtTime(voice.peak, at + 0.29);
+      o.frequency.exponentialRampToValueAtTime(voice.peak * 0.78, at + 0.72);
+      o.frequency.exponentialRampToValueAtTime(voice.end, at + 2.12);
+
+      // The modulation rates are intentionally unrelated. Their depth rises
+      // after the initial cry, so the voice breaks apart instead of sustaining
+      // a recognisable musical vibrato.
+      const trem = ctx.createOscillator(); trem.type = 'square'; trem.frequency.value = 12.7 + voice.phase * 1.9;
+      const tremDepth = ctx.createGain();
+      const tremAmount = 0.105 + voice.phase * 0.008;
+      tremDepth.gain.setValueAtTime(0.0001, at);
+      tremDepth.gain.linearRampToValueAtTime(tremAmount, at + 0.38);
+      tremDepth.gain.setValueAtTime(tremAmount, at + 1.12);
+      tremDepth.gain.linearRampToValueAtTime(0.0001, at + 1.78);
+      const pitchBreak = ctx.createOscillator(); pitchBreak.frequency.value = 4.1 + voice.phase * 0.73;
+      const pitchDepth = ctx.createGain(); pitchDepth.gain.value = 5.5 + voice.phase * 2.2;
+      pitchBreak.connect(pitchDepth).connect(o.frequency);
+
+      const raw = ctx.createGain(); raw.gain.value = 0.62;
+      const gate = ctx.createGain();
+      gate.gain.setValueAtTime(0.0001, at);
+      gate.gain.exponentialRampToValueAtTime(voice.gain, at + 0.055);
+      gate.gain.exponentialRampToValueAtTime(voice.gain * 0.84, at + 0.56);
+      gate.gain.setValueAtTime(voice.gain * 0.84, at + 0.7);
+      gate.gain.exponentialRampToValueAtTime(voice.gain * 0.22, at + 1.46);
+      gate.gain.exponentialRampToValueAtTime(0.0001, at + 2.28);
+      trem.connect(tremDepth).connect(gate.gain);
+      o.connect(raw);
+
+      // Each throat owns a moving cavity rather than sharing three static
+      // vowel bands. The formants cross as the jaws stop agreeing.
+      for (const [f0, f1, q, g0] of [
+        [430 + voice.phase * 36, 710 - voice.phase * 19, 4.2, 0.62],
+        [960 + voice.phase * 71, 1280 - voice.phase * 44, 5.1, 0.34],
+        [1840 + voice.phase * 83, 1320 + voice.phase * 31, 3.4, 0.17],
+      ]) {
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q;
+        bp.frequency.setValueAtTime(f0, at);
+        bp.frequency.exponentialRampToValueAtTime(f1, at + 1.62);
+        const fg = ctx.createGain(); fg.gain.value = g0;
+        raw.connect(bp); bp.connect(fg).connect(gate);
+      }
+      gate.connect(out);
+      o.start(at); o.stop(at + 2.34);
+      trem.start(at + 0.32); trem.stop(at + 2.32);
+      pitchBreak.start(at); pitchBreak.stop(at + 2.32);
     }
-    src.start(t); src.stop(t + 3.3);
-    vib.start(t); vib.stop(t + 3.3);
-    // torn-throat noise layer
-    const nz = ctx.createBufferSource(); nz.buffer = this._noiseBuf;
-    const nbp = ctx.createBiquadFilter(); nbp.type = 'bandpass'; nbp.frequency.value = 1500; nbp.Q.value = 1.2;
-    const ng = ctx.createGain();
-    this._env(ng, t, 0.3, 0.1, 2.6);
-    nz.connect(nbp).connect(ng).connect(out);
-    nz.start(t); nz.stop(t + 2.9);
-    // sub dread
-    const sub = ctx.createOscillator(); sub.type = 'sine';
-    sub.frequency.setValueAtTime(60, t);
-    sub.frequency.exponentialRampToValueAtTime(28, t + 2.4);
-    const sg = ctx.createGain();
-    this._env(sg, t, 0.5, 0.06, 2.5);
-    sub.connect(sg).connect(out);
-    sub.start(t); sub.stop(t + 2.8);
-    this.duck(0.12, 4); // ducks everything hard
+
+    // Dry tooth catches interrupt the long envelope. They are deliberately
+    // brief and non-periodic: the skull is choking on the sound, not singing.
+    for (const [offset, freq, gain] of [[0.61, 2260, 0.24], [0.87, 1740, 0.19], [1.31, 2480, 0.14]]) {
+      const tear = ctx.createBufferSource(); tear.buffer = this._noiseBuf;
+      const hp = ctx.createBiquadFilter(); hp.type = 'bandpass'; hp.frequency.value = freq; hp.Q.value = 1.8;
+      const tg = ctx.createGain(); this._env(tg, start + offset, gain, 0.002, 0.065);
+      tear.connect(hp).connect(tg).connect(out);
+      tear.start(start + offset); tear.stop(start + offset + 0.1);
+    }
+
+    const body = ctx.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(54, start);
+    body.frequency.exponentialRampToValueAtTime(23, start + 2.36);
+    const bodyG = ctx.createGain(); this._env(bodyG, start, 0.34, 0.025, 2.35);
+    body.connect(bodyG).connect(out); body.start(start); body.stop(start + 2.48);
+
+    // Leave the arena bed present enough to locate the world around the cue.
+    // The scream owns the foreground; it does not switch the rest of the mix
+    // off for four seconds.
+    this.duck(0.28, 2.7);
+  }
+
+  enemyTell(kind, opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.6, 0.78, opts.verb ?? 0.58);
+    const recipe = {
+      walker:   { f: [91, 137], dur: 0.72, noise: 1220, rise: 1.42, bite: 0.32 },
+      resident: { f: [43, 63.7, 91], dur: 1.18, noise: 610, rise: 0.71, bite: 0.24 },
+      kneeler:  { f: [32, 49], dur: 0.94, noise: 880, rise: 0.58, bite: 0.42 },
+    }[kind] || { f: [91, 137], dur: 0.72, noise: 1220, rise: 1.42, bite: 0.32 };
+
+    for (let i = 0; i < recipe.f.length; i++) {
+      const at = t + i * 0.027;
+      const o = ctx.createOscillator(); o.type = i % 2 ? 'triangle' : 'sine';
+      o.frequency.setValueAtTime(recipe.f[i], at);
+      o.frequency.exponentialRampToValueAtTime(recipe.f[i] * recipe.rise, at + recipe.dur * 0.38);
+      o.frequency.exponentialRampToValueAtTime(recipe.f[i] * 0.73, at + recipe.dur);
+      const g = ctx.createGain(); this._env(g, at, 0.19 - i * 0.025, 0.07 + i * 0.025, recipe.dur * 0.84);
+      o.connect(g).connect(out); o.start(at); o.stop(at + recipe.dur + 0.1);
+    }
+    const breath = ctx.createBufferSource(); breath.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = recipe.noise; bp.Q.value = 0.82;
+    const bg = ctx.createGain(); this._env(bg, t, recipe.bite, 0.025, recipe.dur * 0.82);
+    breath.connect(bp).connect(bg).connect(out); breath.start(t); breath.stop(t + recipe.dur + 0.08);
+    return true;
   }
 
   catchThud(opts = {}) {
