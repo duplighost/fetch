@@ -3176,7 +3176,8 @@ export class Forest {
   // vocabulary as the optional-rope pockets (support trunk, bough, dropped
   // line, pale knot), but on the road rather than beside it: off-line knots
   // are secrets, on-line knots are the route. Everything static bakes into
-  // two InstancedMeshes so five anchors cost two draw calls, not twenty-five.
+  // three InstancedMeshes (bark, rope, knots) so six anchors cost three draw
+  // calls, not twenty-five.
   _buildChain() {
     const game = this.game;
     const { world, scene, mats: M, audio } = game;
@@ -3191,11 +3192,11 @@ export class Forest {
     }
 
     const segs = [];
-    const seg = (a, b, radius) => {
+    const seg = (a, b, radius, rope = false) => {
       const d = b.clone().sub(a);
       const len = d.length();
       const q = new THREE.Quaternion().setFromUnitVectors(up, d.clone().divideScalar(len));
-      segs.push({ p: a.clone().add(b).multiplyScalar(0.5), q, len, radius });
+      segs.push({ p: a.clone().add(b).multiplyScalar(0.5), q, len, radius, rope });
     };
     const ground = (v) => { v.y = this.heightAt(v.x, v.z); return v; };
 
@@ -3217,7 +3218,7 @@ export class Forest {
       // even though the generous physical target was already correct. Make
       // the authored object match that affordance; do not touch swing math or
       // the derived knot positions.
-      seg(pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.042);
+      seg(pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.042, true);
       knots.push(pivot.clone());
 
       const flag = `forestChain:${index}`;
@@ -3252,11 +3253,16 @@ export class Forest {
     addLink(this.chain.seedS, 5);          // the teacher: hands to the searchers-line pocket
     this.chain.knotS.forEach((s, k) => addLink(s, k));
 
+    // The dropped lines bake apart from the bark so they can actually carry
+    // the brightened rope material — baked into M.bark they rendered as more
+    // canopy, which is the exact disappearance the seg comment above fixes.
+    const barkSegs = segs.filter((it) => !it.rope);
+    const ropeSegs = segs.filter((it) => it.rope);
     const wood = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(1, 1.08, 1, 7), M.bark, segs.length);
+      new THREE.CylinderGeometry(1, 1.08, 1, 7), M.bark, barkSegs.length);
     const mtx = new THREE.Matrix4();
     const sc = new THREE.Vector3();
-    segs.forEach((it, i) => {
+    barkSegs.forEach((it, i) => {
       mtx.compose(it.p, it.q, sc.set(it.radius, it.len, it.radius));
       wood.setMatrixAt(i, mtx);
     });
@@ -3265,6 +3271,16 @@ export class Forest {
     wood.receiveShadow = true;
     wood.name = 'chain supports and lines';
     scene.add(wood);
+
+    const ropeMesh = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(1, 1.08, 1, 5), ropeMat, ropeSegs.length);
+    ropeSegs.forEach((it, i) => {
+      mtx.compose(it.p, it.q, sc.set(it.radius, it.len, it.radius));
+      ropeMesh.setMatrixAt(i, mtx);
+    });
+    ropeMesh.instanceMatrix.needsUpdate = true;
+    ropeMesh.name = 'chain dropped lines';
+    scene.add(ropeMesh);
 
     const knotGeo = new THREE.DodecahedronGeometry(0.19, 0);
     const knotMesh = new THREE.InstancedMesh(knotGeo, knotMat, knots.length);
