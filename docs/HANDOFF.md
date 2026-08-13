@@ -1,10 +1,27 @@
-# HANDOFF - 2026-08-13, Codex feedback pass (CURRENT SOURCE - NOT DEPLOYED)
+# HANDOFF - 2026-08-13, Codex feedback pass (MERGED - AWAITING ALEX ON SITE PR #52)
 
 Read `AGENTS.md` first. This section supersedes the completion and branch-state
-claims below it. The implementation is on `codex/fetch-aug13-handoff-pass`,
-based on `origin/claude/to-fix-aug12` at `3960e8f`. It has been verified and is
-ready for human feel review, but it has **not** been copied to Qualiacology,
-previewed, merged, or deployed. The public site is still the August 12 build.
+claims below it. The implementation was written on `codex/fetch-aug13-handoff-pass`
+(based on `3960e8f`), independently re-verified by Claude the same day, and is
+now MERGED into `claude/to-fix-aug12` at `d559969` via game PR #21.
+
+Claude's adversarial review (evening 2026-08-13) confirmed the pass clean on
+the light-census, sacred-contract, audio-architecture, and perf dimensions,
+and found ONE real defect: the chain's rope brightening was dead code —
+`ropeMat` was cloned and brightened in `_buildChain` but every segment,
+dropped aiming lines included, baked into the single `M.bark` InstancedMesh,
+so the line still rendered canopy-dark. Fixed in `09bb34c`: the dropped lines
+bake into their own InstancedMesh wearing the pocket ropes' material
+(pixel-verified — the line's sampled luminance doubles; forest 318→319 draws).
+All four canonical gates + creature-audio 11/11 + chain probe re-run green on
+the merged tip.
+
+Site lane: the six changed `src/` files are copied to qualiacology as
+**site PR #52** (`fetch-aug13-codex-pass`), full-tree parity with `d559969`
+verified. `build/qa/fetch-boot-check.mjs` PASSED locally (97ms to world,
+skull visible in hand, zero errors). **Not merged to the site** — waiting on
+Alex's play/listen pass on the Netlify deploy preview and his explicit
+approval. The public site is still the August 12 build until then.
 
 ## Alex's six notes - current truth
 
@@ -83,8 +100,9 @@ numbers above are the uncontended final runs.
   deterministic traversal and pixel gates are green, but they do not get the
   last word on awkwardness or delicious darkness.
 - The planned real ossuary shaft climb and the empty ossuary side pockets.
-- Qualiacology copy, source/site parity audit, Netlify preview boot gate, merge,
-  and canonical-domain verification. Do not call this live until those happen.
+- Alex's approval + merge of site PR #52, then canonical-domain verification.
+  Copy, parity audit, and the local boot gate are done; do not call this live
+  until the PR merges with his explicit approval and production is re-checked.
 
 ---
 
