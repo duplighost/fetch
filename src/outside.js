@@ -823,8 +823,10 @@ function buildOssuaryRoute(game) {
   addWall(OX - HALF_W - 0.15, OZ + 21.65, 0.3, 16.7);
   addWall(OX + HALF_W + 0.15, OZ + 9.35, 0.3, 18.7);
   addWall(OX + HALF_W + 0.15, OZ + 25.15, 0.3, 9.7);
-  // Pocket shells.
-  addWall(OX - 5.9, OZ + 12, 0.3, 2.9);
+  // Pocket shells. The west back wall leaves a shuttered gap — the kennel's
+  // false back lives behind it (DESIGN.md: "a mausoleum with a false back").
+  addWall(OX - 5.9, OZ + 10.95, 0.3, 0.8);
+  addWall(OX - 5.9, OZ + 13.05, 0.3, 0.8);
   addWall(OX - 4.45, OZ + 10.55, 2.9, 0.3);
   addWall(OX - 4.45, OZ + 13.45, 2.9, 0.3);
   addWall(OX + 5.9, OZ + 19, 0.3, 2.9);
@@ -1020,40 +1022,382 @@ function buildOssuaryRoute(game) {
   routeRoot.add(exitSlab);
   const exitCollider = world.addCollider(OX - HALF_W, FLOOR - 0.5, OZ + 27.94,
     OX + HALF_W, FLOOR + HEIGHT, OZ + 28.34, { ossuaryExit: true });
-  // The shaft beyond is deliberately brighter than every side pocket.
-  const shaftGlow = { x: OX, y: FLOOR + 1.1, z: OZ + 29.2, intensity: 4.2, r: 7 };
-  world.candles.push(shaftGlow);
-  for (const x of [OX - 1.0, OX, OX + 1.0]) {
-    const rung = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.5, 6), ironMat);
-    rung.position.set(x, FLOOR + 1.6, OZ + 29.2);
-    rung.rotation.z = Math.PI / 2;
-    routeRoot.add(rung);
+  // ------------------------------------------------------------- THE CLIMB
+  // Past the slab the corridor becomes a vertical shaft: two masonry flights
+  // turn 90 degrees so the top is out of sight of the bottom, and the same
+  // counterweight number that sinks the slab unbolts a deck hatch over the
+  // stair head. The player walks up under their own power — ramp records for
+  // ground height, tread colliders for feet, no new movement system. The old
+  // three decorative rungs (three bars at one height, no collider) are gone.
+  const DECK_Y = FLOOR + 5.25;              // hatch deck over the stair head
+  const WALL_TOP = DECK_Y + 1.65;           // walls reach the void ceiling: sealed
+  // floor + tall walls for the chamber past the corridor's roofline
+  addMeshBox(floorMat, OX, FLOOR - 0.08, OZ + 32.7, HALF_W * 2, 0.16, 5.4, 'shaft dirt floor');
+  for (const side of [-1, 1]) {
+    addMeshBox(wallMat, OX + side * (HALF_W + 0.15), (FLOOR + WALL_TOP) / 2, OZ + 32.7,
+      0.3, WALL_TOP - FLOOR, 5.4, 'shaft side wall');
+    world.addCollider(OX + side * (HALF_W + 0.3), FLOOR - 0.5, OZ + 30,
+      OX + side * HALF_W, WALL_TOP, OZ + 35.4, { ossuary: true });
   }
+  addMeshBox(wallMat, OX, (FLOOR + WALL_TOP) / 2, OZ + 35.55, HALF_W * 2 + 0.6,
+    WALL_TOP - FLOOR, 0.3, 'shaft cap wall');
+  world.addCollider(OX - HALF_W - 0.3, FLOOR - 0.5, OZ + 35.4,
+    OX + HALF_W + 0.3, WALL_TOP, OZ + 35.7, { ossuary: true });
+  // header face where the corridor's low roof meets the tall shaft
+  addMeshBox(wallMat, OX, (FLOOR + HEIGHT + 0.24 + WALL_TOP) / 2, OZ + 29.95,
+    HALF_W * 2, WALL_TOP - (FLOOR + HEIGHT + 0.24), 0.3, 'shaft header');
+  // absolute black above the shaft; the lid opens into this, never into sky,
+  // so the sealed-district invariant (zero exterior roots visible) holds
+  const shaftVoid = new THREE.Mesh(new THREE.PlaneGeometry(HALF_W * 2 + 0.6, 6.0),
+    new THREE.MeshBasicMaterial({ color: 0x010204, side: THREE.DoubleSide }));
+  shaftVoid.rotation.x = Math.PI / 2;
+  shaftVoid.position.set(OX, WALL_TOP - 0.05, OZ + 32.85);
+  routeRoot.add(shaftVoid);
 
-  // A witness owns the final composition without blocking the route or
-  // becoming another mandatory health bar. It turns only between looks and
-  // sinks when the counterweight pays out.
-  const witness = new THREE.Group();
-  witness.name = 'ossuary standing witness';
-  witness.userData.noBatch = true;
-  const witnessBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.9, 3, 7),
-    new THREE.MeshStandardMaterial({ color: 0x090a0a, roughness: 1 }));
-  witnessBody.position.y = 0.88;
-  witnessBody.scale.set(0.68, 1, 0.48);
-  witness.add(witnessBody);
-  const witnessHead = new THREE.Mesh(new THREE.SphereGeometry(0.17, 9, 7), boneMat);
-  witnessHead.position.y = 1.58;
-  witnessHead.scale.set(0.68, 1.15, 0.78);
-  witness.add(witnessHead);
-  witness.position.set(OX + 1.85, FLOOR, OZ + 24.2);
-  routeRoot.add(witness);
+  // flight A: floor to landing along +z on the east side, 11 treads
+  const A = { x0: OX + 0.7, x1: OX + 2.85, z0: OZ + 29.55, z1: OZ + 33.25, rise: 2.1, steps: 11 };
+  const aStep = (A.z1 - A.z0) / A.steps;
+  for (let i = 0; i < A.steps; i++) {
+    const top = FLOOR + ((i + 1) / A.steps) * A.rise;
+    const z0 = A.z0 + i * aStep;
+    addMeshBox(wallMat, (A.x0 + A.x1) / 2, top - 0.06, z0 + (aStep + 0.01) / 2,
+      A.x1 - A.x0, 0.12, aStep + 0.01, 'shaft tread');
+    world.addCollider(A.x0, top - 0.12, z0, A.x1, top, z0 + aStep + 0.01,
+      { stairId: 'ossuaryFlightA', stairPart: 'tread', stairStep: i });
+  }
+  world.ramps.push({ id: 'ossuaryFlightA', axis: 'z', x0: A.x0, x1: A.x1,
+    z0: A.z0, z1: A.z1, y0: FLOOR, y1: FLOOR + A.rise });
+  // masonry fill so the flight is carried, not floating
+  addMeshBox(wallMat, (A.x0 + A.x1) / 2, FLOOR + 0.33, OZ + 30.35, A.x1 - A.x0, 0.66, 1.4);
+  addMeshBox(wallMat, (A.x0 + A.x1) / 2, FLOOR + 0.75, OZ + 31.7, A.x1 - A.x0, 1.5, 1.3);
+  addMeshBox(wallMat, (A.x0 + A.x1) / 2, FLOOR + 1.35, OZ + 32.85, A.x1 - A.x0, 2.7, 0.8);
+
+  // landing: a solid corner pillar at the turn
+  addMeshBox(wallMat, (A.x0 + A.x1) / 2, FLOOR + 1.05, OZ + 34.325,
+    A.x1 - A.x0, 2.1, 2.15, 'shaft landing');
+  world.addCollider(A.x0, FLOOR - 0.5, OZ + 33.25, A.x1, FLOOR + 2.1, OZ + 35.4,
+    { ossuary: true });
+
+  // flight B: landing to the hatch platform along -x under the cap wall
+  const BF = { x0: OX - 2.0, x1: OX + 0.7, z0: OZ + 33.9, z1: OZ + 35.4, steps: 6 };
+  const bStep = (BF.x1 - BF.x0) / BF.steps;
+  for (let i = 0; i < BF.steps; i++) {
+    const top = FLOOR + 2.1 + ((i + 1) / BF.steps) * 1.15;
+    const x1 = BF.x1 - i * bStep;
+    addMeshBox(wallMat, x1 - (bStep + 0.01) / 2, top - 0.06, (BF.z0 + BF.z1) / 2,
+      bStep + 0.01, 0.12, BF.z1 - BF.z0, 'shaft tread');
+    world.addCollider(x1 - bStep - 0.01, top - 0.12, BF.z0, x1, top, BF.z1,
+      { stairId: 'ossuaryFlightB', stairPart: 'tread', stairStep: i });
+  }
+  world.ramps.push({ id: 'ossuaryFlightB', axis: 'x', x0: BF.x0, x1: BF.x1,
+    z0: BF.z0, z1: BF.z1, y0: FLOOR + 3.25, y1: FLOOR + 2.1 });
+
+  // hatch platform: solid pillar in the far corner, under the deck mouth
+  addMeshBox(wallMat, OX - 2.5, FLOOR + 1.625, OZ + 34.65, 1.0, 3.25, 1.5, 'shaft platform');
+  world.addCollider(OX - 3.0, FLOOR - 0.5, OZ + 33.9, OX - 2.0, FLOOR + 3.25, OZ + 35.4,
+    { ossuary: true });
+  world.rooms.push(
+    { id: 'ossuaryShaft', level: 'ossuary', floorY: FLOOR,
+      x0: OX - HALF_W, z0: OZ + 28.6, x1: OX + HALF_W, z1: OZ + 35.4 },
+    { id: 'ossuaryShaftLanding', level: 'ossuary', floorY: FLOOR + 2.1,
+      x0: A.x0, z0: OZ + 33.25, x1: A.x1, z1: OZ + 35.4 },
+    { id: 'ossuaryShaftTop', level: 'ossuary', floorY: FLOOR + 3.25,
+      x0: OX - 3.0, z0: OZ + 33.9, x1: OX - 2.0, z1: OZ + 35.4 },
+  );
+
+  // parapets: the visual rail is stepped; the collider is one solid band per
+  // open edge, tall enough that no tread's feet+0.5 clears it
+  addMeshBox(wallMat, A.x0 - 0.055, FLOOR + 1.0, OZ + 30.15, 0.11, 0.85, 1.25);
+  addMeshBox(wallMat, A.x0 - 0.055, FLOOR + 1.7, OZ + 31.4, 0.11, 0.85, 1.25);
+  addMeshBox(wallMat, A.x0 - 0.055, FLOOR + 2.4, OZ + 32.65, 0.11, 0.85, 1.25);
+  world.addCollider(A.x0 - 0.11, FLOOR - 0.5, A.z0, A.x0, FLOOR + 2.85, OZ + 33.9,
+    { stairId: 'ossuaryFlightA', stairPart: 'edge' });
+  addMeshBox(wallMat, OX - 0.65, FLOOR + 2.75, OZ + 33.845, 2.7, 0.8, 0.11);
+  world.addCollider(BF.x0, FLOOR + 1.9, OZ + 33.79, OX + 0.45, FLOOR + 4.0, OZ + 33.9,
+    { stairId: 'ossuaryFlightB', stairPart: 'edge' });
+  addMeshBox(wallMat, OX - 2.5, FLOOR + 3.65, OZ + 33.845, 1.0, 0.8, 0.11);
+  world.addCollider(OX - 3.0, FLOOR + 2.9, OZ + 33.79, OX - 2.0, FLOOR + 4.3, OZ + 33.9,
+    { stairId: 'ossuaryShaftTop', stairPart: 'edge' });
+
+  // the deck the hatch lives in, with one mouth over the platform. Plates
+  // tuck INTO the walls — a plate ending flush at a wall face leaked a bright
+  // seam of the mouth's light along the joint.
+  addMeshBox(wallMat, OX + 0.625, DECK_Y, OZ + 34.7, 5.35, 0.2, 2.0, 'hatch deck');
+  addMeshBox(wallMat, OX - 2.45, DECK_Y, OZ + 33.93, 0.9, 0.2, 0.46, 'hatch deck south');
+  addMeshBox(wallMat, OX - 3.075, DECK_Y, OZ + 34.7, 0.45, 0.2, 2.0, 'hatch deck west');
+
+  // the lid: a bolted iron panel, chain X, hasp and fat padlock underneath —
+  // the game's existing sealed-then-open language (the basement bilco kit).
+  // Everything is DRIVEN parametrically off state.exitT so a forced restore
+  // (director teleport, respawn) seats the whole pose in one assignment.
+  const brassMat = new THREE.MeshStandardMaterial({ color: 0xa98748, roughness: 0.34, metalness: 0.78 });
+  const sootMat = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.7, metalness: 0.5 });
+  const lidPivot = new THREE.Group();
+  lidPivot.name = 'ossuary hatch lid';
+  lidPivot.userData.noBatch = true;
+  lidPivot.position.set(OX - 2.45, DECK_Y + 0.07, OZ + 35.3);
+  routeRoot.add(lidPivot);
+  const lidPanel = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.1, 1.14), ironMat);
+  lidPanel.position.z = -0.57;
+  lidPivot.add(lidPanel);
+  const hatchChains = new THREE.Group();
+  hatchChains.name = 'ossuary hatch chains';
+  hatchChains.userData.noBatch = true;
+  routeRoot.add(hatchChains);
+  {
+    const linkGeo = new THREE.TorusGeometry(0.045, 0.015, 6, 10);
+    const mouthY = DECK_Y - 0.14;
+    const corners = [
+      [[OX - 2.83, OZ + 34.22], [OX - 2.07, OZ + 35.28]],
+      [[OX - 2.07, OZ + 34.22], [OX - 2.83, OZ + 35.28]],
+    ];
+    for (const [a, b] of corners) {
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8;
+        const link = new THREE.Mesh(linkGeo, sootMat);
+        link.position.set(a[0] + (b[0] - a[0]) * t, mouthY, a[1] + (b[1] - a[1]) * t);
+        link.lookAt(b[0], mouthY, b[1]);
+        link.rotateY(Math.PI / 2);
+        if (i % 2) link.rotateX(Math.PI / 2);
+        hatchChains.add(link);
+      }
+    }
+    const hasp = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.16), sootMat);
+    hasp.position.set(OX - 2.45, mouthY - 0.02, OZ + 34.75);
+    hatchChains.add(hasp);
+    const lockBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.1), brassMat);
+    lockBody.position.set(OX - 2.45, mouthY - 0.24, OZ + 34.75);
+    hatchChains.add(lockBody);
+    const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.024, 8, 10, Math.PI), sootMat);
+    shackle.position.set(OX - 2.45, mouthY - 0.1, OZ + 34.75);
+    hatchChains.add(shackle);
+  }
+  // The shaft's one light sits INSIDE the mouth: the brightest thing in the
+  // district is a hole in the ceiling, seen from the corridor once the slab
+  // is gone. Pre-solve it leaks a faint seam around the slab's 17cm gaps.
+  const shaftGlow = { x: OX - 2.45, y: DECK_Y - 0.6, z: OZ + 34.75, intensity: 1.0, r: 7 };
+  world.candles.push(shaftGlow);
+
+  // ------------------------------------------------- THE WEST POCKET KENNEL
+  // The false back DESIGN.md promises. Bars the player cannot pass but the
+  // skull can, a cradle that takes a held weight, a shutter the hold raises —
+  // the crawl kennel's grammar restated underground. Behind it: a wrongness,
+  // never a mechanic. The reward is the seated one in the wall.
+  const kennel = (() => {
+    const cageIron = new THREE.MeshStandardMaterial({ color: 0x242829, roughness: 0.72, metalness: 0.52 });
+    const wornIron = new THREE.MeshStandardMaterial({
+      color: 0x747774, roughness: 0.48, metalness: 0.72,
+      emissive: 0x151817, emissiveIntensity: 0.65,
+    });
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xe2e7e2, transparent: true, opacity: 0.035 });
+    const barX = OX - 3.85;
+    // bars: one instanced draw, skull passes between them, the player never
+    const barPoints = [];
+    for (let z = OZ + 10.92; z <= OZ + 13.1; z += 0.31) barPoints.push(z);
+    const bars = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.027, 0.034, HEIGHT - 0.25, 7), cageIron, barPoints.length);
+    const barM4 = new THREE.Matrix4();
+    barPoints.forEach((z, i) => {
+      barM4.makeTranslation(barX, FLOOR + (HEIGHT - 0.25) / 2, z);
+      bars.setMatrixAt(i, barM4);
+    });
+    bars.instanceMatrix.needsUpdate = true;
+    bars.name = 'ossuary kennel bars';
+    bars.userData.noBatch = true;
+    routeRoot.add(bars);
+    for (const railY of [FLOOR + 0.14, FLOOR + 1.3, FLOOR + 2.5]) {
+      addMeshBox(cageIron, barX, railY, OZ + 12, 0.09, 0.09, 2.5, 'kennel rail');
+    }
+    world.addCollider(barX - 0.07, FLOOR - 0.05, OZ + 10.7, barX + 0.07, FLOOR + HEIGHT,
+      OZ + 13.3, { id: 'ossuaryKennelBars', skullPass: true });
+
+    // the alcove behind the wall gap; its back is a REAL collider so a wild
+    // throw bounces off stone, never off invisible air
+    addMeshBox(wallMat, OX - 6.55, FLOOR + 0.85, OZ + 12, 0.3, 1.9, 1.9, 'alcove back');
+    addMeshBox(wallMat, OX - 6.15, FLOOR + 1.86, OZ + 12, 1.1, 0.16, 1.9, 'alcove roof');
+    addMeshBox(wallMat, OX - 6.15, FLOOR + 0.85, OZ + 11.02, 1.1, 1.9, 0.16, 'alcove side');
+    addMeshBox(wallMat, OX - 6.15, FLOOR + 0.85, OZ + 12.98, 1.1, 1.9, 0.16, 'alcove side');
+    addMeshBox(floorMat, OX - 6.15, FLOOR - 0.06, OZ + 12, 1.1, 0.12, 1.9, 'alcove floor');
+    world.addCollider(OX - 6.7, FLOOR - 0.5, OZ + 11.0, OX - 6.4, FLOOR + 1.9, OZ + 13.0,
+      { ossuary: true });
+
+    // the seated one — the witness geometry, moved into the wall. It faces
+    // the bars. It was here before the shutter was.
+    const seated = new THREE.Group();
+    seated.name = 'ossuary seated witness';
+    const seatedBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.62, 3, 7),
+      new THREE.MeshStandardMaterial({ color: 0x090a0a, roughness: 1 }));
+    seatedBody.position.y = 0.62;
+    seatedBody.scale.set(0.68, 1, 0.48);
+    seated.add(seatedBody);
+    const seatedHead = new THREE.Mesh(new THREE.SphereGeometry(0.17, 9, 7), boneMat);
+    seatedHead.position.y = 1.18;
+    seatedHead.scale.set(0.68, 1.15, 0.78);
+    seatedHead.rotation.z = 0.34;
+    seated.add(seatedHead);
+    const reach = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.024, 0.72, 6), boneMat);
+    reach.position.set(0.42, 0.36, 0.1);
+    reach.rotation.z = -1.12;
+    seated.add(reach);
+    for (let i = 0; i < 3; i++) {
+      const pileBone = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.4, 3, 6), boneMat);
+      pileBone.position.set(0.1 + i * 0.14, 0.06, -0.22 + i * 0.16);
+      pileBone.rotation.set(Math.PI / 2, 0, i * 0.8);
+      seated.add(pileBone);
+    }
+    seated.position.set(OX - 6.05, FLOOR, OZ + 12);
+    seated.rotation.y = Math.PI / 2 - 0.18;
+    routeRoot.add(seated);
+
+    // shutter over the gap, and the cradle that raises it
+    const shutterBaseY = FLOOR + 0.92;
+    const shutter = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.9, 1.34), cageIron);
+    shutter.name = 'ossuary kennel shutter';
+    shutter.userData.noBatch = true;
+    shutter.position.set(OX - 5.83, shutterBaseY, OZ + 12);
+    routeRoot.add(shutter);
+    addMeshBox(cageIron, OX - 5.82, FLOOR + 1.1, OZ + 11.28, 0.14, 2.2, 0.1, 'shutter jamb');
+    addMeshBox(cageIron, OX - 5.82, FLOOR + 1.1, OZ + 12.72, 0.14, 2.2, 0.1, 'shutter jamb');
+    addMeshBox(cageIron, OX - 5.82, FLOOR + 2.24, OZ + 12, 0.14, 0.1, 1.6, 'shutter lintel');
+    // the wall gap is full-height but the shutter is not: stone above the
+    // lintel, or the corridor sees straight out of the sealed district
+    addMeshBox(wallMat, OX - 5.9, FLOOR + 2.57, OZ + 12, 0.3, 0.66, 1.4, 'shutter transom');
+    const sliverMat = new THREE.MeshBasicMaterial({
+      color: 0xd9e2de, transparent: true, opacity: 0.3, depthWrite: false, toneMapped: false,
+    });
+    const sliver = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.04, 1.22), sliverMat);
+    sliver.name = 'ossuary kennel seam';
+    sliver.userData.noBatch = true;
+    sliver.position.set(OX - 5.76, FLOOR + 0.035, OZ + 12);
+    routeRoot.add(sliver);
+
+    // one cold fixture supplies both the pre-solve seam and the revealed
+    // alcove. Real PointLight created at BUILD time (before pinLightCensus),
+    // only ever intensity-ramped — the census never moves.
+    const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 7), coreMat.clone());
+    lampCore.name = 'ossuary kennel lamp';
+    lampCore.userData.noBatch = true;
+    lampCore.position.set(OX - 6.3, FLOOR + 1.52, OZ + 12.42);
+    routeRoot.add(lampCore);
+    const lamp = new THREE.PointLight(0xd9e2de, 0, 5.5, 1.8);
+    lamp.position.copy(lampCore.position);
+    scene.add(lamp);
+    const bracket = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.03, 0.2, 7), wornIron);
+    bracket.position.set(OX - 6.42, FLOOR + 1.52, OZ + 12.42);
+    bracket.rotation.z = Math.PI / 2;
+    routeRoot.add(bracket);
+    const hood = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.16, 9, 1, true), wornIron);
+    hood.position.set(OX - 6.33, FLOOR + 1.6, OZ + 12.42);
+    hood.rotation.z = -Math.PI / 2;
+    routeRoot.add(hood);
+
+    const cradleBase = new THREE.Vector3(OX - 4.75, FLOOR + 1.02, OZ + 12);
+    const cradle = new THREE.Group();
+    cradle.name = 'ossuary kennel cradle';
+    cradle.userData.noBatch = true;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.045, 7, 22), wornIron);
+    ring.rotation.x = Math.PI / 2;
+    cradle.add(ring);
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.32, 0.07, 12), M.metal);
+    dish.position.y = -0.09;
+    cradle.add(dish);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * TAU;
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.032, 0.48, 6), wornIron);
+      arm.position.set(Math.cos(a) * 0.27, 0.2, Math.sin(a) * 0.27);
+      arm.rotation.z = Math.cos(a) * 0.22;
+      arm.rotation.x = Math.sin(a) * 0.22;
+      cradle.add(arm);
+    }
+    const targetGlow = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.012, 5, 20), coreMat);
+    targetGlow.rotation.x = Math.PI / 2;
+    targetGlow.position.y = 0.015;
+    cradle.add(targetGlow);
+    cradle.position.copy(cradleBase);
+    routeRoot.add(cradle);
+
+    const puzzle = {
+      id: 'ossuaryKennel', state: 'idle', solved: false,
+      holdTime: 0, progress: 0, requiredHold: 1.25,
+      cradle, shutter, seated, lamp, target: null,
+      _strainT: 0, _wasWeighing: false,
+    };
+    const kennelAnchor = new THREE.Vector3();
+    puzzle.target = world.addFetchTarget({
+      id: 'ossuaryKennelCradle', object: cradle, radius: 0.56,
+      onHit(skull) {
+        if (puzzle.solved) return 'return';
+        if (skull.mode !== 'outbound') return 'continue';
+        this.enabled = false;
+        puzzle.state = 'weighing';
+        cradle.getWorldPosition(kennelAnchor);
+        skull.anchorAt(kennelAnchor, { swing: true, maxHold: 4.5, puzzleId: puzzle.id });
+        game.impact('locked', kennelAnchor);
+        game.audio.creak({ pos: kennelAnchor, gain: 0.55, rate: 0.72 });
+        return 'anchor';
+      },
+    });
+    return {
+      puzzle, cradleBase, shutterBaseY, sliverMat, lamp, lampCore, coreMat,
+      solvePos: new THREE.Vector3(OX - 5.83, FLOOR + 1.0, OZ + 12),
+      remainsPos: new THREE.Vector3(OX - 6.05, FLOOR + 0.9, OZ + 12),
+    };
+  })();
+  game.ossuaryKennel = kennel.puzzle;
+
+  // ------------------------------------------------ THE EAST POCKET NICHES
+  // The payoff the route's header promises: three niches, one per resonant
+  // grave, each wearing the settled, bowed silhouette its surface grave wears
+  // right now — read live off game.resonantGraves[i].credit. Silhouette and
+  // value only, no hue. The under-yard answers what you already did.
+  const nicheMinis = [];
+  {
+    const nicheStone = M.headstone.clone();
+    nicheStone.color.multiplyScalar(0.62);
+    if ('emissive' in nicheStone) {
+      nicheStone.emissive = new THREE.Color(0xb9d4dc);
+      nicheStone.emissiveIntensity = 0.07;
+    }
+    const nicheVoid = new THREE.MeshBasicMaterial({ color: 0x010204 });
+    const wallFace = OX + 5.72;
+    [OZ + 18.2, OZ + 19.0, OZ + 19.8].forEach((nz, i) => {
+      const backing = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 1.42), nicheVoid);
+      backing.position.set(wallFace + 0.02, FLOOR + 1.05, nz);
+      backing.rotation.y = -Math.PI / 2;
+      routeRoot.add(backing);
+      addMeshBox(wallMat, wallFace - 0.1, FLOOR + 0.3, nz, 0.26, 0.1, 0.8, 'niche sill');
+      addMeshBox(wallMat, wallFace - 0.08, FLOOR + 1.05, nz - 0.42, 0.2, 1.55, 0.1, 'niche jamb');
+      addMeshBox(wallMat, wallFace - 0.08, FLOOR + 1.05, nz + 0.42, 0.2, 1.55, 0.1, 'niche jamb');
+      addMeshBox(wallMat, wallFace - 0.08, FLOOR + 1.86, nz, 0.2, 0.1, 0.94, 'niche header');
+      const mini = new THREE.Group();
+      mini.name = `ossuary resonant niche ${i + 1}`;
+      mini.userData.noBatch = true;
+      const mBase = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.205, 0.088, 6), nicheStone);
+      mBase.position.y = 0.045;
+      mini.add(mBase);
+      const mShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.12, 0.588, 5), nicheStone);
+      mini.add(mShaft);
+      const mCrownL = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.043, 0.18, 5), nicheStone);
+      mini.add(mCrownL);
+      const mCrownR = new THREE.Mesh(new THREE.CylinderGeometry(0.023, 0.043, 0.155, 5), nicheStone);
+      mini.add(mCrownR);
+      const mCap = new THREE.Mesh(new THREE.DodecahedronGeometry(0.05, 0), nicheStone);
+      mCap.scale.set(1.25, 0.65, 0.8);
+      mini.add(mCap);
+      mini.position.set(wallFace - 0.16, FLOOR + 0.35, nz);
+      mini.rotation.y = Math.PI / 2;
+      routeRoot.add(mini);
+      nicheMinis.push({ index: i, shaft: mShaft, crownL: mCrownL, crownR: mCrownR, cap: mCap });
+    });
+    world.candles.push({ x: OX + 4.45, y: FLOOR + 2.2, z: OZ + 19, intensity: 0.42, r: 4.2 });
+  }
 
   const state = {
     origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
     unlocked: false, route: null, inOssuary: false, solved: false,
     pulling: false, progress: 0, slabT: 0, exitT: 0,
     surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider,
-    mechanism, wheel, weight, witness, target: null,
+    mechanism, wheel, weight, lidPivot, hatchChains, resident: null, target: null,
     unlock(route = 'ritual') {
       if (this.unlocked) return false;
       this.unlocked = true;
@@ -1101,7 +1445,14 @@ function buildOssuaryRoute(game) {
     || child === routeRoot
     || child === game._impactRing
     || child === game._impactLight
-    || child.isLight;
+    || child.isLight
+    // pinLightCensus lifts every boot light into world.lightRoot, a GROUP —
+    // hiding it here dropped the whole census out of traverseVisible, which
+    // both unlit the district's own candle descriptors and re-triggered the
+    // exact whole-scene shader recompile the pin exists to prevent.
+    || child === world.lightRoot
+    // runtime residents (the district's Standing One) opt in by marker
+    || child.userData?.keepInOssuary === true;
   const syncOssuaryVisibility = () => {
     if (state.inOssuary) {
       ossuaryVisibilityActive = true;
@@ -1133,9 +1484,59 @@ function buildOssuaryRoute(game) {
     },
   });
 
-  const eye = new THREE.Vector3();
-  const look = new THREE.Vector3();
-  const toWitness = new THREE.Vector3();
+  // ---------------------------------------------- THE FOREST-SIDE ARRIVAL
+  // The far end is no longer a teleport onto bare grass: a stone hatch waits
+  // at the gate, flush and shut until the counterweight pays out, standing
+  // open over a black throat afterwards. The player lands in its mouth and
+  // can turn around and see the hole they came out of. Registered as a
+  // lookback root so forest back-district culling keeps it.
+  const arrival = new THREE.Group();
+  arrival.name = 'ossuary arrival hatch';
+  scene.add(arrival);
+  {
+    const stone = M.headstone.clone();
+    stone.color.multiplyScalar(0.6);
+    const ax = FOREST_GATE.x;
+    const az = FOREST_GATE.z + 0.3;
+    arrival.position.set(ax, 0.08, az);
+    const curb = (x, z, w, d) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, d), stone);
+      m.position.set(x, 0.09, z);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      arrival.add(m);
+    };
+    curb(0, -0.66, 1.5, 0.18);
+    curb(0, 0.66, 1.5, 0.18);
+    curb(-0.66, 0, 0.18, 1.14);
+    curb(0.66, 0, 0.18, 1.14);
+    const mouthVoid = new THREE.Mesh(new THREE.PlaneGeometry(1.14, 1.14),
+      new THREE.MeshBasicMaterial({ color: 0x010204 }));
+    mouthVoid.rotation.x = -Math.PI / 2;
+    mouthVoid.position.y = 0.02;
+    arrival.add(mouthVoid);
+    for (const [sx, sz, w, d] of [[0, -0.53, 1.1, 0.1], [0, 0.53, 1.1, 0.1],
+      [-0.53, 0, 0.1, 0.96], [0.53, 0, 0.1, 0.96]]) {
+      const wallDown = new THREE.Mesh(new THREE.BoxGeometry(w, 0.85, d), stone);
+      wallDown.position.set(sx, -0.42, sz);
+      arrival.add(wallDown);
+    }
+    const arrivalPivot = new THREE.Group();
+    arrivalPivot.position.set(0, 0.16, -0.6);
+    arrival.add(arrivalPivot);
+    const arrivalLid = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.1, 1.3), stone);
+    arrivalLid.position.z = 0.62;
+    arrivalLid.castShadow = true;
+    arrivalPivot.add(arrivalLid);
+    // the player walks AROUND the open mouth; the skull still crosses it
+    world.addCollider(ax - 0.68, -0.8, az - 0.68, ax + 0.68, 0.8, az + 0.68,
+      { skullPass: true });
+    state.arrival = { root: arrival, pivot: arrivalPivot };
+  }
+  (game.graveyardLookbackRoots ||= []).push(arrival);
+
+  const kAnchor = new THREE.Vector3();
+  let hatchCreaked = false;
   game.tickers.push((dt, time) => {
     let crossedFarExit = false;
     state.slabT += ((state.unlocked ? 1 : 0) - state.slabT) * Math.min(1, dt * 1.6);
@@ -1171,6 +1572,25 @@ function buildOssuaryRoute(game) {
       game.flag('ossuaryEntered');
       game.checkpoint('graveyard');
       game.audio.stoneGrind({ pos: new THREE.Vector3(OX, FLOOR, OZ), gain: 0.34, rate: 0.54 });
+      // The district's one inhabitant is the real Standing Kind: it moves
+      // only while unobserved, so the corridor is walked with glances over
+      // the shoulder. It stands past the last baffle, before the wheel —
+      // the player passes it, then holds the counterweight with it behind
+      // them. The keepInOssuary marker spares it from the district seal.
+      const residentAlive = state.resident && game.enemies.list.includes(state.resident);
+      if (!state.solved && !residentAlive) {
+        // posted on the WEST side: the last baffle forces the east gap, so
+        // the player passes it at arm's-plus length — watched, never blocked
+        const res = game.enemies.spawn('walker', OX - 1.6, OZ + 20.4, 'standing', FLOOR + 1);
+        res.standing = true;
+        res.ossuaryResident = true;
+        res.home = { x: OX - 1.6, z: OZ + 20.4 };
+        // it closes while your back is turned, but never leaves its post —
+        // the corridor stays a walk of glances, not a pursuit
+        res.tether = 2.2;
+        res.mesh.userData.keepInOssuary = true;
+        state.resident = res;
+      }
     }
     if (state.inOssuary && !state.solved && p.z < OZ + 0.28 && skull?.mode === 'held') {
       state.inOssuary = false;
@@ -1181,6 +1601,9 @@ function buildOssuaryRoute(game) {
       player.yaw = Math.PI;
       player._sync(0);
       game.checkpoint('graveyard');
+      // the resident stays with its district; it does not follow into the yard
+      game.enemies.clear((enemy) => enemy.ossuaryResident);
+      state.resident = null;
     }
 
     const anchored = skull?.mode === 'anchored'
@@ -1215,6 +1638,11 @@ function buildOssuaryRoute(game) {
       game.audio.metalDrop({ pos: anchorPos, gain: 0.88, rate: 0.62 });
       game.audio.duck(0.2, 2.8);
       game.checkpoint('graveyard');
+      // the Standing One lays itself to rest as the counterweight pays out —
+      // the ritual it was standing for is complete
+      if (state.resident && game.enemies.list.includes(state.resident)) {
+        game.enemies._layToRest?.(state.resident);
+      }
     }
     state.exitT += ((state.solved ? 1 : 0) - state.exitT) * Math.min(1, dt * 1.8);
     exitSlab.position.y = FLOOR + 1.33 - state.exitT * 3.1;
@@ -1226,20 +1654,102 @@ function buildOssuaryRoute(game) {
     // reported. Open only once the slab's top has sunk below the floor.
     const slabTop = exitSlab.position.y + 1.325;
     exitCollider.max.y = slabTop < FLOOR + 0.05 ? exitCollider.min.y : FLOOR + HEIGHT;
-
-    if (state.inOssuary) {
-      const camPos = game.camera.getWorldPosition(eye);
-      game.camera.getWorldDirection(look);
-      const d = toWitness.copy(witness.position).sub(camPos).length() || 1;
-      const watched = toWitness.multiplyScalar(1 / d).dot(look) > 0.88;
-      if (!watched && !state.solved) witness.lookAt(p.x, witness.position.y + 0.8, p.z);
+    // The same number drives every stage of the way out: the slab sinks, the
+    // chain X drops off the hatch, the lid swings, the glow in the mouth
+    // blooms. All poses derive from exitT so a forced restore (director
+    // teleport, respawn) seats the entire far end with one assignment.
+    hatchChains.position.y = -smoothstep(0.04, 0.34, state.exitT) * 1.85;
+    lidPivot.rotation.x = smoothstep(0.3, 0.98, state.exitT) * 1.92;
+    if (!hatchCreaked && state.exitT > 0.32) {
+      hatchCreaked = true;
+      game.audio.stoneGrind({
+        pos: new THREE.Vector3(OX - 2.45, DECK_Y, OZ + 34.75), gain: 0.5, rate: 0.9,
+      });
     }
-    witness.position.y += (((state.solved ? FLOOR - 1.9 : FLOOR) - witness.position.y)
-      * Math.min(1, dt * 1.2));
+    shaftGlow.intensity += ((1.0 + state.exitT * 3.4) - shaftGlow.intensity)
+      * Math.min(1, dt * 2.2);
+    // the forest-side mouth opens on the same payout — parametric off exitT
+    // like everything else at the far end, so one forced assignment seats it
+    state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, state.exitT) * 1.85;
 
-    if (state.inOssuary && state.solved && p.z > OZ + 28.45 && skull?.mode === 'held') {
+    // the kennel: a held weight raises the shutter; letting go drops it
+    {
+      const kp = kennel.puzzle;
+      const weighing = skull && skull.mode === 'anchored'
+        && skull.anchor && skull.anchor.puzzleId === kp.id;
+      if (!kp.solved) {
+        if (!weighing && skull && skull.mode === 'held') kp.target.enabled = true;
+        if (weighing) kp.holdTime = Math.min(kp.requiredHold, kp.holdTime + dt);
+        else kp.holdTime = Math.max(0, kp.holdTime - dt * 1.8);
+        kp.state = weighing ? 'weighing' : kp.holdTime > 0 ? 'resetting' : 'idle';
+        kp.progress = clamp(kp.holdTime / kp.requiredHold, 0, 1);
+        if (kp.progress >= 1) {
+          kp.solved = true;
+          kp.state = 'latched';
+          kp.target.enabled = false;
+          game.flag('ossuaryKennelSolved');
+          game.audio.unlock({ pos: kennel.solvePos, gain: 0.85, rate: 0.72 });
+          game.audio.metalDrop({ pos: kennel.solvePos, gain: 0.7, rate: 0.62 });
+          game.after(0.62, () => game.audio.knock({ pos: kennel.remainsPos, gain: 0.34, rate: 0.76 }));
+          game.after(1.15, () => game.audio.whisper({ pos: kennel.remainsPos, gain: 0.28, rate: 0.7, verb: 0.85 }));
+        }
+      } else kp.progress = 1;
+      const ke = kp.progress * kp.progress * (3 - 2 * kp.progress);
+      kp.cradle.position.y = kennel.cradleBase.y - ke * 0.5;
+      kp.shutter.position.y = kennel.shutterBaseY + ke * 1.86;
+      if (weighing && skull?.anchor) {
+        kp.cradle.getWorldPosition(kAnchor);
+        skull.pos.copy(kAnchor);
+        skull.root.position.copy(kAnchor);
+        skull.anchor.point.copy(kAnchor);
+      }
+      if (weighing) {
+        kp._strainT -= dt;
+        if (kp._strainT <= 0) {
+          kp._strainT = 0.34;
+          game.audio.creak({
+            pos: kennel.solvePos,
+            gain: 0.3 + kp.progress * 0.25, rate: 0.55 + kp.progress * 0.5,
+          });
+        }
+      } else if (kp._wasWeighing && !kp.solved && kp.holdTime > 0.1) {
+        game.audio.stoneGrind({ pos: kennel.solvePos, gain: 0.62, rate: 1.4 });
+        game.shake(0.12);
+      }
+      kp._wasWeighing = weighing;
+      const kBreath = Math.sin(time * 2.1);
+      const lampTarget = kp.solved ? 9.5 + kBreath * 0.5 : 1.6 + kBreath * 0.14;
+      kennel.lamp.intensity += (lampTarget - kennel.lamp.intensity) * Math.min(1, dt * 2.5);
+      const coreTarget = kp.solved ? 0.7 + kBreath * 0.03 : 0.16 + kBreath * 0.015;
+      kennel.lampCore.material.opacity += (coreTarget - kennel.lampCore.material.opacity)
+        * Math.min(1, dt * 3.5);
+      const seamTarget = kp.solved ? 0 : 0.3 + kBreath * 0.02;
+      kennel.sliverMat.opacity += (seamTarget - kennel.sliverMat.opacity) * Math.min(1, dt * 4.5);
+      kennel.coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0);
+    }
+
+    // The niches wear the surface graves' settled silhouettes, live. The
+    // minis are quarter-scale sculpts of the resonant graves, so every donor
+    // offset scales by the same 0.25 — geometry and position must agree or
+    // the crowns float off their shafts.
+    for (const m of nicheMinis) {
+      const c = game.resonantGraves?.[m.index]?.credit ?? 0;
+      m.shaft.position.y = (1.38 - c * 0.16) * 0.25;
+      m.crownL.position.set(-0.04, (2.82 - c * 0.28) * 0.25, 0);
+      m.crownL.rotation.z = -0.23 - c * 0.34;
+      m.crownR.position.set(0.0425, (2.77 - c * 0.24) * 0.25, 0.005);
+      m.crownR.rotation.z = 0.3 + c * 0.38;
+      m.cap.position.set(-0.01, (2.49 - c * 0.18) * 0.25, 0);
+    }
+
+    // The way out is now the TOP of the climb: standing on the hatch platform
+    // with the lid fully open, walls filling the frame, skull in hand — the
+    // same masking the entry throat gets. No more crossing a plane at a slab.
+    if (state.inOssuary && state.solved && state.exitT > 0.98
+      && p.y > FLOOR + 3.05 && p.x < OX - 2.0 && p.z > OZ + 33.9
+      && skull?.mode === 'held') {
       state.inOssuary = false;
-      p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 0.55);
+      p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 1.35);
       player.vel.set(0, 0, 0);
       player.fallV = 0;
       player.grounded = true;
@@ -1250,6 +1760,8 @@ function buildOssuaryRoute(game) {
       player.pitch = 0;
       player._sync(0);
       game.flag('ossuaryExited');
+      game.enemies.clear((enemy) => enemy.ossuaryResident);
+      state.resident = null;
       game.director.setAct('forest');
       game.forest?.recentre(player.pos);
       game.checkpoint('forest');

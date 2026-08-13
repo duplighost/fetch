@@ -277,7 +277,12 @@ try {
       || child === ossuary.root
       || child === g._impactRing
       || child === g._impactLight
-      || child.isLight;
+      || child.isLight
+      // mirrors src keepInOssuary: the pinned light census container stays
+      // visible (hiding it re-triggered whole-scene recompiles), and marked
+      // residents (the district's Standing One) are legitimate occupants
+      || child === g.world.lightRoot
+      || child.userData?.keepInOssuary === true;
     const ossuaryLeaks = g.scene.children
       .filter((child) => child.visible && !allowedOssuaryRoot(child)).map(label);
     const ossuaryInside = {
@@ -339,7 +344,11 @@ try {
     g.player._sync(0);
     F.step(1 / 120, 1, false);
     ossuary.solved = true;
-    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 28.6);
+    ossuary.exitT = 1;   // mirror the director restore: one number seats slab, hatch, arrival
+    // the far exit now fires at the TOP of the shaft climb, on the hatch
+    // platform under the open lid — place the player there, as the stairs do
+    g.player.pos.set(ossuary.origin.x - 2.45, ossuary.origin.floor + 3.25,
+      ossuary.origin.z + 34.65);
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;

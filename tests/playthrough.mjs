@@ -486,11 +486,24 @@ try {
     }
     beat('exit-slab-sank-and-opened-the-way',
       g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
-    walkTo(-70, 19.0, 12);
-    for (let t = 0; t < 3 && !g.flags.has('ossuaryExited'); t += 0.1) F.stepWith(0.1, { moveZ: 1 });
-    beat('ossuary-exits-outside-the-surface-gate',
-      g.flags.has('ossuaryExited') && !g.ossuary.inOssuary,
-      { player: g.player.pos.toArray(), gateOpening: g.graveyardGate.opening });
+    // THE CLIMB: flight A up the east side, the 90-degree turn, flight B to
+    // the hatch platform. The swap fires only at the TOP, under the open lid
+    // — so a rising climbPeakY is the proof the ascent was real ground
+    // contact, not a position write.
+    walkTo(-68.2, 19.8, 10);
+    let climbPeakY = g.player.pos.y;
+    for (let t = 0; t < 14 && !g.flags.has('ossuaryExited'); t += 0.1) {
+      const target = g.player.pos.z < 23.0 ? [-68.2, 23.6] : [-72.45, 24.65];
+      const dx = target[0] - g.player.pos.x, dz = target[1] - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+      climbPeakY = Math.max(climbPeakY, g.player.pos.y);
+    }
+    beat('ossuary-exits-up-the-shaft-climb',
+      g.flags.has('ossuaryExited') && !g.ossuary.inOssuary && climbPeakY > -1.16
+      && !g.enemies.list.some((e) => e.ossuaryResident && e.state !== 'dying'),
+      { player: g.player.pos.toArray(), climbPeakY: +climbPeakY.toFixed(2),
+        exitT: +g.ossuary.exitT.toFixed(3), gateOpening: g.graveyardGate.opening });
     walkTo(2, 45, 10);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later

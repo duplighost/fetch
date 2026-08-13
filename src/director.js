@@ -180,6 +180,10 @@ export class Director {
       if (g.flags.has('graveyardCleared') && g.ossuary) {
         g.ossuary.solved = true;
         g.ossuary.progress = 1;
+        // exitT is the ONE number the far end derives from (slab, hatch
+        // chains, lid, arrival mouth). Forcing only the collider left the
+        // exit re-sealing itself for a second while exitT caught up.
+        g.ossuary.exitT = 1;
         g.ossuary.exitCollider.max.y = g.ossuary.exitCollider.min.y;
       }
       if (!this.graveRitual) this.graveRitual = { credits: new Set([0, 1, 2]), done: true, route: 'restored' };
