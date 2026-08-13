@@ -38,7 +38,12 @@ const DROWNED_CHOIR = Object.freeze({
   recovery: 1.25,
 });
 
-const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x16141a };
+// Kneeler crosses the player in the forest's darkest value range. Its old
+// near-black violet body merged with trunks even inside the skull's 11.5 m
+// lantern, leaving only two eyes and a pale jaw. Lift the neutral surface just
+// enough for the malformed silhouette and planted limbs to exist; eye motion
+// and the long windup still carry state, so no meaning depends on this value.
+const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x2b2930 };
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 // More than the whole authored graveyard fight, with room for the house and
@@ -62,6 +67,40 @@ const FIGURE_GEO = {
   slab: new THREE.BoxGeometry(1, 1, 1),
   spike: new THREE.ConeGeometry(0.5, 1, 5),
 };
+
+// A one-time shared warp pass keeps the low-poly bodies from resolving into
+// clean capsules and spheres under the skull light. These buffers are built
+// once, then reused by every Resident and Kneeler; no spawn-time geometry and
+// no per-frame vertex work. The deformation is deliberately modest because
+// silhouette and pose do the heavy lifting, while collision remains authored.
+function malformShared(source, amount, seed) {
+  const geometry = source.clone();
+  const p = geometry.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const ripple = Math.sin(x * 8.7 + seed * 1.3)
+      * Math.cos(y * 6.1 - seed * 0.7)
+      * Math.sin(z * 9.3 + seed * 2.1);
+    const crooked = Math.sin(y * 4.9 + seed) * 0.55
+      + Math.sin((x - z) * 7.4 + seed * 0.37) * 0.3;
+    const radial = 1 + amount * (ripple + crooked);
+    p.setXYZ(
+      i,
+      x * radial + Math.sin(y * 5.3 + seed) * amount * 0.035,
+      y * (1 + ripple * amount * 0.22),
+      z * (1 + amount * (ripple - crooked * 0.45)),
+    );
+  }
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+FIGURE_GEO.malformedCapsule = malformShared(FIGURE_GEO.capsule, 0.14, 3.1);
+FIGURE_GEO.malformedLimb = malformShared(FIGURE_GEO.limb, 0.19, 7.7);
+FIGURE_GEO.malformedSphere = malformShared(FIGURE_GEO.sphere, 0.17, 12.4);
+FIGURE_GEO.malformedSlab = malformShared(FIGURE_GEO.slab, 0.12, 18.2);
 {
   // One shared pall gives the walker a corpse under cloth, not a tombstone.
   // The shoulder line breaks twice, the waist caves inward, and the hem forks
@@ -372,6 +411,14 @@ function addEyes(head, spread, y, z, sx = 0.025, sy = 0.018) {
   return eyes;
 }
 
+// Deterministic held noise: a secondary bone snaps to a slightly wrong pose,
+// holds it, then snaps again. Root movement and attack clocks never see this.
+function steppedJerk(time, serial, rate, channel = 0) {
+  const step = Math.floor(time * rate + serial * 0.731 + channel * 3.17);
+  const n = Math.sin(step * 12.9898 + serial * 78.233 + channel * 37.719) * 43758.5453;
+  return (n - Math.floor(n)) * 2 - 1;
+}
+
 function pointSegmentDistanceSq(px, py, pz, a, b) {
   const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
   const len2 = abx * abx + aby * aby + abz * abz;
@@ -500,7 +547,10 @@ function buildWalker(g, mat, limbs) {
   jaw.userData.basePosition = jaw.position.clone();
   jaw.userData.baseRotation = jaw.rotation.clone();
   for (const eye of eyes) eye.userData.baseScale = eye.scale.clone();
-  for (const shoulder of shoulders) shoulder.userData.baseScale = shoulder.scale.clone();
+  for (const shoulder of shoulders) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
   head.userData.walker = {
     head, shroud, shoulders, mouth, jaw, eyes,
     headBase: head.position.clone(),
@@ -510,80 +560,159 @@ function buildWalker(g, mat, limbs) {
 }
 
 function buildResident(g, mat, limbs) {
-  // The house's owner fills a doorway before it enters: a sloped coat, a high
-  // back, and wall-reaching hands around a small, almost buried face.
-  addPart(g, FIGURE_GEO.coat, mat, 0, 0.78, -0.02, 0.72, 1.4, 0.55);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.3, -0.12, 0.48, 0.52, 0.34, -0.18);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.53, -0.04, 0.28, 0.72, 0.28, 0, 0, Math.PI / 2);
-  addPart(g, FIGURE_GEO.sphere, mat, 0, 1.55, -0.25, 0.58, 0.4, 0.32);
+  // The house's owner is built like a doorway that learned to walk: an uneven
+  // lintel of shoulders, one wall-reaching arm, one shortened arm, and a face
+  // wedged under the high side rather than centred on a mannequin torso.
+  addPart(g, FIGURE_GEO.coat, mat, 0, 0.78, -0.02, 0.74, 1.4, 0.57, 0, 0, -0.035);
+  addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.04, 1.3, -0.12, 0.5, 0.54, 0.35, -0.2, 0, 0.055);
+  const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.035, 1.54, -0.055, 0.29, 0.78, 0.29, 0, 0, Math.PI / 2 + 0.055);
+  const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
+    -0.18, 1.59, -0.24, 0.7, 0.43, 0.35, -0.12, 0.04, 0.11);
+
+  // At range this is only a coat seam. The skull light finds that the seam has
+  // depth and a crooked hard latch inside it; attack posture parts it slightly.
+  // Two shared meshes buy the close-range horror without adding glow or a cue.
+  const seam = addPart(g, FIGURE_GEO.slab, WALKER_VOID_MAT,
+    0.055, 1.03, 0.36, 0.09, 0.48, 0.018, 0, 0, -0.075);
+  const latch = addPart(g, FIGURE_GEO.malformedLimb, WALKER_BONE_MAT,
+    0.075, 1.04, 0.382, 0.042, 0.14, 0.035, 0, 0, Math.PI / 2 - 0.19);
 
   const head = new THREE.Group();
-  head.position.set(-0.03, 1.76, 0.075);
-  head.rotation.set(-0.16, 0, -0.12);
-  addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.23, 0.27, 0.2);
-  addPart(head, FIGURE_GEO.slab, mat, 0, -0.2, 0.035, 0.2, 0.13, 0.15);
-  addEyes(head, 0.07, 0.015, 0.19, 0.032, 0.014);
+  head.position.set(0.09, 1.77, 0.09);
+  head.rotation.set(-0.18, 0.06, -0.2);
+  addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.23, 0.28, 0.2, 0.02);
+  addPart(head, FIGURE_GEO.malformedSlab, mat, 0.015, -0.2, 0.045, 0.2, 0.13, 0.15, -0.04, 0, 0.08);
+  addEyes(head, 0.07, 0.015, 0.19, 0.028, 0.012);
   g.add(head);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * 0.43, 1.5, 0.025);
-    armP.rotation.z = s * -0.18;
-    addPart(armP, FIGURE_GEO.limb, mat, 0, -0.56, 0.06, 0.13, 0.58, 0.11);
-    addPart(armP, FIGURE_GEO.sphere, mat, 0, -1.12, 0.1, 0.19, 0.22, 0.1);
+    const longSide = s < 0;
+    armP.position.set(s * (longSide ? 0.48 : 0.43), longSide ? 1.56 : 1.47, 0.025);
+    armP.rotation.z = longSide ? 0.11 : -0.27;
+    addPart(armP, FIGURE_GEO.malformedLimb, mat,
+      0, longSide ? -0.61 : -0.49, 0.065,
+      longSide ? 0.12 : 0.15, longSide ? 0.66 : 0.53, longSide ? 0.1 : 0.13,
+      s * 0.04);
+    const handY = longSide ? -1.2 : -0.98;
+    addPart(armP, FIGURE_GEO.malformedSphere, mat,
+      0, handY, 0.11, longSide ? 0.18 : 0.22, longSide ? 0.22 : 0.19, 0.11);
     for (let i = -1; i <= 1; i++) {
-      addPart(armP, FIGURE_GEO.spike, mat, i * 0.085, -1.36, 0.14,
-        0.045, 0.3 + (i === 0 ? 0.05 : 0), 0.045, 0, 0, Math.PI);
+      addPart(armP, FIGURE_GEO.spike, WALKER_BONE_MAT,
+        i * (longSide ? 0.075 : 0.09), handY - (longSide ? 0.24 : 0.22), 0.145,
+        0.038, (longSide ? 0.29 : 0.25) + (i === 0 ? 0.055 : 0), 0.038,
+        0, 0, Math.PI + i * 0.08);
     }
     limbs.arms.push(armP);
     g.add(armP);
 
     const legP = new THREE.Group();
     legP.position.set(s * 0.2, 0.58, -0.05);
-    addPart(legP, FIGURE_GEO.limb, mat, 0, -0.32, 0, 0.16, 0.36, 0.14);
-    addPart(legP, FIGURE_GEO.slab, mat, 0, -0.68, 0.13, 0.22, 0.1, 0.34, -0.08);
+    addPart(legP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.32, 0, s < 0 ? 0.14 : 0.18, 0.36, s < 0 ? 0.16 : 0.13, s * 0.055);
+    addPart(legP, FIGURE_GEO.malformedSlab, mat,
+      s * 0.025, -0.68, 0.13, s < 0 ? 0.19 : 0.24, 0.1, s < 0 ? 0.37 : 0.31,
+      -0.08, s * 0.05, s * -0.04);
     limbs.legs.push(legP);
     g.add(legP);
   }
+
+  for (const shoulder of [yoke, hump]) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
+  seam.userData.baseScale = seam.scale.clone();
+  latch.userData.baseRotation = latch.rotation.clone();
+  latch.userData.basePosition = latch.position.clone();
+  head.userData.anatomy = {
+    kind: 'resident', head, yoke, hump, seam, latch,
+    headBase: head.position.clone(), headRot: head.rotation.clone(),
+  };
   return head;
 }
 
 function buildKneeler(g, mat, limbs) {
-  // A load-bearing animal silhouette rather than a scaled walker: enormous
-  // shoulder shelf, bowed spine, low forward face, and forelimbs made to plant.
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.08, -0.12, 0.46, 0.52, 0.4, -0.32);
-  addPart(g, FIGURE_GEO.sphere, mat, 0, 1.47, -0.25, 0.54, 0.47, 0.42);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.38, -0.04, 0.28, 0.78, 0.3, 0, 0, Math.PI / 2);
-  for (let i = -1; i <= 1; i++) {
-    addPart(g, FIGURE_GEO.spike, mat, i * 0.16, 1.79 - Math.abs(i) * 0.08, -0.28,
-      0.1, 0.42 - Math.abs(i) * 0.08, 0.1, -0.35);
+  // A load-bearing animal silhouette rather than a scaled walker. Its weight
+  // has collapsed to one side, the shoulder yoke is broader than its pelvis,
+  // and two crooked forelimb joints plant ahead of a face hung underneath it.
+  addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.04, 1.07, -0.12, 0.48, 0.54, 0.42, -0.34, 0, -0.05);
+  const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
+    -0.09, 1.48, -0.25, 0.66, 0.52, 0.46, -0.08, 0.03, 0.1);
+  const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    0.035, 1.39, -0.035, 0.3, 0.82, 0.32, 0.02, 0.04, Math.PI / 2 - 0.08);
+  const spineDefs = [
+    [-0.29, 1.72, 0.1, 0.36, -0.48],
+    [0.015, 1.87, 0.115, 0.5, -0.29],
+    [0.31, 1.69, 0.09, 0.32, -0.12],
+  ];
+  for (const [x, y, width, height, lean] of spineDefs) {
+    addPart(g, FIGURE_GEO.spike, WALKER_BONE_MAT,
+      x, y, -0.3, width, height, width, lean, 0, x * -0.24);
   }
 
   const head = new THREE.Group();
-  head.position.set(0, 1.38, 0.36);
-  head.rotation.x = -0.22;
-  addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.3, 0.25, 0.31);
-  addPart(head, FIGURE_GEO.slab, mat, 0, -0.17, 0.17, 0.27, 0.14, 0.32, -0.18);
-  addEyes(head, 0.095, 0.025, 0.29, 0.04, 0.018);
+  head.position.set(0.1, 1.32, 0.38);
+  head.rotation.set(-0.28, 0.07, 0.24);
+  addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.31, 0.25, 0.32, 0.03);
+  addPart(head, FIGURE_GEO.malformedSlab, mat,
+    0.015, -0.15, 0.17, 0.27, 0.13, 0.32, -0.2, 0, 0.08);
+  const mouth = addPart(head, FIGURE_GEO.slab, WALKER_VOID_MAT,
+    0.015, -0.18, 0.345, 0.18, 0.055, 0.016, -0.08, 0, 0.06);
+  const jaw = addPart(head, FIGURE_GEO.malformedSlab, WALKER_BONE_MAT,
+    0.045, -0.255, 0.32, 0.25, 0.08, 0.13, -0.13, 0.04, 0.14);
+  addPart(head, FIGURE_GEO.spike, WALKER_BONE_MAT,
+    -0.07, -0.19, 0.375, 0.024, 0.105, 0.024, 0, 0, Math.PI + 0.12);
+  addEyes(head, 0.095, 0.025, 0.29, 0.035, 0.015);
   g.add(head);
 
+  const forearms = [];
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * 0.38, 1.32, 0.06);
-    armP.rotation.z = s * -0.15;
-    addPart(armP, FIGURE_GEO.limb, mat, 0, -0.52, 0.16, 0.18, 0.56, 0.16, -0.12);
-    addPart(armP, FIGURE_GEO.sphere, mat, 0, -1.04, 0.27, 0.28, 0.17, 0.34);
+    armP.position.set(s * (s < 0 ? 0.43 : 0.37), s < 0 ? 1.35 : 1.29, 0.045);
+    armP.rotation.z = s < 0 ? 0.13 : -0.25;
+    addPart(armP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.32, 0.1, s < 0 ? 0.17 : 0.2, 0.37, 0.16, -0.28, 0, s * 0.05);
+    const elbow = new THREE.Group();
+    elbow.position.set(s * 0.035, -0.62, 0.2);
+    elbow.rotation.set(-0.46, s * 0.08, s * 0.22);
+    armP.add(elbow);
+    addPart(elbow, FIGURE_GEO.malformedLimb, mat,
+      0, -0.27, 0.11, 0.15, 0.34, 0.14, -0.22, 0, s * -0.09);
+    addPart(elbow, FIGURE_GEO.malformedSphere, mat,
+      s * 0.025, -0.56, 0.25, s < 0 ? 0.27 : 0.31, 0.16, s < 0 ? 0.35 : 0.31,
+      0, s * 0.06, s * 0.08);
+    elbow.userData.baseRotation = elbow.rotation.clone();
+    forearms.push(elbow);
     limbs.arms.push(armP);
     g.add(armP);
 
     const legP = new THREE.Group();
     legP.position.set(s * 0.25, 0.72, -0.28);
     legP.rotation.z = s * 0.2;
-    addPart(legP, FIGURE_GEO.limb, mat, 0, -0.3, -0.08, 0.2, 0.34, 0.18, 0.42);
-    addPart(legP, FIGURE_GEO.slab, mat, 0, -0.62, 0.18, 0.28, 0.11, 0.42, -0.08);
+    addPart(legP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.3, -0.08, s < 0 ? 0.22 : 0.18, 0.34, s < 0 ? 0.17 : 0.21,
+      0.42, s * 0.06);
+    addPart(legP, FIGURE_GEO.malformedSlab, mat,
+      s * 0.035, -0.62, 0.18, s < 0 ? 0.31 : 0.26, 0.11, s < 0 ? 0.39 : 0.45,
+      -0.08, s * 0.05, s * -0.06);
     limbs.legs.push(legP);
     g.add(legP);
   }
+
+  for (const shoulder of [yoke, hump]) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
+  mouth.userData.baseScale = mouth.scale.clone();
+  jaw.userData.basePosition = jaw.position.clone();
+  jaw.userData.baseRotation = jaw.rotation.clone();
+  head.userData.anatomy = {
+    kind: 'kneeler', head, yoke, hump, mouth, jaw, forearms,
+    headBase: head.position.clone(), headRot: head.rotation.clone(),
+  };
   return head;
 }
 
@@ -1258,7 +1387,9 @@ export class Enemies {
         case 'wind': {
           // the wind-up IS the mercy: sound tells you it's coming before it moves
           e.windT += dt;
-          if (e.windT === dt) game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
+          if (e.windT === dt && !game.audio.enemyTell?.(e.kind, { pos: e.pos })) {
+            game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
+          }
           e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.08 * Math.min(1, e.windT / e.spec.windup); });
           if (e.windT >= e.spec.windup) e.state = 'chase';
           break;
@@ -1524,6 +1655,7 @@ export class Enemies {
         }
       }
       if (e.kind === 'walker') this._poseWalker(e, dt, graveClaims.has(e));
+      else this._poseMalformed(e);
       if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
       if (e.graveRiseT > 0 && e.state !== 'dying') {
@@ -2243,7 +2375,10 @@ export class Enemies {
     const stunned = e.state === 'stunned' ? 1 : 0;
     const awake = e.state !== 'dormant' && e.state !== 'dying' ? 1 : 0;
     const attacker = claimed && awake ? 1 : 0;
-    const twitch = Math.sin(e.phase * 1.73 + e.serial * 0.91);
+    const twitchRate = e.state === 'strike' ? 14 : e.state === 'chase' ? 10 : e.state === 'wind' ? 6 : 3.5;
+    const twitch = awake ? steppedJerk(this.game.time, e.serial, twitchRate, 0) : 0;
+    const shoulderJerk = awake ? steppedJerk(this.game.time, e.serial, twitchRate * 0.72, 1) : 0;
+    const sway = Math.sin(e.phase * 1.73 + e.serial * 0.91);
     const chatter = awake * Math.max(0, Math.sin(e.phase * 3.1 + e.serial)) ** 5;
 
     // An assigned attacker uncocks its mask and broadens the corpse's two
@@ -2289,6 +2424,12 @@ export class Enemies {
         shoulder.userData.baseScale.y * (1 + attacker * 0.06),
         shoulder.userData.baseScale.z,
       );
+      const base = shoulder.userData.baseRotation;
+      shoulder.rotation.set(
+        base.x + shoulderJerk * (0.012 + attacker * 0.014),
+        base.y,
+        base.z + shoulderJerk * (index ? -0.026 : 0.036) * (1 + attacker * 0.5),
+      );
     }
     // Pressure bodies keep their forearms below and outside the pall. Only the
     // committed strike snaps them fully at the camera; the hooks are therefore
@@ -2302,8 +2443,153 @@ export class Enemies {
       arms[0].rotation.x = -0.32 - winding * 0.22;
       arms[1].rotation.x = -0.42 - winding * 0.2;
     }
-    W.shroud.rotation.z = twitch * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
+    // Cloth keeps a slow secondary sway; only the head and shoulder bones use
+    // held stop-motion snaps, so locomotion never inherits fake frame drops.
+    W.shroud.rotation.z = sway * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
     W.shroud.rotation.x = -0.08 - striking * 0.1;
+  }
+
+  _poseMalformed(e) {
+    const A = e.mesh.userData.head?.userData.anatomy;
+    if (!A) return;
+    const striking = e.state === 'strike'
+      ? smoothstep(0, 1, clamp((e.strikeT || 0) / (e.spec.strike || 0.66), 0, 1))
+      : 0;
+    const winding = e.state === 'wind'
+      ? clamp((e.windT || 0) / Math.max(0.001, e.spec.windup), 0, 1)
+      : 0;
+    const stunned = e.state === 'stunned' ? 1 : 0;
+    const awake = e.state !== 'dormant' && e.state !== 'dying' ? 1 : 0;
+    const aggressive = e.state === 'chase' || e.state === 'wind' || e.state === 'strike' ? 1 : 0;
+    const rate = e.state === 'strike' ? 13 : e.state === 'chase' ? 8.5 : e.state === 'wind' ? 5.5 : 3;
+    const headJerk = awake ? steppedJerk(this.game.time, e.serial, rate, 2) : 0;
+    const shoulderJerk = awake ? steppedJerk(this.game.time, e.serial, rate * 0.68, 3) : 0;
+
+    if (A.kind === 'resident') {
+      // The face remains trapped under the high shoulder until commitment,
+      // when it pushes forward and the apparently ordinary coat seam parts.
+      A.head.position.set(
+        A.headBase.x + headJerk * 0.012,
+        A.headBase.y - stunned * 0.1 + striking * 0.025,
+        A.headBase.z + winding * 0.045 + striking * 0.115,
+      );
+      A.head.rotation.set(
+        A.headRot.x - winding * 0.055 - striking * 0.16 + stunned * 0.2,
+        A.headRot.y + headJerk * (0.025 + aggressive * 0.022),
+        A.headRot.z + headJerk * 0.038 + stunned * 0.16,
+      );
+
+      const yokeScale = A.yoke.userData.baseScale;
+      A.yoke.scale.set(
+        yokeScale.x * (1 + winding * 0.04 + striking * 0.09),
+        yokeScale.y * (1 + striking * 0.08),
+        yokeScale.z,
+      );
+      const yokeRot = A.yoke.userData.baseRotation;
+      A.yoke.rotation.set(
+        yokeRot.x + shoulderJerk * 0.016,
+        yokeRot.y,
+        yokeRot.z + shoulderJerk * 0.025 - striking * 0.08,
+      );
+      const humpScale = A.hump.userData.baseScale;
+      A.hump.scale.set(
+        humpScale.x * (1 + winding * 0.05 + striking * 0.12),
+        humpScale.y * (1 + striking * 0.07),
+        humpScale.z,
+      );
+      const humpRot = A.hump.userData.baseRotation;
+      A.hump.rotation.set(
+        humpRot.x + shoulderJerk * 0.02,
+        humpRot.y,
+        humpRot.z - shoulderJerk * 0.03 + striking * 0.06,
+      );
+
+      const open = winding * 0.24 + striking;
+      const seamScale = A.seam.userData.baseScale;
+      A.seam.scale.set(
+        seamScale.x * (1 + open * 0.95),
+        seamScale.y * (1 + open * 0.28),
+        seamScale.z,
+      );
+      const latchBase = A.latch.userData.basePosition;
+      A.latch.position.set(
+        latchBase.x + open * 0.025,
+        latchBase.y - open * 0.018,
+        latchBase.z + open * 0.006,
+      );
+      const latchRot = A.latch.userData.baseRotation;
+      A.latch.rotation.set(latchRot.x, latchRot.y, latchRot.z - open * 0.62);
+      return;
+    }
+
+    if (A.kind === 'kneeler') {
+      // The Kneeler does not become a faster animation when angry. Its hanging
+      // head advances, its shoulder burden torques, and the sideways jaw opens;
+      // the lethal root lunge remains wholly owned by the existing state machine.
+      A.head.position.set(
+        A.headBase.x + headJerk * 0.01,
+        A.headBase.y - stunned * 0.075 - winding * 0.025 + striking * 0.025,
+        A.headBase.z + winding * 0.05 + striking * 0.13,
+      );
+      A.head.rotation.set(
+        A.headRot.x - winding * 0.08 - striking * 0.21 + stunned * 0.16,
+        A.headRot.y + headJerk * (0.02 + aggressive * 0.025),
+        A.headRot.z + headJerk * 0.045 + stunned * 0.11,
+      );
+
+      const yokeScale = A.yoke.userData.baseScale;
+      A.yoke.scale.set(
+        yokeScale.x * (1 + winding * 0.05 + striking * 0.1),
+        yokeScale.y * (1 + striking * 0.07),
+        yokeScale.z,
+      );
+      const yokeRot = A.yoke.userData.baseRotation;
+      A.yoke.rotation.set(
+        yokeRot.x + shoulderJerk * 0.018,
+        yokeRot.y,
+        yokeRot.z + shoulderJerk * 0.028 - striking * 0.07,
+      );
+      const humpScale = A.hump.userData.baseScale;
+      A.hump.scale.set(
+        humpScale.x * (1 + winding * 0.04 + striking * 0.1),
+        humpScale.y * (1 + striking * 0.09),
+        humpScale.z,
+      );
+      const humpRot = A.hump.userData.baseRotation;
+      A.hump.rotation.set(
+        humpRot.x - shoulderJerk * 0.018,
+        humpRot.y,
+        humpRot.z - shoulderJerk * 0.024 + striking * 0.055,
+      );
+
+      const open = winding * 0.22 + striking;
+      const mouthScale = A.mouth.userData.baseScale;
+      A.mouth.scale.set(
+        mouthScale.x * (1 + open * 0.42),
+        mouthScale.y * (1 + open * 1.35),
+        mouthScale.z,
+      );
+      const jawBase = A.jaw.userData.basePosition;
+      A.jaw.position.set(
+        jawBase.x + open * 0.018,
+        jawBase.y - open * 0.055,
+        jawBase.z + open * 0.018,
+      );
+      const jawRot = A.jaw.userData.baseRotation;
+      A.jaw.rotation.set(
+        jawRot.x + open * 0.2,
+        jawRot.y,
+        jawRot.z + open * 0.18,
+      );
+      for (const [index, forearm] of A.forearms.entries()) {
+        const base = forearm.userData.baseRotation;
+        forearm.rotation.set(
+          base.x - open * (index ? 0.22 : 0.29),
+          base.y,
+          base.z + (index ? -1 : 1) * open * 0.1,
+        );
+      }
+    }
   }
 
   _graveMausoleumAt(pos) {

@@ -496,11 +496,15 @@ function addFloorAndShell(game, layout) {
   // call for the entire ribbon (world.box merges by material).
   const wetStone = M.headstone.clone();
   wetStone.userData.underfalls = true;   // cave visibility keeps tagged materials
-  wetStone.color.setHex(0x9fb0b4);
-  if ('roughness' in wetStone) wetStone.roughness = 0.22;
+  // This must survive the stretches between fixtures: it is reflected wet
+  // stone, not a coloured breadcrumb. A higher value, wider shoulder and a
+  // restrained emissive floor keep the next physical tread present in every
+  // vista while the unmarked culvert remains genuinely dark.
+  wetStone.color.setHex(0xbcc8ca);
+  if ('roughness' in wetStone) wetStone.roughness = 0.16;
   if ('emissive' in wetStone) {
-    wetStone.emissive = new THREE.Color(0x232c30);
-    wetStone.emissiveIntensity = 0.5;
+    wetStone.emissive = new THREE.Color(0x394548);
+    wetStone.emissiveIntensity = 0.72;
   }
   for (const seg of layout.mainSegments) {
     const n = Math.max(2, Math.ceil(seg.length / 0.9));
@@ -511,7 +515,7 @@ function addFloorAndShell(game, layout) {
       world.box(wetStone,
         lerp(seg.a.x, seg.b.x, t), lerp(seg.a.y, seg.b.y, t) + 0.012,
         lerp(seg.a.z, seg.b.z, t),
-        2 * clamp(w * 0.4, 0.8, 1.55), 0.05, (seg.length / n + 0.08) * 0.98, yaw);
+        2 * clamp(w * 0.46, 0.94, 1.72), 0.06, (seg.length / n + 0.08) * 0.98, yaw);
     }
   }
 
@@ -557,10 +561,10 @@ function addFloorAndShell(game, layout) {
   // district said THIS way. Three additions, all pale (value, not hue), all
   // instanced, none collidable.
   const paleMark = M.headstone.clone();
-  paleMark.color.setHex(0xa8b4b6);
+  paleMark.color.setHex(0xc8d1d2);
   if ('emissive' in paleMark) {
-    paleMark.emissive = new THREE.Color(0x2b3336);
-    paleMark.emissiveIntensity = 0.35;
+    paleMark.emissive = new THREE.Color(0x3a4547);
+    paleMark.emissiveIntensity = 0.58;
   }
 
   // 1. A pale stalagmite marker on the OUTSIDE of every hard turn (>45°), so
@@ -660,7 +664,7 @@ function addFloorAndShell(game, layout) {
       const yaw = Math.atan2(next.x - mouth.x, next.z - mouth.z);
       const dryDark = M.rock.clone();
       dryDark.userData.underfalls = true;
-      dryDark.color.multiplyScalar(0.55);
+      dryDark.color.multiplyScalar(0.42);
       world.box(dryDark, mouth.x, mouth.y + 2.24, mouth.z, 3.1, 0.34, 0.5, yaw);
     }
   }
@@ -1124,10 +1128,27 @@ function buildHatchCistern(game, layout, state) {
   const hatch = new THREE.Group();
   hatch.name = 'cave ceiling hatch';
   markUnderfalls(hatch);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 1.2), M.woodDark);
+  // The player approaches without the skull and must look almost straight up.
+  // Ordinary dark wood/iron vanished against the sealed ceiling even when the
+  // floor was readable. These are still physical materials, but their value and
+  // restrained emissive response preserve the hatch square, frame and chains
+  // between local fixtures without adding another light.
+  const hatchWood = M.woodDark.clone();
+  hatchWood.color.setHex(0x596365);
+  if ('emissive' in hatchWood) {
+    hatchWood.emissive = new THREE.Color(0x182022);
+    hatchWood.emissiveIntensity = 0.58;
+  }
+  const hatchMetal = M.metal.clone();
+  hatchMetal.color.setHex(0x8a9697);
+  if ('emissive' in hatchMetal) {
+    hatchMetal.emissive = new THREE.Color(0x20292b);
+    hatchMetal.emissiveIntensity = 0.68;
+  }
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 1.2), hatchWood);
   door.position.y = 3.78;
   hatch.add(door);
-  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.11, 6, 4), M.metal);
+  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.11, 6, 4), hatchMetal);
   frame.rotation.x = Math.PI / 2;
   frame.rotation.z = Math.PI / 4;
   frame.position.y = 3.68;
@@ -1144,7 +1165,7 @@ function buildHatchCistern(game, layout, state) {
         0, (i & 1) * Math.PI / 2, 0, 0.72, 0.72, 0.72));
     }
   }
-  addInstances(hatch, new THREE.TorusGeometry(0.12, 0.022, 5, 10), M.metal, chainMatrices,
+  addInstances(hatch, new THREE.TorusGeometry(0.12, 0.022, 5, 10), hatchMetal, chainMatrices,
     { name: 'mismatched hatch pull chains' });
   hatch.position.set(H.x, y, H.z);
   scene.add(hatch);

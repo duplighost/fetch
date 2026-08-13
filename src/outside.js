@@ -3182,12 +3182,12 @@ export class Forest {
     const { world, scene, mats: M, audio } = game;
     const up = new THREE.Vector3(0, 1, 0);
     const ropeMat = M.curtain.clone();
-    if (ropeMat.color) ropeMat.color.multiplyScalar(1.35);
+    if (ropeMat.color) ropeMat.color.multiplyScalar(1.48);
     const knotMat = M.headstone.clone();
-    if (knotMat.color) knotMat.color.multiplyScalar(0.86);
+    if (knotMat.color) knotMat.color.multiplyScalar(1.06);
     if ('emissive' in knotMat) {
-      knotMat.emissive = new THREE.Color(0x2c3134);
-      knotMat.emissiveIntensity = 0.24;
+      knotMat.emissive = new THREE.Color(0x394145);
+      knotMat.emissiveIntensity = 0.38;
     }
 
     const segs = [];
@@ -3212,7 +3212,12 @@ export class Forest {
       const top = base.clone().add(new THREE.Vector3(0, this.chain.height + 1.35, 0));
       seg(base, top, 0.27);
       seg(top, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), 0.12);
-      seg(pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.026);
+      // The dropped line and its bone-pale knot are the aiming surface. They
+      // used to disappear into the canopy at ordinary mouse-look distance,
+      // even though the generous physical target was already correct. Make
+      // the authored object match that affordance; do not touch swing math or
+      // the derived knot positions.
+      seg(pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.042);
       knots.push(pivot.clone());
 
       const flag = `forestChain:${index}`;
@@ -3227,10 +3232,21 @@ export class Forest {
           game.player.beginSwing(pivot, { maxT: 5.8 });
           game.flag(`${flag}:latched`);
           if (audio?.creak) audio.creak({ pos: pivot, gain: 0.5, rate: 0.82 + index * 0.045 });
+          // Once the current knot has answered, the next physical knot gives
+          // one quiet directional complaint. It teaches the consecutive route
+          // through the world and HRTF position, never through a HUD marker or
+          // invisible aim correction.
+          if (link?.nextPivot && game.after) {
+            game.after(0.24, () => {
+              if (!game.player.swing || game.act !== 'forest') return;
+              audio?.creak?.({ pos: link.nextPivot, gain: 0.23, rate: 1.28 });
+            });
+          }
           return 'anchor';
         },
       });
-      links.push({ s, pivot: pivot.clone(), target });
+      const link = { s, pivot: pivot.clone(), target, nextPivot: null };
+      links.push(link);
     };
 
     addLink(this.chain.seedS, 5);          // the teacher: hands to the searchers-line pocket
@@ -3250,16 +3266,20 @@ export class Forest {
     wood.name = 'chain supports and lines';
     scene.add(wood);
 
-    const knotGeo = new THREE.DodecahedronGeometry(0.13, 0);
+    const knotGeo = new THREE.DodecahedronGeometry(0.19, 0);
     const knotMesh = new THREE.InstancedMesh(knotGeo, knotMat, knots.length);
     const kq = new THREE.Quaternion();
     knots.forEach((p, i) => {
-      mtx.compose(p, kq, sc.set(1.0, 1.35, 1.0));
+      mtx.compose(p, kq, sc.set(1.0, 1.5, 1.0));
       knotMesh.setMatrixAt(i, mtx);
     });
     knotMesh.instanceMatrix.needsUpdate = true;
     knotMesh.name = 'chain pale knots';
     scene.add(knotMesh);
+
+    // Link only the five consecutive road knots. The seed knot teaches the
+    // verb into a side pocket and should not call across half the forest.
+    for (let i = 1; i < links.length - 1; i++) links[i].nextPivot = links[i + 1].pivot;
 
     this.chainLinks = links;
   }

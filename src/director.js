@@ -42,7 +42,11 @@ const AMBIENT_BY_ACT = {
   // see now". A little — so the forest comes back up, and the carried light
   // comes up with it rather than instead of it.
   bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.46,
-  forest: 0.54, clearing: 0.68, cave: 0.30, mirror: 0.6,
+  // Underfalls has no carried skull-light. At 0.30 its authored wet line and
+  // far hatch disappeared between local fixtures, turning navigation into a
+  // wall-feeling exercise. 0.42 still leaves it darker than the forest while
+  // preserving enough floor/wall value for the physical route grammar to read.
+  forest: 0.54, clearing: 0.68, cave: 0.42, mirror: 0.6,
 };
 const BACKGROUND_BY_ACT = {
   bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
@@ -617,7 +621,6 @@ export class Director {
       g.baseTension = 0.42;
       g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 60);
       g.audio.skullScream(g.camera.getWorldPosition(new THREE.Vector3()));
-      g.audio.sting(0.72);
       g.shake(0.22);
     }
 
