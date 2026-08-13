@@ -1,3 +1,108 @@
+# HANDOFF — 2026-08-12, the to-fix sweep (CURRENT — LIVE ON THE SITE)
+
+Read `AGENTS.md` first. Short version: Alex sent a to-fix list with
+screenshots; all of it shipped to production today except what is under
+"Not done" below. Production = site repo qualiacology `fetch/` = game branch
+`claude/to-fix-aug12` (pushed to origin). **Game-repo `main` is OLDER than
+the site now — work from the branch, not main.** Six site PRs (#46–#51),
+each verified with the site repo's `build/qa/fetch-boot-check.mjs` — run it
+before shipping anything; it exists because 74 green counter checks once
+shipped a game you could hear but not see.
+
+## Done today (do not redo)
+
+- Every "freeze / lag when entering areas / hit-something-and-it-freezes"
+  report was ONE bug: three.js recompiles every shader when the number of
+  visible lights changes. The census is now pinned (`world.js`
+  `pinLightCensus`). **Law: never add or remove a light at runtime.**
+  Pre-create it, or borrow via `world.loanLight`/`returnLight`. Candle
+  descriptors pushed to `world.candles` are always safe.
+- Empty hands turn over and read as hands (`skull.js`).
+- Firebox shows real fire; broken planks fall clear of the cellar doorway;
+  the 8th stepping stone in the water IS in (`outside.js`, `bridgeZ` —
+  Alex asked; it is done).
+- House enemy comes out early and actually hunts: door-to-door routing,
+  closing a door costs it time, slamming one staggers it
+  (`enemies.js`/`director.js`; gate =
+  `tests/house-chase-doors-regression.mjs`).
+- Enemies emerge from the ground by default; the nursery reveal grows the
+  real creature, no placeholder swap (`enemies.js`).
+- THE CHAIN: five consecutive swing knots in the forest plus a teaching
+  link (`outside.js`: `this.chain`, `_buildChain`). The pivot heights and
+  spacing are DERIVED numbers with the law written beside the data — read
+  that comment before moving anything.
+- The bell beat is finally necessary: the guest candle is the only flame,
+  the basement pilot is cold until the carried fire lights it, and the
+  incinerator gates on `pilotLit` (`house.js`;
+  `tests/house-critical-path-regression.mjs` holds the whole contract).
+- Underfalls route legibility: pale wet ribbon on the main route only,
+  chamber floor discs, flatter light falloff, turn markers, chamber
+  doorjambs, dry lintel on the culvert mouth, wall value ladder
+  (`underfalls.js`, `atmosphere.js`).
+- Ossuary: entry faces down the corridor, counterweight is bolted to the
+  wall, bone niches, a light rhythm per baffle, and the exit collider
+  honestly follows the sinking slab (`outside.js`).
+- The archive back room wakes when the player walks in and has one
+  hittable collar-valve the whole room answers; the kennel counterweight
+  has visible chain, a pre-solve light sliver, strain audio during the
+  hold, and a slam on early release (`house.js`).
+
+## Alex's fresh feedback — his words are the spec; none of this is done
+
+1. "i don't think the contraption on the first floor that you need to move
+   to the window needs to be moved in this version to ring the bell, but
+   I'm not sure." — the window trolley relay vs the direct study bell.
+   VERIFY what the trolley actually does now before touching it; it may
+   just need to read as optional. Don't remove anything on a hunch.
+2. "That light in the last room of the basement is still a bit odd." —
+   deep-basement rooms (`house.js`, archive lamp / kennel lamp area). Look
+   at it in-game first; decide what "odd" is before changing it.
+3. "the forest feels better, but it is still a bit awkward." — open-ended.
+   Play it. Small feel passes, not rework; the chain numbers are derived.
+4. "Inside the waterfall is cool, but its kind of so dark you just have to
+   feel around. there should be a method to the madness." — the route
+   markers shipped, but the cave act may simply be too dark overall.
+   Consider the act's ambient floor (`director.js`, `AMBIENT_BY_ACT`).
+   Alex is colourblind — brightness/shape/motion only — and mind the
+   light-census law above.
+5. "we still need to make these enemies look freakier. some of the enemies
+   we used in the game marrow actually looked really freaky. and sounded
+   freaky." — raid MARROW for creature look AND sound (per his memory the
+   hub copy at qualiacology `marrow/` is the only source). FETCH creatures
+   live in `enemies.js` (`buildWalker` / `buildResident` / `buildKneeler`).
+   Keep the animation contract (limbs arrays, head userData) intact.
+6. "we still have some odd scream sound effect in this one." — `audio.js`,
+   everything is synthesized, no files. He has called the scream lame
+   before; it has never been fixed.
+
+## Also not done (planned, never built)
+
+- The ossuary far exit is honest but still a proximity swap past
+  decorative rungs. The real climb (ramp flights up a shaft, a hatch the
+  counterweight opens, a matching arrival hatch at the forest gate) was
+  planned and not built.
+- The ossuary side pockets are still empty rooms.
+
+## Rules that get work rejected
+
+Throw grammar is sacred (press = throw, hold = stays out, release =
+returns; no charge). `FEEL_PROFILE` in `skull.js` is frozen. Alex is
+colourblind — no read may depend on hue, ever. No HUD, no on-screen words,
+no control theft. No `setTimeout` — dt-driven beats only (`game.after`).
+Never add/remove lights at runtime. This checkout is shared — work in your
+own worktree; never check out over someone else's tree.
+
+## Gates (all green before any deploy; run from the game repo root)
+
+`node tests/smoke.mjs` · `tests/autotest.mjs` · `tests/regressions.mjs`
+(54) · `tests/playthrough.mjs` · `tests/house-critical-path-regression.mjs`
+· `tests/render-perf.mjs`. Deploy = copy `src/` into qualiacology
+`fetch/src/`, feature branch, PR, boot-check the Netlify preview
+(`node build/qa/fetch-boot-check.mjs <preview-url>/fetch/`), merge only
+with Alex's approval.
+
+---
+
 # HANDOFF — 2026-08-10, bell/pilot/intruder recovery (CURRENT, UNRELEASED)
 
 Read `AGENTS.md` first. This section supersedes every release-state claim below.
