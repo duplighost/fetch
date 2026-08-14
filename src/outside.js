@@ -8,6 +8,7 @@ import { RNG, clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
 import { buildUnderfalls } from './underfalls.js';
 import { makeKey } from './house.js';
+import { buildMarrowArea } from './marrow.js';
 
 export const FOREST_GATE = { x: 2, z: 43 };
 export const CLEARING_BASIN = Object.freeze({
@@ -285,7 +286,11 @@ function buildGraveyardLandmarks(game) {
     }
     // The player reads a hole and walks around it; the skull can still cross
     // the opening, preserving combat lines and avoiding invisible ricochets.
-    world.addCollider(x - 0.62, -0.8, z - 1.28, x + 0.62, 0.82, z + 1.28, { skullPass: true });
+    const pitCollider = world.addCollider(x - 0.62, -0.8, z - 1.28, x + 0.62, 0.82, z + 1.28, { skullPass: true });
+    // the northeast pit is THE MARROW's mouth: once the yard's business is
+    // done it stops being a lie (marrow.js collapses this collider and the
+    // player can step down into somewhere that should not be under here)
+    if (x === 11.8) game.marrowPit = { pit, collider: pitCollider, x, z };
     landmarks.push(pit);
   }
   game.graveLandmarks = landmarks;
@@ -294,6 +299,7 @@ function buildGraveyardLandmarks(game) {
   buildGraveyardGate(game);
   buildSealedMausoleumSecret(game);
   buildOssuaryRoute(game);
+  buildMarrowArea(game);
 }
 
 // ------------------------------------------- the sealed mausoleum secret
@@ -376,12 +382,22 @@ function buildSealedMausoleumSecret(game) {
   key.rotation.set(-Math.PI / 2 + 0.28, 0, 0.7);
   key.visible = false;
   scene.add(key);
+  // "i didn't see the key... the skull wasn't holding a key" — the key now
+  // GLOWS in the rubble (descriptor + breathing scale) and keeps glowing in
+  // the skull's mouth after the grab, so the carry reads at a glance.
+  const keyGlow = { x: 18.52, y: 0.5, z: 37.5, intensity: 0, r: 4 };
+  world.candles.push(keyGlow);
   const keyTarget = world.addFetchTarget({
     id: 'mausoleumKey', object: key, radius: 0.7, enabled: false,
     onHit(skull) {
       this.enabled = false;
       skull.grab('mausoleumKey', key);
       game.flag('gotMausoleumKey');
+      key.traverse((o) => {
+        if (o.isMesh && o.material && 'emissiveIntensity' in o.material) {
+          o.material.emissiveIntensity = 2.4;
+        }
+      });
       return 'return';
     },
   });
@@ -424,12 +440,20 @@ function buildSealedMausoleumSecret(game) {
   });
 
   let grateOpenT = 0;
-  game.tickers.push((dt) => {
+  game.tickers.push((dt, time) => {
     const g5 = keyGrave();
     const toppled = g5 ? g5.hits >= 2 : false;
     const gotten = game.flags.has('gotMausoleumKey');
     key.visible = toppled && !gotten;
     keyTarget.enabled = key.visible;
+    // the revealed key is unmissable: it breathes light and size
+    keyGlow.intensity += ((key.visible ? 1.3 + Math.sin(time * 2.6) * 0.25 : 0)
+      - keyGlow.intensity) * Math.min(1, dt * 3);
+    if (key.visible) key.scale.setScalar(1.4 + Math.sin(time * 2.6) * 0.09);
+    // the unlocked canine invites the throw: its metal breathes
+    if (!game.flags.has('skullSharpened') && game.flags.has('mausoleumUnlocked')) {
+      toothMat.emissiveIntensity = 0.85 + Math.sin(time * 3.1) * 0.35;
+    }
     const unlocked = game.flags.has('mausoleumUnlocked');
     if (unlocked && m.darkness.visible) m.darkness.visible = false;
     grateOpenT += ((unlocked ? 1 : 0) - grateOpenT) * Math.min(1, dt * 1.4);
@@ -445,6 +469,25 @@ function buildSealedMausoleumSecret(game) {
       for (const socket of game.skull.sockets) socket.scale.multiplyScalar(1.13);
       tooth.visible = false;
       toothTarget.enabled = false;
+      // "some effect making the skull look stronger with a cool outline or
+      // glow" — an inverted-hull rim in pale steel over every solid skull
+      // mesh. Value only: it reads identically in any light and any hue.
+      const outlineMat = new THREE.MeshBasicMaterial({
+        color: 0x9fb4b8, side: THREE.BackSide, transparent: true, opacity: 0.4,
+        depthWrite: false, toneMapped: false,
+      });
+      const shellSources = [];
+      game.skull.root.traverse((o) => {
+        if (o.isMesh && o.material && o.material.transparent !== true) shellSources.push(o);
+      });
+      for (const src of shellSources) {
+        const shell = new THREE.Mesh(src.geometry, outlineMat);
+        shell.position.copy(src.position);
+        shell.rotation.copy(src.rotation);
+        shell.scale.copy(src.scale).multiplyScalar(1.06);
+        shell.layers.mask = src.layers.mask;
+        src.parent.add(shell);
+      }
     }
   });
 }

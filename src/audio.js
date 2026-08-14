@@ -1179,6 +1179,38 @@ export class GameAudio {
     });
   }
 
+  // MARROW's eye-glimpse (its audio.js:500-524), ported for THE MARROW: a
+  // bandpassed noise swell plus three descending sawtooth formants — a wet
+  // blink from something that has no lids to blink with.
+  eyeGlimpse(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.05, 0.55, 0.75);
+    const swell = ctx.createBufferSource();
+    swell.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(980, t);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.exponentialRampToValueAtTime(0.16 * (opts.gain ?? 1), t + 0.09);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    swell.connect(bp).connect(sg).connect(out);
+    swell.start(t); swell.stop(t + 0.34);
+    for (const [i, f] of [410, 610, 870].entries()) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f * 1.1, t + i * 0.02);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.72, t + 0.24 + i * 0.02);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, t + i * 0.02);
+      og.gain.exponentialRampToValueAtTime(0.045 * (opts.gain ?? 1), t + 0.05 + i * 0.02);
+      og.gain.exponentialRampToValueAtTime(0.0001, t + 0.26 + i * 0.02);
+      osc.connect(og).connect(out);
+      osc.start(t + i * 0.02); osc.stop(t + 0.3 + i * 0.02);
+    }
+  }
+
   // A wordless human inhale for the final black. The noise breath rises toward
   // a tight, involuntary glottal catch; both layers share the HRTF bus so the
   // stranger occupies a precise point just behind the listener instead of

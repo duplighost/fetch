@@ -438,7 +438,7 @@ export class Skull {
       // frame, arms at rest. ("I do not even think the player needs their
       // hands up after the skull is gone.") Hands only — hold itself never
       // moves, so the kept locket and the finale's pose capture are safe.
-      lowered: { x: 0.152, y: -0.335, z: 0.028, rx: -0.06, ry: 0.34, rz: 0.05 },
+      lowered: { x: 0.152, y: -0.56, z: 0.028, rx: -0.06, ry: 0.34, rz: 0.05 },
       t: 0,   // 0 = cradle, 1 = empty
       g: 0,   // 0 = waiting poses above, 1 = lowered (skull permanently gone)
     };
@@ -456,10 +456,13 @@ export class Skull {
       const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 10), sleeveMat);
       fore.position.copy(a).addScaledVector(dir, 0.5);
       fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      fore.userData.baseY = fore.position.y;
       hold.add(fore);
+      return fore;
     };
-    mkForearm(-1);
-    mkForearm(1);
+    // the sleeves must sink WITH the lowered hands after the bargain — left
+    // behind, they read as a black outline at the bottom of the frame
+    this._handPose.forearms = [mkForearm(-1), mkForearm(1)];
 
     this._grip = 0.55;
     this.hold = hold;
@@ -553,6 +556,12 @@ export class Skull {
       const side = i === 0 ? -1 : 1;
       P.hands[i].position.set(side * x, y, z);
       P.hands[i].rotation.set(rx, -side * ry, -side * rz);
+      // fully sunk = fully gone: no aspect ratio may catch a knuckle
+      P.hands[i].visible = g < 0.985;
+    }
+    for (const fore of P.forearms || []) {
+      fore.position.y = fore.userData.baseY - g * 0.5;
+      fore.visible = g < 0.985;
     }
     P.t = t;
     P.g = g;
