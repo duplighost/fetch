@@ -707,6 +707,95 @@ try {
     return { checks, diagnostics: null };
   });
 
+  await scenario('marrow-descent', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.flag('graveyardResolved');   // the yard's business is done; the pit wakes
+    g.skull.holdNow();
+    F.stepWith(0.3, {}, false);
+    check('the northeast pit collider collapses once the marrow is open',
+      g.marrowPit && g.marrowPit.collider.max.y === g.marrowPit.collider.min.y,
+      { max: g.marrowPit?.collider?.max?.y });
+    g.player.pos.set(11.8, 0.05, 36.2);
+    g.player.vel.set(0, 0, 0);
+    g.player._sync(0);
+    F.stepWith(0.3, {});
+    const M = g.marrow;
+    check('stepping into the pit descends into the marrow',
+      M.inMarrow === true && g.flags.has('marrow:entered') && g.flags.has('marrow:witnessed'),
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    check('the marrow wears its own palette while fetch waits above',
+      g.scene.fog && g.scene.fog.color.getHex() === 0x160611,
+      { fog: g.scene.fog?.color?.getHex?.().toString(16) });
+    // let the introduction play out: it claws up, stares, folds away, and is
+    // already waiting at the altar
+    F.stepWith(6.0, {});
+    const P = M.presence.group;
+    check('after the introduction the presence guards the altar',
+      P.visible === true && Math.abs(P.position.z - (M.origin.z + 26 - 3.6)) < 0.5,
+      { at: P.position.toArray().map((v) => +v.toFixed(1)) });
+
+    // the skull passes THROUGH it: your verb is not from its game
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 17);
+    const dxT = P.position.x - g.player.pos.x;
+    const dzT = P.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxT, -dzT);
+    g.player.pitch = Math.atan2(1.3 - 1.62, Math.hypot(dxT, dzT));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(1.2, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('a thrown skull passes through the guardian and comes home',
+      g.skull.mode === 'held' && P.visible === true && M.yielded === false,
+      { mode: g.skull.mode, visible: P.visible });
+
+    // MARROW's way: walk into the loom until it yields
+    for (let t = 0; t < 8 && !M.yielded; t += 0.1) {
+      const dx = P.position.x - g.player.pos.x;
+      const dz = P.position.z - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+    }
+    F.stepWith(2.0, {});
+    check('walking into the loom makes the guardian yield through the floor',
+      M.yielded === true && g.flags.has('marrow:guardianYielded'),
+      { dist: +M.guardianDist.toFixed(2) });
+
+    // the relic rides home in the jaw
+    const jawBefore = g.skull.jaw.children.length;
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
+    const relicY = M.origin.floor + 1.24;
+    const dz2 = (M.origin.z + 26 - 2.2) - g.player.pos.z;
+    g.player.yaw = Math.atan2(0, -dz2);
+    g.player.pitch = Math.atan2(relicY - (g.player.pos.y + 1.62), Math.abs(dz2));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.8, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('the relic is taken and rides in the skull jaw',
+      g.flags.has('marrow:relicKept') && g.skull.jaw.children.length > jawBefore,
+      { jawBefore, jawAfter: g.skull.jaw.children.length });
+
+    // leave: the surface takes its palette back
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 0.4);
+    g.player._sync(0);
+    F.stepWith(0.4, {});
+    check('walking out surfaces beside the grave and restores the fog',
+      M.inMarrow === false && g.act === 'graveyard'
+      && g.scene.fog.color.getHex() !== 0x160611,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    return { checks, diagnostics: { escorted: g.flags.has('marrow:escorted') } };
+  });
+
   await scenario('forest-mouth-boundary', () => {
     const F = window.__FETCH;
     const g = window.__game;

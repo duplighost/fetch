@@ -1,3 +1,73 @@
+# HANDOFF - 2026-08-14, THE MARROW (branch claude/marrow-area)
+
+Alex: "the enemies in the game i made called 'marrow' ... are actually really
+freaky and cool. I wish we could have an area with them." Then: "start
+working on the next run you mentioned." Built: **src/marrow.js** — a sealed
+optional district inhabited by MARROW's actual creatures, ported from the
+shipped source at qualiacology/marrow (its entity.js, scares.js,
+graveyard.js, crypt.js — see the full bestiary in this session's record).
+
+## The area
+
+- ENTRANCE: after `graveyardResolved`, the NORTHEAST open grave pit
+  ([11.8, 36.2] — `game.marrowPit`, set in the graveSites loop) stops being
+  a lie: it breathes warm light (gated descriptor) and knocks from below
+  when stood near; its collider collapses (derived per tick) and stepping
+  in swaps to the district at offset (70, -10), floor -5 — the ossuary's
+  mirror. Level string 'marrow'; audio zone 'basement' (interior verb);
+  scene fog/background SWAPPED to MARROW's crypt palette (0x160611) on
+  entry and restored exactly on exit.
+- THE MOURNING STATUES (marrow graveyard.js:182-210, scaled 1.4): four
+  pale weepers along the walk that turn to face you ONLY while unseen —
+  vicious against a weapon you have to watch fly.
+- THE DARK EYES (scares.js:198-240): the slitted three-eyed apparition,
+  unlit basic materials, 0.82s life, 38Hz buzz, spawning in the wall dark
+  between candle clusters every 9-17s. New audio.eyeGlimpse() (ported).
+- THE PRESENCE (entity.js whole file): the 78-mesh starved thing —
+  malform() noise on every primitive, wrenched head, hanging jaw, third
+  eye, second face in its shoulder, chest eyes, rib-halo, black rags,
+  stop-motion jitter at held 14fps frames. NO lights ported (emissive
+  carries it; census untouched). On first entry it ERUPTS from the floor
+  ahead, stares, folds away — then waits at the altar in GUARD mode,
+  growing 40% taller as you close, head bowing down at you.
+  **The skull passes THROUGH it** (a flinch and a whisper — your verb is
+  not from its game). The way past is MARROW's: walk into the loom to
+  d<1.15 and it YIELDS — folds through the floor, the earth thuds under
+  your feet. It did not leave.
+- THE RELIC: MARROW's small wet thing on the altar. Outbound throw takes
+  it once the guardian yields; it rides home as a dangle in the skull's
+  JAW (locket precedent, opposite side). Then the WALLS TRAVEL beat: 5
+  knocks circle nearer with shrinking gaps, and it rises one last time
+  between you and the door — and lets you pass.
+- Flags: marrow:entered/witnessed/guardianYielded/relicKept/escorted.
+  State on game.marrow. Checkpoints as 'graveyard' (host act law).
+
+## Also on this branch (Alex's live-play notes, same night)
+
+- MAUSOLEUM LEGIBILITY: the key now GLOWS in grave #6's rubble (descriptor
+  + breathing scale), keeps glowing IN THE SKULL'S MOUTH after the grab
+  (emissive 2.4), the unlocked canine breathes light to invite the throw,
+  and the sharpened skull wears an INVERTED-HULL pale-steel OUTLINE
+  (BackSide shells over every solid skull mesh) — "some effect making the
+  skull look stronger with a cool outline or glow."
+- HANDS: the lowered-hands pose left the forearm sleeves behind as "a
+  black outline at the bottom of the screen." The sleeves now sink WITH
+  the gone-blend and everything hides fully at blend 0.985.
+
+## Verification
+
+- regressions 73 (marrow-descent: 9 checks — pit collapse, entry, palette,
+  guardian at altar, throw-through, yield-by-walking, relic in jaw, exit
+  with fog restored). district-culling 14 (marrow sealed at 202 draws,
+  zero leaks, exact restore; sweep max 443/450). Full battery on the
+  branch tip — see test results.
+- KNOWN SCRIPT TRAP: placing a test player inside the pit footprint on the
+  same tick the district opens gets ejected by the not-yet-collapsed
+  collider — step once AFTER setting graveyardResolved before placement
+  (real play is unaffected; the collider is long-collapsed by approach).
+
+---
+
 # HANDOFF - 2026-08-14, THE BIG FEEDBACK PASS (branch claude/feedback-aug13-night)
 
 Alex's second feedback batch, same night, every item actioned. Two design

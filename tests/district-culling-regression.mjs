@@ -333,6 +333,50 @@ try {
       { ...ossuaryAfter, ceiling: 450 },
     );
 
+    // THE MARROW: the third sealed district obeys the same law — occupied,
+    // it hides every exterior top-level root; exited, it restores exactly.
+    g.enemies.clear();
+    const beforeMarrow = snapshotVisibility();
+    g.flag('graveyardResolved');
+    g.skull.holdNow();
+    g.player.pos.set(11.8, 0.05, 36.2);
+    g.player.vel.set(0, 0, 0);
+    g.player._sync(0);
+    F.step(1 / 120, 40, false);
+    const marrow = g.marrow;
+    const marrowDrawSamples = [];
+    for (let i = 0; i < 3; i++) {
+      g.render();
+      marrowDrawSamples.push(g.lastRender.drawCalls);
+    }
+    const marrowDraws = g.lastRender.drawCalls;
+    const allowedMarrowRoot = (child) => child === g.camera
+      || child === g.skull.root
+      || child === marrow.root
+      || child === g._impactRing
+      || child === g._impactLight
+      || child.isLight
+      || child === g.world.lightRoot
+      || child.userData?.keepInMarrow === true;
+    const marrowLeaks = g.scene.children
+      .filter((child) => child.visible && !allowedMarrowRoot(child)).map(label);
+    check(
+      'the occupied marrow hides every exterior top-level root and stays below the render ceiling',
+      marrow.inMarrow && marrow.root.visible && marrowLeaks.length === 0
+        && marrowDraws > 0 && marrowDraws < 450,
+      { inMarrow: marrow.inMarrow, drawCalls: marrowDraws, samples: marrowDrawSamples,
+        leaks: marrowLeaks, ceiling: 450 },
+    );
+    g.player.pos.set(marrow.origin.x, marrow.origin.floor, marrow.origin.z + 0.4);
+    g.player._sync(0);
+    F.step(1 / 120, 40, false);
+    const marrowRestoreDiff = visibilityDiff(beforeMarrow);
+    check(
+      'the marrow exit restores every saved exterior visibility bit exactly',
+      !marrow.inMarrow && !marrow.root.visible && marrowRestoreDiff.length === 0,
+      { count: marrowRestoreDiff.length, first: marrowRestoreDiff.slice(0, 5) },
+    );
+
     // Repeat through the intended far hatch as well. This is a one-way chapter
     // boundary: the ossuary snapshot must restore first, then the completed
     // house/yard district is intentionally retired as the forest act begins.
@@ -427,6 +471,7 @@ try {
       ['house-after-cave', houseAfterCave.drawCalls],
       ['ossuary', ossuaryInside.drawCalls],
       ['grave-after-ossuary', ossuaryAfter.drawCalls],
+      ['marrow', marrowDraws],
       ['grave-after-far-hatch', ossuaryForward.drawCalls],
     ];
     const maxRender = Math.max(...renderSamples.map(([, calls]) => calls));
