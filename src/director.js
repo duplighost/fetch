@@ -114,8 +114,17 @@ export class Director {
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
     g.ambientTarget = AMBIENT_BY_ACT[act] ?? 1;
-    g.scene.fog.color.setHex(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
-    g.scene.background.setHex(BACKGROUND_BY_ACT[act] ?? 0x03050a);
+    // fog COLOUR eases like density does. Snapping it while density lagged
+    // gave every act boundary a two-stage look — a clear "better version"
+    // for a second, then the haze arriving like a second load. ("it almost
+    // seemed that way" — it literally was.) Hard act sets seed both.
+    g.fogColorTarget = new THREE.Color(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
+    g.bgColorTarget = new THREE.Color(BACKGROUND_BY_ACT[act] ?? 0x03050a);
+    if (hard) {
+      g.scene.fog.color.copy(g.fogColorTarget);
+      g.scene.background.copy(g.bgColorTarget);
+      g.scene.fog.density = g.fogTarget;
+    }
     this.approach = APPROACH_BY_ACT[act] ?? this.approach;
     // The skull may look afraid; the player's calibrated throw never changes.
     g.skull.graveFear = act === 'graveyard';   // expression: the hands tremble

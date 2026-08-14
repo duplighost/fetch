@@ -1146,6 +1146,10 @@ class Game {
 
     // fog eases toward the act's density
     this.scene.fog.density = damp(this.scene.fog.density, this.fogTarget, 0.8, dt);
+    // colour and sky ease alongside density: atmosphere arrives as weather
+    // rolling in, never as a second version of the room loading up
+    if (this.fogColorTarget) this.scene.fog.color.lerp(this.fogColorTarget, Math.min(1, dt * 1.1));
+    if (this.bgColorTarget) this.scene.background.lerp(this.bgColorTarget, Math.min(1, dt * 1.1));
   }
 
   _interact() {

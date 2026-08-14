@@ -435,8 +435,22 @@ export function buildMarrowArea(game) {
 
   // ---- the pit entrance (surface side) -----------------------------------
   // the northeast open grave; game.marrowPit is set by buildGraveyard.
+  // "i didn't see any enemies from marrow if they existed" — the mouth was
+  // too quiet. Once open it is UNMISSABLE now: a breathing ember shimmer
+  // floats over the black, the glow is strong, the under-knocks carry
+  // twelve metres, and the moment the yard resolves the pit announces
+  // itself once across the graveyard.
   const pitGlow = { x: 11.8, y: 0.45, z: 36.2, intensity: 0, r: 4.5 };
   world.candles.push(pitGlow);
+  const pitEmber = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.95, 2.25),
+    new THREE.MeshBasicMaterial({
+      color: 0xff7a3a, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+  pitEmber.rotation.x = -Math.PI / 2;
+  pitEmber.position.set(11.8, 0.03, 36.2);
+  scene.add(pitEmber);
 
   const state = {
     origin: { x: MX, z: MZ, floor: FLOOR },
@@ -480,23 +494,25 @@ export function buildMarrowArea(game) {
     sealActive = false;
   };
 
-  // MARROW's palette rides the fog: save FETCH's, wear the crypt's inside
+  // MARROW's palette rides the fog TARGETS (the main loop eases colour and
+  // density as one weather system) — the descent grades into the wine-dark
+  // and the surface takes its own air back on the way out. Setting the fog
+  // directly would fight the easing every frame.
   const enterPalette = () => {
-    if (!scene.fog) return;
     state._fogSaved = {
-      color: scene.fog.color.getHex(),
-      density: scene.fog.density,
-      bg: scene.background?.getHex?.() ?? null,
+      color: game.fogColorTarget ? game.fogColorTarget.getHex() : scene.fog.color.getHex(),
+      density: game.fogTarget ?? scene.fog.density,
+      bg: game.bgColorTarget ? game.bgColorTarget.getHex() : (scene.background?.getHex?.() ?? 0x03050a),
     };
-    scene.fog.color.setHex(0x160611);
-    scene.fog.density = 0.052;
-    if (scene.background?.setHex) scene.background.setHex(0x0d030a);
+    game.fogColorTarget = new THREE.Color(0x160611);
+    game.bgColorTarget = new THREE.Color(0x0d030a);
+    game.fogTarget = 0.052;
   };
   const exitPalette = () => {
-    if (!scene.fog || !state._fogSaved) return;
-    scene.fog.color.setHex(state._fogSaved.color);
-    scene.fog.density = state._fogSaved.density;
-    if (scene.background?.setHex && state._fogSaved.bg != null) scene.background.setHex(state._fogSaved.bg);
+    if (!state._fogSaved) return;
+    game.fogColorTarget = new THREE.Color(state._fogSaved.color);
+    game.bgColorTarget = new THREE.Color(state._fogSaved.bg);
+    game.fogTarget = state._fogSaved.density;
     state._fogSaved = null;
   };
 
@@ -523,13 +539,28 @@ export function buildMarrowArea(game) {
     const opened = game.flags.has('graveyardResolved');
 
     // the pit breathes once the yard's business is done
-    pitGlow.intensity += (((opened && !state.inMarrow) ? 0.85 + Math.sin(time * 1.3) * 0.18 : 0)
+    pitGlow.intensity += (((opened && !state.inMarrow) ? 1.4 + Math.sin(time * 1.3) * 0.3 : 0)
       - pitGlow.intensity) * Math.min(1, dt * 2);
+    pitEmber.material.opacity += (((opened && !state.inMarrow)
+      ? 0.16 + Math.max(0, Math.sin(time * 1.3)) * 0.14 : 0)
+      - pitEmber.material.opacity) * Math.min(1, dt * 2);
+    // a shut mouth costs no draw — and a per-tick visibility drive must
+    // never fight another district's seal, so it defers to any active one
+    pitEmber.visible = pitEmber.material.opacity > 0.012
+      && game.act === 'graveyard' && !game.ossuary?.inOssuary && !state.inMarrow;
+    // the one-time announcement: the yard resolves, and somewhere northeast
+    // a grave clears its throat three times
+    if (opened && !state._invited && game.act === 'graveyard') {
+      state._invited = true;
+      game.after(2.4, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.62, rate: 0.46 }), { global: true });
+      game.after(3.1, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.66, rate: 0.42 }), { global: true });
+      game.after(3.9, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.7, rate: 0.38 }), { global: true });
+    }
     if (opened && !state.inMarrow && game.act === 'graveyard' && time > state._knockAt) {
-      const nearPit = Math.hypot(p.x - 11.8, p.z - 36.2) < 6;
-      state._knockAt = time + 9 + Math.random() * 5;
+      const nearPit = Math.hypot(p.x - 11.8, p.z - 36.2) < 12;
+      state._knockAt = time + 6 + Math.random() * 4;
       if (nearPit) {
-        game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.4, rate: 0.5 });
+        game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.52, rate: 0.48 });
       }
     }
     // walking onto the breathing pit descends. The pit collider collapses

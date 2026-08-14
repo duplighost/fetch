@@ -359,15 +359,66 @@ function buildSealedMausoleumSecret(game) {
   plinth.castShadow = true;
   plinth.receiveShadow = true;
   scene.add(plinth);
+  // "the actual object you collect should look cooler" — a real FANG now:
+  // curved in two segments, a brass root band, side serrations, seated on
+  // a dark bone cradle, breathing an additive halo, turning slowly on the
+  // plinth. It should look like the reliquary treasure it is.
   const toothMat = new THREE.MeshStandardMaterial({
     color: 0x8d9296, roughness: 0.32, metalness: 0.85,
     emissive: 0x2a3033, emissiveIntensity: 0.55,
   });
-  const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.26, 7), toothMat);
+  const toothBrass = new THREE.MeshStandardMaterial({
+    color: 0xa98748, roughness: 0.3, metalness: 0.8,
+    emissive: 0x4a3410, emissiveIntensity: 0.6,
+  });
+  const tooth = new THREE.Group();
   tooth.name = 'the iron canine';
-  tooth.position.set(x, 1.08, z + 0.55);
-  tooth.rotation.x = Math.PI;   // point down, root up: a canine on display
-  scene.add(tooth);
+  const fangUpper = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.15, 7), toothMat);
+  fangUpper.position.y = -0.02;
+  fangUpper.rotation.x = Math.PI;
+  tooth.add(fangUpper);
+  const fangTip = new THREE.Mesh(new THREE.ConeGeometry(0.042, 0.14, 7), toothMat);
+  fangTip.position.set(0, -0.135, 0.022);
+  fangTip.rotation.x = Math.PI - 0.34;   // the curve of a canine
+  tooth.add(fangTip);
+  const rootBand = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.016, 6, 14), toothBrass);
+  rootBand.position.y = 0.05;
+  rootBand.rotation.x = Math.PI / 2;
+  tooth.add(rootBand);
+  for (const side of [-1, 1]) {
+    const serration = new THREE.Mesh(new THREE.ConeGeometry(0.016, 0.055, 5), toothMat);
+    serration.position.set(side * 0.055, -0.04, 0);
+    serration.rotation.x = Math.PI;
+    serration.rotation.z = side * 0.3;
+    tooth.add(serration);
+  }
+  const cradle = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.02, 6, 14), M.bone);
+  cradle.position.y = -0.16;
+  cradle.rotation.x = Math.PI / 2;
+  tooth.add(cradle);
+  {
+    const c = document.createElement('canvas');
+    c.width = c.height = 64;
+    const cx = c.getContext('2d');
+    const grad = cx.createRadialGradient(32, 32, 2, 32, 32, 30);
+    grad.addColorStop(0, 'rgba(190,210,214,0.9)');
+    grad.addColorStop(0.5, 'rgba(150,175,180,0.35)');
+    grad.addColorStop(1, 'rgba(150,175,180,0)');
+    cx.fillStyle = grad;
+    cx.fillRect(0, 0, 64, 64);
+    const haloTex = new THREE.CanvasTexture(c);
+    haloTex.colorSpace = THREE.SRGBColorSpace;
+    const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    halo.scale.set(0.55, 0.55, 1);
+    halo.position.y = -0.05;
+    tooth.add(halo);
+    tooth.userData.halo = halo;
+  }
+  tooth.position.set(x, 1.14, z + 0.55);
+  tooth.visible = false;   // sealed behind the black doorway until unlocked;
+  scene.add(tooth);        // no reason to spend its draws from the house windows
   const relicGlow = { x, y: 1.35, z: z + 0.55, intensity: 0, r: 4.5 };
   world.candles.push(relicGlow);
 
@@ -387,9 +438,16 @@ function buildSealedMausoleumSecret(game) {
   // the skull's mouth after the grab, so the carry reads at a glance.
   const keyGlow = { x: 18.52, y: 0.5, z: 37.5, intensity: 0, r: 4 };
   world.candles.push(keyGlow);
+  // "i never saw the key... it is possible i collect i accidentally" — he
+  // did, and not by choice: the grab had no outbound guard, so the SAME
+  // throw that toppled the grave could scoop the key on its return leg,
+  // the second it appeared. Outbound-only now, plus a settle delay: the
+  // key gets a full breath in the rubble before it can be taken at all.
+  let keyRevealedAt = -1;
   const keyTarget = world.addFetchTarget({
     id: 'mausoleumKey', object: key, radius: 0.7, enabled: false,
     onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
       this.enabled = false;
       skull.grab('mausoleumKey', key);
       game.flag('gotMausoleumKey');
@@ -444,15 +502,32 @@ function buildSealedMausoleumSecret(game) {
     const g5 = keyGrave();
     const toppled = g5 ? g5.hits >= 2 : false;
     const gotten = game.flags.has('gotMausoleumKey');
-    key.visible = toppled && !gotten;
-    keyTarget.enabled = key.visible;
+    // per-tick visibility must defer to the sealed districts' cullers — and
+    // a CARRIED key is always visible: this line used to hide the mesh the
+    // moment it was grabbed, which is the whole of "the skull wasn't
+    // holding a key". In the rubble: surface only. In the jaw: always.
+    const surfaceVisible = game.act === 'graveyard'
+      && !game.ossuary?.inOssuary && !game.marrow?.inMarrow;
+    const carried = game.skull?.carry?.id === 'mausoleumKey';
+    key.visible = carried || (toppled && !gotten && surfaceVisible);
+    if (key.visible && keyRevealedAt < 0) keyRevealedAt = time;
+    if (!key.visible) keyRevealedAt = gotten ? keyRevealedAt : -1;
+    keyTarget.enabled = key.visible && keyRevealedAt >= 0 && (time - keyRevealedAt) > 0.9;
     // the revealed key is unmissable: it breathes light and size
     keyGlow.intensity += ((key.visible ? 1.3 + Math.sin(time * 2.6) * 0.25 : 0)
       - keyGlow.intensity) * Math.min(1, dt * 3);
     if (key.visible) key.scale.setScalar(1.4 + Math.sin(time * 2.6) * 0.09);
-    // the unlocked canine invites the throw: its metal breathes
-    if (!game.flags.has('skullSharpened') && game.flags.has('mausoleumUnlocked')) {
+    // the canine exists on screen only once the grate is open — and then it
+    // invites the throw: breathing, turning, bobbing under its halo
+    tooth.visible = game.flags.has('mausoleumUnlocked') && !game.flags.has('skullSharpened');
+    if (tooth.visible) {
       toothMat.emissiveIntensity = 0.85 + Math.sin(time * 3.1) * 0.35;
+      tooth.rotation.y += dt * 0.55;
+      tooth.position.y = 1.14 + Math.sin(time * 1.8) * 0.022;
+      if (tooth.userData.halo) {
+        const hb = 0.62 + Math.sin(time * 2.3) * 0.08;
+        tooth.userData.halo.scale.set(hb, hb, 1);
+      }
     }
     const unlocked = game.flags.has('mausoleumUnlocked');
     if (unlocked && m.darkness.visible) m.darkness.visible = false;

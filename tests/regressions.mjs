@@ -730,9 +730,17 @@ try {
     check('stepping into the pit descends into the marrow',
       M.inMarrow === true && g.flags.has('marrow:entered') && g.flags.has('marrow:witnessed'),
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    // the palette EASES in now (fog is a weather system, never a snap), so
+    // assert proximity to the crypt colour rather than exact hex equality
+    F.stepWith(2.5, {});
+    // compare in sRGB bytes (getHex), not the linear-light channel floats
+    const fogHex = g.scene.fog.color.getHex();
+    const nearCrypt = Math.abs(((fogHex >> 16) & 255) - 0x16) < 14
+      && Math.abs(((fogHex >> 8) & 255) - 0x06) < 14
+      && Math.abs((fogHex & 255) - 0x11) < 14;
     check('the marrow wears its own palette while fetch waits above',
-      g.scene.fog && g.scene.fog.color.getHex() === 0x160611,
-      { fog: g.scene.fog?.color?.getHex?.().toString(16) });
+      g.scene.fog && nearCrypt,
+      { fog: fogHex.toString(16) });
     // let the introduction play out: it claws up, stares, folds away, and is
     // already waiting at the altar
     F.stepWith(6.0, {});
