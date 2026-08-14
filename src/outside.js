@@ -194,7 +194,11 @@ function buildGraveyard(game) {
   scene.add(head, head.target);
   game.tickers.push((dt, t) => {
     // dying flicker — brightness carries the unease, not color
-    head.intensity = (Math.sin(t * 13) > -0.82 ? 1 : 0.15) * (280 + Math.sin(t * 3.1) * 50);
+    const beat = Math.sin(t * 13) > -0.82 ? 1 : 0.15;
+    head.intensity = beat * (280 + Math.sin(t * 3.1) * 50);
+    // the lens answers its own lamp, so the flicker is visible from the SIDE
+    // too — not only in the beam thrown out across the graves
+    if (game.wreckLens) game.wreckLens.color.setScalar(0.055 + beat * 0.30);
   });
 
   // the bodies. prone, wrong — every one of them crawling AWAY from the forest
@@ -2133,7 +2137,14 @@ function buildWreckedCar(game) {
     transparent: true, opacity: 0.82,
   });
   const tyre = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.98 });
-  const lamp = new THREE.MeshBasicMaterial({ color: 0xdde6de });
+  // The lens. MeshBasic is UNLIT, so this was a fixed 0.77-luminance shape —
+  // measured, the single brightest surface on the whole wreck and brighter
+  // than anything the act uses as a landmark, sitting there at full white
+  // whether the headlight was flickering on or off. Dim glass that BRIGHTENS
+  // with the dying flicker instead (driven from buildGraveyard's ticker via
+  // game.wreckLens), so the lamp reads as failing rather than as painted on.
+  const lamp = new THREE.MeshBasicMaterial({ color: 0x2c3330 });
+  game.wreckLens = lamp;
   const cavity = new THREE.MeshBasicMaterial({ color: 0x020304 });
   const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
     const m = new THREE.Mesh(geo, mat);
@@ -2338,7 +2349,12 @@ function buildGraveyardBodies(game) {
   const trousers = [0x090c0f, 0x100b0e, 0x0a100f, 0x11110d].map((color) =>
     new THREE.MeshStandardMaterial({ color, roughness: 0.99 }));
   const seam = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 1 });
-  const skin = new THREE.MeshStandardMaterial({ color: 0x554941, roughness: 1 });
+  // 0x554941 is 0.087 linear, and the lantern delivers ~19 at the two metres
+  // you stand over a body at: 1.65, hard clipped. That is why the dead read as
+  // pale shop mannequins rather than people — the skin was the brightest thing
+  // in the yard, brighter than the headstones the act uses as its landmarks.
+  // Everything you can walk up to in this game has to live under ~0.03.
+  const skin = new THREE.MeshStandardMaterial({ color: 0x241f1c, roughness: 1 });
   const shoe = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.98 });
   const hair = new THREE.MeshStandardMaterial({ color: 0x11100f, roughness: 1 });
   const faceDark = new THREE.MeshStandardMaterial({ color: 0x080909, roughness: 1 });

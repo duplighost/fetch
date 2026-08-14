@@ -68,7 +68,10 @@ try {
       });
     };
 
-    inspect('wrecked station wagon', 'car');
+    // after batchStaticGroup the car's meshes are renamed 'wrecked wagon material N'
+    inspect('wrecked wagon', 'car');
+    inspect('graveyard body', 'body');
+    inspect('dragged body', 'body');
     inspect('boiler-tank', 'boiler');
     inspect('boiler-shoulder', 'boiler');
     // and a control: something that already reads correctly
