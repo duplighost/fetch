@@ -433,7 +433,14 @@ export class Skull {
       hands: [L, R],
       cradle: { x: 0.114, y: -0.168, z: 0.052, rx: -0.58, ry: 0.71, rz: 0.27 },
       empty: { x: 0.133, y: -0.147, z: 0.043, rx: -0.33, ry: 0.50, rz: 0.15 },
+      // After the waterfall bargain the skull is GONE — nothing is coming
+      // back to these hands, so they stop waiting for it. Mostly out of
+      // frame, arms at rest. ("I do not even think the player needs their
+      // hands up after the skull is gone.") Hands only — hold itself never
+      // moves, so the kept locket and the finale's pose capture are safe.
+      lowered: { x: 0.152, y: -0.335, z: 0.028, rx: -0.06, ry: 0.34, rz: 0.05 },
       t: 0,   // 0 = cradle, 1 = empty
+      g: 0,   // 0 = waiting poses above, 1 = lowered (skull permanently gone)
     };
     this._applyHandPose(0);
     hold.add(L, R);
@@ -532,18 +539,23 @@ export class Skull {
 
   // Blend the two authored hand poses. side = -1 mirrors in x and in both of
   // the rotations that carry handedness.
-  _applyHandPose(t) {
+  _applyHandPose(t, g = this._handPose?.g || 0) {
     const P = this._handPose;
     if (!P) return;
-    const c = P.cradle, e = P.empty;
-    const x = lerp(c.x, e.x, t), y = lerp(c.y, e.y, t), z = lerp(c.z, e.z, t);
-    const rx = lerp(c.rx, e.rx, t), ry = lerp(c.ry, e.ry, t), rz = lerp(c.rz, e.rz, t);
+    const c = P.cradle, e = P.empty, l = P.lowered;
+    let x = lerp(c.x, e.x, t), y = lerp(c.y, e.y, t), z = lerp(c.z, e.z, t);
+    let rx = lerp(c.rx, e.rx, t), ry = lerp(c.ry, e.ry, t), rz = lerp(c.rz, e.rz, t);
+    if (g > 0) {
+      x = lerp(x, l.x, g); y = lerp(y, l.y, g); z = lerp(z, l.z, g);
+      rx = lerp(rx, l.rx, g); ry = lerp(ry, l.ry, g); rz = lerp(rz, l.rz, g);
+    }
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
       P.hands[i].position.set(side * x, y, z);
       P.hands[i].rotation.set(rx, -side * ry, -side * rz);
     }
     P.t = t;
+    P.g = g;
   }
 
   _updateHands(dt) {
@@ -557,7 +569,11 @@ export class Skull {
     // The hands turn over on the same signal as the grip, so opening and
     // rolling over are one gesture rather than two. Closing is quicker than
     // opening: a catch should feel caught, a throw should feel let go of.
-    this._applyHandPose(damp(this._handPose ? this._handPose.t : 0, held ? 0 : 1, held ? 7 : 3.4, dt));
+    // 'gone' is permanent (the waterfall keeps what it takes): the hands
+    // sink out of frame instead of waiting forever for a catch.
+    const goneBlend = damp(this._handPose ? this._handPose.g : 0,
+      this.mode === 'gone' ? 1 : 0, 2.2, dt);
+    this._applyHandPose(damp(this._handPose ? this._handPose.t : 0, held ? 0 : 1, held ? 7 : 3.4, dt), goneBlend);
     this._handT = (this._handT || 0) + dt;
     const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
     for (const f of this._fingers) {

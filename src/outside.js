@@ -7,6 +7,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RNG, clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
 import { buildUnderfalls } from './underfalls.js';
+import { makeKey } from './house.js';
 
 export const FOREST_GATE = { x: 2, z: 43 };
 export const CLEARING_BASIN = Object.freeze({
@@ -256,6 +257,7 @@ function buildGraveyardLandmarks(game) {
     darkness.rotation.y = mirror < 0 ? Math.PI : 0;
     scene.add(g);
     if (x < 0) game.ritualMausoleum = { group: g, darkness, x, z };
+    else game.sealedMausoleum = { group: g, darkness, x, z };
     world.addCollider(x - 1.82, -0.5, z + 1.35, x + 1.82, 3, z + 1.75);
     world.addCollider(x - 1.82, -0.5, z - 1.75, x - 1.42, 3, z + 1.75);
     world.addCollider(x + 1.42, -0.5, z - 1.75, x + 1.82, 3, z + 1.75);
@@ -290,7 +292,161 @@ function buildGraveyardLandmarks(game) {
   buildDestructibleGraves(game);
   buildResonantGraves(game);
   buildGraveyardGate(game);
+  buildSealedMausoleumSecret(game);
   buildOssuaryRoute(game);
+}
+
+// ------------------------------------------- the sealed mausoleum secret
+// Alex: "One of them should be locked. and a destructible gravestone should
+// have a key to it. Inside should be an optional powerup that makes your
+// skull do more damage. because right now one is empty and it would be
+// perfect for that." The east mausoleum takes a barred grate and a fat
+// padlock; the key lies in the rubble of the sixth hero grave once it is
+// toppled; inside, on a plinth, an IRON CANINE — take it and the skull's
+// bite sharpens (game.skullPower: stuns hold longer, blows land harder,
+// slower throws still count). Sockets deepen so the change reads on the
+// skull itself. Value and shape only; no words anywhere.
+function buildSealedMausoleumSecret(game) {
+  const { world, scene, mats: M } = game;
+  const m = game.sealedMausoleum;
+  if (!m) return;
+  const { x, z } = m;
+  const cageIron = new THREE.MeshStandardMaterial({ color: 0x242829, roughness: 0.72, metalness: 0.52 });
+  const brass = new THREE.MeshStandardMaterial({ color: 0xa98748, roughness: 0.34, metalness: 0.78 });
+
+  const grate = new THREE.Group();
+  grate.name = 'sealed mausoleum grate';
+  grate.position.set(x, 0, z - 1.82);
+  scene.add(grate);
+  const barPts = [];
+  for (let bx = -0.42; bx <= 0.43; bx += 0.168) barPts.push(bx);
+  const bars = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.024, 0.028, 2.3, 7), cageIron, barPts.length);
+  const bm4 = new THREE.Matrix4();
+  barPts.forEach((bx, i) => {
+    bm4.makeTranslation(bx, 1.17, 0);
+    bars.setMatrixAt(i, bm4);
+  });
+  bars.instanceMatrix.needsUpdate = true;
+  bars.castShadow = true;
+  grate.add(bars);
+  for (const railY of [0.24, 2.1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.07, 0.07), cageIron);
+    rail.position.set(0, railY, 0);
+    grate.add(rail);
+  }
+  const hasp = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.14), cageIron);
+  hasp.position.set(0, 1.15, -0.09);
+  grate.add(hasp);
+  const lockBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.1), brass);
+  lockBody.name = 'sealed mausoleum padlock';
+  lockBody.position.set(0, 0.94, -0.12);
+  grate.add(lockBody);
+  const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.024, 8, 10, Math.PI), cageIron);
+  shackle.position.set(0, 1.1, -0.12);
+  grate.add(shackle);
+  const grateCollider = world.addCollider(x - 0.52, -0.5, z - 1.95, x + 0.52, 2.4, z - 1.7,
+    { id: 'mausoleumGrate' });
+
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.92, 0.46), M.headstone);
+  plinth.position.set(x, 0.46, z + 0.55);
+  plinth.castShadow = true;
+  plinth.receiveShadow = true;
+  scene.add(plinth);
+  const toothMat = new THREE.MeshStandardMaterial({
+    color: 0x8d9296, roughness: 0.32, metalness: 0.85,
+    emissive: 0x2a3033, emissiveIntensity: 0.55,
+  });
+  const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.075, 0.26, 7), toothMat);
+  tooth.name = 'the iron canine';
+  tooth.position.set(x, 1.08, z + 0.55);
+  tooth.rotation.x = Math.PI;   // point down, root up: a canine on display
+  scene.add(tooth);
+  const relicGlow = { x, y: 1.35, z: z + 0.55, intensity: 0, r: 4.5 };
+  world.candles.push(relicGlow);
+
+  // The key lies in the rubble of the toppled SIXTH hero grave — the stone
+  // nearest this mausoleum. Its visibility derives from the grave's own
+  // state every tick, so death resets can never desync it. It is its own
+  // mesh, never a debris-pool entry (the pool's census is asserted exact).
+  const key = makeKey(M);
+  key.scale.setScalar(1.4);
+  const keyGrave = () => game.destructibleGraves?.[5] || null;
+  key.position.set(18.52, 0.2, 37.5);
+  key.rotation.set(-Math.PI / 2 + 0.28, 0, 0.7);
+  key.visible = false;
+  scene.add(key);
+  const keyTarget = world.addFetchTarget({
+    id: 'mausoleumKey', object: key, radius: 0.7, enabled: false,
+    onHit(skull) {
+      this.enabled = false;
+      skull.grab('mausoleumKey', key);
+      game.flag('gotMausoleumKey');
+      return 'return';
+    },
+  });
+
+  const lockPos = new THREE.Vector3(x, 0.94, z - 1.94);
+  world.addFetchTarget({
+    id: 'mausoleumLock', object: lockBody, radius: 0.6,
+    onHit(skull, at) {
+      if (game.flags.has('mausoleumUnlocked')) return 'continue';
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!skull.carry || skull.carry.id !== 'mausoleumKey') {
+        game.impact('locked', at || lockPos);
+        game.audio.lockedRattle({ pos: lockPos, gain: 0.72, rate: 0.8 });
+        return 'return';
+      }
+      const c = skull.dropCarry();
+      c.mesh.visible = false;
+      game.flag('mausoleumUnlocked');
+      game.audio.unlock({ pos: lockPos, gain: 0.85, rate: 0.7 });
+      game.after(0.4, () => game.audio.stoneGrind({ pos: lockPos, gain: 0.6, rate: 0.6 }));
+      return 'return';
+    },
+  });
+
+  const toothTarget = world.addFetchTarget({
+    id: 'ironCanine', object: tooth, radius: 0.55,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (!game.flags.has('mausoleumUnlocked')) return 'continue';
+      if (game.flags.has('skullSharpened')) return 'continue';
+      this.enabled = false;
+      tooth.visible = false;
+      game.flag('skullSharpened');
+      game.impact('pop', at || tooth.position);
+      game.audio.catchThud?.({ pos: tooth.position, gain: 0.7, rate: 0.7 });
+      game.audio.unlock({ pos: tooth.position, gain: 0.6, rate: 0.5 });
+      skull._flourishT = 0.9;
+      return 'return';
+    },
+  });
+
+  let grateOpenT = 0;
+  game.tickers.push((dt) => {
+    const g5 = keyGrave();
+    const toppled = g5 ? g5.hits >= 2 : false;
+    const gotten = game.flags.has('gotMausoleumKey');
+    key.visible = toppled && !gotten;
+    keyTarget.enabled = key.visible;
+    const unlocked = game.flags.has('mausoleumUnlocked');
+    if (unlocked && m.darkness.visible) m.darkness.visible = false;
+    grateOpenT += ((unlocked ? 1 : 0) - grateOpenT) * Math.min(1, dt * 1.4);
+    grate.position.y = -grateOpenT * 2.45;
+    // the collider follows the sinking iron, never a flag
+    grateCollider.max.y = Math.max(grateCollider.min.y, grate.position.y + 2.4);
+    relicGlow.intensity += (((unlocked && !game.flags.has('skullSharpened')) ? 1.5
+      : unlocked ? 0.45 : 0) - relicGlow.intensity) * Math.min(1, dt * 2);
+    // idempotent application: respawn and reload keep the sharpened bite
+    if (game.flags.has('skullSharpened') && !game._sharpenedApplied && game.skull?.sockets) {
+      game._sharpenedApplied = true;
+      game.skullPower = 2;
+      for (const socket of game.skull.sockets) socket.scale.multiplyScalar(1.13);
+      tooth.visible = false;
+      toothTarget.enabled = false;
+    }
+  });
 }
 
 function buildDestructibleGraves(game) {
@@ -3702,14 +3858,16 @@ export class Forest {
     // Value only — the colourblind law — and the ROAD stays brighter than the
     // pocket secrets so the hierarchy holds.
     if ('emissive' in ropeMat) {
-      ropeMat.emissive = new THREE.Color(0x2a3134);
-      ropeMat.emissiveIntensity = 0.85;
+      // FOURTH brightness ask ("the hanging things in the forest should be
+      // brighter") — the lines are now frankly self-lit. Value only.
+      ropeMat.emissive = new THREE.Color(0x39423f);
+      ropeMat.emissiveIntensity = 1.35;
     }
     const knotMat = M.headstone.clone();
-    if (knotMat.color) knotMat.color.multiplyScalar(1.18);
+    if (knotMat.color) knotMat.color.multiplyScalar(1.28);
     if ('emissive' in knotMat) {
-      knotMat.emissive = new THREE.Color(0x434d51);
-      knotMat.emissiveIntensity = 0.6;
+      knotMat.emissive = new THREE.Color(0x59666b);
+      knotMat.emissiveIntensity = 0.85;
     }
 
     const segs = [];
@@ -4969,7 +5127,15 @@ export function buildClearing(game) {
   // added closest to where the player has to step onto the first rock." The
   // crossing's entry stride was the shelf edge to dz 17.4 over the drop-off,
   // the exact shape of the far-bank problem the eighth already solved.
-  const bridgeZ = [8.8, 10.52, 12.24, 13.96, 15.68, 16.55, 17.4, 19.12, 20.42];
+  //
+  // The TENTH is the true first step. The basin's water edge is at dz~7.0
+  // (outerR 8.2 around centerZ 15.2) and the old first stone at 8.8 left
+  // 1.8 m of shin-deep water before the run began — "you dip into the water
+  // a little. It needs a rock for the player to step on as the first rock."
+  // Prepended in spatial order so the rise wave still runs bank -> falls.
+  // Stone tops resolve as ground within 1.03 m of centre, so every stride
+  // stays continuous even where the index-based wobble shifted.
+  const bridgeZ = [7.35, 8.8, 10.52, 12.24, 13.96, 15.68, 16.55, 17.4, 19.12, 20.42];
   bridgeZ.forEach((dz, i) => {
     const st = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.9, 0.5, 9), M.rock);
     st.position.set(C.x + Math.sin(i * 1.7) * 0.34, -1.4, C.z + dz);

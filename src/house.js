@@ -2,7 +2,7 @@
 // Declarative tables for the world compiler + furnishing + the act-gating props.
 // Grid: origin (-12,-14), 12x10 cells of 2m. Backyard begins at world z=6.
 import * as THREE from 'three';
-import { clamp, TAU } from './util.js';
+import { clamp, smoothstep, TAU } from './util.js';
 import { Mirror, Mirrors, LAYER_DOUBLE, MASK_DOUBLE } from './mirrors.js';
 
 export const HOUSE_TABLES = {
@@ -670,6 +670,7 @@ export function buildHouse(game) {
   voidDoorAct(game);
   buildWindowRelay(game);
   buildSculleryCrawler(game);
+  buildWindowWatchers(game);
   buildHouseReturnHorror(game);
   buildHouseLagMirror(game);
   cellarBoards(game);
@@ -1724,11 +1725,22 @@ function basementAct(game) {
         game.basementPilot?.nudge?.();
         return 'return';
       }
-      if (!game.flags.has('pumpGalleryLatched')) {
+      if (!game.flags.has('pilotLit')) {
+        // the furnace will not take an offering over a cold pilot — the test
+        // suite always claimed this; now the code does too
+        game.impact('locked', incPos);
+        game.audio.fireChoke({ pos: incPos, gain: 0.22, rate: 0.58 });
+        game.basementPilot?.nudge?.();
+        return 'return';
+      }
+      if (!game.flags.has('pumpGalleryLatched') || !game.flags.has('archiveDraftOpened')) {
         game.flag('incineratorNeedsDraft');
         game.impact('locked', incPos);
         game.audio.lockedRattle({ pos: draftGauge.getWorldPosition(new THREE.Vector3()), gain: 0.72, rate: 0.64 });
-        game.pumpGallery?.nudge?.();
+        // point at whichever half of the draft is missing: the pump crossing,
+        // or the archive's collar valve at the end of the same line
+        if (!game.flags.has('pumpGalleryLatched')) game.pumpGallery?.nudge?.();
+        else game.blindArchive?.nudge?.();
         return 'return';
       }
       if (incin.offered) return 'return';
@@ -1763,7 +1775,8 @@ function basementAct(game) {
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
   game.tickers.push((dt, t) => {
-    const hasDraft = game.flags.has('pilotLit') && game.flags.has('pumpGalleryLatched');
+    const hasDraft = game.flags.has('pilotLit') && game.flags.has('pumpGalleryLatched')
+      && game.flags.has('archiveDraftOpened');
     if (!incin.awake && hasDraft) {
       incin.awake = true;
       game.flag('incineratorAwake');
@@ -2519,9 +2532,35 @@ function buildWindowRelay(game) {
   // Target the actual visible silhouette, not the group's empty pivot. The
   // original pivot sphere stopped just above the bell mouth and far above the
   // pull, recreating the exact “I threw at the bell and nothing happened” bug.
+  // THE BELL IS CAGED FROM THE ROOM. Alex: "The window trolley should be
+  // necessary." A room-side lattice now guards the striker: an ordinary
+  // throw clangs off the cage, shivers the bell without ringing it, and
+  // points back at the mooring — the only thing that can strike it properly
+  // arrives on the rail, from outside. 'direct-bell' survives only as dead
+  // code; the basement-pilot valve still rings the circuit for stranded
+  // saves, and the trolley return/release commits are untouched.
+  const cage = new THREE.Group();
+  cage.name = 'study-bell-room-cage';
+  cage.position.set(-10.5, G, 1);
+  scene.add(cage);
+  for (let i = 0; i < 5; i++) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.026, 1.66, 7), iron);
+    bar.position.set(0, 1.75, -0.55 + i * 0.275);
+    cage.add(bar);
+  }
+  for (const railY of [1.02, 2.48]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 1.34), iron);
+    rail.position.set(0, railY, 0);
+    cage.add(rail);
+  }
   const directHit = (skull, at) => {
     if (skull.mode !== 'outbound') return 'continue';
-    relay.complete('direct-bell', at || directStriker.position);
+    if (relay.solved) return 'return';
+    relay.ringT = Math.max(relay.ringT || 0, 0.3);   // a shiver, never a ring
+    game.impact('locked', at || directStriker.position);
+    game.audio.metalDrop({ pos: directStriker.position, gain: 0.5, rate: 1.6 });
+    game.audio.lockedRattle({ pos: directStriker.position, gain: 0.6, rate: 0.92 });
+    relay.nudge();
     return 'return';
   };
   for (const [id, local, radius] of [
@@ -2850,6 +2889,144 @@ function buildWindowRelay(game) {
 // real aperture invites a soaked figure to climb toward the gaze. Continued
 // watching advances its weight from earth to sill to room; looking away freezes
 // the crossing. The camera and player remain completely live throughout.
+// ---------------------------------------------------- the window watchers
+// Alex, twice: "more creepy things that climb into random windows when you
+// look through." One figure, many windows. It haunts the GLAZED panes (the
+// scullery crawler owns the open one): while you watch, it climbs into view
+// outside the glass and presses a palm to the pane; stop watching, or step
+// close, and it drops away. It never enters — the glass is physically
+// honest. One nine-mesh rig hops between windows on a growing cooldown, so
+// no two sessions read the same. game.windowWatcher.force(i) pins a site
+// and zeroes the cooldown for deterministic tests.
+function buildWindowWatchers(game) {
+  const { scene } = game;
+  const G = HOUSE_TABLES.levels.ground.floor;
+  const F = HOUSE_TABLES.levels.first.floor;
+  const sites = [
+    { x: -1, floor: F, z: 6, nx: 0, nz: 1 },     // landing, graveyard side
+    { x: -9, floor: F, z: 6, nx: 0, nz: 1 },     // nursery, graveyard side
+    { x: 12, floor: G, z: -11, nx: 1, nz: 0 },   // dining, east
+    { x: 12, floor: G, z: -3, nx: 1, nz: 0 },    // kitchen, east
+    { x: 12, floor: F, z: -7, nx: 1, nz: 0 },    // guest, east
+  ];
+  const skin = new THREE.MeshBasicMaterial({ color: 0x42433d, transparent: true, opacity: 1 });
+  const cloth = new THREE.MeshBasicMaterial({ color: 0x0c0e0f, transparent: true, opacity: 1 });
+  const root = new THREE.Group();
+  root.name = 'window-watcher';
+  root.visible = false;
+  scene.add(root);
+  const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16, 1), skin);
+  head.scale.set(0.78, 1.18, 0.8);
+  head.position.set(0.06, 1.6, 0.1);
+  root.add(head);
+  const hood = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), cloth);
+  hood.position.set(0.06, 1.69, 0.04);
+  hood.scale.set(1.12, 1.05, 0.92);
+  root.add(hood);
+  const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.26, 0.85, 7), cloth);
+  torso.position.set(0.03, 1.0, 0.02);
+  torso.rotation.z = 0.14;
+  root.add(torso);
+  for (const side of [-1, 1]) {
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.11, 7, 6), cloth);
+    shoulder.position.set(side * 0.21, 1.4, 0.04);
+    shoulder.scale.set(1.15, 0.8, 0.9);
+    root.add(shoulder);
+  }
+  const palmArm = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.045, 0.62, 6), cloth);
+  palmArm.position.set(-0.24, 1.35, 0.3);
+  palmArm.rotation.x = 1.1;
+  palmArm.rotation.z = 0.4;
+  root.add(palmArm);
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.035), skin);
+  palm.position.set(-0.34, 1.52, 0.56);
+  root.add(palm);
+  for (let i = 0; i < 3; i++) {
+    const finger = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.085, 0.026), skin);
+    finger.position.set(-0.38 + i * 0.038, 1.64, 0.56);
+    finger.rotation.z = (i - 1) * 0.12;
+    root.add(finger);
+  }
+  const fadeMats = [skin, cloth];
+
+  const w = {
+    siteIndex: -1, active: false, t: 0, lookAwayT: 0,
+    cooldown: 26, seen: 0, nextSite: null, fade: 1,
+  };
+  game.windowWatcher = {
+    root, state: w, sites,
+    force(i) { w.nextSite = i; w.cooldown = 0; },
+  };
+  const eye = new THREE.Vector3();
+  const fwd = new THREE.Vector3();
+  const toPane = new THREE.Vector3();
+  const paneCenter = new THREE.Vector3();
+  const vanish = (reason) => {
+    if (!w.active) return;
+    w.active = false;
+    w.seen++;
+    w.cooldown = 24 + w.seen * 9;
+    w.t = 0;
+    root.visible = false;
+    game.flag('windowWatcherSeen');
+    if (reason === 'close') {
+      game.audio.whisper({ pos: root.position, gain: 0.32, rate: 0.44, verb: 1.1 });
+    } else {
+      game.audio.whisper({ pos: root.position, gain: 0.24, rate: 0.5, verb: 0.9 });
+    }
+  };
+  game.tickers.push((dt) => {
+    if (game.act !== 'house') { if (w.active) vanish('act'); return; }
+    if (!w.active) {
+      w.cooldown -= dt;
+      if (w.cooldown > 0) return;
+      // deterministic-but-varied: hop to the next site, biased by how much
+      // of the house the player has touched so far
+      w.siteIndex = w.nextSite != null
+        ? w.nextSite
+        : (w.siteIndex + 1 + (game.flags.size % sites.length)) % sites.length;
+      w.nextSite = null;
+      const s = sites[w.siteIndex];
+      root.position.set(s.x + s.nx * 0.5, s.floor - 1.6, s.z + s.nz * 0.5);
+      root.rotation.y = Math.atan2(-s.nx, -s.nz);
+      w.active = true;
+      w.t = 0;
+      w.lookAwayT = 0;
+      w.fade = 1;
+      for (const m of fadeMats) m.opacity = 1;
+      root.visible = false;
+      return;
+    }
+    const s = sites[w.siteIndex];
+    paneCenter.set(s.x, s.floor + 1.8, s.z);
+    game.camera.updateMatrixWorld(true);
+    game.camera.getWorldPosition(eye);
+    const dist = toPane.copy(paneCenter).sub(eye).length();
+    // same-floor rule: no psychic gaze through a ceiling
+    const watched = dist < 8.5 && Math.abs(eye.y - paneCenter.y) < 2.2
+      && (game.camera.getWorldDirection(fwd), fwd.dot(toPane.multiplyScalar(1 / dist)) > 0.93);
+    const planar = Math.hypot(game.player.pos.x - s.x, game.player.pos.z - s.z);
+    if (planar < 2.1 && w.t > 0.05) { vanish('close'); return; }
+    if (watched) {
+      if (w.t === 0) {
+        game.audio.whisper({ pos: paneCenter, gain: 0.2, rate: 0.55, verb: 1.0 });
+      }
+      w.lookAwayT = 0;
+      const before = w.t;
+      w.t = Math.min(1, w.t + dt / 3.1);
+      root.visible = true;
+      // it climbs into view from below the sill while your eyes hold it
+      root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 1.62;
+      if (before < 0.78 && w.t >= 0.78) {
+        game.audio.glassTink({ pos: paneCenter, gain: 0.4, rate: 0.5 });
+      }
+    } else if (w.t > 0) {
+      w.lookAwayT += dt;
+      if (w.lookAwayT > 0.55) vanish('away');
+    }
+  });
+}
+
 function buildSculleryCrawler(game) {
   const { world, scene } = game;
   const opening = world.windowOpenings.find((o) => o.id === 'sculleryCrawlerWindow');
@@ -3871,11 +4048,44 @@ function buildPumpGallery(game) {
   for (let i = 0; i < 6; i++) {
     const spoke = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.88, 6), worn);
     spoke.position.copy(wheel.position);
-    spoke.rotation.z = i / 6 * Math.PI;
+    // spokes live in the wheel's own YZ plane (the ring is rotation.y=PI/2);
+    // rotating them about Z put them perpendicular to their own rim
+    spoke.rotation.x = i / 6 * Math.PI;
     winch.add(spoke);
   }
+  // MOUNTED, not hovering ("a back part that just floats... another piece
+  // that connects the cylinder like thing to the wall would solve it"):
+  // an axle runs from the drum's back end into the east wall, lands on a
+  // bearing plate, and a pedestal carries the drum off the floor. Same
+  // bolted-to-the-room vocabulary as the ossuary counterweight.
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.25, 8), iron);
+  axle.position.set(0.95, 0.72, 0);
+  axle.rotation.z = Math.PI / 2;
+  winch.add(axle);
+  const bearing = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.5), iron);
+  bearing.position.set(1.5, 0.72, 0);
+  winch.add(bearing);
+  const pedestal = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.62, 0.42), iron);
+  pedestal.position.set(0.12, 0.31, 0);
+  winch.add(pedestal);
+  // the cable finally hangs from something: a mast off the winch base rises
+  // to an eye directly above the cradle line, and the cable top meets it
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.62, 7), worn);
+  mast.position.set(-0.63, 1.47, 0);
+  winch.add(mast);
+  const cableEye = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.02, 6, 12), worn);
+  cableEye.position.set(-0.63, 2.28, 0);
+  cableEye.rotation.x = Math.PI / 2;
+  winch.add(cableEye);
   world.addCollider(-14.05, B, -7.35, -13.05, B + 1.42, -6.25,
     { id: 'pumpWinchBody', skullPass: true });
+  // "all the stuff was attached by some wires on the floor or something
+  // across those basement puzzles" — a floor conduit runs from the winch
+  // base to the gate it drives, then up the jamb. The machines are wired
+  // to their effects now, not just near them.
+  world.box(iron, -13.62, B + 0.028, -4.85, 0.09, 0.055, 3.3);
+  world.box(iron, -14.21, B + 0.028, -3.2, 1.18, 0.055, 0.09);
+  world.box(iron, -14.8, B + 0.62, -3.14, 0.07, 1.24, 0.07);
 
   const cradleBase = new THREE.Vector3(-14.18, B + 1.62, -6.8);
   const cradle = new THREE.Group();
@@ -4068,7 +4278,8 @@ function buildPumpGallery(game) {
     archiveLamp.add(cage);
   }
   // The room's one pooled source sits exactly inside the visible cage.
-  world.candles.push({ x: -16.25, y: B + 1.91, z: 4.72, intensity: 0.52, r: 4.7 });
+  const archiveGlow = { x: -16.25, y: B + 1.91, z: 4.72, intensity: 0.52, r: 4.7 };
+  world.candles.push(archiveGlow);
 
   const tankGeo = new THREE.CylinderGeometry(0.25, 0.28, 1, 12);
   const capGeo = new THREE.SphereGeometry(0.26, 12, 7);
@@ -4293,9 +4504,45 @@ function buildPumpGallery(game) {
         pumpStands[2].group.position.y -= 0.03;
         game.after(0.65, () => game.audio.creak({ pos: pumpStands[2].group.position, gain: 0.5, rate: 0.5 }));
       }
+      // THE ROOM IS NOW NECESSARY. Alex: "the last room of the basement with
+      // all those contraptions should actually be necessary do something that
+      // happens very clearly and looks like you need to do it." The collar is
+      // the furnace's draft valve: the first strike opens it — the stands
+      // surge and STAY awake, the caged lamp burns up, and a run of duct
+      // thunks travels east along the ceiling main to the furnace, which
+      // answers with a breath of fire. The firebox refuses the offering
+      // until this has happened.
+      if (!game.flags.has('archiveDraftOpened')) {
+        game.flag('archiveDraftOpened');
+        route.draftOpen = true;
+        game.audio.unlock({ pos: collar.position, gain: 0.7, rate: 0.66 });
+        game.after(0.55, () => game.audio.knock({ pos: new THREE.Vector3(-14.4, B + 2.28, 5.58), gain: 0.42, rate: 0.62 }));
+        game.after(0.9, () => game.audio.knock({ pos: new THREE.Vector3(-12.1, B + 2.28, 5.4), gain: 0.46, rate: 0.56 }));
+        game.after(1.3, () => game.audio.knock({ pos: new THREE.Vector3(-6.0, B + 2.3, 4.2), gain: 0.5, rate: 0.5 }));
+        game.after(1.75, () => {
+          if (!game.incineratorPosition) return;
+          game.audio.fireRoar({ pos: game.incineratorPosition, gain: 0.28, rate: 0.8 });
+          game.audio.knock({ pos: game.incineratorPosition, gain: 0.55, rate: 0.44 });
+        });
+      }
       return 'return';
     },
   });
+  // the line does not end in the room: a conduit continues east along the
+  // ceiling main, drops the shared wall, and stubs off toward the hatchbay —
+  // the archive is visibly wired INTO the house, not parked beside it
+  world.box(worn, -12.74, B + 2.28, 5.58, 1.36, 0.07, 0.07);
+  world.box(worn, -12.06, B + 1.62, 5.52, 0.07, 1.4, 0.07);
+  world.box(worn, -12.06, B + 0.9, 5.32, 0.07, 0.07, 0.5);
+  // the furnace's no-draft refusal points here when the crossing is done
+  // but the collar has not been struck
+  game.blindArchive = {
+    nudge() {
+      game.audio.knock({ pos: collar.position, gain: 0.46, rate: 0.62 });
+      game.after(0.28, () => game.audio.creak({ pos: collar.position, gain: 0.4, rate: 0.55 }));
+      route.surgeT = Math.max(route.surgeT || 0, 0.8);
+    },
+  };
 
   // This district looks east beneath the entire furnished house. WebGL has no
   // occlusion culling, so without a sector mask it submitted hundreds of fully
@@ -4427,7 +4674,8 @@ function buildPumpGallery(game) {
     }
     wheel.rotation.x = eased * TAU * 3.2;
     drum.rotation.x = eased * TAU * 2.1;
-    const cableTop = B + 2.35;
+    // the cable now hangs from the winch mast's eye instead of empty air
+    const cableTop = B + 2.26;
     const cableBottom = cradle.position.y + 0.32;
     cable.scale.y = Math.max(0.04, cableTop - cableBottom);
     cable.position.set(cradleBase.x, (cableTop + cableBottom) / 2, cradleBase.z);
@@ -4450,7 +4698,10 @@ function buildPumpGallery(game) {
     water.material.opacity = 0.78 + Math.sin(time * 0.8) * 0.035;
     // Slow pressure-breath, not the old frantic electronic flicker. The pooled
     // light still owns a restrained flame variation, both from this fixture.
-    archiveLampCore.material.opacity = 0.72 + Math.sin(time * 1.85) * 0.035;
+    // An opened draft burns the lamp up — the room stays visibly powered.
+    const lampBreath = Math.sin(time * 1.85) * 0.035;
+    archiveLampCore.material.opacity = (route.draftOpen ? 0.9 : 0.72) + lampBreath;
+    archiveGlow.intensity = (route.draftOpen ? 1.2 : 0.52) + lampBreath * 3;
 
     if (!route.heard && game.act === 'basement'
       && game.player.pos.distanceTo(new THREE.Vector3(-12.2, B, -3)) < 5.2) {
@@ -4466,13 +4717,16 @@ function buildPumpGallery(game) {
     // watches it wake up. And it does not run forever: the sentence finishes,
     // then only a struck collar (below) stirs it again.
     route.surgeT = Math.max(0, (route.surgeT || 0) - dt);
+    // the opened draft survives death/teleport restores via its flag
+    if (!route.draftOpen && game.flags.has('archiveDraftOpened')) route.draftOpen = true;
     if (route.latched && archiveDetailVisible) {
       route.archiveWake += dt;
       for (let i = 0; i < pumpStands.length; i++) {
         const pump = pumpStands[i];
         const wake = clamp((route.archiveWake - i * 0.16) * 1.3, 0, 1)
           * clamp(1.6 - route.archiveWake * 0.09, 0.12, 1)   // it settles
-          + route.surgeT * 0.9;                              // a hit stirs it
+          + route.surgeT * 0.9                               // a hit stirs it
+          + (route.draftOpen ? 0.5 : 0);   // an opened draft KEEPS the room working
         pump.wheel.rotation.z += dt * wake * (i % 2 ? -0.22 : 0.28);
         for (let n = 0; n < pump.needles.length; n++) {
           pump.needles[n].rotation.z = -1.95 + clamp(wake, 0, 1.4) * (1.12
@@ -4550,6 +4804,11 @@ function voidDoorAct(game) {
       this.source = source?.id || 'unknown';
       for (const candidate of this.sources) {
         if (candidate.target) candidate.target.enabled = false;
+        // A residual source is an IGNITER, not a stock of fuel: the strike
+        // lights it, the skull takes the heart of the flame, and the candle
+        // keeps a diminished burn — "you should probably be turning the
+        // candle/light on instead of off." Its caller drives the visuals.
+        if (candidate.residual) continue;
         if (candidate.flame) candidate.flame.visible = false;
         if (candidate.glow) {
           // Extinguish the descriptor and any currently assigned pool light in
@@ -4587,7 +4846,43 @@ function voidDoorAct(game) {
   game.flameCircuit = flameCircuit;
 
   const doorPos = new THREE.Vector3(4, F + 1.15, -7);
-  const guestSource = { id: 'guest-candle', flame, glow, target: null };
+  // The room is visibly WIRED to somewhere below: a brass line drops from the
+  // candle dish through a floor collar — the same pipe vocabulary the pilot
+  // ignition uses in the basement. When the strike lights the candle, the
+  // line runs hot downward: "some sign that the fire moves or is wired up to
+  // something in there."
+  const BRASS_BASE = 0x8c6d31;
+  const BRASS_HOT = 0xf0b45a;
+  const BRASS_WARM = 0xa9853d;
+  const dropMatA = new THREE.MeshStandardMaterial({ color: BRASS_BASE, roughness: 0.44, metalness: 0.75 });
+  const dropMatB = dropMatA.clone();
+  const downPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.034, 1.24, 8), dropMatA);
+  downPipe.position.set(5.44, F + 0.66, -7.07);
+  scene.add(downPipe);
+  const floorCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.1, 0.05, 10), dropMatB);
+  floorCollar.position.set(5.44, F + 0.028, -7.07);
+  scene.add(floorCollar);
+  const ignite = { t: -1 };
+  game.tickers.push((dt) => {
+    if (ignite.t < 0) return;
+    ignite.t = Math.min(1, ignite.t + dt / 1.4);
+    const k = ignite.t;
+    // flame blooms ON and settles to a live burn the absorb never kills
+    const bloom = k < 0.55 ? k / 0.55 : 1 - (k - 0.55) * 0.45;
+    const s = 0.25 + bloom * 1.15;
+    flame.scale.set(unlitFlameScale.x * s, unlitFlameScale.y * s, unlitFlameScale.z * s);
+    glow.intensity = 0.4 + bloom * 1.9;
+    // heat runs DOWN the line: drop, then the floor collar
+    const seg = (mat, a, b) => {
+      const u = clamp((k - a) / (b - a), 0, 1);
+      const pulse = Math.sin(u * Math.PI);
+      mat.color.setHex(BRASS_BASE).lerp(new THREE.Color(BRASS_HOT), pulse);
+      if (u >= 1) mat.color.setHex(BRASS_WARM);
+    };
+    seg(dropMatA, 0.12, 0.72);
+    seg(dropMatB, 0.72, 1.0);
+  });
+  const guestSource = { id: 'guest-candle', flame, glow, target: null, residual: true };
   const flameTarget = world.addFetchTarget({
     // The visible flame is narrow, but the throw arrives from the stairwell
     // below at a steep retained arc. Own the whole candle-dish silhouette so a
@@ -4599,8 +4894,18 @@ function voidDoorAct(game) {
       // cannot spend a second interaction credit or grant progression.
       if (skull.mode !== 'outbound') return 'continue';
       if (!flameCircuit.absorb(skull, guestSource)) return 'return';
-      game.audio.fireChoke({ pos: stand.position, gain: 0.4 });   // the flame dies into it
+      // THE STRIKE IS AN IGNITION: the candle goes ON, the skull takes the
+      // heart of the flame as it returns, and the brass line pulses hot
+      // toward the basement. Three knocks descend after it.
+      flame.visible = true;
+      ignite.t = 0;
+      game.impact('break', stand.position);
+      game.audio.fireRoar({ pos: stand.position, gain: 0.34, rate: 1.12 });
       game.audio.glassTink({ pos: stand.position, gain: 0.5, rate: 0.7 });
+      const kx = 5.44, kz = -7.07;
+      game.after(0.5, () => game.audio.knock({ pos: new THREE.Vector3(kx, F + 0.9, kz), gain: 0.34, rate: 0.9 }));
+      game.after(0.85, () => game.audio.knock({ pos: new THREE.Vector3(kx, F + 0.1, kz), gain: 0.36, rate: 0.78 }));
+      game.after(1.2, () => game.audio.knock({ pos: new THREE.Vector3(kx, F - 0.9, kz), gain: 0.38, rate: 0.64 }));
       return 'return';
     },
   });
@@ -4617,21 +4922,15 @@ function voidDoorAct(game) {
     game.flag('voidDoorOpen');
     if (source === 'windowRelay') game.flag('voidDoorOpenedByRelay');
     flameTarget.enabled = true;
-    // The candle catches as the door swings: a breath of delay, then the
-    // flame grows in and the glow ramps. From the stairwell this is the
-    // point of the beat -- the door you cannot reach now has light behind
-    // it, and the light was not there before you rang the bell.
+    // The door now opens on an UNLIT igniter. The wick waits dark; the glow
+    // barely breathes; the brass line runs down through the floor beside it.
+    // The room reads as "something in here takes fire", and the strike
+    // (guestFlame) is the ignition that turns it ON — never the reverse.
     game.after(0.55, () => {
-      game.audio.fireRoar({ pos: stand.position, gain: 0.16, rate: 1.35 });
-      const grow = { t: 0 };
-      game.tickers.push((dt) => {
-        // absorb() extinguishes this candle by hiding the flame and zeroing
-        // the glow; if that happens mid-ramp the ramp must lose, not refight.
-        if (grow.t >= 1 || !flame.visible) { grow.t = 1; return; }
-        grow.t = Math.min(1, grow.t + dt / 1.6);
-        glow.intensity = 1.6 * grow.t;
-        const s = 0.25 + 0.75 * grow.t;
-        flame.scale.set(unlitFlameScale.x * s, unlitFlameScale.y * s, unlitFlameScale.z * s);
+      game.audio.creak({ pos: stand.position, gain: 0.22, rate: 0.6 });
+      game.tickers.push((dt, time) => {
+        if (game.flags.has('ateFlame') || ignite.t >= 0) return;
+        glow.intensity = 0.08 + Math.max(0, Math.sin(time * 1.7)) * 0.09;
       });
     }, { global: true });
     return true;

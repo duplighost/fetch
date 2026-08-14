@@ -1,4 +1,77 @@
-# HANDOFF - 2026-08-13 night, Alex's website-build feedback (THE NEW SPEC)
+# HANDOFF - 2026-08-14, THE BIG FEEDBACK PASS (branch claude/feedback-aug13-night)
+
+Alex's second feedback batch, same night, every item actioned. Two design
+REVERSALS, one new secret, one new haunting, the Underfalls remake, and four
+small trues. His directive: "Let's get to it! when you're done, update the
+website with your best version."
+
+## What changed (all src on this branch)
+
+1. **THE TROLLEY IS NECESSARY** (reversal of the Aug-13 verification). A
+   room-side iron lattice cages the study bell (`house.js` buildWindowRelay):
+   direct throws clang off it, shiver the bell without ringing, and nudge
+   toward the mooring. Only the carried trolley (or the basement-pilot
+   stranded-save valve) commits. house-critical-path Blocks A/B/C rewritten
+   to drive the trolley (door-open loop + the expansion test's choreography);
+   playthrough already used the trolley.
+2. **THE CANDLE GOES ON** (`voidDoorAct`): the door now opens on an UNLIT
+   igniter; the outbound strike LIGHTS it (bloom + fireRoar + glassTink),
+   the skull takes the heart of the flame (ateFlame unchanged), the candle
+   keeps a residual burn (flameCircuit sources can be `residual`), and a
+   NEW brass down-line beside the stand runs hot downward with three
+   descending knocks — the fire visibly goes somewhere below.
+3. **THE ARCHIVE IS NECESSARY**: the collar valve is the furnace's second
+   draft half. `archiveDraftOpened` (flag) is now required by the firebox
+   alongside `pumpGalleryLatched`, and `pilotLit` is enforced too (the tests
+   always claimed it; the code now agrees). The strike surges the stands AND
+   pins them awake (`route.draftOpen`), burns the caged lamp up, and runs a
+   duct-thunk chain east to the furnace, which answers with fire. Refusals
+   point at whichever half is missing (`game.blindArchive.nudge`).
+4. **WIRES**: floor conduit winch→gate→jamb; archive ceiling-main extension
+   dropping the shared hatchbay wall; the winch drum finally has an axle
+   into the east wall, a bearing, a pedestal, a mast whose eye the cable
+   actually hangs from (cableTop B+2.26), and spokes in the wheel's own
+   plane (they were perpendicular to their rim).
+5. **THE SEALED MAUSOLEUM** (`outside.js` buildSealedMausoleumSecret): the
+   east mausoleum takes a barred grate + fat padlock; the key (makeKey) lies
+   in the rubble of hero grave #6 once toppled (state-derived every tick,
+   reset-proof, never a debris-pool entry); inside, an IRON CANINE on a
+   plinth. Take it (outbound, after unlocking): `skullPower = 2` — stuns
+   hold twice as long, knockback doubles, slower contacts count (speed gate
+   8/power), longer hit flourish — and the skull's sockets deepen 13%. The
+   two-tier stun-then-pop grammar is UNTOUCHED. Flags: gotMausoleumKey,
+   mausoleumUnlocked, skullSharpened. enemies.js reads game.skullPower.
+6. **WINDOW WATCHERS** (`house.js` buildWindowWatchers): one nine-mesh
+   figure haunting the five glazed windows (landing, nursery, dining,
+   kitchen, guest — the scullery crawler owns the open one). Climbs into
+   view outside the glass while watched, palm+fingers to the pane at 78%,
+   vanishes on look-away or approach, hops sites on a growing cooldown.
+   `game.windowWatcher.force(i)` for deterministic tests.
+7. **UNDERFALLS: WATERFALLS, NOT ROCKS**: six new route-SPANNING water
+   curtains in the interior-cataracts instanced draw (entry throat, apse
+   mouth, both sluice legs, hatch approach, secret dry return), each with a
+   pooled candle descriptor; floor rock teeth moved OUT of the movement
+   clamp (halfW+0.18→+0.62 — the literal "walking through rocks"); sluice
+   gate posts out of the lane (w-0.34→w+0.12); cave fog 0.07→0.055 with the
+   comment extended; cataract shader brightened. Zero new lights, zero new
+   colliders, zero draw calls added.
+8. **HANDS DOWN** (`skull.js`): a third authored hand pose (`lowered`) and a
+   gone-blend — after the waterfall bargain the hands sink out of frame.
+   Hands only; `hold` never moves (kept locket + finale capture safe).
+   FEEL_PROFILE untouched.
+9. **CHAIN, FOURTH ASK**: rope emissive 0x39423f @ 1.35, knots x1.28 /
+   0x59666b @ 0.85. **TENTH STONE** at dz 7.35 — the true first step at the
+   water's edge (basin outerR puts water at dz~7.0; the old first stone at
+   8.8 left 1.8 m of shin-dip). Prepended in spatial order; stride check ok.
+
+## Recorded, not built
+
+- MARROW-enemies area ("probably not for this run"): an area with MARROW's
+  actual creatures. Alex wish, future run.
+
+---
+
+# HANDOFF - 2026-08-13 night, Alex's website-build feedback (SUPERSEDED — every item above)
 
 Alex played the LIVE Codex-pass build (site PR #52, pre-ossuary) and sent
 notes. His words are the spec; quotes verbatim. He explicitly prefers playing
