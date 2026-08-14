@@ -376,7 +376,9 @@ export function buildMarrowArea(game) {
     st.rotation.y = rng.float() * TAU;
     marrowRoot.add(st);
     statues.push(st);
-    world.addCollider(MX + sx - 0.62, FLOOR - 0.5, MZ + sz - 0.62,
+    st.userData.home = st.position.clone();
+    st.userData.homeRot = st.rotation.y;
+    st.userData.collider = world.addCollider(MX + sx - 0.62, FLOOR - 0.5, MZ + sz - 0.62,
       MX + sx + 0.62, FLOOR + 2.6, MZ + sz + 0.62, { marrow: true });
     void side;
   }
@@ -403,6 +405,11 @@ export function buildMarrowArea(game) {
   marrowRoot.add(relic);
   const relicGlow = { x: MX, y: FLOOR + 1.5, z: MZ + LENGTH - 2.2, intensity: 0.9, r: 5 };
   world.candles.push(relicGlow);
+  // the altar is stone, not a suggestion: no walking through the pedestal.
+  // The SKULL still passes — a low throw at the relic must never clank off
+  // an invisible box under it.
+  world.addCollider(MX - 0.78, FLOOR - 0.5, MZ + LENGTH - 2.68,
+    MX + 0.78, FLOOR + 1.12, MZ + LENGTH - 1.72, { marrow: true, skullPass: true });
 
   // ---- THE PRESENCE ------------------------------------------------------
   const presence = buildPresence(rng);
@@ -531,6 +538,80 @@ export function buildMarrowArea(game) {
     game.audio.whisper({ pos: presence.group.position, gain: 0.34, rate: 0.42, verb: 1.1 });
   };
 
+  // "it feels like you touch it and teleport" — descending and leaving are
+  // now VERBS: E on the breathing mouth to go down; E on the hanging bone
+  // toggle to climb back out. Same grammar as every hatch in the game.
+  //
+  // The verb only ARMS the swap; the ticker executes it. E fires before
+  // forest.update in the step, and a teleport the forest cullers see before
+  // the seal snapshots poisons the save/restore maps (details culled for
+  // the marrow position get saved as the surface state). Deferring to the
+  // ticker keeps the old walk-over ordering: cullers run on the surface
+  // pose, then the swap and the seal happen together.
+  const doDescend = () => {
+    const player = game.player;
+    if (state.inMarrow || game.act !== 'graveyard') return;
+    if (!game.flags.has('graveyardResolved') || game.skull?.mode !== 'held') return;
+    if (Math.hypot(player.pos.x - 11.8, player.pos.z - 36.2) > 2.6) return;
+    state.inMarrow = true;
+    player.pos.set(MX, FLOOR, MZ + 1.5);
+    player.vel.set(0, 0, 0);
+    player.fallV = 0;
+    player.grounded = true;
+    player.yaw = Math.PI;
+    player.pitch = 0;
+    player._sync(0);
+    game.flag('marrow:entered');
+    game.checkpoint('graveyard');
+    enterPalette();
+    game.audio.stoneGrind({ pos: new THREE.Vector3(MX, FLOOR, MZ), gain: 0.4, rate: 0.45 });
+    game.audio.duck(0.3, 2.2);
+    if (!state.witnessed) {
+      state.witnessed = true;
+      game.flag('marrow:witnessed');
+      game.after(1.1, () => {
+        if (!state.inMarrow) return;
+        startErupt(MX + 0.8, MZ + 9);
+        game.after(2.6, () => { if (state.inMarrow && !state.yielded) startFold(); }, { global: true });
+      }, { global: true });
+    }
+  };
+  const doAscend = () => {
+    const player = game.player;
+    if (!state.inMarrow || game.skull?.mode !== 'held') return;
+    if (player.pos.z > MZ + 3.4) return;
+    state.inMarrow = false;
+    exitPalette();
+    player.pos.set(11.8, 0.12, 34.6);
+    player.vel.set(0, 0, 0);
+    player.fallV = 0;
+    player.grounded = true;
+    player.yaw = Math.PI;
+    player._sync(0);
+    game.checkpoint('graveyard');
+    game.audio.stoneGrind({ pos: new THREE.Vector3(11.8, 0, 36.2), gain: 0.4, rate: 0.6 });
+  };
+  const descend = () => { state._pendingDescend = true; };
+  const ascend = () => { state._pendingAscend = true; };
+  state.descend = descend;
+  state.ascend = ascend;
+  let pitInter = null;
+  if (game.marrowPit) {
+    pitInter = world.registerInteract(game.marrowPit.pit, 'marrowDescend', descend);
+    pitInter.enabled = false;
+  }
+  // the way up hangs where you arrived: a rope and a bone toggle
+  const ropeMat = new THREE.MeshLambertMaterial({ color: 0x6a6458 });
+  const exitRope = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 1.7, 6), ropeMat);
+  exitRope.position.set(MX, FLOOR + HEIGHT - 0.85, MZ + 1.0);
+  marrowRoot.add(exitRope);
+  const exitToggle = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.24, 3, 6), boneMat);
+  exitToggle.name = 'marrow way up';
+  exitToggle.position.set(MX, FLOOR + 1.55, MZ + 1.0);
+  marrowRoot.add(exitToggle);
+  const exitInter = world.registerInteract(exitToggle, 'marrowAscend', ascend);
+  exitInter.enabled = false;
+
   const pv = new THREE.Vector3();
   game.tickers.push((dt, time) => {
     const player = game.player;
@@ -563,55 +644,61 @@ export function buildMarrowArea(game) {
         game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.52, rate: 0.48 });
       }
     }
-    // walking onto the breathing pit descends. The pit collider collapses
-    // only while the marrow is open — derived every tick, never an event.
-    if (game.marrowPit) {
-      game.marrowPit.collider.max.y = opened ? game.marrowPit.collider.min.y : 0.82;
-    }
-    if (opened && !state.inMarrow && game.act === 'graveyard'
-      && skull?.mode === 'held'
-      && Math.abs(p.x - 11.8) < 0.6 && Math.abs(p.z - 36.2) < 1.1 && p.y < 0.4) {
-      state.inMarrow = true;
-      p.set(MX, FLOOR, MZ + 1.5);
-      player.vel.set(0, 0, 0);
-      player.fallV = 0;
-      player.grounded = true;
-      player.yaw = Math.PI;   // face down the hall
-      player.pitch = 0;
-      player._sync(0);
-      game.flag('marrow:entered');
-      game.checkpoint('graveyard');
-      enterPalette();
-      game.audio.stoneGrind({ pos: new THREE.Vector3(MX, FLOOR, MZ), gain: 0.4, rate: 0.45 });
-      game.audio.duck(0.3, 2.2);
-      // the introduction: it claws out of the floor ahead, stares, folds
-      if (!state.witnessed) {
-        state.witnessed = true;
-        game.flag('marrow:witnessed');
-        game.after(1.1, () => {
-          if (!state.inMarrow) return;
-          startErupt(MX + 0.8, MZ + 9);
-          game.after(2.6, () => { if (state.inMarrow && !state.yielded) startFold(); }, { global: true });
-        }, { global: true });
-      }
-    }
-    // exit: walk back into the south end
-    if (state.inMarrow && p.z < MZ + 0.6 && skull?.mode === 'held') {
-      state.inMarrow = false;
-      exitPalette();
-      p.set(11.8, 0.12, 34.6);
-      player.vel.set(0, 0, 0);
-      player.fallV = 0;
-      player.grounded = true;
-      player.yaw = Math.PI;
-      player._sync(0);
-      game.checkpoint('graveyard');
-      game.audio.stoneGrind({ pos: new THREE.Vector3(11.8, 0, 36.2), gain: 0.4, rate: 0.6 });
-    }
+    // descending and leaving are USED (E on the mouth, E on the way-up
+    // rope), never walked-over — "everything you can open should kind of
+    // work the same way." The mouth stays a hole you lean over (collider
+    // permanently raised); the crosshair only offers the verb when it's live.
+    if (pitInter) pitInter.enabled = opened && !state.inMarrow && game.act === 'graveyard';
+    exitInter.enabled = state.inMarrow;
+
+    // armed verbs execute HERE, after the frame's cullers ran on the old
+    // pose — the swap and the seal land in the same ticker pass
+    if (state._pendingDescend) { state._pendingDescend = false; doDescend(); }
+    if (state._pendingAscend) { state._pendingAscend = false; doAscend(); }
 
     marrowRoot.visible = state.inMarrow;
     syncMarrowVisibility();
+
+    // THE RELIC'S GIFT: danger-sense. The small wet piece of another game
+    // beats like a heart in the jaw, faster as something closes in — in the
+    // crypt, in the yard, everywhere it rides. Value and motion only.
+    if (state.dangle) {
+      let near = 99;
+      for (const e of (game.enemies?.list || [])) {
+        if (!e?.pos) continue;
+        const dd = Math.hypot(e.pos.x - p.x, e.pos.z - p.z);
+        if (dd < near) near = dd;
+      }
+      const danger = clamp(1 - near / 14, 0, 1);
+      state._pulseT = (state._pulseT || 0) + dt * (0.9 + danger * 5.1);
+      const beat = Math.max(0, Math.sin(state._pulseT * TAU));
+      const throb = beat * beat;
+      state.dangle.scale.setScalar(0.45 + throb * (0.1 + danger * 0.16));
+      const m = state.dangle.material;
+      m.emissiveIntensity = (m.userData.base ??= m.emissiveIntensity) + throb * (0.4 + danger * 2.4);
+    }
+
     if (!state.inMarrow) return;
+
+    // a hard respawn re-seats the surface palette; the crypt takes its air
+    // back on the next tick (idempotent — never re-saves the surface)
+    if (state._fogSaved && game.fogColorTarget?.getHex() !== 0x160611) {
+      game.fogColorTarget = new THREE.Color(0x160611);
+      game.bgColorTarget = new THREE.Color(0x0d030a);
+      game.fogTarget = 0.052;
+    }
+    // death inside the crypt: when the player stands back up, the mourners
+    // are at their posts again — grace, never an ambush
+    if (game.dead) state._deadSeen = true;
+    else if (state._deadSeen) {
+      state._deadSeen = false;
+      for (const st of statues) {
+        st.position.copy(st.userData.home);
+        st.rotation.set(0, st.userData.homeRot, 0);
+        st.userData.stagger = 0;
+        st.userData.hitCd = 0;
+      }
+    }
 
     // candle flicker (sprite-only, MARROW's crypt trick)
     for (const c of candleSprites) {
@@ -620,18 +707,72 @@ export function buildMarrowArea(game) {
       c.spr.material.opacity = 0.75 + n * 0.25;
     }
 
-    // THE MOURNING STATUES: they turn to face you only while unseen
+    // THE MOURNING STATUES: they turn to face you only while unseen — until
+    // the relic leaves the altar. Then the mourning is over: while your eyes
+    // are elsewhere they DASH, the skull's hit shoves them back like any
+    // other creature, and their touch is the end. Weeping-angel grammar the
+    // player already learned on the way in; the theft breaks the truce.
     game.camera.getWorldDirection(pv);
+    const hunting = state.relicKept;
     for (const st of statues) {
+      const H = st.userData;
+      if (H.collider) {
+        // hunting statues abandon their plinth boxes (the catch radius is
+        // the body now); the truce restores them
+        H.collider.max.y = hunting ? H.collider.min.y : FLOOR + 2.6;
+      }
       const dx = p.x - st.position.x, dz = p.z - st.position.z;
       const d = Math.hypot(dx, dz);
-      if (d > 16) continue;
-      const facing = (pv.x * -dx + pv.z * -dz) / (d || 1) > 0.42;
-      if (!facing) {
+      if (!hunting) {
+        if (d > 16) continue;
+        const facing = (pv.x * -dx + pv.z * -dz) / (d || 1) > 0.42;
+        if (!facing) {
+          const want = Math.atan2(dx, dz);
+          let diff = ((want - st.rotation.y + Math.PI) % TAU) - Math.PI;
+          st.rotation.y += diff * Math.min(1, dt * 0.4);
+        }
+        continue;
+      }
+      H.stagger = Math.max(0, (H.stagger || 0) - dt);
+      // the skull's answer: bone shoves marble, harder with the iron canine
+      if (skull && (skull.mode === 'outbound' || skull.mode === 'returning') && time > (H.hitCd || 0)) {
+        // marble is a BIG target (1.4-scale cone), and the boomerang arc
+        // bends off the aim line — the radius honours both
+        const sd = Math.hypot(skull.pos.x - st.position.x, skull.pos.z - st.position.z);
+        if (sd < 1.0 && skull.pos.y > FLOOR && skull.pos.y < FLOOR + 3) {
+          H.hitCd = time + 0.7;
+          H.stagger = 1.5;
+          const kx = st.position.x - skull.pos.x, kz = st.position.z - skull.pos.z;
+          const kd = Math.hypot(kx, kz) || 1;
+          const push = 1.9 * (game.skullPower || 1);
+          st.position.x = clamp(st.position.x + (kx / kd) * push, MX - (HALF_W - 0.6), MX + (HALF_W - 0.6));
+          st.position.z = clamp(st.position.z + (kz / kd) * push, MZ + 1.0, MZ + LENGTH - 1.0);
+          st.rotation.z = (rng.float() - 0.5) * 0.14;   // knocked off true
+          game.audio.thud({ pos: st.position, gain: 0.7, rate: 0.62, crack: true });
+          game.impact('pop', st.position);
+        }
+      }
+      if (H.stagger > 0) {
+        // a struck statue shivers where it stands
+        st.rotation.y += Math.sin(time * 31 + st.userData.home.x) * 0.02;
+        continue;
+      }
+      const facing = (pv.x * -dx + pv.z * -dz) / (d || 1) > 0.38;
+      if (!facing && d > 0.05) {
         const want = Math.atan2(dx, dz);
         let diff = ((want - st.rotation.y + Math.PI) % TAU) - Math.PI;
-        st.rotation.y += diff * Math.min(1, dt * 0.4);
+        st.rotation.y += diff * Math.min(1, dt * 6);
+        const nx = dx / (d || 1), nz = dz / (d || 1);
+        st.position.x = clamp(st.position.x + nx * 3.3 * dt, MX - (HALF_W - 0.6), MX + (HALF_W - 0.6));
+        st.position.z = clamp(st.position.z + nz * 3.3 * dt, MZ + 1.0, MZ + LENGTH - 1.0);
+        // marble scraping stone, only while it moves — heard, never seen
+        H.scrapeT = (H.scrapeT || 0) - dt;
+        if (H.scrapeT <= 0) {
+          H.scrapeT = 0.34 + rng.float() * 0.2;
+          game.audio.stoneGrind({ pos: st.position, gain: 0.22, rate: 1.7 });
+        }
       }
+      if (d < 0.85 && !game.dead) game.director.death(st);
     }
 
     // THE DARK EYES: the spaces between candles blink
@@ -747,13 +888,14 @@ export function buildMarrowArea(game) {
     relicGlow.intensity = state.relicKept ? 0.2 : (state.yielded ? 1.4 : 0.9);
     if (!state.relicKept && state.yielded && skull?.mode === 'outbound') {
       const rd = Math.hypot(skull.pos.x - relic.position.x, skull.pos.z - relic.position.z);
-      if (rd < 0.5 && Math.abs(skull.pos.y - relic.position.y) < 0.6) {
+      if (rd < 0.72 && Math.abs(skull.pos.y - relic.position.y) < 0.9) {
         state.relicKept = true;
         game.flag('marrow:relicKept');
         const dangle = new THREE.Mesh(relicGeo.clone(), relicMat.clone());
         dangle.scale.setScalar(0.45);
         dangle.position.set(-0.048, -0.035, 0.05);
         game.skull.jaw.add(dangle);
+        state.dangle = dangle;
         game.audio.catchThud?.({ pos: relic.position, gain: 0.6, rate: 0.8 });
         game.audio.unlock({ pos: relic.position, gain: 0.5, rate: 0.55 });
         // the walls answer on the way out: knocks circle nearer, then it

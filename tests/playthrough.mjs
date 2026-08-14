@@ -176,7 +176,7 @@ try {
     F.stepWith(1.82, { moveZ: 1, run: true, throwHeld: true });
     F.stepWith(1.15, { throwHeld: true });
     F.stepWith(1 / 120, { throwReleased: true });
-    for (let t = 0; t < 4 && !g.flags.has('windowRelaySolved'); t += 0.05) F.stepWith(0.05);
+    for (let t = 0; t < 5 && !(g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpen')); t += 0.05) F.stepWith(0.05);
     waitHeld();
     beat('window-return-bell-opens-void-door',
       g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpenedByRelay')
@@ -506,12 +506,29 @@ try {
     // contact, not a position write.
     walkTo(-68.2, 19.8, 10);
     let climbPeakY = g.player.pos.y;
-    for (let t = 0; t < 14 && !g.flags.has('ossuaryExited'); t += 0.1) {
+    const atHatchTop = () => g.player.pos.y > g.ossuary.origin.floor + 3.05
+      && g.player.pos.x < g.ossuary.origin.x - 2.0
+      && g.player.pos.z > g.ossuary.origin.z + 33.9;
+    for (let t = 0; t < 14 && !atHatchTop(); t += 0.1) {
       const target = g.player.pos.z < 23.0 ? [-68.2, 23.6] : [-72.45, 24.65];
       const dx = target[0] - g.player.pos.x, dz = target[1] - g.player.pos.z;
       g.player.yaw = Math.atan2(-dx, -dz);
       F.stepWith(0.1, { moveZ: 1 });
       climbPeakY = Math.max(climbPeakY, g.player.pos.y);
+    }
+    // at the top the way out is USED, same grammar as every hatch: look
+    // into the open mouth under the lid and press E
+    if (!g.flags.has('ossuaryExited')) {
+      const mx = g.ossuary.origin.x - 2.45;
+      const mz = g.ossuary.origin.z + 34.75;
+      const my = g.ossuary.origin.floor + 5.43;
+      const dx = mx - g.player.pos.x, dz = mz - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.max(-1.15, Math.min(1.15,
+        Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001)));
+      g.player._sync(0);
+      F.stepWith(1 / 120, { interactPressed: true });
+      F.stepWith(0.3, {});
     }
     beat('ossuary-exits-up-the-shaft-climb',
       g.flags.has('ossuaryExited') && !g.ossuary.inOssuary && climbPeakY > -1.16

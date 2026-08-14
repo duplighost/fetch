@@ -429,14 +429,17 @@ function buildSealedMausoleumSecret(game) {
   const key = makeKey(M);
   key.scale.setScalar(1.4);
   const keyGrave = () => game.destructibleGraves?.[5] || null;
-  key.position.set(18.52, 0.2, 37.5);
-  key.rotation.set(-Math.PI / 2 + 0.28, 0, 0.7);
+  // "its underneath the rubble. it should be above the rubble... float
+  // standing straight up in the air" — bow up, blade down, hovering clear
+  // of the debris so the reveal cannot be buried.
+  key.position.set(18.52, 0.85, 37.5);
+  key.rotation.set(0, 0, 0);
   key.visible = false;
   scene.add(key);
   // "i didn't see the key... the skull wasn't holding a key" — the key now
   // GLOWS in the rubble (descriptor + breathing scale) and keeps glowing in
   // the skull's mouth after the grab, so the carry reads at a glance.
-  const keyGlow = { x: 18.52, y: 0.5, z: 37.5, intensity: 0, r: 4 };
+  const keyGlow = { x: 18.52, y: 0.9, z: 37.5, intensity: 0, r: 4 };
   world.candles.push(keyGlow);
   // "i never saw the key... it is possible i collect i accidentally" — he
   // did, and not by choice: the grab had no outbound guard, so the SAME
@@ -517,6 +520,10 @@ function buildSealedMausoleumSecret(game) {
     keyGlow.intensity += ((key.visible ? 1.3 + Math.sin(time * 2.6) * 0.25 : 0)
       - keyGlow.intensity) * Math.min(1, dt * 3);
     if (key.visible) key.scale.setScalar(1.4 + Math.sin(time * 2.6) * 0.09);
+    if (key.visible && !carried) {
+      key.position.y = 0.85 + Math.sin(time * 1.6) * 0.05;
+      key.rotation.y += dt * 0.9;
+    }
     // the canine exists on screen only once the grate is open — and then it
     // invites the throw: breathing, turning, bobbing under its halo
     tooth.visible = game.flags.has('mausoleumUnlocked') && !game.flags.has('skullSharpened');
@@ -1414,6 +1421,22 @@ function buildOssuaryRoute(game) {
   const lidPanel = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.1, 1.14), ironMat);
   lidPanel.position.z = -0.57;
   lidPivot.add(lidPanel);
+  // "things you can activate look distinct" — the lid wears the hatch-handle
+  // language: a bar bolted to its underside, catching light the moment the
+  // lid stands open above the climb.
+  const lidHandleMat = new THREE.MeshStandardMaterial({
+    color: 0x22282a, roughness: 0.4, metalness: 0.7,
+    emissive: 0x22282a, emissiveIntensity: 0.85,
+  });
+  const lidHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.46, 8), lidHandleMat);
+  lidHandle.rotation.z = Math.PI / 2;
+  lidHandle.position.set(0, -0.12, -0.94);
+  lidPivot.add(lidHandle);
+  for (const side of [-1, 1]) {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.05), lidHandleMat);
+    bracket.position.set(side * 0.2, -0.08, -0.94);
+    lidPivot.add(bracket);
+  }
   const hatchChains = new THREE.Group();
   hatchChains.name = 'ossuary hatch chains';
   hatchChains.userData.noBatch = true;
@@ -1705,6 +1728,55 @@ function buildOssuaryRoute(game) {
     },
   };
   game.ossuary = state;
+
+  // "you just get to the end and telport. everything you can open should
+  // kind of work the same way." — climbing out is now a USED verb: stand on
+  // the deck under the open lid, look into the mouth, E.
+  //
+  // The verb only ARMS the exit; the district ticker executes it. E fires
+  // before forest.update in the step, and committing the forest act there
+  // makes the back-district culler retire the yard while the ossuary seal
+  // still holds it hidden — the seal's restore then overwrites the
+  // retirement and the completed yard stays visible under the forest.
+  // Deferred to the ticker, cullers run on the pre-exit pose and the
+  // restore-then-retire order is the same as the old walk-over swap.
+  const doClimbOut = () => {
+    const player = game.player;
+    const skull = game.skull;
+    if (!state.inOssuary || !state.solved || state.exitT <= 0.98) return;
+    if (skull?.mode !== 'held') return;
+    const p = player.pos;
+    if (p.y <= FLOOR + 3.05 || p.x >= OX - 2.0 || p.z <= OZ + 33.9) return;
+    state.inOssuary = false;
+    p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 1.35);
+    player.vel.set(0, 0, 0);
+    player.fallV = 0;
+    player.grounded = true;
+    // The hatch rises beyond the gate. Face into the new chapter instead of
+    // back toward the completed 1,000-draw yard, and commit the forest act
+    // in this same fixed step rather than exposing one graveyard frame.
+    player.yaw = Math.PI;
+    player.pitch = 0;
+    player._sync(0);
+    game.flag('ossuaryExited');
+    game.enemies.clear((enemy) => enemy.ossuaryResident);
+    state.resident = null;
+    game.director.setAct('forest');
+    game.forest?.recentre(player.pos);
+    game.checkpoint('forest');
+    game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
+    state._justExited = true;
+  };
+  const climbOut = () => { state._pendingClimbOut = true; };
+  state.climbOut = climbOut;
+  const exitMouth = new THREE.Mesh(
+    new THREE.BoxGeometry(1.0, 0.55, 1.3),
+    new THREE.MeshBasicMaterial({ visible: false }));
+  exitMouth.position.set(OX - 2.45, DECK_Y + 0.18, OZ + 34.75);
+  exitMouth.userData.noBatch = true;
+  routeRoot.add(exitMouth);
+  const exitMouthInter = world.registerInteract(exitMouth, 'ossuaryClimbOut', climbOut);
+  exitMouthInter.enabled = false;
 
   // A solid wall still costs every draw behind it: WebGL performs depth
   // rejection, not whole-scene portal culling. From the east pocket the camera
@@ -2016,30 +2088,17 @@ function buildOssuaryRoute(game) {
       m.cap.position.set(-0.01, (2.49 - c * 0.18) * 0.25, 0);
     }
 
-    // The way out is now the TOP of the climb: standing on the hatch platform
-    // with the lid fully open, walls filling the frame, skull in hand — the
-    // same masking the entry throat gets. No more crossing a plane at a slab.
-    if (state.inOssuary && state.solved && state.exitT > 0.98
+    // The way out is USED at the TOP of the climb: the lid stands open, the
+    // bar on its underside catches the shaft light, and the crosshair only
+    // offers the verb once the player is up on the deck with skull in hand.
+    exitMouthInter.enabled = state.inOssuary && state.solved && state.exitT > 0.98
       && p.y > FLOOR + 3.05 && p.x < OX - 2.0 && p.z > OZ + 33.9
-      && skull?.mode === 'held') {
-      state.inOssuary = false;
-      p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 1.35);
-      player.vel.set(0, 0, 0);
-      player.fallV = 0;
-      player.grounded = true;
-      // The hatch rises beyond the gate. Face into the new chapter instead of
-      // back toward the completed 1,000-draw yard, and commit the forest act
-      // in this same fixed step rather than exposing one graveyard frame.
-      player.yaw = Math.PI;
-      player.pitch = 0;
-      player._sync(0);
-      game.flag('ossuaryExited');
-      game.enemies.clear((enemy) => enemy.ossuaryResident);
-      state.resident = null;
-      game.director.setAct('forest');
-      game.forest?.recentre(player.pos);
-      game.checkpoint('forest');
-      game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
+      && skull?.mode === 'held';
+    // the armed verb executes HERE, where the old walk-over swap lived —
+    // after this frame's cullers, before the seal restore below
+    if (state._pendingClimbOut) { state._pendingClimbOut = false; doClimbOut(); }
+    if (state._justExited) {
+      state._justExited = false;
       crossedFarExit = true;
     }
     routeRoot.visible = state.inOssuary;
@@ -5175,6 +5234,15 @@ export function buildClearing(game) {
   pool.name = 'clearing plunge pool';
   pool.userData.radius = CLEARING_BASIN.waterR;
   scene.add(pool);
+  // "you can see under the water which is odd" — the surface plane is
+  // single-sided, so any camera angle from the basin side looked straight
+  // into a dry pit. The pool has a BODY now: opaque murk filling the basin.
+  const murk = new THREE.Mesh(
+    new THREE.CylinderGeometry(CLEARING_BASIN.waterR - 0.03, CLEARING_BASIN.innerR - 0.3,
+      CLEARING_BASIN.depth + 0.1, 40),
+    new THREE.MeshStandardMaterial({ color: 0x0b1418, roughness: 1, metalness: 0 }));
+  murk.position.set(C.x, 0.05 - (CLEARING_BASIN.depth + 0.1) / 2, C.z + CLEARING_BASIN.centerZ);
+  scene.add(murk);
   game.clearingPool = pool;
   game.clearingBasin = CLEARING_BASIN;
   game.tickers.push((dt, t) => {

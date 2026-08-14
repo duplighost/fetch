@@ -1,3 +1,100 @@
+# HANDOFF - 2026-08-14, EVERYTHING OPENS THE SAME WAY (branch claude/feedback-aug14)
+
+Alex's second live-play list of the day, all of it built. The through-line
+was his own sentence: "everything you can open should kind of work the
+same way." Every touch-teleport is now a USED verb with a visible handle.
+
+THE BIG ROOT CAUSE — "i think the biggest problem is something with the
+lighting isn't working" (Underfalls): he was right, it was BROKEN, not
+dim. The cave's visibility seal spares `child.isLight` — but
+World.pinLightCensus LIFTS every boot light into world.lightRoot, a plain
+GROUP the seal didn't recognize. The seal hid the group, the renderer
+skipped the entire light subtree, and the cave rendered with ZERO point
+lights — only emissive/basic materials survived (the pale wet line he
+could see). One line — spare `game.world.lightRoot` — relit the whole
+district. This also fully explains his earlier "a better looking version
+loads up before another version loads up": the first ticks after entry
+rendered lit, then the seal killed the census. LAW REAFFIRMED: every
+district seal spares world.lightRoot, no exceptions, and `child.isLight`
+at scene level matches nothing after the census lift.
+
+TRANSITIONS ARE VERBS NOW (marrow in/out, ossuary top):
+- The marrow pit mouth: E while looking into the breathing grave (interact
+  on the pit mesh, crosshair only offers it once the yard is resolved).
+  The pit collider stays raised — the mouth is a hole you lean over, never
+  fall into. The way out is a hanging rope + bone toggle at the entry wall
+  (E). Both are armed verbs: the VERB sets a pending flag and the DISTRICT
+  TICKER executes the swap. This ordering matters — E fires before
+  forest.update in the step, and a teleport the forest cullers see before
+  the seal snapshots poisons the save/restore maps (we shipped exactly
+  that bug for one commit: forest detail saved as culled, restored as
+  culled, gone until you re-crossed z 31.5). The ticker keeps the old
+  walk-over ordering: cullers run on the surface pose, swap + seal land
+  together.
+- The ossuary top: the open lid wears a handle bar on its underside, and
+  climbing out is E into the mouth under it (invisible interact box on the
+  deck, enabled only at the top with skull held). Same pending-verb
+  deferral — committing the forest act at _interact time made the
+  back-district culler retire the yard while the ossuary seal still held
+  it, and the seal's restore then undid the retirement.
+- The underfalls end hatch already had its E — it now wears the same
+  handle language (bar + brackets on the door underside, facing the
+  upturned player).
+
+THE MARROW GREW TEETH (Alex: "make it an actual challange where they
+behave like the other enemies when the skull hits them and you cant let
+them get you" + "What does that secret item do... make it do something
+cool"):
+- THE HUNT: the moment the relic leaves the altar, the Mourning Statues
+  stop mourning. Watched, they freeze (the grammar the entry taught);
+  unobserved, they DASH at 3.3 m/s with marble-scrape audio; a skull hit
+  (outbound or returning, radius 1.0 — the boomerang arc bends off the aim
+  line, don't tighten it) shoves them 1.9m (x skullPower) and staggers
+  them shivering for 1.5s; their touch is death. Their plinth colliders
+  collapse while hunting (the catch radius is the body). Death in the
+  crypt respawns you at the entry checkpoint with every statue reposted
+  home — grace, never an ambush. The crypt palette re-asserts itself every
+  tick it owns the player, so a hard respawn can't leave graveyard air
+  down there.
+- THE RELIC'S GIFT: danger-sense. The dangle in the jaw beats like a
+  heart — scale throb + emissive pulse, 0.9Hz calm to 6Hz with something
+  close (nearest enemy within 14m scales it). Works everywhere it rides,
+  every act. Value and motion only.
+- The altar is solid now (collider, skullPass so low throws never clank)
+  and the take window widened (rd < 0.72, |dy| < 0.9) — "i couldn't
+  collect the item easily... i walked right through the pedestal".
+
+THE REST OF THE LIST:
+- KEY FLOATS ("it should be above the rubble... float standing straight
+  up in the air"): bow-up blade-down at y 0.85, bobbing and slowly
+  turning, glow descriptor raised with it. Carried pose untouched (grab
+  owns the jaw).
+- CELLAR STAIRS ("you can kind of go through a texture"): the flight is
+  thin tread slats with rises taller than the slats are thick — you could
+  see clean through it. One slope-matched skirt panel under the treads
+  closes every gap. Visual only.
+- POOL HAS A BODY ("you can see under the water which is odd"): the
+  surface plane is single-sided; from inside the basin you saw a dry pit.
+  An opaque murk cylinder fills the basin under the plane.
+- Battery: full serial run green — smoke, autotest 24, regressions 78
+  (marrow-descent now 13 checks: verbs, dash, freeze, skull-shove,
+  lethal catch, respawn reseat), playthrough COMPLETE, district-culling
+  14 (both verb deferrals proven by exact restore), house-critical-path,
+  house-expansion, underfalls-expansion 13, failure-state 20,
+  basement-foundations 8, grave-arena, chase-doors, return-horror,
+  choir-occlusion, creature-audio, enemy-stain, postclear, exterior,
+  forest-hardening, nervous-system, horror-expansion 16, pause-title 25,
+  perf-pool, pump-release. Draw ceilings hold (max 443 house-after-cave).
+- TEST AUTHORING NOTE (cost a full debug loop): the statues hunt from the
+  INSTANT the relic is grabbed. A test that dawdles after the take gets
+  its player killed by statue #0 closing from behind while it stages the
+  next check — and the failure surfaces two legs later as "the throw never
+  launched" (dead ⇒ verbsLive false). Re-seat all four statues before
+  staging statue checks, and park the non-subject three far away.
+
+Deliberately left: house chaser stuck on stairs (Alex uses it for
+playtesting).
+
 # HANDOFF - 2026-08-14, BASEMENT LEGIBILITY (branch claude/basement-legibility)
 
 Alex, playing THE MARROW build live: "the puzzle in the basement of the

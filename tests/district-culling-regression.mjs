@@ -339,9 +339,11 @@ try {
     const beforeMarrow = snapshotVisibility();
     g.flag('graveyardResolved');
     g.skull.holdNow();
+    // descent is a USED verb now: stand at the lip and take it directly
     g.player.pos.set(11.8, 0.05, 36.2);
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
+    g.marrow.descend();
     F.step(1 / 120, 40, false);
     const marrow = g.marrow;
     const marrowDrawSamples = [];
@@ -369,6 +371,7 @@ try {
     );
     g.player.pos.set(marrow.origin.x, marrow.origin.floor, marrow.origin.z + 0.4);
     g.player._sync(0);
+    marrow.ascend();
     F.step(1 / 120, 40, false);
     const marrowRestoreDiff = visibilityDiff(beforeMarrow);
     check(
@@ -397,6 +400,7 @@ try {
     g.player.fallV = 0;
     g.player.grounded = true;
     g.player._sync(0);
+    ossuary.climbOut();   // the far exit is a USED verb now: E under the open lid
     F.step(1 / 120, 1, false);
     g.enemies.clear();
     const forwardDrawSamples = [];

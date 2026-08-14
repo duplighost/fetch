@@ -637,6 +637,19 @@ export function buildHouse(game) {
     }
   }
 
+  // cellar flight skirt: the steep flight is authored as thin tread slats
+  // (openUnder) and the rise between slats is taller than the slats are
+  // thick, so descending you could see clean through the flight into the
+  // corridor below — "you can kind of go through a texture". One panel
+  // matched to the slope closes every gap. Visual only; no collider.
+  {
+    const slope = Math.atan2(2.0, 2.5);   // flight: z 2 -> 4.5, y 0 -> -2
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(3.96, 0.09, 3.3), M.stone);
+    skirt.position.set(10, -1.19, 3.24);
+    skirt.rotation.x = slope;
+    scene.add(skirt);
+  }
+
   // roof slabs: over ground cells with no first-floor room, and over first
   const firstCells = new Set();
   for (const [id, x0, z0, x1, z1, lv] of HOUSE_TABLES.rooms) {
@@ -1195,7 +1208,7 @@ function cellarBoards(game) {
   // route cannot run backwards, but it does not pretend one flame is mandatory.
   const latch = new THREE.Group();
   latch.name = 'cellar-bell-circuit-latch';
-  latch.position.set(p.x + 0.65, 0, p.z - 0.235);
+  latch.position.set(p.x + 1.05, 0, p.z - 0.235);   // beside the frame, out of the walk line
   scene.add(latch);
   const latchBrass = new THREE.MeshStandardMaterial({
     color: 0x9d7f43, roughness: 0.34, metalness: 0.84,
@@ -1735,14 +1748,6 @@ function basementAct(game) {
         game.basementPilot?.nudge?.();
         return 'return';
       }
-      if (!game.flags.has('pilotLit')) {
-        // the furnace will not take an offering over a cold pilot — the test
-        // suite always claimed this; now the code does too
-        game.impact('locked', incPos);
-        game.audio.fireChoke({ pos: incPos, gain: 0.22, rate: 0.58 });
-        game.basementPilot?.nudge?.();
-        return 'return';
-      }
       if (!game.flags.has('pumpGalleryLatched') || !game.flags.has('archiveDraftOpened')) {
         game.flag('incineratorNeedsDraft');
         game.impact('locked', incPos);
@@ -1794,7 +1799,7 @@ function basementAct(game) {
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
   game.tickers.push((dt, t) => {
-    const hasDraft = game.flags.has('pilotLit') && game.flags.has('pumpGalleryLatched')
+    const hasDraft = game.flags.has('pumpGalleryLatched')
       && game.flags.has('archiveDraftOpened');
     if (!incin.awake && hasDraft) {
       incin.awake = true;
@@ -1850,6 +1855,24 @@ function basementAct(game) {
   const panel = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.12, 1.9), M.metal);
   panel.rotation.x = -0.5;
   hatch.add(panel);
+  // "when it knocks off the lock, there should still be a handle on it.
+  // It's a good idea to have things you can activate look distinct." — a
+  // real pull handle, bright by emissive value, riding the panel's tilt.
+  const handleMat = new THREE.MeshStandardMaterial({
+    color: 0x8f9694, roughness: 0.4, metalness: 0.7,
+    emissive: 0x22282a, emissiveIntensity: 0.85,
+  });
+  const handleBar = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.44, 8), handleMat);
+  handleBar.rotation.z = Math.PI / 2;
+  handleBar.rotation.x = -0.5;
+  handleBar.position.set(0, 0.13, 0.28);
+  hatch.add(handleBar);
+  for (const side of [-1, 1]) {
+    const bracket = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.024, 0.12, 6), handleMat);
+    bracket.rotation.x = -0.5 + Math.PI / 2;
+    bracket.position.set(side * 0.19, 0.1, 0.25);
+    hatch.add(bracket);
+  }
   hatch.position.set(-10, B + 2.1, 4.4);
   scene.add(hatch);
 
@@ -2496,7 +2519,10 @@ function buildWindowRelay(game) {
     game.audio.metalDrop({ pos: receiver.position, gain: 0.72, rate: 1.18 });
     game.after(0.16, () => game.audio.unlock({ pos: receiver.position, gain: 0.72, rate: 1.34 }));
     game.after(0.32, () => game.audio.knock({ pos: mooring.position, gain: 0.42, rate: 0.76 }));
-    game.voidDoorBeat?.open?.('windowRelay');
+    game.after(0.35, () => game.audio.knock({ pos: new THREE.Vector3(-6, 2.4, 0.4), gain: 0.4, rate: 0.7 }), { global: true });
+    game.after(0.68, () => game.audio.knock({ pos: new THREE.Vector3(0.5, 4.2, -3), gain: 0.44, rate: 0.62 }), { global: true });
+    game.after(0.95, () => game.audio.knock({ pos: new THREE.Vector3(4, 4.75, -7), gain: 0.5, rate: 0.55 }), { global: true });
+    game.after(1.15, () => game.voidDoorBeat?.open?.('windowRelay'), { global: true });
     game.houseMirror?.signalRelay?.();
     game.cellarRelayLatch?.release?.();
     return true;
@@ -2548,6 +2574,10 @@ function buildWindowRelay(game) {
   const pullHandle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.018, 6, 14), strikerEdge);
   pullHandle.position.set(0.045, -0.87, 0.36);
   directStriker.add(pullHandle);
+  // "im also still seeing two bells" — one bell now. The gold room-side
+  // striker is hidden (its refusal targets remain as invisible anchors);
+  // the receiver behind the cage in the window reveal IS the bell.
+  directStriker.visible = false;
   relay.directStriker = directStriker;
   // Target the actual visible silhouette, not the group's empty pivot. The
   // original pivot sphere stopped just above the bell mouth and far above the
@@ -2934,7 +2964,7 @@ function buildWindowWatchers(game) {
     { x: 12, floor: G, z: -3, nx: 1, nz: 0 },    // kitchen, east
     { x: 12, floor: F, z: -7, nx: 1, nz: 0 },    // guest, east
   ];
-  const skin = new THREE.MeshBasicMaterial({ color: 0x42433d, transparent: true, opacity: 1 });
+  const skin = new THREE.MeshBasicMaterial({ color: 0x5c5e55, transparent: true, opacity: 1 });
   const cloth = new THREE.MeshBasicMaterial({ color: 0x0c0e0f, transparent: true, opacity: 1 });
   const root = new THREE.Group();
   root.name = 'window-watcher';
@@ -3044,8 +3074,10 @@ function buildWindowWatchers(game) {
       const before = w.t;
       w.t = Math.min(1, w.t + dt / 3.1);
       root.visible = true;
-      // it climbs into view from below the sill while your eyes hold it
-      root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 1.62;
+      // it climbs into view from below the sill while your eyes hold it —
+      // all the way up, so its torso and palm fill the pane, not just a
+      // sliver of hood cresting the sill
+      root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 2.35;
       if (before < 0.78 && w.t >= 0.78) {
         game.audio.glassTink({ pos: paneCenter, gain: 0.4, rate: 0.5 });
       }
@@ -4509,7 +4541,7 @@ function buildPumpGallery(game) {
   };
 
   world.addFetchTarget({
-    id: 'archiveCollar', pos: new THREE.Vector3(-16.3, B + 2.28, 5.58), radius: 0.62,
+    id: 'archiveCollar', pos: new THREE.Vector3(-16.3, B + 2.28, 5.58), radius: 0.42,
     onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
       // the line takes the blow: every gauge in the room swings, one stand
@@ -4562,7 +4594,7 @@ function buildPumpGallery(game) {
   // the draft commits. The collar strike still opens it too; two honest
   // doors to one flag.
   const lampAnchor = new THREE.Vector3();
-  const draftHold = { t: 0, required: 1.35, _strainT: 0, _was: false };
+  const draftHold = { t: 0, required: 1.05, _strainT: 0, _was: false };
   const lampTarget = world.addFetchTarget({
     id: 'archiveDraftLamp', object: archiveLamp, radius: 0.72,
     onHit(skull) {
@@ -4570,7 +4602,10 @@ function buildPumpGallery(game) {
       if (skull.mode !== 'outbound') return 'continue';
       this.enabled = false;
       archiveLamp.getWorldPosition(lampAnchor);
-      skull.anchorAt(lampAnchor, { swing: true, maxHold: 4.5, puzzleId: 'archiveDraft' });
+      // a PARK, not a button-hold: the skull lands ON the light and stays
+      // there while the room revs — "you could hold it to rev up all those
+      // contraptions" meant leaving it there, and now that is exactly it
+      skull.anchorAt(lampAnchor, { maxHold: 4.5, puzzleId: 'archiveDraft' });
       game.impact('locked', lampAnchor);
       game.audio.creak({ pos: lampAnchor, gain: 0.55, rate: 0.68 });
       return 'anchor';
@@ -4796,13 +4831,16 @@ function buildPumpGallery(game) {
         game.shake(0.1);
       }
       draftHold._was = drafting;
-      if (draftHold.t >= draftHold.required) openArchiveDraft();
+      if (draftHold.t >= draftHold.required) {
+        openArchiveDraft();
+        if (drafting) game.skull.beginReturn?.('auto');
+      }
     }
     if (route.latched && archiveDetailVisible) {
       route.archiveWake += dt;
       for (let i = 0; i < pumpStands.length; i++) {
         const pump = pumpStands[i];
-        const wake = clamp((route.archiveWake - i * 0.16) * 1.3, 0, 1)
+        const wake = clamp((route.archiveWake - i * 0.1) * 1.9, 0, 1)
           * clamp(1.6 - route.archiveWake * 0.09, 0.12, 1)   // it settles
           + route.surgeT * 0.9                               // a hit stirs it
           + (route.draftOpen ? 0.5 : 0);   // an opened draft KEEPS the room working

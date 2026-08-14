@@ -155,6 +155,7 @@ try {
     F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
     for (let i = 0; i < 50 && !g.flags.has('windowRelaySolved'); i++) F.stepWith(0.05, {}, false);
     for (let i = 0; i < 60 && g.skull.mode !== 'held'; i++) F.stepWith(0.05, {}, false);
+    for (let i = 0; i < 40 && !g.flags.has('voidDoorOpen'); i++) F.stepWith(0.05, {}, false);   // the ring travels
     const afterBell = {
       solved: g.flags.has('windowRelaySolved'),
       source: g.windowRelay?.solveSource ?? null,

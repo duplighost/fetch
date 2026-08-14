@@ -1183,6 +1183,22 @@ function buildHatchCistern(game, layout, state) {
   }
   addInstances(hatch, new THREE.TorusGeometry(0.12, 0.022, 5, 10), hatchMetal, chainMatrices,
     { name: 'mismatched hatch pull chains' });
+  // "the thing at the end should be more visible with a handle" — the same
+  // handle language as every other thing you can open: a bar and brackets
+  // on the door's underside, facing the upturned player.
+  const hatchHandleMat = new THREE.MeshStandardMaterial({
+    color: 0x22282a, roughness: 0.4, metalness: 0.7,
+    emissive: 0x22282a, emissiveIntensity: 0.85,
+  });
+  const hatchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.56, 8), hatchHandleMat);
+  hatchHandle.rotation.z = Math.PI / 2;
+  hatchHandle.position.set(0, 3.56, 0);
+  hatch.add(hatchHandle);
+  for (const side of [-1, 1]) {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.06), hatchHandleMat);
+    bracket.position.set(side * 0.24, 3.64, 0);
+    hatch.add(bracket);
+  }
   hatch.position.set(H.x, y, H.z);
   scene.add(hatch);
 
@@ -1273,6 +1289,11 @@ function installCaveVisibility(game, state) {
     || child === game.skull?.root
     || child === game.clearingPool
     || child.userData?.underfalls
+    // The pinned census rides in ONE group (World.pinLightCensus lifts every
+    // boot light into world.lightRoot). `child.isLight` was written before
+    // that lift and no longer matches anything at scene level — hiding the
+    // group un-lights the entire district. Every seal spares lightRoot.
+    || child === game.world.lightRoot
     || child.isLight
     || child === game.world.moon?.target
     || enemyRoots.has(child)

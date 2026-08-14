@@ -633,7 +633,9 @@ try {
     const samples = [];
     let regressed = 0;
     let wp = 0;
-    for (let t = 0; t < 40 && !g.flags.has('ossuaryExited'); t += 0.1) {
+    const atTop = () => g.player.pos.y > g.ossuary.origin.floor + 3.05
+      && g.player.pos.x < OX - 2.0 && g.player.pos.z > OZ + 33.9;
+    for (let t = 0; t < 40 && !atTop(); t += 0.1) {
       const p = g.player.pos;
       const target = waypoints[Math.min(wp, waypoints.length - 1)];
       const dx = target[0] - p.x;
@@ -644,6 +646,18 @@ try {
       const y = g.player.pos.y;
       if (samples.length && y < samples[samples.length - 1] - 0.3) regressed++;
       samples.push(+y.toFixed(2));
+    }
+    // the top of the climb ends on a USED verb now: E into the open mouth
+    if (!g.flags.has('ossuaryExited') && atTop()) {
+      const mx = OX - 2.45, mz = OZ + 34.75;
+      const my = g.ossuary.origin.floor + 5.43;
+      const dx = mx - g.player.pos.x, dz = mz - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.max(-1.15, Math.min(1.15,
+        Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001)));
+      g.player._sync(0);
+      F.stepWith(1 / 120, { interactPressed: true });
+      F.stepWith(0.3, {});
     }
     const peak = Math.max(...samples);
     check('the far exit is a grounded climb to the hatch, not a plane swap',
@@ -719,15 +733,21 @@ try {
     g.flag('graveyardResolved');   // the yard's business is done; the pit wakes
     g.skull.holdNow();
     F.stepWith(0.3, {}, false);
-    check('the northeast pit collider collapses once the marrow is open',
-      g.marrowPit && g.marrowPit.collider.max.y === g.marrowPit.collider.min.y,
-      { max: g.marrowPit?.collider?.max?.y });
-    g.player.pos.set(11.8, 0.05, 36.2);
+    check('the pit mouth offers its verb once the marrow is open',
+      g.marrowPit && g.marrowPit.pit.userData.inter?.enabled === true
+      && g.marrowPit.collider.max.y > g.marrowPit.collider.min.y,
+      { enabled: g.marrowPit?.pit?.userData?.inter?.enabled });
+    // descending is USED now, never walked-over: stand at the lip, look
+    // into the mouth, E
+    g.player.pos.set(11.8, 0.05, 34.85);
     g.player.vel.set(0, 0, 0);
+    g.player.yaw = Math.PI;
+    g.player.pitch = Math.atan2(0.018 - (0.05 + 1.62), 36.2 - 34.85);
     g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
     F.stepWith(0.3, {});
     const M = g.marrow;
-    check('stepping into the pit descends into the marrow',
+    check('using the mouth descends into the marrow',
       M.inMarrow === true && g.flags.has('marrow:entered') && g.flags.has('marrow:witnessed'),
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
     // the palette EASES in now (fog is a weather system, never a snap), so
@@ -792,11 +812,81 @@ try {
       g.flags.has('marrow:relicKept') && g.skull.jaw.children.length > jawBefore,
       { jawBefore, jawAfter: g.skull.jaw.children.length });
 
-    // leave: the surface takes its palette back
-    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 0.4);
+    // the theft breaks the truce: while unobserved the mourners DASH.
+    // Hunting began the moment the relic left the altar, so first re-seat
+    // every statue at its post for a known board. st0 is the subject of
+    // every check; the other three park at the far end (the player faces
+    // them while st0 works from behind) or four simultaneous hunters end
+    // the test before the throw leg.
+    const st0 = M.statues[0];
+    for (const st of M.statues) {
+      st.position.copy(st.userData.home);
+      st.userData.stagger = 0;
+    }
+    for (const st of M.statues.slice(1)) {
+      st.position.set(M.origin.x + 3.2, M.origin.floor, M.origin.z + 24.8);
+    }
+    const preDash = st0.position.clone();
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 13);
+    g.player.vel.set(0, 0, 0);
+    g.player.yaw = Math.PI;   // facing up-hall; statue 0 is behind, unseen
+    g.player.pitch = 0;
     g.player._sync(0);
+    F.stepWith(1.0, {});
+    const advanced = preDash.distanceTo(st0.position);
+    check('after the theft an unobserved statue closes the distance fast',
+      advanced > 1.2, { advanced: +advanced.toFixed(2) });
+
+    // watched, it freezes mid-hunt
+    const preWatch = st0.position.clone();
+    const dxs = st0.position.x - g.player.pos.x;
+    const dzs = st0.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxs, -dzs);
+    g.player._sync(0);
+    F.stepWith(0.8, {});
+    check('a watched statue freezes mid-hunt',
+      preWatch.distanceTo(st0.position) < 0.05,
+      { moved: +preWatch.distanceTo(st0.position).toFixed(3) });
+
+    // the skull's hit shoves marble like any other creature
+    const preHit = st0.position.clone();
+    let minSd = 99;
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    for (let i = 0; i < 60; i++) {
+      F.step(1 / 120, 1, false);
+      minSd = Math.min(minSd,
+        Math.hypot(g.skull.pos.x - st0.position.x, g.skull.pos.z - st0.position.z));
+    }
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    const shoved = preHit.distanceTo(st0.position);
+    check('a skull hit staggers the hunter back',
+      shoved > 0.8, { shoved: +shoved.toFixed(2), minSd: +minSd.toFixed(2) });
+
+    // and you cannot let them get you
+    const dxa = st0.position.x - g.player.pos.x;
+    const dza = st0.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxa, -dza) + Math.PI;   // look away again
+    g.player._sync(0);
+    for (let t = 0; t < 6 && !g.dead; t += 0.1) F.stepWith(0.1, {});
+    check('letting a mourner reach you is the end', g.dead === true, { dead: g.dead });
+
+    g.director.respawn();
+    F.stepWith(0.5, {});
+    check('respawn stands you back up inside the marrow with the mourners reposted',
+      M.inMarrow === true && !g.dead
+      && M.statues[0].position.distanceTo(M.statues[0].userData.home) < 0.05,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    // leave: E on the hanging bone toggle; the surface takes its air back
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 2.2);
+    g.player.vel.set(0, 0, 0);
+    g.player.yaw = 0;
+    g.player.pitch = -0.06;
+    g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
     F.stepWith(0.4, {});
-    check('walking out surfaces beside the grave and restores the fog',
+    check('using the way-up toggle surfaces beside the grave and restores the fog',
       M.inMarrow === false && g.act === 'graveyard'
       && g.scene.fog.color.getHex() !== 0x160611,
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
