@@ -300,9 +300,12 @@ export class Skull {
     // A physically lit, very rough surface gives the joints their volume; the
     // viewmodel key in main.js is deliberately far enough away that it cannot
     // clip the skin to white at point-blank range.
-    const skin = new THREE.MeshStandardMaterial({ color: 0x684238, roughness: 0.97, metalness: 0 });
-    const crease = new THREE.MeshStandardMaterial({ color: 0x57372f, roughness: 1.0, metalness: 0 });
-    const nailMat = new THREE.MeshStandardMaterial({ color: 0x7c5a4e, roughness: 0.82, metalness: 0 });
+    // Slightly off the old orange-red: under the warm viewmodel key a saturated
+    // albedo came back as salmon plastic. These sit a step darker and a step
+    // less saturated so the key can do the warming.
+    const skin = new THREE.MeshStandardMaterial({ color: 0x5d3f36, roughness: 0.97, metalness: 0 });
+    const crease = new THREE.MeshStandardMaterial({ color: 0x4b3029, roughness: 1.0, metalness: 0 });
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x6b5046, roughness: 0.82, metalness: 0 });
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
 
     const mkFinger = (parent, x, y, z, scale, yaw) => {

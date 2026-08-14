@@ -1,3 +1,128 @@
+# HANDOFF - 2026-08-14, THE VISUAL PASS (branch claude/visual-pass)
+
+Alex: "Let's do a complete visual pass on this game and make everything look
+absolutely stunning." Whole game, every act, looked at rather than reasoned
+about — new tool `tools/shot-visual-audit.mjs` shoots 36 posed vantages across
+bedroom / house / basement / graveyard / forest / clearing / underfalls /
+mirror in one pass and prints draws+tris per frame, so a prettier game cannot
+quietly blow the budget. Seven rounds of shoot-look-fix.
+
+Nothing about feel was touched: FEEL_PROFILE, the throw grammar, input, all
+progression and every collider are byte-identical. This is light, surface and
+frame only.
+
+## The five things that were actually wrong
+
+**1. THE VIEWMODEL NEVER LEARNED THE WORLD WENT DARK.** The hands and the held
+skull draw in their own depth pass with their own lamps, so nothing about the
+act reaches them — they carried the BEDROOM's lighting all the way into the
+graveyard. Measured (`tools/probe-viewmodel-light.mjs`, new): hand region mean
+**0.158 against a world mean of 0.032 — five times the brightness of the frame
+they sit in.** That is the whole of "two salmon gloves floating in the dark".
+The key now rides the act's own free-light floor (the same factor the director
+eases world ambient by, `^1.25`), and a second term makes the game's premise
+visible: while the skull is HELD it is the thing lighting your hands, so
+throwing it dims the cradle with everything else, and `gone` dims it for good.
+New back rim (`holdRimLight`, created at boot — the never-add-a-light-at-
+runtime law is intact) keeps a silhouette alive against black. Graveyard hands:
+0.158 → 0.069, ratio 5.0 → 2.2.
+
+**2. THE GROWING TISSUE WAS BRIGHTER THAN THE BONE.** The stage 3+ patches on
+skull-variant-e peaked at **0.96 luminance in a graveyard frame averaging
+0.032** — a stripe of orange paint across the cranium, and to a colourblind
+player only ever "a bright wrong thing". Wet tissue on dry bone is DARKER than
+the bone. muscle/muscle2/skin/skinPale dropped and roughened (0.48→0.70 etc) so
+they stop throwing the specular that lit them; the new rim finds their wet edge
+instead. Value carries the read, hue carries none of it.
+
+**3. THERE WAS NO OCCLUSION TERM ANYWHERE.** Corners read exactly as bright as
+the middle of the wall they turned; ceilings came out brighter than the floors
+under them. `World._buildOcclusionGrid` + `_bakeContactShading`: rasterise the
+SHELL of every static collider into a sparse grid (a shell, not a volume, so a
+200 m forest costs about what a cupboard does — 38,761 cells total), then
+darken every merged vertex by how much of its own hemisphere is walled in.
+`box()` now segments anything over ~0.85 m so there are vertices for a seam to
+land on. Free at runtime: it is a colour attribute on geometry that was being
+merged anyway. Ceiling albedo also dropped below the wallpaper's (0x808080 →
+0x5e5e5a) — lamplight falls on what is UNDER it. Not one lumen was removed from
+any room; "the house feels empty" was never this.
+
+**4. EVERY WALL WAS PURE DIFFUSE.** The one light the player carries could
+sweep across a brick wall and never find a brick. Every painted map already has
+its own shading in it, which makes it a serviceable height field, so each is
+fed back as its own `bumpMap` — no new texture, no new material, no new draw
+call, and Lambert carries bumpMap per-fragment in the vendored r161 (verified).
+`stonePaint` also stopped being a perfect 4-column grid with a half-offset:
+jittered course widths, per-block value and bevel, chipped corners, one block
+in 150 gone, and a whole-cycle macro field so no two square metres match.
+(First attempt used 1-in-20 missing blocks and the cellar came back as a
+black-and-white checkerboard — caught by looking, fixed to 1-in-150.)
+New `M.stoneFloor`: a floor is a wall that gets walked on, and sharing one map
+put pale wall stone underfoot where the hemisphere term hands floors the SKY's
+share of the light — the cellar floor was the brightest plane in the room.
+
+**5. THE OUTDOORS HAD NO SKY, NEON FOLIAGE AND A BARCODE WATERFALL.**
+- Sky: the dome was an honest vertical gradient and nothing else, so every
+  silhouette the game builds had nothing to be a silhouette against. Now
+  drifting cloud on an overhead plane (foreshortens toward the horizon), a moon
+  that lights the air around it in a tight corona and a broad wash, and one
+  `MOON_DIR` the disc, the halo and the sky all agree on.
+- Foliage: 120 fat ellipses on a 64 px canvas stretched over a four-metre
+  thicket gave every bush half-metre pale clouds. 128 px, 340 leaves at half
+  the relative size, each with a dark rim and a midrib. And night foliage is
+  grey — a green-dominant albedo a metre from a 58-candela lantern clips the
+  green channel by itself and returns neon mint. Albedo pulled off white
+  (0xffffff → 0x93968f, canopy 0xd5ddd0 → 0x7f847c) so the leaves have headroom.
+- The falls: one sine at 82 cycles across crossed with another at 58 down is a
+  plaid, and it was the backdrop of the game's most important beat. Three
+  ribbon widths of value noise, none periodic on screen, all FALLING — packets
+  that accelerate as they drop, a glassy lip, foam by the basin. (v1 of this
+  drew a chevron front across the sheet, which is the barcode on its side; two
+  smeared runs at different rates fixed it.)
+
+## Also
+
+- **Grounded furniture** (`World.buildGroundContact`): the collider list
+  already knows where everything solid is, so anything furniture-shaped with
+  its feet on a room floor gets one soft multiply decal the size of its own
+  footprint. 16 quads, ONE draw call, derived not authored. The AO bake works
+  at 0.85 m, which is right for a wall/floor seam and completely wrong for the
+  15 cm of dark that says a wardrobe is standing on something.
+- **Torn wallpaper** was nine-sided polygons filled FLAT two value steps above
+  the paper — a rotting wall wore pale pentagons that read as cut paper stuck
+  to it. A tear is an EDGE: plaster only slightly lighter and actually
+  textured, a dark undercut where the paper stands away, a lit lip on the
+  paper side, lobed-and-nicked outline, fewer and smaller.
+- **The frame**: the grain/vignette overlay reached 16% in the extreme corners,
+  which is a vignette nobody sees. 30%, starting earlier, grain 0.055 → 0.075.
+  Overlay constants only — the pass structure that shipped black in 0.6.x is
+  untouched.
+
+## Numbers
+
+All four gates green: smoke ALL PASS, autotest 24, regressions 78, playthrough
+COMPLETE. Plus render-perf (GPU p95 5.5 ms cave / 13.9 ms mirror against a
+45 ms gate), district-culling 14, perf-pool. Zero console errors anywhere.
+Triangles at the worst vantage 178k → 239k (+34%, the shell tessellation);
+draw calls unchanged per act.
+
+**WATCH THIS: house-after-cave is 445 against the 450 ceiling** (was 443).
++1 for `stoneFloor` splitting off the shared stone shell, +1 for the grounding
+mesh. `dirtFloor` was built and then deliberately removed to give a draw back —
+dirt is already the darkest map in the game and never appears as a wall, so it
+bought nothing. Four draws of margin is not much; the next person adding a
+merged material to the house should reclaim one first.
+
+## Left deliberately
+
+Props are still untextured flat-coloured primitives (the boiler is a grey box,
+the mausoleum a pale slab) — that is a modelling lane, not a lighting one, and
+it is the biggest remaining visual gap. The distant graveyard treeline is still
+flat cards. The empty hands' finger silhouette is unchanged; it has been
+iterated three times and the problem was always that they were lit wrong.
+
+---
+
 # HANDOFF - 2026-08-14, EVERYTHING OPENS THE SAME WAY (branch claude/feedback-aug14)
 
 Alex's second live-play list of the day, all of it built. The through-line

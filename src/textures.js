@@ -145,25 +145,51 @@ function wallpaperPaint(g, w, h, r, rot) {
     g.fillRect(x - 8 - r.float() * 14, 0, 16 + r.float() * 28, len);
   }
   stains(g, w, h, rot ? 10 : 6, r);
-  // peeling: ragged patches torn back to plaster — plaster is LIGHTER, reads as wound
-  for (let i = 0, n = rot ? 6 : 2; i < n; i++) {
+  // Peeling: ragged patches torn back to plaster.
+  //
+  // These used to be nine-sided polygons filled FLAT, two full value steps
+  // above the paper — so a rotting wall came back wearing half a dozen pale
+  // pentagons that read as cut paper stuck to it, the loudest "this is a
+  // procedural texture" tell in the house. A tear is not a shape, it is an
+  // EDGE: the plaster behind sits only a little lighter, it is grainy and
+  // stained like plaster, and the paper curls away from it with a dark
+  // undercut and a lit lip. Fewer, smaller, raggeder.
+  for (let i = 0, n = rot ? 4 : 2; i < n; i++) {
     const px = r.float() * w, py = r.float() * h;
-    const pr = w * (rot ? 0.07 + r.float() * 0.13 : 0.04 + r.float() * 0.06);
-    g.save();
-    g.beginPath();
-    for (let p = 0; p <= 9; p++) {
-      const a = (p / 9) * TAU;
-      const rr = pr * (0.6 + r.float() * 0.7);
-      const vx = px + Math.cos(a) * rr, vy = py + Math.sin(a) * rr * 1.3;
-      if (p === 0) g.moveTo(vx, vy); else g.lineTo(vx, vy);
+    const pr = w * (rot ? 0.055 + r.float() * 0.085 : 0.035 + r.float() * 0.045);
+    const verts = [];
+    for (let p = 0; p <= 17; p++) {
+      const a = (p / 17) * TAU;
+      // two scales of raggedness: a lobed outline with torn nicks in it
+      const lobe = 0.72 + 0.34 * Math.sin(a * (2 + (i % 3)) + i);
+      const rr = pr * lobe * (0.74 + r.float() * 0.5);
+      verts.push([px + Math.cos(a) * rr, py + Math.sin(a) * rr * 1.25]);
     }
-    g.closePath();
-    g.fillStyle = rgb(96, 92, 84);
+    const trace = () => {
+      g.beginPath();
+      verts.forEach(([vx, vy], p) => (p === 0 ? g.moveTo(vx, vy) : g.lineTo(vx, vy)));
+      g.closePath();
+    };
+    g.save();
+    trace();
+    g.fillStyle = rgb(74, 73, 67);
     g.fill();
-    g.strokeStyle = 'rgba(16,12,8,0.6)'; g.lineWidth = 1.5; g.stroke();
+    trace();
     g.clip();
-    cracks(g, w, h, 2, r, 'rgba(40,36,30,0.5)', 0.8, 7);
+    // the plaster behind is a surface, not a colour
+    stains(g, w, h, 5, r, '30,27,22', 0.24, 0.02, 0.1);
+    speckle(g, w, h, 260, ['#585448', '#464238', '#6a6659', '#3a372f'], r, 0.4, 1.6);
+    cracks(g, w, h, 3, r, 'rgba(40,36,30,0.5)', 0.8, 7);
     g.restore();
+    // the undercut: paper stands away from the wall and casts into the tear
+    g.save();
+    trace(); g.clip();
+    g.strokeStyle = 'rgba(10,8,6,0.55)'; g.lineWidth = 5;
+    trace(); g.stroke();
+    g.restore();
+    // and the torn lip catches light on the paper side
+    g.strokeStyle = 'rgba(150,152,136,0.30)'; g.lineWidth = 1.1;
+    trace(); g.stroke();
   }
   if (rot) {
     // mold blooms: a soft dark halo full of hard speckles
@@ -220,33 +246,113 @@ function woodDarkPaint(g, w, h, r) {
   grain(g, w, h, 0.06, r);
 }
 
-// coursed blocks; shared by stone and brick (different base/rows/mortar)
+// coursed blocks; shared by stone and brick (different base/rows/mortar).
+//
+// The old version laid a PERFECT four-column grid with a half-offset on every
+// other row, which is the one thing real masonry never is — and at three tile
+// repeats across a basement wall the eye read the repeat instantly and the
+// whole room came back as wallpaper-of-bricks. Courses now walk their own
+// jittered widths, blocks sit proud or sunk by their own amount, a few are
+// missing outright, and a low-frequency field (whole cycles, so it still
+// tiles) keeps any two square metres from matching.
 function stonePaint(g, w, h, r, base, rows, mortar) {
   g.fillStyle = mortar;
   g.fillRect(0, 0, w, h);
-  const bh = h / rows, cols = 4, bw = w / cols;
+  // recessed joints: darken the ground a little so the bump map reads mortar as
+  // the low ground and every block face as raised. Gently — a hard mortar/block
+  // contrast is exactly the tiled-grid read this is trying to get away from.
+  g.fillStyle = 'rgba(0,0,0,0.14)';
+  g.fillRect(0, 0, w, h);
+  const bh = h / rows;
+  const nominal = w / 4;
   for (let row = 0; row < rows; row++) {
-    const half = row % 2 === 1;
-    for (let i = 0; i <= cols; i++) {
-      if (!half && i === cols) break;
-      const x = i * bw - (half ? bw / 2 : 0);
-      const s = 0.78 + r.float() * 0.38;
-      g.fillStyle = rgb(base[0] * s, base[1] * s, base[2] * s);
-      g.fillRect(x + 2, row * bh + 2, bw - 4, bh - 4);
-      // bevel shadow along the bottom edge, then pocks
-      g.fillStyle = 'rgba(10,9,8,0.35)';
-      g.fillRect(x + 2, row * bh + bh - 6, bw - 4, 3);
-      for (let p = 0; p < 5; p++) {
-        g.fillStyle = `rgba(14,13,11,${0.15 + r.float() * 0.2})`;
-        g.beginPath();
-        g.arc(x + 4 + r.float() * (bw - 8), row * bh + 4 + r.float() * (bh - 8), 1 + r.float() * 2.5, 0, TAU);
-        g.fill();
+    const y = row * bh;
+    // start each course part-way through a block so the vertical joints never
+    // line up between rows, and never at the same offset twice
+    let x = -nominal * (0.15 + r.float() * 0.7);
+    while (x < w) {
+      const bw = nominal * (0.62 + r.float() * 0.8);
+      const s = 0.74 + r.float() * 0.4;
+      const inset = 1.5 + r.float() * 2;
+      const bx = x + inset, by = y + inset;
+      const bwi = bw - inset * 2, bhi = bh - inset * 2;
+      if (bwi > 3 && bhi > 3) {
+        // A wall loses a block once in a long while. At 1-in-20 it stopped
+        // being masonry and became a checkerboard of holes — the shipped
+        // basement read as black-and-white tiling. One in 150 is a wall with
+        // something wrong with it; one in 20 is a pattern.
+        if (r.chance(0.007)) {
+          g.fillStyle = 'rgba(10,9,9,0.62)';
+          g.fillRect(bx, by, bwi, bhi);
+        } else {
+          g.fillStyle = rgb(base[0] * s, base[1] * s, base[2] * s);
+          g.fillRect(bx, by, bwi, bhi);
+          // a lit top-left arris and a shadowed bottom edge: the block reads as
+          // a solid with a thickness even before the bump map touches it
+          g.fillStyle = `rgba(210,206,196,${0.025 + r.float() * 0.035})`;
+          g.fillRect(bx, by, bwi, 1.6);
+          g.fillRect(bx, by, 1.4, bhi);
+          g.fillStyle = `rgba(8,7,7,${0.16 + r.float() * 0.14})`;
+          g.fillRect(bx, by + bhi - 3, bwi, 3);
+          g.fillRect(bx + bwi - 2, by, 2, bhi);
+          // pitting and spall
+          for (let p = 0, n = r.int(3, 8); p < n; p++) {
+            g.fillStyle = `rgba(14,13,11,${0.12 + r.float() * 0.22})`;
+            g.beginPath();
+            g.arc(bx + r.float() * bwi, by + r.float() * bhi, 0.6 + r.float() * 2.4, 0, TAU);
+            g.fill();
+          }
+          if (r.chance(0.22)) {   // a chipped corner
+            g.fillStyle = 'rgba(12,11,10,0.4)';
+            const cw = 3 + r.float() * 7;
+            g.beginPath();
+            g.moveTo(bx + bwi, by + bhi);
+            g.lineTo(bx + bwi - cw, by + bhi);
+            g.lineTo(bx + bwi, by + bhi - cw);
+            g.closePath(); g.fill();
+          }
+        }
       }
+      x += bw;
     }
   }
-  stains(g, w, h, 5, r, '12,11,10', 0.2, 0.05, 0.28);
-  cracks(g, w, h, 4, r);
+  // macro variation: two crossed low-frequency waves at whole cycles, so a big
+  // wall has weather on it and still tiles seamlessly
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const f = 1 + 0.17 * Math.sin((px / w) * TAU) * Math.sin((py / h) * TAU + 1.1)
+        + 0.11 * Math.sin((px / w) * TAU * 2 + 0.7) * Math.cos((py / h) * TAU * 2);
+      const i = (py * w + px) * 4;
+      d[i] *= f; d[i + 1] *= f; d[i + 2] *= f;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  stains(g, w, h, 6, r, '12,11,10', 0.22, 0.05, 0.3);
+  cracks(g, w, h, 5, r);
   grain(g, w, h, 0.09, r);
+}
+
+// Floors that are not wood. A floor is a wall that gets walked on: bigger
+// courses, ground-in grime in every joint, and a good deal darker than the
+// masonry standing on it — the up-facing hemisphere term already hands floors
+// the sky's share of the light, and pale wall stone underfoot came back as the
+// brightest plane in the cellar.
+function flagstonePaint(g, w, h, r) {
+  stonePaint(g, w, h, r, [58, 56, 52], 3, rgb(20, 19, 18));
+  stains(g, w, h, 9, r, '10,9,8', 0.3, 0.08, 0.36);
+  speckle(g, w, h, 320, ['#2a2724', '#3a3630', '#171514', '#454038'], r, 0.5, 2.4);
+  // a walked line: two soft parallel scuffs polished paler than the rest
+  for (let i = 0; i < 3; i++) {
+    const x = w * (0.25 + r.float() * 0.5), lw = w * (0.06 + r.float() * 0.1);
+    const gr = g.createLinearGradient(x - lw, 0, x + lw, 0);
+    gr.addColorStop(0, 'rgba(126,120,108,0)');
+    gr.addColorStop(0.5, `rgba(126,120,108,${0.05 + r.float() * 0.05})`);
+    gr.addColorStop(1, 'rgba(126,120,108,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }
+  grain(g, w, h, 0.07, r);
 }
 
 function dirtPaint(g, w, h, r) {
@@ -626,24 +732,40 @@ export function makeMaterials() {
   // UVs. Callers retune per-mesh via mat.map.repeat.set(w/2, h/2) — but note
   // repeat lives on the shared texture, so clone the material first if two
   // meshes need different tiling.
-  M.wallpaper    = lam({ map: T(512, 512, 11, (g, w, h, r) => wallpaperPaint(g, w, h, r, false), 2, 1.4) });
-  M.wallpaperRot = lam({ map: T(512, 512, 12, (g, w, h, r) => wallpaperPaint(g, w, h, r, true), 2, 1.4) });
-  M.plaster      = lam({ map: T(256, 256, 13, plasterPaint, 2, 1.4) });
+  // RELIEF. Every wall in this game was a pure-diffuse Lambert with nothing but
+  // an albedo, so the one light the player carries could sweep across a brick
+  // wall and never find a brick: perfectly smooth falloff over a picture OF
+  // masonry. These maps were painted with their own shading in them, which
+  // makes each one a serviceable height field — the mortar is the dark, the
+  // face is the light. Feeding the same texture back as a bumpMap costs no
+  // extra memory, no extra draw call and no new material, and it is what turns
+  // a moving lantern into a thing that rakes across a surface.
+  // Lambert carries bumpMap per-fragment in r161 (verified in the vendored
+  // build), so nothing here needs to become Standard to get it.
+  const bump = (t, scale) => ({ map: t, bumpMap: t, bumpScale: scale });
+  M.wallpaper    = lam(bump(T(512, 512, 11, (g, w, h, r) => wallpaperPaint(g, w, h, r, false), 2, 1.4), 0.07));
+  M.wallpaperRot = lam(bump(T(512, 512, 12, (g, w, h, r) => wallpaperPaint(g, w, h, r, true), 2, 1.4), 0.11));
+  M.plaster      = lam(bump(T(256, 256, 13, plasterPaint, 2, 1.4), 0.10));
   M.woodFloor    = std({
-    map: T(512, 512, 14, (g, w, h, r) => planks(g, w, h, r, [66, 52, 38], '#0f0b07', 8, true), 2, 2),
+    ...bump(T(512, 512, 14, (g, w, h, r) => planks(g, w, h, r, [66, 52, 38], '#0f0b07', 8, true), 2, 2), 0.16),
     roughness: 0.85, metalness: 0.02,
   });
-  M.woodDark     = lam({ map: T(256, 256, 15, woodDarkPaint) });
-  M.stone        = lam({ map: T(512, 512, 16, (g, w, h, r) => stonePaint(g, w, h, r, [74, 72, 66], 5, rgb(30, 28, 26)), 2, 1) });
-  M.brick        = lam({ map: T(256, 256, 17, (g, w, h, r) => stonePaint(g, w, h, r, [80, 54, 46], 6, rgb(46, 43, 40)), 3, 1.5) });
-  M.dirt         = lam({ map: T(256, 256, 18, dirtPaint, 3, 3) });
-  M.grass        = lam({ map: T(256, 256, 19, grassPaint, 4, 4) });
-  M.bark         = lam({ map: T(256, 256, 20, barkPaint, 1, 2) });
-  M.carpet       = lam({ map: T(256, 256, 21, carpetPaint, 2, 2) });
-  M.ceiling      = lam({ map: T(256, 256, 22, ceilingPaint, 2, 2) });
-  M.metal        = std({ map: T(256, 256, 23, metalPaint), roughness: 0.5, metalness: 0.7 });
-  M.headstone    = lam({ map: T(256, 256, 24, headstonePaint) });
-  M.rock         = std({ map: T(256, 256, 25, rockPaint, 2, 2), roughness: 0.6, metalness: 0.05 });
+  M.woodDark     = lam(bump(T(256, 256, 15, woodDarkPaint), 0.09));
+  M.stone        = lam(bump(T(512, 512, 16, (g, w, h, r) => stonePaint(g, w, h, r, [74, 72, 66], 5, rgb(30, 28, 26)), 2, 1), 0.19));
+  M.brick        = lam(bump(T(256, 256, 17, (g, w, h, r) => stonePaint(g, w, h, r, [80, 54, 46], 6, rgb(46, 43, 40)), 3, 1.5), 0.16));
+  M.dirt         = lam(bump(T(256, 256, 18, dirtPaint, 3, 3), 0.16));
+  // Only stone needs the split. `dirt` is already the darkest map in the game
+  // and never appears as a wall, so a second dirt variant bought nothing but a
+  // draw call — and house-after-cave sits close enough to the 450 ceiling that
+  // draw calls are not free.
+  M.stoneFloor   = lam(bump(T(512, 512, 30, flagstonePaint, 1.6, 1.6), 0.22));
+  M.grass        = lam(bump(T(256, 256, 19, grassPaint, 4, 4), 0.12));
+  M.bark         = lam(bump(T(256, 256, 20, barkPaint, 1, 2), 0.34));
+  M.carpet       = lam(bump(T(256, 256, 21, carpetPaint, 2, 2), 0.06));
+  M.ceiling      = lam(bump(T(256, 256, 22, ceilingPaint, 2, 2), 0.07));
+  M.metal        = std({ ...bump(T(256, 256, 23, metalPaint), 0.10), roughness: 0.5, metalness: 0.7 });
+  M.headstone    = lam(bump(T(256, 256, 24, headstonePaint), 0.14));
+  M.rock         = std({ ...bump(T(256, 256, 25, rockPaint, 2, 2), 0.26), roughness: 0.6, metalness: 0.05 });
   M.curtain      = lam({ map: T(256, 256, 26, curtainPaint), side: THREE.DoubleSide });
   // web ground stays transparent — no repeat wrap, one web per quad
   M.web = lam({

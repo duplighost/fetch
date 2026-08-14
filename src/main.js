@@ -180,6 +180,7 @@ class Game {
     this.atmosphere = buildAtmosphere(this);
     this.finale = new Finale(this);
     this.world.finishStatic();
+    this.world.buildGroundContact(this.scene);
     this.world.buildLights(this.scene);
     this.world.attachCandlePool(this.scene);
 
@@ -210,7 +211,10 @@ class Game {
     // from its fingers. Inverse-square falloff at the old position bleached
     // every phalanx bone-white and flattened the skull's relief. This broader,
     // offset key preserves warm living skin, dark creases, and readable bone.
-    this.holdLight = new THREE.PointLight(0xd8bb90, 2.0, 2.0, 2.0);
+    // Distance 2.0 / decay 2.0 put the whole falloff curve inside the length of
+    // a hand: knuckles clipped while the wrist fell into black. A longer reach
+    // and a gentler exponent light the cradle as one object.
+    this.holdLight = new THREE.PointLight(0xd8bb90, 2.0, 2.9, 1.8);
     this.holdLight.position.set(0.16, 0.18, -0.18);
     this.holdLight.layers.set(LAYER_HELD);
     this.camera.add(this.holdLight);
@@ -222,6 +226,18 @@ class Game {
     this.holdFillLight.position.set(-0.3, -0.04, -0.08);
     this.holdFillLight.layers.set(LAYER_HELD);
     this.camera.add(this.holdFillLight);
+    // A back rim behind the cradle. Front-lit hands against a black forest are
+    // two flat orange shapes; one cool light from behind gives the knuckles and
+    // the cranium an edge, so the silhouette survives when the fill goes away.
+    // It EARNS its intensity in the dark acts (see _updateViewmodelLight) —
+    // brightness and edge only, never colour carrying meaning.
+    this.holdRimLight = new THREE.PointLight(0x8ea6c2, 0.5, 2.6, 1.7);
+    this.holdRimLight.position.set(-0.34, 0.36, -1.06);
+    this.holdRimLight.layers.set(LAYER_HELD);
+    this.camera.add(this.holdRimLight);
+    // Base values the act scaling multiplies. Kept here so the calibration is
+    // one table rather than three magic numbers scattered through the loop.
+    this._vmKey = { key: 2.0, fill: 0.38, rim: 0.5, lit: 1 };
 
     this.input = new InputState();
     this._wireInput();
@@ -290,8 +306,15 @@ class Game {
     tint('plaster', 0x7d7d78);
     tint('stone', 0x74746e);
     tint('brick', 0x6e6862);
+    // Floors sit a clear step under the masonry standing on them.
+    tint('stoneFloor', 0x5c5c56);
     tint('woodFloor', 0x7a7268);
-    tint('ceiling', 0x808080);
+    // A ceiling was the BRIGHTEST plane in most interior frames — brighter than
+    // the walls, brighter than the floor, in rooms whose only light is a lamp
+    // standing on a dresser. Lamplight falls on what is under it. Dropping the
+    // albedo below the wallpaper's puts the value order back without taking a
+    // single lumen out of the room ("the house feels empty" was never this).
+    tint('ceiling', 0x5e5e5a);
     tint('bone', 0xcfc9bb);
     tint('rock', 0x48545c);
     tint('headstone', 0x7b898f);
@@ -316,10 +339,17 @@ class Game {
         varying vec2 vUv; uniform float uTime; uniform float uFear;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
         void main(){
+          // Grain reads at 1440p as well as 720p only if it is sampled at a
+          // fixed screen scale, and it needs to be perceptible or the frame
+          // comes back looking rendered rather than shot.
           float g = hash(vUv*vec2(1280.,720.) + fract(uTime)*173.1) - 0.5;
           vec2 c = vUv - 0.5;
-          float vig = smoothstep(0.35, 0.95, dot(c,c)*(2.4 + uFear*2.2));
-          float a = abs(g)*0.055 + vig*(0.16 + uFear*0.42);
+          // A vignette that only reaches 16% in the extreme corners is a
+          // vignette nobody sees. Start it earlier and let it close harder:
+          // the corners of a frame in a game about carrying the only light
+          // should be somewhere the light has not got to.
+          float vig = smoothstep(0.18, 1.05, dot(c,c)*(2.2 + uFear*2.0));
+          float a = abs(g)*0.075 + vig*(0.30 + uFear*0.40);
           gl_FragColor = vec4(vec3(0.007,0.006,0.01), clamp(a, 0., 0.88));
         }`,
     });
@@ -1144,12 +1174,48 @@ class Game {
       }
     }
 
+    this._updateViewmodelLight(dt);
+
     // fog eases toward the act's density
     this.scene.fog.density = damp(this.scene.fog.density, this.fogTarget, 0.8, dt);
     // colour and sky ease alongside density: atmosphere arrives as weather
     // rolling in, never as a second version of the room loading up
     if (this.fogColorTarget) this.scene.fog.color.lerp(this.fogColorTarget, Math.min(1, dt * 1.1));
     if (this.bgColorTarget) this.scene.background.lerp(this.bgColorTarget, Math.min(1, dt * 1.1));
+  }
+
+  // The hands and the held skull draw in their own depth pass with their own
+  // lamps, so NOTHING about the world reaches them. They kept the bedroom's
+  // lighting all the way into the graveyard, and measured there (
+  // tools/probe-viewmodel-light.mjs) the hand region read mean 0.158 against a
+  // world of 0.032 — five times the brightness of the frame they sit in, which
+  // is exactly why they read as two salmon gloves floating in the dark.
+  //
+  // So the viewmodel key rides the act's own free-light floor: the same factor
+  // the director eases world ambient by. Walking out of the house takes the
+  // light off your own hands too. And the second term is the game's whole
+  // premise made visible — while the skull is HELD it is the thing lighting
+  // your hands, so when you throw it the cradle dims with everything else and
+  // the rim is most of what is left of you. Value only, no hue read.
+  _updateViewmodelLight(dt) {
+    const V = this._vmKey;
+    if (!V) return;
+    const w = this.world;
+    const k = w && w.ambient && w.ambientBase ? w.ambient.intensity / w.ambientBase : 1;
+    // ^1.25 rather than linear: the acts are already only 0.42..1.0 apart, and
+    // a linear ride left the dark ones still glowing.
+    const act = clamp(Math.pow(clamp(k, 0.05, 1.4), 1.25), 0.2, 1.15);
+    // The skull's own presence. `gone` is the waterfall — permanent, and the
+    // hands should feel it for the rest of the game.
+    const m = this.skull.mode;
+    const carried = m === 'held' ? 1 : (m === 'gone' ? 0.44 : 0.6);
+    V.lit = damp(V.lit, act * carried, 3.2, dt);
+    this.holdLight.intensity = V.key * V.lit;
+    this.holdFillLight.intensity = V.fill * V.lit;
+    // The rim is the opposite contract: it exists to keep a silhouette alive
+    // where there is nothing behind the hands to separate them from, so it
+    // holds up as the key falls away instead of falling with it.
+    this.holdRimLight.intensity = V.rim * (0.42 + 0.58 * V.lit) * (1.5 - 0.5 * act);
   }
 
   _interact() {

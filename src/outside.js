@@ -3434,17 +3434,45 @@ export class Forest {
       ], false);
     })();
     const shrubTex = (() => {
+      // 120 fat ellipses on a 64px canvas, stretched across a four-metre
+      // thicket, gave every bush a handful of half-metre blobs — soft-edged
+      // pale clouds, not leaves. Four times the pixels and three times the
+      // leaves at half the relative size gets the density back, and each leaf
+      // now carries its own dark rim and midrib so the skull's light finds
+      // edges to rake instead of one smooth sheet.
+      //
+      // Night foliage is also grey, not green. These leaves sit within a metre
+      // of a 58-candela lantern, and at that range a green-dominant albedo does
+      // not read as lit leaves — it clips the green channel by itself and comes
+      // back as neon mint. A near-neutral albedo blows out to pale grey-green,
+      // which is what a torch on wet leaves actually looks like, and it costs a
+      // colourblind player nothing because the read was never the hue.
+      const S = 128;
       const cv = document.createElement('canvas');
-      cv.width = cv.height = 64;
+      cv.width = cv.height = S;
       const g = cv.getContext('2d');
-      g.clearRect(0, 0, 64, 64);
-      const cols = ['#1c2818', '#16211a', '#212e1a', '#0f1810'];
-      for (let i = 0; i < 120; i++) {
-        const x = 5 + rng.float() * 54, y = 64 - rng.float() * 60, r = rng.range(1.8, 5.2);
-        g.fillStyle = cols[rng.int(0, 3)];
+      g.clearRect(0, 0, S, S);
+      const cols = ['#262922', '#1d201b', '#2b2d24', '#171a16', '#2a2a20', '#332f22'];
+      for (let i = 0; i < 340; i++) {
+        const x = 6 + rng.float() * (S - 12);
+        const y = S - rng.float() * (S - 8);
+        const r = rng.range(2.2, 6.4);
+        const a = rng.float() * TAU;
+        const ry = r * rng.range(0.42, 0.78);
+        g.fillStyle = cols[rng.int(0, 5)];
         g.beginPath();
-        g.ellipse(x, y, r, r * rng.range(0.55, 1), rng.float() * TAU, 0, TAU);
+        g.ellipse(x, y, r, ry, a, 0, TAU);
         g.fill();
+        // rim: a leaf has an edge, and an edge is what catches a moving light
+        g.strokeStyle = 'rgba(9,11,9,0.55)';
+        g.lineWidth = 0.8;
+        g.stroke();
+        // midrib
+        g.strokeStyle = 'rgba(58,62,52,0.30)';
+        g.beginPath();
+        g.moveTo(x - Math.cos(a) * r, y - Math.sin(a) * r);
+        g.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+        g.stroke();
       }
       const t = new THREE.CanvasTexture(cv);
       t.colorSpace = THREE.SRGBColorSpace;
@@ -3597,8 +3625,12 @@ export class Forest {
       mtx.compose(sv.set(it.x, 0, it.z), q, v.set(1.1, it.h, 1.1));
     }, (it) => it.tint);
 
+    // Albedo, not white. A near-white base under a lantern this close does not
+    // leave the leaf texture any headroom — everything within about a metre
+    // clipped to paper. These sit where night foliage belongs: dark enough that
+    // the carried light has something to carve, bright enough to answer it.
     const canopyMat = new THREE.MeshLambertMaterial({
-      color: 0xd5ddd0,
+      color: 0x7f847c,
       map: shrubTex,
       alphaTest: 0.36,
       side: THREE.DoubleSide,
@@ -3618,7 +3650,7 @@ export class Forest {
     }, () => 0.85);
 
     const shrubMat = new THREE.MeshLambertMaterial({
-      color: 0xffffff,
+      color: 0x93968f,
       map: shrubTex,
       alphaTest: 0.42,
       side: THREE.DoubleSide,

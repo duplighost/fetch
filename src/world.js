@@ -8,6 +8,31 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clamp, lerp, damp } from './util.js';
 
 export const CS = 2;               // one cell = 2m
+// Baked contact shading (see _buildOcclusionGrid). Cell 0.5 m resolves a door
+// reveal and a stair riser without turning the forest into a million entries.
+const AO_CELL = 0.5;
+const AO_SPAN = 1024;              // packed grid index range, +/- 256 m
+const AO_ORIGIN = AO_SPAN / 2;
+const AO_STRENGTH = 0.66;
+const AO_FLOOR = 0.30;
+// Target edge length for shell tessellation. Small enough that a wall/floor
+// seam reads as a seam, large enough that the house does not become a million
+// triangles: measured with tests/render-perf.mjs, not guessed.
+const AO_SEG = 0.85;
+// The 13 hemisphere directions of a 3x3x3 neighbourhood, normalised once.
+const AO_DIRS = (() => {
+  const out = [];
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      for (let k = -1; k <= 1; k++) {
+        if (!i && !j && !k) continue;
+        const l = Math.hypot(i, j, k);
+        out.push(i / l, j / l, k / l);
+      }
+    }
+  }
+  return out;
+})();
 const WALL_T = 0.26;
 const EXT_T = 0.4;
 const DOOR_W = 1.3, DOOR_H = 2.25;
@@ -49,7 +74,13 @@ export class World {
   }
 
   box(mat, x, y, z, w, h, d, ry = 0) {
-    const g = new THREE.BoxGeometry(w, h, d);
+    // A four-metre wall used to be four vertices, so the baked occlusion below
+    // could only ever interpolate across the whole face — a soft gradient where
+    // a room wants a seam. Segment anything big enough to carry one; anything
+    // under about a metre (hardware, trim, prop detail) is untouched, so the
+    // cost lands only on the surfaces that actually own the frame.
+    const seg = (s) => Math.max(1, Math.min(8, Math.round(s / AO_SEG)));
+    const g = new THREE.BoxGeometry(w, h, d, seg(w), seg(h), seg(d));
     if (ry) g.rotateY(ry);
     g.translate(x, y, z);
     if (!this._geo.has(mat)) this._geo.set(mat, []);
@@ -57,16 +88,197 @@ export class World {
   }
 
   finishStatic() {
+    const grid = this._buildOcclusionGrid(AO_CELL);
+    this.shellStats = { materials: 0, vertices: 0, cells: grid.size };
     for (const [mat, list] of this._geo) {
       if (!list.length) continue;
       const merged = mergeGeometries(list);
-      const mesh = new THREE.Mesh(merged, mat);
+      // The shell gets its OWN material instance so switching on vertexColors
+      // cannot reach a prop that shares the same painted texture and has no
+      // colour attribute of its own (that renders black on most drivers).
+      const shellMat = mat.clone();
+      shellMat.vertexColors = true;
+      shellMat.name = (mat.name || 'shell') + ':shell';
+      this._bakeContactShading(merged, grid, AO_CELL);
+      const mesh = new THREE.Mesh(merged, shellMat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       this.scene.add(mesh);
+      this.shellStats.materials++;
+      this.shellStats.vertices += merged.attributes.position.count;
       for (const g of list) g.dispose();
     }
     this._geo.clear();
+  }
+
+  // ------------------------------------------------------------- grounding
+  // The baked occlusion above works on the shell, and the shell is tessellated
+  // at 0.85 m — which is the right resolution for the seam where a wall meets
+  // a floor and completely the wrong one for the 15 cm of dark that says a
+  // wardrobe is STANDING on something. Without it every prop in the house
+  // reads as pasted onto the frame, which is the single most reliable tell
+  // that a room was assembled rather than lit.
+  //
+  // The collider list already knows where everything solid is. Anything
+  // furniture-shaped — short enough to be furniture, big enough to see, with
+  // its feet on a room floor — gets one soft multiply decal the size of its
+  // own footprint. One InstancedMesh, one draw call for the whole house, no
+  // per-frame cost, and it is derived from colliders rather than authored, so
+  // furniture added later is grounded without anyone remembering to.
+  buildGroundContact(scene) {
+    const floors = new Map();     // floorY -> room rects at that height
+    for (const room of this.rooms) {
+      if (!floors.has(room.floorY)) floors.set(room.floorY, []);
+      floors.get(room.floorY).push(room);
+    }
+    const quads = [];
+    for (const c of this.colliders) {
+      if (c.door) continue;
+      const sx = c.max.x - c.min.x, sy = c.max.y - c.min.y, sz = c.max.z - c.min.z;
+      if (sy < 0.12 || sy > 2.3) continue;                 // walls and trims, not furniture
+      const area = sx * sz;
+      if (area < 0.09 || area > 7 || sx > 4.2 || sz > 4.2) continue;
+      const cx = (c.min.x + c.max.x) / 2, cz = (c.min.z + c.max.z) / 2;
+      let floorY = null;
+      for (const [y, rooms] of floors) {
+        if (Math.abs(c.min.y - y) > 0.3) continue;         // must be standing ON that floor
+        if (rooms.some((r) => cx >= r.x0 && cx <= r.x1 && cz >= r.z0 && cz <= r.z1)) { floorY = y; break; }
+      }
+      if (floorY == null) continue;
+      quads.push({ cx, cz, y: floorY + 0.012, w: sx + 0.42, d: sz + 0.42 });
+    }
+    this.groundContactCount = quads.length;
+    if (!quads.length) return null;
+
+    const S = 64;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = S;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#ffffff';
+    g.fillRect(0, 0, S, S);
+    // White outside, dark under the footprint, soft between: a multiply decal.
+    const gr = g.createRadialGradient(S / 2, S / 2, S * 0.10, S / 2, S / 2, S * 0.5);
+    gr.addColorStop(0, 'rgba(24,22,20,1)');
+    gr.addColorStop(0.45, 'rgba(70,66,62,1)');
+    gr.addColorStop(1, 'rgba(255,255,255,1)');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, S, S);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex,
+      blending: THREE.MultiplyBlending,
+      transparent: true,
+      depthWrite: false,
+      fog: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const mesh = new THREE.InstancedMesh(geo, mat, quads.length);
+    const m = new THREE.Matrix4();
+    quads.forEach((q, i) => {
+      m.makeScale(q.w, 1, q.d);
+      m.setPosition(q.cx, q.y, q.cz);
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.name = 'grounded furniture contact';
+    mesh.renderOrder = 1;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    scene.add(mesh);
+    this.groundContact = mesh;
+    return mesh;
+  }
+
+  // ---------------------------------------------------------- contact shading
+  // Every interior here is merged boxes under a large uniform ambient, so a
+  // corner reads exactly as bright as the middle of the wall it turns, a
+  // ceiling comes out brighter than the floor beneath it, and nothing has a
+  // seam. That is not a lighting bug — there is simply no occlusion term
+  // anywhere in the pipeline, and SSAO wants a post chain this game does not
+  // have and must not grow lightly (docs/FIRST-LIGHT-POSTMORTEM.md).
+  //
+  // So bake it. The static colliders already describe every solid surface in
+  // the world. Rasterise their SHELLS into a sparse grid — a shell, not a
+  // volume, so a two-hundred-metre forest costs about what a cupboard does —
+  // then darken every merged vertex by how much of its own hemisphere is
+  // walled in. Inside corners, door reveals, stair undersides, the slot behind
+  // a beam and the seam where a wall meets its floor all go down; an open wall
+  // face is untouched. Free at runtime: it is a colour attribute on geometry
+  // that was being merged anyway.
+  _buildOcclusionGrid(cell) {
+    const grid = new Set();
+    const K = (i, j, k) => (i + AO_ORIGIN) + (j + AO_ORIGIN) * AO_SPAN + (k + AO_ORIGIN) * AO_SPAN * AO_SPAN;
+    const inRange = (v) => v > -AO_ORIGIN && v < AO_ORIGIN;
+    const mark = (i, j, k) => { if (inRange(i) && inRange(j) && inRange(k)) grid.add(K(i, j, k)); };
+    for (const c of this.colliders) {
+      // Doors swing and their colliders collapse; baking their shut state would
+      // paint a permanent shadow across a doorway that spends the game open.
+      if (c.door) continue;
+      const sx = c.max.x - c.min.x, sy = c.max.y - c.min.y, sz = c.max.z - c.min.z;
+      if (sy < 0.03 || sx < 0.02 || sz < 0.02) continue;      // collapsed / degenerate
+      if (sx > 60 || sy > 60 || sz > 60) continue;            // arena bounds, not furniture
+      const i0 = Math.floor(c.min.x / cell), i1 = Math.floor(c.max.x / cell);
+      const j0 = Math.floor(c.min.y / cell), j1 = Math.floor(c.max.y / cell);
+      const k0 = Math.floor(c.min.z / cell), k1 = Math.floor(c.max.z / cell);
+      const w = i1 - i0 + 1, h = j1 - j0 + 1, d = k1 - k0 + 1;
+      if (w * h * d > 90000) continue;                        // pathological; not worth the bake
+      for (let i = i0; i <= i1; i++) {
+        for (let j = j0; j <= j1; j++) {
+          for (let k = k0; k <= k1; k++) {
+            // shell only: interior cells can never be sampled from outside
+            const deep = i > i0 && i < i1 && j > j0 && j < j1 && k > k0 && k < k1;
+            if (deep) continue;
+            mark(i, j, k);
+          }
+        }
+      }
+    }
+    return grid;
+  }
+
+  _bakeContactShading(geo, grid, cell) {
+    const pos = geo.attributes.position, nor = geo.attributes.normal;
+    if (!pos || !nor || !grid.size) return;
+    const n = pos.count;
+    const col = new Float32Array(n * 3);
+    const K = (i, j, k) => (i + AO_ORIGIN) + (j + AO_ORIGIN) * AO_SPAN + (k + AO_ORIGIN) * AO_SPAN * AO_SPAN;
+    const px = pos.array, nx = nor.array;
+    // Two rings of the same 13 hemisphere directions: the near ring finds the
+    // hard seam, the far one gives it somewhere to fade out to.
+    const dirs = AO_DIRS;
+    for (let v = 0; v < n; v++) {
+      const o = v * 3;
+      const nxv = nx[o], nyv = nx[o + 1], nzv = nx[o + 2];
+      // Start the sample OUTSIDE the surface the vertex sits on, or every flat
+      // wall shadows itself and the bake becomes a global dimmer.
+      const lift = cell * 0.7;
+      const bx = px[o] + nxv * lift, by = px[o + 1] + nyv * lift, bz = px[o + 2] + nzv * lift;
+      let occ = 0, tot = 0;
+      for (let d = 0; d < dirs.length; d += 3) {
+        const dx = dirs[d], dy = dirs[d + 1], dz = dirs[d + 2];
+        const w = dx * nxv + dy * nyv + dz * nzv;
+        if (w <= 0.08) continue;
+        for (let ring = 0; ring < 2; ring++) {
+          const reach = cell * (ring ? 1.95 : 1.0);
+          const rw = w * (ring ? 0.55 : 1.0);
+          tot += rw;
+          const i = Math.floor((bx + dx * reach) / cell);
+          const j = Math.floor((by + dy * reach) / cell);
+          const k = Math.floor((bz + dz * reach) / cell);
+          if (grid.has(K(i, j, k))) occ += rw;
+        }
+      }
+      // Vertex colours multiply in linear space, which is exactly what an
+      // occlusion term is. Floored so a corner is dark, never dead.
+      const ao = tot > 0 ? Math.max(AO_FLOOR, 1 - (occ / tot) * AO_STRENGTH) : 1;
+      col[o] = col[o + 1] = col[o + 2] = ao;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   }
 
   addZone(name, x0, z0, x1, z1, yMin = -50, yMax = 50) {
@@ -257,7 +469,13 @@ export class World {
       const { floor, ceil } = T.levels[lv];
       const o = opts || {};
       const fx0 = wx(x0), fz0 = wz(z0), fx1 = wx(x1 + 1), fz1 = wz(z1 + 1);
-      const fmat = M[o.floor || 'woodFloor'] || M.woodFloor;
+      // A floor is a wall that gets walked on. Sharing one map between the two
+      // put the pale wall stone underfoot as well, and because the hemisphere
+      // light hands its SKY colour to everything facing up, the cellar floor
+      // came out the brightest plane in the room — brighter than the walls it
+      // was supposed to sit under. Prefer a floor-specific variant where one
+      // exists; the room tables are unchanged.
+      const fmat = M[(o.floor || 'woodFloor') + 'Floor'] || M[o.floor || 'woodFloor'] || M.woodFloor;
       const cmat = M[o.ceil || 'ceiling'] || M.ceiling;
       const holesF = this.floorHoles.filter(h => h.level === lv &&
         !(h.x1 < fx0 || h.x0 > fx1 || h.z1 < fz0 || h.z0 > fz1));

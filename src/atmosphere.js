@@ -112,6 +112,10 @@ export function buildAtmosphere(game) {
 }
 
 // --------------------------------------------------------------------- sky
+// One moon, agreed on by the disc, its halo and the sky it hangs in.
+const MOON_POS = new THREE.Vector3(-74, 54, -144);
+const MOON_DIR = MOON_POS.clone().normalize();
+
 function buildNightSky(game, root, track, own, tickers) {
   const camera = game.camera;
   if (!camera) return;
@@ -120,26 +124,60 @@ function buildNightSky(game, root, track, own, tickers) {
   sky.name = 'moon sky';
   root.add(sky);
 
+  // The sky was an honest vertical gradient and nothing else: every outdoor
+  // frame in the game — the graveyard, the whole forest looking up, the
+  // clearing the waterfall stands in — ended in the same flat navy wash, so
+  // every silhouette the act builds had nothing to be a silhouette AGAINST.
+  // Three things fix that and all three are pixels, not objects: weather
+  // (drifting cloud, so the sky has form and the tree line has an edge), a moon
+  // that actually lights the air around it, and a horizon a shade warmer than
+  // the zenith so up feels like up. The moon disc below already sits at
+  // MOON_DIR; the sky now agrees with it.
   const domeMat = own(new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
-    uniforms: {},
+    uniforms: { uTime: { value: 0 }, uMoon: { value: MOON_DIR.clone() } },
     vertexShader: `
-      varying float vHeight;
+      varying vec3 vDir;
       void main() {
-        vHeight = normalize(position).y;
+        vDir = normalize(position);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
-      varying float vHeight;
+      varying vec3 vDir;
+      uniform float uTime;
+      uniform vec3 uMoon;
+      float hash21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vnoise(vec2 p){
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+                   mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+      }
       void main() {
-        float h = clamp(vHeight * 0.5 + 0.5, 0.0, 1.0);
-        vec3 horizon = vec3(0.030, 0.047, 0.078);
-        vec3 zenith = vec3(0.006, 0.009, 0.027);
+        float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
+        vec3 horizon = vec3(0.034, 0.050, 0.082);
+        vec3 zenith = vec3(0.005, 0.008, 0.024);
         vec3 col = mix(horizon, zenith, smoothstep(0.10, 0.92, h));
-        col += vec3(0.018, 0.026, 0.050) * pow(max(vHeight, 0.0), 5.0);
+        col += vec3(0.018, 0.026, 0.050) * pow(max(vDir.y, 0.0), 5.0);
+
+        // the moon owns the air: one tight corona, one broad wash across its
+        // whole quarter of the sky
+        float md = max(0.0, dot(vDir, uMoon));
+        col += vec3(0.085, 0.125, 0.185) * pow(md, 30.0);
+        col += vec3(0.020, 0.030, 0.048) * pow(md, 3.2);
+
+        // cloud, on a plane overhead so it foreshortens toward the horizon
+        // the way real overcast does. Drifting, never repeating on screen.
+        vec2 cp = vDir.xz / max(0.10, vDir.y + 0.24);
+        float n = vnoise(cp * 0.85 + vec2(uTime * 0.0042, uTime * 0.0022)) * 0.56
+                + vnoise(cp * 2.10 - vec2(uTime * 0.0075, 0.0)) * 0.30
+                + vnoise(cp * 4.90) * 0.14;
+        float cloud = smoothstep(0.44, 0.88, n) * smoothstep(-0.03, 0.26, vDir.y);
+        vec3 lit = mix(vec3(0.016, 0.021, 0.034), vec3(0.115, 0.145, 0.195), pow(md, 1.9));
+        col = mix(col, lit, cloud * 0.82);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -201,7 +239,7 @@ function buildNightSky(game, root, track, own, tickers) {
   sky.add(stars);
   noteObject(statsProxy(track), stars, 1);
 
-  const moonPos = new THREE.Vector3(-74, 54, -144);
+  const moonPos = MOON_POS.clone();
   const moon = new THREE.Mesh(
     new THREE.CircleGeometry(5.8, 48),
     own(new THREE.MeshBasicMaterial({ color: 0xe6f2f2, depthWrite: false, fog: false, side: THREE.DoubleSide })),
@@ -245,6 +283,8 @@ function buildNightSky(game, root, track, own, tickers) {
     sky.position.copy(camera.position);
     stars.rotation.y = t * 0.00035;
     halo.scale.setScalar(1 + Math.sin(t * 0.19) * 0.025);
+    // Weather moves. Slowly — this is one still night, not a time-lapse.
+    domeMat.uniforms.uTime.value = t % 100000;
   });
 }
 
@@ -956,18 +996,46 @@ function buildClearingDress(game, track, own, tickers) {
         gl_Position = projectionMatrix * modelViewMatrix * localPosition;
       }
     `,
+    // One sine at 82 cycles across the width, crossed with another at 58 down
+    // it, is a plaid — and that is exactly what the falls read as: corrugated
+    // plastic, the single least convincing surface in the game and the backdrop
+    // of its most important beat. Water does not have one frequency. This is
+    // three ribbon widths of value noise, none of them periodic on screen, all
+    // of them FALLING: packets run down the sheet and accelerate as they go,
+    // the lip stays glassy enough to see the rock through, and the whole thing
+    // breaks into foam by the time it reaches the basin.
     fragmentShader: `
       varying vec2 vUv;
       uniform float uTime;
       uniform float uSeal;
+      float h11(float n){ return fract(sin(n * 127.1) * 43758.5453); }
+      float bands(float x, float f, float s){
+        float p = x * f + s;
+        float i = floor(p), q = fract(p);
+        q = q * q * (3.0 - 2.0 * q);
+        return mix(h11(i), h11(i + 1.0), q);
+      }
       void main(){
-        float ribbons = 0.5 + 0.5 * sin(vUv.x * 82.0 + sin(vUv.y * 17.0 - uTime * 3.2) * 1.8);
-        float ripple = 0.5 + 0.5 * sin(vUv.y * 58.0 - uTime * 9.0 + vUv.x * 12.0);
-        float edge = smoothstep(0.0, 0.11, vUv.x) * smoothstep(0.0, 0.11, 1.0 - vUv.x);
-        float footFoam = 1.0 - smoothstep(0.0, 0.16, vUv.y);
-        vec3 col = mix(vec3(0.25,0.53,0.66), vec3(0.82,0.95,0.98), ribbons * 0.45 + footFoam * 0.35);
-        float alpha = edge * (0.42 + ribbons * 0.28 + ripple * 0.08 + footFoam * 0.15) * (1.0 - uSeal * 0.94);
-        gl_FragColor = vec4(col, alpha);
+        float x = vUv.x, y = vUv.y, t = uTime;
+        float w1 = bands(x + sin(y * 2.6 + t * 0.5) * 0.010, 7.0, 0.0);
+        float w2 = bands(x + sin(y * 5.1 - t * 0.8) * 0.016, 17.0, 5.1);
+        float w3 = bands(x, 41.0, 13.7);
+        float ribbon = w1 * 0.52 + w2 * 0.31 + w3 * 0.17;
+        // gravity: the run repeats faster the further it has fallen. Two runs
+        // at different rates and phases, both smeared wide — one crisp run
+        // draws a chevron front right across the sheet, which is just the
+        // barcode again lying on its side.
+        float runA = fract(y * 1.4 + t * (0.85 + 1.5 * (1.0 - y)) + w2 * 3.1 + w3 * 1.3);
+        float runB = fract(y * 2.3 - t * (1.15 + 0.9 * (1.0 - y)) + w1 * 4.7);
+        float packet = smoothstep(0.18, 1.0, runA) * 0.62 + smoothstep(0.3, 1.0, runB) * 0.38;
+        float breakUp = smoothstep(0.88, 0.12, y);        // glassy at the lip
+        float foot = 1.0 - smoothstep(0.0, 0.21, y);      // foam in the basin
+        float bright = ribbon * 0.55 + packet * breakUp * 0.5 + foot * 0.8;
+        float edge = smoothstep(0.0, 0.13, x) * smoothstep(0.0, 0.13, 1.0 - x);
+        vec3 col = mix(vec3(0.14,0.27,0.37), vec3(0.80,0.92,0.97), clamp(bright, 0.0, 1.0));
+        float alpha = edge * (0.20 + ribbon * 0.33 + packet * breakUp * 0.26 + foot * 0.32)
+                    * (1.0 - uSeal * 0.94);
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
       }
     `,
   }));

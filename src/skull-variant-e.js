@@ -593,10 +593,19 @@ export function buildSkullMesh(boneMaterial) {
   // teeth barely above bone, never a bright keyboard in the middle of the face
   const enamel = mk(0x7f7867, 0.48, { vertexColors: true, bumpScale: 0.06 });
   const enamelStain = mk(0x6a6353, 0.60, { vertexColors: true, bumpScale: 0.07 });
-  const muscle = mk(0x4d1715, 0.48, { side: THREE.DoubleSide });
-  const muscle2 = mk(0x68231d, 0.55, { side: THREE.DoubleSide });
-  const skin = mk(0x70483d, 0.68, { side: THREE.DoubleSide });
-  const skinPale = mk(0x865d4f, 0.64, { side: THREE.DoubleSide });
+  // The growing tissue was LIGHTER and glossier than the bone it grows on, and
+  // it sat inside the viewmodel key: measured, the stage-3 patches peaked at
+  // 0.96 luminance in a graveyard frame whose world averaged 0.032. On screen
+  // that is not tissue, it is a stripe of orange paint across the cranium — and
+  // to a colourblind player it is only ever "a bright wrong thing".
+  //
+  // Wet tissue on dry bone is DARKER than the bone. Value carries the read now,
+  // hue carries none of it, and the rougher surfaces stop throwing the specular
+  // that made the patches glow. The rim light finds their wet edge instead.
+  const muscle = mk(0x39120f, 0.70, { side: THREE.DoubleSide });
+  const muscle2 = mk(0x4b1a15, 0.74, { side: THREE.DoubleSide });
+  const skin = mk(0x4f362e, 0.84, { side: THREE.DoubleSide });
+  const skinPale = mk(0x5e453a, 0.80, { side: THREE.DoubleSide });
   const hair = mk(0x241f1b, 0.97, { side: THREE.DoubleSide });
   // A pale ball in a black socket is a googly eye no matter how small it is.
   // What belongs in a half-grown socket is something DARK and wet that catches
