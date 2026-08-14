@@ -1719,6 +1719,16 @@ function basementAct(game) {
     id: 'firebox', pos: incPos.clone(), radius: 0.55, enabled: false,
     onHit(skull) {
       if (skull.mode !== 'outbound') return 'continue';
+      // A shut fire door used to leave this target DISABLED, so a throw
+      // bounced off bare geometry with no voice at all — which read as "the
+      // puzzle doesn't work anymore." The target is always armed now; a
+      // shut door answers with its own rattle and points at the handle.
+      if (!incin.doorOpen) {
+        game.impact('locked', incPos);
+        game.audio.lockedRattle({ pos: incPos, gain: 0.72, rate: 1.1 });
+        game.shake(0.08);
+        return 'return';
+      }
       if (!game.flags.has('ateFlame')) {
         game.impact('locked', incPos);
         game.audio.fireChoke({ pos: incPos, gain: 0.22, rate: 0.58 });
@@ -1738,9 +1748,18 @@ function basementAct(game) {
         game.impact('locked', incPos);
         game.audio.lockedRattle({ pos: draftGauge.getWorldPosition(new THREE.Vector3()), gain: 0.72, rate: 0.64 });
         // point at whichever half of the draft is missing: the pump crossing,
-        // or the archive's collar valve at the end of the same line
-        if (!game.flags.has('pumpGalleryLatched')) game.pumpGallery?.nudge?.();
-        else game.blindArchive?.nudge?.();
+        // or the archive at the end of the same line. When it is the archive,
+        // the refusal TRAVELS — knocks walk west along the ceiling main from
+        // the furnace toward the back room, so the pointer is a path, not a
+        // distant noise.
+        if (!game.flags.has('pumpGalleryLatched')) {
+          game.pumpGallery?.nudge?.();
+        } else {
+          game.after(0.35, () => game.audio.knock({ pos: new THREE.Vector3(4.5, B + 2.3, 4.8), gain: 0.4, rate: 0.62 }));
+          game.after(0.7, () => game.audio.knock({ pos: new THREE.Vector3(-4.5, B + 2.3, 5.2), gain: 0.44, rate: 0.56 }));
+          game.after(1.1, () => game.audio.knock({ pos: new THREE.Vector3(-12.5, B + 2.3, 5.5), gain: 0.48, rate: 0.5 }));
+          game.after(1.5, () => game.blindArchive?.nudge?.());
+        }
         return 'return';
       }
       if (incin.offered) return 'return';
@@ -1760,7 +1779,7 @@ function basementAct(game) {
       return 'anchor';
     },
   });
-  fireboxTarget.enabled = false;
+  fireboxTarget.enabled = true;   // always armed; the shut-door branch answers
 
   keyTarget = world.addFetchTarget({
     id: 'hatchKey', object: key, radius: 0.7, enabled: false,
@@ -1781,7 +1800,7 @@ function basementAct(game) {
       incin.awake = true;
       game.flag('incineratorAwake');
       incin.glowTarget = incin.doorOpen ? 2.4 : 1.3;
-      fireboxTarget.enabled = incin.doorOpen && !incin.offered;
+      fireboxTarget.enabled = !incin.offered;
       if (!incin.wakePlayed) {
         incin.wakePlayed = true;
         game.audio.knock({ pos: incPos, gain: 0.42, rate: 0.62 });
@@ -1789,7 +1808,8 @@ function basementAct(game) {
       }
     }
     glow.intensity += (incin.glowTarget - glow.intensity) * Math.min(1, dt * 3.5);
-    const gaugeGoal = game.flags.has('pumpGalleryLatched') ? -1.02 : 1.18;
+    const gaugeGoal = (game.flags.has('pumpGalleryLatched') && game.flags.has('archiveDraftOpened'))
+      ? -1.02 : 1.18;
     gaugeNeedle.rotation.z += (gaugeGoal - gaugeNeedle.rotation.z) * Math.min(1, dt * 4.6);
     const lit = clamp(glow.intensity / 1.3, 0.05, 2.2);
     emberMat.color.setRGB(1 * lit * 0.55 + 0.03, 0.3 * lit * 0.45 + 0.01, 0.08 * lit * 0.3);
@@ -2543,11 +2563,16 @@ function buildWindowRelay(game) {
   cage.name = 'study-bell-room-cage';
   cage.position.set(-10.5, G, 1);
   scene.add(cage);
+  // one instanced draw for the bars; the house lives near its draw ceiling
+  const cageBars = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.022, 0.026, 1.66, 7), iron, 5);
+  const cageM4 = new THREE.Matrix4();
   for (let i = 0; i < 5; i++) {
-    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.026, 1.66, 7), iron);
-    bar.position.set(0, 1.75, -0.55 + i * 0.275);
-    cage.add(bar);
+    cageM4.makeTranslation(0, 1.75, -0.55 + i * 0.275);
+    cageBars.setMatrixAt(i, cageM4);
   }
+  cageBars.instanceMatrix.needsUpdate = true;
+  cage.add(cageBars);
   for (const railY of [1.02, 2.48]) {
     const rail = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.06, 1.34), iron);
     rail.position.set(0, railY, 0);
@@ -2951,7 +2976,11 @@ function buildWindowWatchers(game) {
 
   const w = {
     siteIndex: -1, active: false, t: 0, lookAwayT: 0,
-    cooldown: 26, seen: 0, nextSite: null, fade: 1,
+    // "It would be cool if the second room in the game had one of those
+    // scary things in the window." The FIRST haunting is scripted: the
+    // landing window, seconds after the house act opens — the first window
+    // you pass leaving the bedroom already has something climbing into it.
+    cooldown: 6, seen: 0, nextSite: 0, fade: 1,
   };
   game.windowWatcher = {
     root, state: w, sites,
@@ -4058,21 +4087,13 @@ function buildPumpGallery(game) {
   // an axle runs from the drum's back end into the east wall, lands on a
   // bearing plate, and a pedestal carries the drum off the floor. Same
   // bolted-to-the-room vocabulary as the ossuary counterweight.
-  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.25, 8), iron);
-  axle.position.set(0.95, 0.72, 0);
-  axle.rotation.z = Math.PI / 2;
-  winch.add(axle);
-  const bearing = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.5), iron);
-  bearing.position.set(1.5, 0.72, 0);
-  winch.add(bearing);
-  const pedestal = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.62, 0.42), iron);
-  pedestal.position.set(0.12, 0.31, 0);
-  winch.add(pedestal);
+  // static mounts ride the global merged batch — zero extra draws
+  world.box(iron, -13.55 + 0.95, B + 0.72, -6.8, 1.25, 0.12, 0.12);   // axle
+  world.box(iron, -13.55 + 1.5, B + 0.72, -6.8, 0.12, 0.5, 0.5);      // bearing
+  world.box(iron, -13.55 + 0.12, B + 0.31, -6.8, 0.34, 0.62, 0.42);   // pedestal
   // the cable finally hangs from something: a mast off the winch base rises
   // to an eye directly above the cradle line, and the cable top meets it
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 1.62, 7), worn);
-  mast.position.set(-0.63, 1.47, 0);
-  winch.add(mast);
+  world.box(worn, -13.55 - 0.63, B + 1.47, -6.8, 0.1, 1.62, 0.1);     // mast
   const cableEye = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.02, 6, 12), worn);
   cableEye.position.set(-0.63, 2.28, 0);
   cableEye.rotation.x = Math.PI / 2;
@@ -4512,22 +4533,50 @@ function buildPumpGallery(game) {
       // thunks travels east along the ceiling main to the furnace, which
       // answers with a breath of fire. The firebox refuses the offering
       // until this has happened.
-      if (!game.flags.has('archiveDraftOpened')) {
-        game.flag('archiveDraftOpened');
-        route.draftOpen = true;
-        game.audio.unlock({ pos: collar.position, gain: 0.7, rate: 0.66 });
-        game.after(0.55, () => game.audio.knock({ pos: new THREE.Vector3(-14.4, B + 2.28, 5.58), gain: 0.42, rate: 0.62 }));
-        game.after(0.9, () => game.audio.knock({ pos: new THREE.Vector3(-12.1, B + 2.28, 5.4), gain: 0.46, rate: 0.56 }));
-        game.after(1.3, () => game.audio.knock({ pos: new THREE.Vector3(-6.0, B + 2.3, 4.2), gain: 0.5, rate: 0.5 }));
-        game.after(1.75, () => {
-          if (!game.incineratorPosition) return;
-          game.audio.fireRoar({ pos: game.incineratorPosition, gain: 0.28, rate: 0.8 });
-          game.audio.knock({ pos: game.incineratorPosition, gain: 0.55, rate: 0.44 });
-        });
-      }
+      openArchiveDraft();
       return 'return';
     },
   });
+  // shared by the collar strike and the lamp hold below: the moment the
+  // draft opens, thunks travel EAST down the ceiling main and the furnace
+  // answers with a breath of fire — cause, wire, effect, in one sentence
+  function openArchiveDraft() {
+    if (game.flags.has('archiveDraftOpened')) return;
+    game.flag('archiveDraftOpened');
+    route.draftOpen = true;
+    game.audio.unlock({ pos: collar.position, gain: 0.7, rate: 0.66 });
+    game.after(0.55, () => game.audio.knock({ pos: new THREE.Vector3(-14.4, B + 2.28, 5.58), gain: 0.42, rate: 0.62 }));
+    game.after(0.9, () => game.audio.knock({ pos: new THREE.Vector3(-12.1, B + 2.28, 5.4), gain: 0.46, rate: 0.56 }));
+    game.after(1.3, () => game.audio.knock({ pos: new THREE.Vector3(-6.0, B + 2.3, 4.2), gain: 0.5, rate: 0.5 }));
+    game.after(1.75, () => {
+      if (!game.incineratorPosition) return;
+      game.audio.fireRoar({ pos: game.incineratorPosition, gain: 0.28, rate: 0.8 });
+      game.audio.knock({ pos: game.incineratorPosition, gain: 0.55, rate: 0.44 });
+    });
+  }
+  // Alex: "the skull should actually have a place to land on the light
+  // where you could hold it to rev up all those contraptions to cause that
+  // part of the puzzle to work." The caged lamp is now that place: an
+  // outbound throw lands and LATCHES on the cage, and the HOLD revs the
+  // room — every wheel spins up with the hold, every needle climbs — until
+  // the draft commits. The collar strike still opens it too; two honest
+  // doors to one flag.
+  const lampAnchor = new THREE.Vector3();
+  const draftHold = { t: 0, required: 1.35, _strainT: 0, _was: false };
+  const lampTarget = world.addFetchTarget({
+    id: 'archiveDraftLamp', object: archiveLamp, radius: 0.72,
+    onHit(skull) {
+      if (game.flags.has('archiveDraftOpened')) return 'continue';
+      if (skull.mode !== 'outbound') return 'continue';
+      this.enabled = false;
+      archiveLamp.getWorldPosition(lampAnchor);
+      skull.anchorAt(lampAnchor, { swing: true, maxHold: 4.5, puzzleId: 'archiveDraft' });
+      game.impact('locked', lampAnchor);
+      game.audio.creak({ pos: lampAnchor, gain: 0.55, rate: 0.68 });
+      return 'anchor';
+    },
+  });
+  game.archiveDraftHold = draftHold;
   // the line does not end in the room: a conduit continues east along the
   // ceiling main, drops the shared wall, and stubs off toward the hatchbay —
   // the archive is visibly wired INTO the house, not parked beside it
@@ -4700,8 +4749,8 @@ function buildPumpGallery(game) {
     // light still owns a restrained flame variation, both from this fixture.
     // An opened draft burns the lamp up — the room stays visibly powered.
     const lampBreath = Math.sin(time * 1.85) * 0.035;
-    archiveLampCore.material.opacity = (route.draftOpen ? 0.9 : 0.72) + lampBreath;
-    archiveGlow.intensity = (route.draftOpen ? 1.2 : 0.52) + lampBreath * 3;
+    archiveLampCore.material.opacity = (route.draftOpen ? 0.9 : 0.72 + (draftHold.t / draftHold.required) * 0.16) + lampBreath;
+    archiveGlow.intensity = (route.draftOpen ? 1.2 : 0.52 + (draftHold.t / draftHold.required) * 0.7) + lampBreath * 3;
 
     if (!route.heard && game.act === 'basement'
       && game.player.pos.distanceTo(new THREE.Vector3(-12.2, B, -3)) < 5.2) {
@@ -4719,6 +4768,36 @@ function buildPumpGallery(game) {
     route.surgeT = Math.max(0, (route.surgeT || 0) - dt);
     // the opened draft survives death/teleport restores via its flag
     if (!route.draftOpen && game.flags.has('archiveDraftOpened')) route.draftOpen = true;
+    // THE LAMP HOLD: a landed throw latches on the cage; the held weight
+    // revs every contraption in the room until the draft commits. Letting
+    // go early drops it all back with a grind.
+    const drafting = game.skull && game.skull.mode === 'anchored'
+      && game.skull.anchor?.puzzleId === 'archiveDraft';
+    if (!game.flags.has('archiveDraftOpened')) {
+      if (!drafting && game.skull?.mode === 'held') lampTarget.enabled = true;
+      draftHold.t = drafting ? Math.min(draftHold.required, draftHold.t + dt)
+        : Math.max(0, draftHold.t - dt * 1.6);
+      if (drafting) {
+        archiveLamp.getWorldPosition(lampAnchor);
+        game.skull.pos.copy(lampAnchor);
+        game.skull.root.position.copy(lampAnchor);
+        game.skull.anchor.point.copy(lampAnchor);
+        route.surgeT = Math.max(route.surgeT, 0.35 + (draftHold.t / draftHold.required) * 1.15);
+        draftHold._strainT -= dt;
+        if (draftHold._strainT <= 0) {
+          draftHold._strainT = 0.3;
+          game.audio.creak({
+            pos: lampAnchor, gain: 0.28 + (draftHold.t / draftHold.required) * 0.3,
+            rate: 0.6 + (draftHold.t / draftHold.required) * 0.55,
+          });
+        }
+      } else if (draftHold._was && draftHold.t > 0.1) {
+        game.audio.stoneGrind({ pos: archiveLamp.position, gain: 0.5, rate: 1.4 });
+        game.shake(0.1);
+      }
+      draftHold._was = drafting;
+      if (draftHold.t >= draftHold.required) openArchiveDraft();
+    }
     if (route.latched && archiveDetailVisible) {
       route.archiveWake += dt;
       for (let i = 0; i < pumpStands.length; i++) {

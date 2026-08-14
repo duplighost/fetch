@@ -282,8 +282,13 @@ try {
     walkTo(-18.9, 0.6, 10);
     walkTo(-18.9, 3.4, 8);
     walkTo(-16.3, 4.15, 8);
-    throwAt(-16.3, -0.72, 5.58, 0.3);
-    beat('archive-collar-opens-the-draft', g.flags.has('archiveDraftOpened'),
+    // land the skull on the caged lamp and hold: the room revs, the draft opens
+    aimAt(-16.25, -0.88, 4.72);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(1.9, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
+    beat('archive-lamp-hold-opens-the-draft', g.flags.has('archiveDraftOpened'),
       { player: g.player.pos.toArray() });
     walkTo(-18.9, 3.2, 8); walkTo(-18.9, 0.4, 8);
     walkTo(-12.6, -3, 14, true); walkTo(-9.2, -3, 8, true);

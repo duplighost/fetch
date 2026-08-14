@@ -1,3 +1,66 @@
+# HANDOFF - 2026-08-14, BASEMENT LEGIBILITY (branch claude/basement-legibility)
+
+Alex, playing THE MARROW build live: "the puzzle in the basement of the
+house doesn't seem to work anymore... i do all the things and the fire is
+still not in the incinerator and the skull bounces right off. oh, if i say
+restart from last checkpoint it somehow works?"
+
+ROOT CAUSE FOUND: the firebox fetch target started DISABLED and was only
+armed by the fire-door interact — a throw before using the handle bounced
+off bare geometry with ZERO feedback. That silence read as "broken", and a
+restart run that happened to re-use the door read as "fixed". Fix: the
+target is always armed; a shut door answers with impact('locked') + its
+own rattle. (The wake ticker no longer re-gates enabled on doorOpen.)
+
+Also this pass:
+- THE LAMP HOLD (Alex's design, verbatim): "the skull should actually have
+  a place to land on the light where you could hold it to rev up all those
+  contraptions." The caged archive lamp is a fetch anchor now
+  ('archiveDraftLamp', swing hold 1.35s): the held weight revs every stand
+  (surge pinned to hold progress), the lamp brightens with it, strain
+  creaks rise, early release drops it all with a grind — and the committed
+  hold opens the draft. The collar strike still opens it too (two honest
+  doors to one flag; openArchiveDraft() shared).
+- The furnace's no-draft refusal now TRAVELS: three knocks walk west along
+  the ceiling main from the furnace toward the archive before the archive
+  answers — the pointer is a path. The draft gauge only settles when BOTH
+  halves (pump + archive) are done.
+- FIRST WINDOW HAUNTING SCRIPTED: "the second room in the game" — the
+  watcher's first appearance is now the landing window ~6s into the house
+  act, so the first window you pass leaving the bedroom has something
+  climbing into it.
+- SECOND ROOT CAUSE, same session ("i never saw the key in the graveyard
+  again... it is possible i collect i accidentally"): the mausoleum key
+  grab had NO outbound guard — the throw that toppled grave #6 could scoop
+  the key on its RETURN leg the second it appeared. Outbound-only now,
+  plus a 0.9s settle before the key is takeable at all: it gets its
+  breath in the rubble, glowing, before any throw can claim it.
+- THE CANINE GLAM ("the actual object you collect should look cooler"):
+  a real curved fang now — two-segment curve, brass root band, side
+  serrations, bone cradle, additive halo, slow turn and bob on the
+  plinth. The sharpened-skull outline he called cool is untouched.
+- THE TWO-STAGE LOAD ("a better looking version loads up before another
+  version") — REAL: act fog DENSITY eased while fog COLOUR snapped, so
+  every act boundary showed a clear vivid frame before the haze arrived
+  like a second load. Fog colour + background now ease with density
+  (main.js lerp dt*1.1; hard teleports seed instantly for tests). The
+  marrow palette rides the same targets instead of mutating scene.fog —
+  the descent GRADES into wine-dark now.
+- MARROW DISCOVERABILITY ("i didn't see any enemies from marrow"): the
+  pit was too quiet. Once open: ember shimmer plane over the black mouth,
+  glow 1.4 breathing, under-knocks carry 12 m on a 6-10s cadence, and a
+  one-time three-knock announcement across the yard the moment
+  graveyardResolved lands. (Note: the marrow only opens AFTER the yard
+  resolves — his session may simply not have reached it.)
+- NOTED, DELIBERATELY LEFT (Alex: "We can leave that for now lol"): the
+  house chaser gets stuck on the stairs — he uses it for playtesting.
+- His bell photo ("looks like there is two bells"): correct and by
+  design — the gold room-side striker + the grey receiver in the reveal.
+  With the real blocker fixed this should stop reading as suspect; if the
+  cage still confuses, that is a future legibility pass.
+
+---
+
 # HANDOFF - 2026-08-14, THE MARROW (branch claude/marrow-area)
 
 Alex: "the enemies in the game i made called 'marrow' ... are actually really

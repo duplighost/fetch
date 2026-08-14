@@ -560,7 +560,13 @@ try {
     walkLeg(-18.9, 0.6, 10);
     walkLeg(-18.9, 3.4, 8);
     walkLeg(-16.3, 4.15, 8);
-    throwAt(-16.3, -0.72, 5.58, 0.3);
+    // the archive half of the draft: land the skull ON the caged lamp and
+    // HOLD — the held weight revs the room until the draft commits
+    aimAt(-16.25, -0.88, 4.72);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(1.9, { throwHeld: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
+    waitHeld(3);
     const draftOpened = g.flags.has('archiveDraftOpened');
     // leave the way you came in: back through the archive door
     walkLeg(-18.9, 3.2, 8);
