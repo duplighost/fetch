@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { clamp, smoothstep, TAU } from './util.js';
 import { Mirror, Mirrors, LAYER_DOUBLE, MASK_DOUBLE } from './mirrors.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const HOUSE_TABLES = {
   origin: [-12, -14],
@@ -509,6 +510,85 @@ function createFurnitureKit(game) {
     // end in a broad soot-black collar/ceiling pocket.
     part(cylinder(f, 0.12, 0.14, 0.88, D.flue, 0.24, 1.9, -0.12, 10), 'flue');
     part(cylinder(f, 0.2, 0.24, 0.1, D.black, 0.24, 2.36, -0.12, 12), 'flue-pocket');
+
+    // ---- the anatomy -------------------------------------------------------
+    // A smooth cylinder with a black rectangle on it is a canister, and no
+    // amount of texture fixes that: measured, the boiler's map, albedo,
+    // roughness and metalness were all correct and the render matched their
+    // numbers exactly — it still read as plastic because there was no SHAPE
+    // for a light to find. (Three separate material passes proved it; see
+    // tools/probe-prop-surface.mjs and the pass-one commit.) What a furnace
+    // needs is edges: plinth, riveted courses, a door that is a door with a
+    // frame and hinges and a latch, an ash lip, a gauge, a flue collar.
+    //
+    // All of it merges into ONE geometry on one material, so the entire
+    // anatomy costs a single draw call. That matters here: house-after-cave
+    // sits at 445 against a 450 ceiling.
+    const bits = [];
+    const at = (geo, x = 0, y = 0, z = 0, rx = 0, ry2 = 0, rz = 0) => {
+      geo.applyMatrix4(new THREE.Matrix4().compose(
+        new THREE.Vector3(x, y, z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry2, rz)),
+        new THREE.Vector3(1, 1, 1)));
+      bits.push(geo);
+    };
+    // cast plinth it stands on
+    at(new THREE.CylinderGeometry(0.60, 0.65, 0.13, 20), 0, 0.065, 0);
+    // riveted courses — kept clear of the door opening (y 0.27..0.85)
+    for (const by of [0.19, 1.06]) {
+      at(new THREE.CylinderGeometry(0.548, 0.548, 0.062, 20), 0, by, 0);
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * TAU;
+        at(new THREE.SphereGeometry(0.019, 8, 6), Math.sin(a) * 0.556, by, Math.cos(a) * 0.556);
+      }
+    }
+    // a course of bolts where the shoulder is seamed on
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * TAU + 0.11;
+      at(new THREE.SphereGeometry(0.017, 8, 6), Math.sin(a) * 0.527, 1.225, Math.cos(a) * 0.527);
+    }
+    // the firebox becomes a DOOR: raised surround, hinges, a latch bar
+    at(new THREE.BoxGeometry(0.75, 0.075, 0.20), 0, 0.862, 0.43);
+    at(new THREE.BoxGeometry(0.75, 0.075, 0.20), 0, 0.258, 0.43);
+    at(new THREE.BoxGeometry(0.075, 0.68, 0.20), -0.338, 0.56, 0.43);
+    at(new THREE.BoxGeometry(0.075, 0.68, 0.20), 0.338, 0.56, 0.43);
+    for (const hy of [0.40, 0.72]) {
+      at(new THREE.CylinderGeometry(0.032, 0.032, 0.115, 8), -0.378, hy, 0.505);
+      at(new THREE.BoxGeometry(0.10, 0.045, 0.055), -0.34, hy, 0.525);
+    }
+    at(new THREE.CylinderGeometry(0.021, 0.021, 0.20, 8), 0.375, 0.56, 0.545, 0, 0, Math.PI / 2);
+    at(new THREE.SphereGeometry(0.034, 8, 6), 0.47, 0.56, 0.545);
+    // ash lip under the door, where the clinker falls
+    at(new THREE.BoxGeometry(0.68, 0.055, 0.22), 0, 0.212, 0.55);
+    at(new THREE.BoxGeometry(0.68, 0.05, 0.03), 0, 0.245, 0.655);
+    // Pressure gauge on the shoulder. A bare disc this size read as a hole
+    // punched in the tank, so the face is small and sits RECESSED inside a
+    // proud bezel — the shadow ring is what makes it a dial instead of a void.
+    at(new THREE.CylinderGeometry(0.032, 0.032, 0.09, 8), 0.22, 1.28, 0.40, Math.PI / 2, 0, 0);
+    at(new THREE.CylinderGeometry(0.074, 0.074, 0.030, 16), 0.22, 1.28, 0.470, Math.PI / 2, 0, 0);
+    // collar where the flue leaves the shoulder
+    at(new THREE.CylinderGeometry(0.175, 0.20, 0.07, 14), 0.24, 1.475, -0.12);
+    // a capped service stub on the flank
+    at(new THREE.CylinderGeometry(0.048, 0.048, 0.20, 10), -0.58, 0.95, 0, 0, 0, Math.PI / 2);
+    at(new THREE.CylinderGeometry(0.072, 0.072, 0.045, 10), -0.68, 0.95, 0, 0, 0, Math.PI / 2);
+
+    // The dial face is the ONE thing that cannot share the iron: at a single
+    // value the recessed disc read as a hole punched in the tank, whichever way
+    // it was bezelled. Glass over a dial is dark, and dark is the read. It buys
+    // one draw call, spent in a 425-draw act against a 700 budget and outside
+    // the constrained house-after-cave vantage entirely (verified: still 445).
+    const dial = mesh(f, new THREE.CylinderGeometry(0.056, 0.056, 0.026, 14), D.black,
+      0.22, 1.28, 0.474, Math.PI / 2, 0, 0);
+    part(dial, 'gauge-face');
+
+    const detail = new THREE.Mesh(mergeGeometries(bits, false), D.machine);
+    detail.position.set(f.x, f.y, f.z);
+    detail.rotation.y = f.ry;
+    detail.castShadow = true;
+    detail.receiveShadow = true;
+    scene.add(detail);
+    part(detail, 'detail');
+
     game.houseFixtures ||= {};
     game.houseFixtures.boiler = {
       parts, ceilingY: HOUSE_TABLES.levels.basement.ceil,
