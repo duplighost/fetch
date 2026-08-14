@@ -33,7 +33,9 @@ await grab('fix-boards', () => {
 await grab('fix-firebox', () => {
   const g = window.__game, F = window.__FETCH;
   F.teleport('basement'); F.stepWith(0.4, {});
+  // the wake needs the FULL circuit now: pilot + pump draft + archive draft
   g.flag('ateFlame'); g.flag('pilotLit'); g.flag('pumpGalleryLatched');
+  g.flag('archiveDraftOpened');
   g.incinerator.doorOpen = true;
   F.stepWith(4.0, {});                     // wake + door swing + fire ramp
   const p = g.incineratorPosition;

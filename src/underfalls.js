@@ -1130,14 +1130,20 @@ function buildHatchCistern(game, layout, state) {
   const r = 4.0;
   world.box(M.rock, H.x, y - 0.15, H.z, r * 2, 0.3, r * 2);
   world.box(M.rock, H.x + r, y + 2.0, H.z, 0.8, 4.5, r * 2);
-  world.box(M.rock, H.x - r, y + 2.0, H.z, 0.8, 4.5, r * 2);
+  // West shell is a north-only segment: the full-length slab used to cross the
+  // authored entry diagonal as ghost geometry. What remains is visually AND
+  // physically a wall (matching collider below); the southwest quadrant is
+  // genuinely open both ways.
+  world.box(M.rock, H.x - r, y + 2.0, H.z + (r - 0.6) / 2, 0.8, 4.5, r + 0.6);
   world.box(M.rock, H.x, y + 2.0, H.z + r, r * 2, 4.5, 0.8);
   world.box(M.rock, H.x, y + 4.15, H.z, r * 2 + 0.4, 0.5, r * 2 + 0.4);
   world.addCollider(H.x + r - 0.4, y - 1, H.z - r, H.x + r + 0.4, y + 4, H.z + r,
     { underfalls: true, role: 'hatch chamber wall' });
   // Southwest stays open: the descending spill arrives diagonally through that
-  // corner. The route union is already the reliable outer boundary, so an AABB
-  // here would only counterfeit a wall across the authored entrance.
+  // corner. The west collider must not reach south of H.z-0.6 or it would
+  // counterfeit a wall across that entrance (and into the choir's routing).
+  world.addCollider(H.x - r - 0.4, y - 1, H.z - 0.6, H.x - r + 0.4, y + 4, H.z + r,
+    { underfalls: true, role: 'hatch chamber wall' });
   world.addCollider(H.x - r, y - 1, H.z + r - 0.4, H.x + r, y + 4, H.z + r + 0.4,
     { underfalls: true, role: 'hatch chamber wall' });
 
@@ -1187,7 +1193,9 @@ function buildHatchCistern(game, layout, state) {
   // handle language as every other thing you can open: a bar and brackets
   // on the door's underside, facing the upturned player.
   const hatchHandleMat = new THREE.MeshStandardMaterial({
-    color: 0x22282a, roughness: 0.4, metalness: 0.7,
+    // pale diffuse + dark emissive, exactly the basement hatch's handle
+    // language (house.js) — value contrast against the darker door, not hue
+    color: 0x8f9694, roughness: 0.4, metalness: 0.7,
     emissive: 0x22282a, emissiveIntensity: 0.85,
   });
   const hatchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.56, 8), hatchHandleMat);
@@ -1389,6 +1397,7 @@ function installBeats(game, layout, state) {
       }
     }
     const player = game.player.pos;
+    const choir = game.enemies?.choir;
     for (let i = 0; i < state.sprayZones.length; i++) {
       const zone = state.sprayZones[i];
       const pulse = state.sprayPulse[i];
@@ -1398,12 +1407,33 @@ function installBeats(game, layout, state) {
       // A water volume is an authored beat, not an every-frame damage aura.
       // Crossing its edge fires one spatial pulse; leaving rearms it, while the
       // cooldown protects the Choir's localized reveal one-shot from chatter.
+      let sprayed = false;
       if (inside && !pulse.inside && t >= pulse.nextAt) {
         game.enemies?.caveSpray?.(zone.pos, zone.radius, zone.strength);
         pulse.nextAt = t + 0.8;
+        sprayed = true;
         if (state.sluice) state.sluice.sprayKick = 1;
       }
       pulse.inside = inside;
+      // The Choir walks the player's own breadcrumbs through the same
+      // curtains: its OWN crossing lights it (reveal + audio only — no slow,
+      // no wash, no strike-cancel, so pursuit is bit-identical). A caveSpray
+      // pulse this frame already revealed and voiced it; don't double-fire.
+      const c = state.choirPulse[i];
+      if (choir && choir.state !== 'spent') {
+        const cdx = choir.pos.x - zone.pos.x;
+        const cdz = choir.pos.z - zone.pos.z;
+        const choirInside = cdx * cdx + cdz * cdz <= zone.radius * zone.radius;
+        if (choirInside && !c.inside && t >= c.nextAt && !sprayed) {
+          game.enemies?.drownedChoirDrench?.();
+          c.nextAt = t + 0.8;
+        }
+        c.inside = choirInside;
+      } else {
+        // no choir (or spent): stay armed-as-inside so a source spawned inside
+        // a curtain cannot self-reveal at birth — the warning stays audio-only
+        c.inside = true;
+      }
     }
     if (!state.beats.pump && player.distanceToSquared(state.pump.position) < 11.5 * 11.5) {
       state.beats.pump = true;
@@ -1476,6 +1506,9 @@ export function buildUnderfalls(game) {
     beats: { pump: false, high: false },
     sprayZones: layout.sprayZones,
     sprayPulse: layout.sprayZones.map(() => ({ inside: false, nextAt: 0 })),
+    // the CHOIR's own zone edges, tracked separately: its crossings reveal it
+    // without touching the player-pulse semantics above
+    choirPulse: layout.sprayZones.map(() => ({ inside: false, nextAt: 0 })),
     groundAt(x, z) { return underfallsGroundAt(layout, x, z); },
     contains(x, z, pad = 0) { return underfallsContains(layout, x, z, pad); },
     project(x, z) { return projectUnderfalls(layout, x, z); },

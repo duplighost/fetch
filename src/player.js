@@ -38,6 +38,10 @@ export class Player {
     this.running = false;
     this.speedRatio = 0;
     this.noise = 0;                           // how loud you are (walkers listen)
+    this._railTouch = 0;                      // stair-guard contact this frame
+    this._railHoldT = 0;                      // sustained contact -> one creak
+    this._railCreakCd = 0;
+    this._railPos = null;
   }
 
   look(dx, dy) {
@@ -141,6 +145,20 @@ export class Player {
     this._moveAxis(this.vel.x * dt, 0);
     this._moveAxis(0, this.vel.z * dt);
 
+    // sustained rail contact answers as wood, not void — one quiet creak,
+    // rate-limited so a held lean cannot machine-gun it
+    this._railCreakCd = Math.max(0, this._railCreakCd - dt);
+    if (this._railTouch) {
+      this._railTouch = 0;
+      this._railHoldT += dt;
+      if (this._railHoldT > 0.25 && this._railCreakCd <= 0) {
+        this._railCreakCd = 2.4;
+        this.audio.creak({ pos: this._railPos, gain: 0.38, rate: 0.8 });
+      }
+    } else {
+      this._railHoldT = 0;
+    }
+
     // vertical: ground height with stair glide
     const gh = this.world.groundHeightAt(this.pos.x, this.pos.z, this.pos.y);
     const dy = this.pos.y - gh;
@@ -202,6 +220,7 @@ export class Player {
       let px = this.pos.x - cx, pz = this.pos.z - cz;
       const d2 = px * px + pz * pz;
       if (d2 >= RADIUS * RADIUS) continue;
+      const bx = this.pos.x, bz = this.pos.z;
       if (d2 > 1e-8) {
         const d = Math.sqrt(d2);
         const push = (RADIUS - d) / d;
@@ -218,7 +237,52 @@ export class Player {
         this.pos.x += outs[1] * outs[0];
         this.pos.z += outs[2] * outs[0];
       }
+      if (this.grounded) {
+        this._railShed(c, this.pos.x - bx, this.pos.z - bz, cx, cz);
+      }
     }
+  }
+
+  // A flight's side barrier — the tagged edge-guard AABB, or the storey wall
+  // whose bottom hangs into the head window over the open stair edge — used to
+  // delete the whole blocked component and pin the player dead mid-flight
+  // ("the basement was catching me"). Grounded on that flight's treads, the
+  // blocked perpendicular motion is re-aimed down-flight instead: the rail
+  // still stops you, then sheds you along it like a banister. Not standing on
+  // treads means no ramp resolves here, so ordinary wall sliding is untouched.
+  _railShed(c, pushX, pushZ, cx, cz) {
+    let ramp = null;
+    for (const r of this.world.ramps) {
+      if (!r.treadColliders || !r.treadColliders.length) continue;
+      if (this.pos.x < r.x0 || this.pos.x > r.x1 ||
+          this.pos.z < r.z0 || this.pos.z > r.z1) continue;
+      const on = r.treadColliders.some((t) =>
+        this.pos.x >= t.min.x && this.pos.x <= t.max.x &&
+        this.pos.z >= t.min.z && this.pos.z <= t.max.z &&
+        this.pos.y >= t.max.y - 0.05 && this.pos.y <= t.max.y + 0.3);
+      if (on) { ramp = r; break; }
+    }
+    if (!ramp) return;
+    const alongZ = ramp.axis === 'z';
+    // only barriers hugging this flight's side boundary read as its rail
+    const isRail = c.stairPart === 'edge'
+      ? c.stairId === (ramp.id || 'stairs')
+      : alongZ
+        ? (c.max.x <= ramp.x0 + 0.15 || c.min.x >= ramp.x1 - 0.15)
+        : (c.max.z <= ramp.z0 + 0.15 || c.min.z >= ramp.z1 - 0.15);
+    if (!isRail) return;
+    const blocked = Math.abs(alongZ ? pushX : pushZ);   // perpendicular pushback only
+    if (blocked < 1e-7) return;
+    const downhill = Math.sign(
+      (ramp.y0 - ramp.y1) * (alongZ ? ramp.z1 - ramp.z0 : ramp.x1 - ramp.x0));
+    if (!downhill) return;
+    // input keeps full authority: an intentional climb is never dragged back
+    const vAlong = alongZ ? this.vel.z : this.vel.x;
+    if (vAlong * downhill < -0.4) return;
+    if (alongZ) this.pos.z += downhill * blocked;
+    else this.pos.x += downhill * blocked;
+    this._railTouch = 1;
+    this._railPos = { x: cx, y: this.pos.y + 0.9, z: cz };
   }
 
   _sync(dt) {

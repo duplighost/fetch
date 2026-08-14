@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { RNG, TAU } from './util.js';
 import { CLEARING_BASIN } from './outside.js';
+import { projectUnderfalls } from './underfalls.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -1409,6 +1410,32 @@ function buildCaveDress(game, track, own, tickers) {
     [C.x + 22, C.z + 42, 0, 2.2],
   ];
   const rng = new RNG(0xca9e51de);
+  // Dress rocks may thicken walls but never stand in walkable space: every
+  // wall-skin, ring, and floor-spike instance is projected against the FULL
+  // route union (main + secret corridors + chambers) and pushed outward
+  // along its radial until its footprint clears the lane;
+  // centerline-degenerate instances have no radial and are dropped. Each
+  // push re-projects, so a rock leaving one leg cannot land inside a
+  // neighbouring leg or the secret culvert. Deliberately elevation-blind:
+  // crossing corridors sit at different storeys (bell cistern vs service
+  // climb), so an "overhead" course by its own floor can be head-height in
+  // the lane it intrudes on. Only the mid-lane ceiling course and hanging
+  // teeth stay exempt — they roof the corridor by design.
+  const clearOfRoute = (x, z, half) => {
+    if (!layout) return { x, z };
+    const margin = half + 0.35;
+    let px = x, pz = z;
+    for (let guard = 0; guard < 6; guard++) {
+      const p = projectUnderfalls(layout, px, pz);
+      if (!p || p.clearance >= margin) return { x: px, z: pz };
+      if (p.d < 1e-4) return null;
+      const push = margin - p.clearance + 0.01;
+      px += (px - p.cx) / p.d * push;
+      pz += (pz - p.cz) / p.d * push;
+    }
+    const p = projectUnderfalls(layout, px, pz);
+    return p && p.clearance >= margin ? { x: px, z: pz } : null;
+  };
   const rockMat = own(cloneTint(game.mats?.rock, 0x3e4c56,
     () => new THREE.MeshStandardMaterial({ color: 0x3e4c56, roughness: 0.88, metalness: 0.03 })));
   if ('roughness' in rockMat) rockMat.roughness = 0.88;
@@ -1437,16 +1464,28 @@ function buildCaveDress(game, track, own, tickers) {
       for (const side of [-1, 1]) {
         // Four interlocked low-poly stones turn the structural wall backing
         // into a continuous, irregular cave silhouette.  Their inner edge
-        // remains just outside the authored 1.65m movement spine.
+        // remains just outside the authored 1.65m movement spine — enforced
+        // against the whole union, not just this leg, so skin from one leg
+        // can never stand inside a crossing corridor.
         for (const layerY of [0.48, 1.38, 2.28, 3.14]) {
           const sc = rng.range(0.42, 0.64);
+          const offX = rng.range(0.92, 1.28);
+          const jitterY = rng.range(-0.16, 0.16);
+          const offZ = rng.range(0.92, 1.28);
+          const rotX = rng.range(-0.48, 0.48);
+          const rotY = rng.range(0, TAU);
+          const rotZ = rng.range(-0.48, 0.48);
+          const sx = sc * rng.range(0.82, 1.0);
+          const sy = sc * rng.range(1.02, 1.34);
+          const sz = sc * rng.range(0.92, 1.18);
+          const placed = clearOfRoute(
+            x + nx * side * (halfW + offX), z + nz * side * (halfW + offZ),
+            Math.max(sx, sz));
+          if (!placed) continue;
           rockTiers.push([0.48, 1.38, 2.28, 3.14].indexOf(layerY));
           rockMatrices.push(compose(
-            x + nx * side * (halfW + rng.range(0.92, 1.28)),
-            floorY + layerY + rng.range(-0.16, 0.16),
-            z + nz * side * (halfW + rng.range(0.92, 1.28)),
-            rng.range(-0.48, 0.48), rng.range(0, TAU), rng.range(-0.48, 0.48),
-            sc * rng.range(0.82, 1.0), sc * rng.range(1.02, 1.34), sc * rng.range(0.92, 1.18),
+            placed.x, floorY + layerY + jitterY, placed.z,
+            rotX, rotY, rotZ, sx, sy, sz,
           ));
         }
       }
@@ -1463,15 +1502,27 @@ function buildCaveDress(game, track, own, tickers) {
       const n = Math.max(14, Math.round(chamber.r * 2.8));
       for (let i = 0; i < n; i++) {
         const a = i / n * TAU;
+        // The full ring never consulted the corridors crossing each rim; the
+        // union guard turns those crossings into real doorways instead of a
+        // rock fence across the walkable lane.
         for (const layerY of [0.58, 1.72, 2.86, 4.02]) {
           const scale = rng.range(0.46, 0.68);
+          const ringA = rng.range(1.02, 1.42);
+          const jitterY = rng.range(-0.14, 0.14);
+          const ringB = rng.range(1.02, 1.42);
+          const rotX = rng.range(-0.42, 0.42);
+          const rotYJ = rng.range(-0.35, 0.35);
+          const rotZ = rng.range(-0.42, 0.42);
+          const sy = scale * rng.range(1.18, 1.55);
+          const placed = clearOfRoute(
+            chamber.x + Math.cos(a) * (chamber.r + ringA),
+            chamber.z + Math.sin(a) * (chamber.r + ringB),
+            scale * 1.08);
+          if (!placed) continue;
           rockTiers.push([0.58, 1.72, 2.86, 4.02].indexOf(layerY));
           rockMatrices.push(compose(
-            chamber.x + Math.cos(a) * (chamber.r + rng.range(1.02, 1.42)),
-            chamber.y + layerY + rng.range(-0.14, 0.14),
-            chamber.z + Math.sin(a) * (chamber.r + rng.range(1.02, 1.42)),
-            rng.range(-0.42, 0.42), a + rng.range(-0.35, 0.35), rng.range(-0.42, 0.42),
-            scale * 1.08, scale * rng.range(1.18, 1.55), scale,
+            placed.x, chamber.y + layerY + jitterY, placed.z,
+            rotX, a + rotYJ, rotZ, scale * 1.08, sy, scale,
           ));
         }
       }
@@ -1545,9 +1596,18 @@ function buildCaveDress(game, track, own, tickers) {
         // floor spikes used to sit at halfW+0.18 minus their own radius —
         // INSIDE the movement clamp, so the player walked through rock,
         // which is the exact "feeling your way through rocks" complaint.
-        // They stand clear of the lane now; the walls keep their teeth.
-        toothMatrices.push(compose(x - nx * side * (halfW + 0.62), floorY + h * 0.42, z - nz * side * (halfW + 0.62),
-          0, rng.range(0, TAU), 0, rng.range(0.55, 0.95), h * 0.75, rng.range(0.55, 0.95)));
+        // They stand clear of the lane now — clear of the whole union, not
+        // just this leg's shoulder; the walls keep their teeth.
+        const rotY = rng.range(0, TAU);
+        const spx = rng.range(0.55, 0.95);
+        const spz = rng.range(0.55, 0.95);
+        const placed = clearOfRoute(
+          x - nx * side * (halfW + 0.62), z - nz * side * (halfW + 0.62),
+          Math.max(spx, spz));
+        if (placed) {
+          toothMatrices.push(compose(placed.x, floorY + h * 0.42, placed.z,
+            0, rotY, 0, spx, h * 0.75, spz));
+        }
       }
     }
   }

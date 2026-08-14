@@ -3,7 +3,8 @@
 // pocket, the resonant niches, the counterweight, the shaft climb with its
 // chained hatch (pre and post solve), the platform under the open lid, and
 // the forest-side arrival mouth. Solves the counterweight for real (throw,
-// anchor, hold) and CLIMBS out by input, then reports what it proved.
+// anchor, hold), CLIMBS out by input and USES the mouth's E-verb at the top
+// (walking onto the platform no longer exits), then reports what it proved.
 import { ensureServer, launchBrowser, openPage, URL_BASE } from '../tests/lib/harness.mjs';
 import { writeFileSync } from 'node:fs';
 const server = await ensureServer();
@@ -102,13 +103,28 @@ await grab('ossuary-climb', posedShot, [O.x + 1.75, O.floor + 1.2, O.z + 31.6, M
 // the platform under the open lid, chains fallen
 const top = await page.evaluate(() => {
   const g = window.__game, F = window.__FETCH;
-  // climb the last flight by input so the shot is a reachable pose
+  // climb the last flight by input so the shot is a reachable pose, then aim
+  // at the mouth and press E for real — the exit is an interact verb now, and
+  // this tool exists to prove the route a player actually has
   const OX = g.ossuary.origin.x, OZ = g.ossuary.origin.z;
-  for (let t = 0; t < 10 && !g.flags.has('ossuaryExited'); t += 0.1) {
+  const atTop = () => g.player.pos.y > g.ossuary.origin.floor + 3.05
+    && g.player.pos.x < OX - 2.0 && g.player.pos.z > OZ + 33.9;
+  for (let t = 0; t < 10 && !atTop(); t += 0.1) {
     const target = g.player.pos.z < OZ + 33.0 ? [OX + 1.75, OZ + 33.6] : [OX - 2.45, OZ + 34.65];
     const dx = target[0] - g.player.pos.x, dz = target[1] - g.player.pos.z;
     g.player.yaw = Math.atan2(-dx, -dz);
     F.stepWith(0.1, { moveZ: 1 });
+  }
+  if (!g.flags.has('ossuaryExited') && atTop()) {
+    const mx = OX - 2.45, mz = OZ + 34.75;
+    const my = g.ossuary.origin.floor + 5.43;
+    const dx = mx - g.player.pos.x, dz = mz - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dx, -dz);
+    g.player.pitch = Math.max(-1.15, Math.min(1.15,
+      Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001)));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.3, {});
   }
   return {
     exited: g.flags.has('ossuaryExited'),

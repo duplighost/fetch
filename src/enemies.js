@@ -1123,6 +1123,18 @@ export class Enemies {
     return caught;
   }
 
+  // The Choir crossing a spray curtain on its OWN pursuit line (underfalls
+  // installBeats owns the edge detection). Reveal + positional audio only:
+  // unlike caveSpray there is no wetT slow, no wash push, and no
+  // strike-cancel, so pursuit behavior is bit-identical to a dry walk.
+  drownedChoirDrench() {
+    const e = this.choir;
+    if (!e || e.state === 'spent') return null;
+    e.revealT = Math.max(e.revealT, 1.6);
+    this.game.audio.sprayReveal({ pos: e.pos, gain: 0.5 });
+    return e;
+  }
+
   getDrownedChoirState() {
     const e = this.choir;
     if (!e) return null;
@@ -2066,8 +2078,10 @@ export class Enemies {
     dist = Math.hypot(dx, dz);
     if (dist > 0.05) e.mesh.rotation.y = Math.atan2(dx, dz);
 
-    // Visibility is a pressure event, not a hue swap. Dry stalking is almost a
-    // hole in the cave; spray and attack reveal cheek planes, socket depth,
+    // Visibility is a pressure event, not a hue swap. Dry stalking keeps the
+    // shroud almost a hole in the cave, but the displaced-water glints hold a
+    // permanent faint floor — the one honest standing tell that something is
+    // moving the water; spray and attack reveal cheek planes, socket depth,
     // broken ribs, displaced water and the one continuous burial silhouette.
     const pressure = e.state === 'pressure'
       ? smoothstep(0, 1, clamp(e.stateT / DROWNED_CHOIR.attackCommit, 0, 1))
@@ -2085,8 +2099,8 @@ export class Enemies {
     U.wetMat.opacity = 0.001 + reveal * 0.25;
     U.rimMat.opacity = 0.001 + reveal * 0.2;
     U.mouthVoidMat.opacity = 0.001 + reveal * 0.92;
-    U.dropMat.uniforms.uOpacity.value = 0.001 + reveal * 0.72;
-    U.dropMat.uniforms.uSize.value = 0.032 + reveal * 0.052;
+    U.dropMat.uniforms.uOpacity.value = 0.10 + reveal * 0.62;
+    U.dropMat.uniforms.uSize.value = 0.052 + reveal * 0.032;
     if (U.light) {
       U.light.intensity = reveal * (2.5 + pressure * 5.6);
       U.light.distance = 4.2 + reveal * 2.3;

@@ -8,7 +8,7 @@ import { FOREST_GATE } from './outside.js';
 const ACT_SPAWNS = {
   bedroom: { x: 7.2, z: 1.5, yaw: Math.PI, y: 3.6 },   // the open window and hanging key own frame one
   house: { x: -1.5, z: 3, yaw: Math.PI, y: 3.6 },
-  basement: { x: 9, z: 4.5, yaw: 0.5, y: -3.0 },
+  basement: { x: 9, z: 4.9, yaw: 0.5, y: -3.0 },  // z >= 4.85 clears the last tread's collider — no frame-one shove
   graveyard: { x: -8, z: 8, yaw: -2.86 },       // car left, gate/bodies ahead
   forest: { x: FOREST_GATE.x, z: FOREST_GATE.z + 3, yaw: Math.PI },
   clearing: null,   // computed from forest end

@@ -697,6 +697,7 @@ export function buildMarrowArea(game) {
         st.rotation.set(0, st.userData.homeRot, 0);
         st.userData.stagger = 0;
         st.userData.hitCd = 0;
+        st.userData.shiverT = 0;
       }
     }
 
@@ -723,7 +724,29 @@ export function buildMarrowArea(game) {
       }
       const dx = p.x - st.position.x, dz = p.z - st.position.z;
       const d = Math.hypot(dx, dz);
+      // the skull's reach is mode-blind: one proximity test feeds both
+      // branches. Marble is a BIG target (1.4-scale cone), and the
+      // boomerang arc bends off the aim line — the radius honours both.
+      let hit = false;
+      if (skull && (skull.mode === 'outbound' || skull.mode === 'returning') && time > (H.hitCd || 0)) {
+        const sd = Math.hypot(skull.pos.x - st.position.x, skull.pos.z - st.position.z);
+        hit = sd < 1.0 && skull.pos.y > FLOOR && skull.pos.y < FLOOR + 3;
+      }
       if (!hunting) {
+        H.shiverT = Math.max(0, (H.shiverT || 0) - dt);
+        if (hit) {
+          // truce: marble answers — a shiver and a soft crack, never a
+          // shove. Position and stagger must stay untouched or the hit
+          // reads as the combat verb working pre-theft.
+          H.hitCd = time + 0.7;
+          H.shiverT = 0.8;
+          game.audio.thud({ pos: st.position, gain: 0.55, rate: 0.62, crack: true });
+          game.impact('break', st.position);
+        }
+        if (H.shiverT > 0) {
+          st.rotation.y += Math.sin(time * 31 + st.userData.home.x) * 0.02;
+          continue;
+        }
         if (d > 16) continue;
         const facing = (pv.x * -dx + pv.z * -dz) / (d || 1) > 0.42;
         if (!facing) {
@@ -735,22 +758,17 @@ export function buildMarrowArea(game) {
       }
       H.stagger = Math.max(0, (H.stagger || 0) - dt);
       // the skull's answer: bone shoves marble, harder with the iron canine
-      if (skull && (skull.mode === 'outbound' || skull.mode === 'returning') && time > (H.hitCd || 0)) {
-        // marble is a BIG target (1.4-scale cone), and the boomerang arc
-        // bends off the aim line — the radius honours both
-        const sd = Math.hypot(skull.pos.x - st.position.x, skull.pos.z - st.position.z);
-        if (sd < 1.0 && skull.pos.y > FLOOR && skull.pos.y < FLOOR + 3) {
-          H.hitCd = time + 0.7;
-          H.stagger = 1.5;
-          const kx = st.position.x - skull.pos.x, kz = st.position.z - skull.pos.z;
-          const kd = Math.hypot(kx, kz) || 1;
-          const push = 1.9 * (game.skullPower || 1);
-          st.position.x = clamp(st.position.x + (kx / kd) * push, MX - (HALF_W - 0.6), MX + (HALF_W - 0.6));
-          st.position.z = clamp(st.position.z + (kz / kd) * push, MZ + 1.0, MZ + LENGTH - 1.0);
-          st.rotation.z = (rng.float() - 0.5) * 0.14;   // knocked off true
-          game.audio.thud({ pos: st.position, gain: 0.7, rate: 0.62, crack: true });
-          game.impact('pop', st.position);
-        }
+      if (hit) {
+        H.hitCd = time + 0.7;
+        H.stagger = 1.5;
+        const kx = st.position.x - skull.pos.x, kz = st.position.z - skull.pos.z;
+        const kd = Math.hypot(kx, kz) || 1;
+        const push = 1.9 * (game.skullPower || 1);
+        st.position.x = clamp(st.position.x + (kx / kd) * push, MX - (HALF_W - 0.6), MX + (HALF_W - 0.6));
+        st.position.z = clamp(st.position.z + (kz / kd) * push, MZ + 1.0, MZ + LENGTH - 1.0);
+        st.rotation.z = (rng.float() - 0.5) * 0.14;   // knocked off true
+        game.audio.thud({ pos: st.position, gain: 0.7, rate: 0.62, crack: true });
+        game.impact('pop', st.position);
       }
       if (H.stagger > 0) {
         // a struck statue shivers where it stands
@@ -884,13 +902,45 @@ export function buildMarrowArea(game) {
     // THE RELIC: takeable once the guardian yields. It rides home in the
     // skull's jaw, a small wet piece of another game.
     relic.visible = !state.relicKept;
-    relic.rotation.y += dt * 0.4;
-    relicGlow.intensity = state.relicKept ? 0.2 : (state.yielded ? 1.4 : 0.9);
-    if (!state.relicKept && state.yielded && skull?.mode === 'outbound') {
+    if (!state.relicKept) {
+      // its state lives on the object the player is aiming at: guarded is
+      // still and dim; yielded beats with the dangle's own heartbeat
+      // grammar and lifts off the altar — brightness/shape/motion only
+      const takeable = state.yielded;
+      relic.rotation.y += dt * (takeable ? 1.1 : 0.4);
+      let throb = 0;
+      if (takeable) {
+        state._altarPulseT = (state._altarPulseT || 0) + dt * 1.6;
+        const beat = Math.max(0, Math.sin(state._altarPulseT * TAU));
+        throb = beat * beat;
+        state._altarRiseT = Math.min(1, (state._altarRiseT || 0) + dt);
+        relic.position.y = FLOOR + 1.24 + smoothstep(0, 1, state._altarRiseT) * 0.15;
+      }
+      if (state._relicFlinchT > 0) {
+        // refused: a dip and a brief overshoot, then back to rest
+        state._relicFlinchT = Math.max(0, state._relicFlinchT - dt);
+        const ph = 1 - state._relicFlinchT / 0.25;
+        relic.scale.setScalar(1 - Math.sin(ph * Math.PI) * 0.2);
+        relicMat.emissiveIntensity = ph < 0.4 ? lerp(0.8, 0.2, ph / 0.4)
+          : ph < 0.75 ? lerp(0.2, 1.9, (ph - 0.4) / 0.35)
+            : lerp(1.9, 0.8, (ph - 0.75) / 0.25);
+      } else {
+        relic.scale.setScalar(1 + throb * 0.22);
+        relicMat.emissiveIntensity = 0.8 + throb * 1.8;
+      }
+      relicGlow.intensity = takeable ? 1.4 + throb * 0.6 : 0.9;
+    } else {
+      relicGlow.intensity = 0.2;
+    }
+    if (!state.relicKept && skull && (skull.mode === 'outbound' || skull.mode === 'returning')) {
       const rd = Math.hypot(skull.pos.x - relic.position.x, skull.pos.z - relic.position.z);
-      if (rd < 0.72 && Math.abs(skull.pos.y - relic.position.y) < 0.9) {
+      const inWindow = rd < 0.72 && Math.abs(skull.pos.y - relic.position.y) < 0.9;
+      if (inWindow && state.yielded && skull.mode === 'outbound') {
         state.relicKept = true;
         game.flag('marrow:relicKept');
+        // the dangle's captured base must be the resting emissive, not a
+        // mid-throb frame — snap before the clone
+        relicMat.emissiveIntensity = 0.8;
         const dangle = new THREE.Mesh(relicGeo.clone(), relicMat.clone());
         dangle.scale.setScalar(0.45);
         dangle.position.set(-0.048, -0.035, 0.05);
@@ -929,7 +979,26 @@ export function buildMarrowArea(game) {
             game.after(2.4, () => { if (presence.group.visible) startFold(); }, { global: true });
           }, { global: true });
         }, { global: true });
+      } else if (inWindow && time > (state._refuseAt || 0)) {
+        // the refusal: the gate is a rule, not a bug — a dry dead knock
+        // (nothing like the take's unlock chord) and a flinch on the relic
+        state._refuseAt = time + 0.7;
+        state._relicFlinchT = 0.25;
+        game.audio.knock({ pos: relic.position, gain: 0.42, rate: 1.35 });
+        if (!state.yielded) {
+          // the disqualifier is the guardian: the refusal points at WHO
+          // is refusing — a hard twitch, an eye-flare, a placed whisper
+          presence._twitchUntil = 0;
+          state._eyeFlareT = 0.3;
+          game.audio.whisper({ pos: gp, gain: 0.45, rate: 0.5 });
+        }
       }
+    }
+    // the refusal eye-flare rides ON TOP of tickPresence's per-tick write,
+    // applied after it in the same pass so the guard drive can't stomp it
+    if (state._eyeFlareT > 0) {
+      state._eyeFlareT = Math.max(0, state._eyeFlareT - dt);
+      presence.eyeMat.emissiveIntensity += (state._eyeFlareT / 0.3) * 2.6;
     }
   });
 }

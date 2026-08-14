@@ -1,3 +1,196 @@
+# HANDOFF - 2026-08-14, ROUND 2: SILENCE READS AS BROKEN (branch claude/feedback-aug14-2)
+
+Alex's second live-play list of the day, plus a diagnosis that names the
+project's recurring disease. Ten items investigated in parallel, 36 defects
+pinned to file:line, all implemented. The through-line — and Alex later said
+it himself ("the main problem we've had here is with implementing the puzzle
+system so it works and a player would understand what to do and not just get
+it by accident... most problems probably just get past a lot of that
+testing"): almost nothing was BROKEN. It was working-but-illegible. The
+verdict column of the investigation: 10/10 items "working-but-illegible" or
+"partly-working", zero "broken". LAW MINTED THIS SESSION: **silence reads as
+broken** — every non-qualifying interaction answers, every state change
+broadcasts AT the object, cause points at effect. And legibility is
+MEASURABLE (luminance ratios, pane pixel deltas, view-cone reveal integrals)
+— the measurements below should graduate into a permanent legibility suite.
+
+## The list, his words, what was actually wrong
+
+- "I still don't see that thing crawling in the window in the second room"
+  (2nd report): the scripted first haunting only RENDERED after ~1.4s of
+  unbroken gaze within ~22 degrees of the pane (climb gated on watched; rig
+  below the sill until t~0.45), and a shorter glance silently CONSUMED the
+  event (vanish('away') counts any t>0, cooldown 33-42s, site hop). Measured:
+  pixel-identical pane at 1.0s of perfect gaze; 3% of pane pixels changed at
+  full climb (cloth 0x0c0e0f behind 85%-opaque glass). Now: first event
+  arrives pre-crested and visible with a positional glassTink hook, creeps
+  while unwatched, is only consumable once actually witnessed; skin/cloth
+  brightened, head joined to the palm inside the glass plane. Later
+  hauntings keep the stare-gated grammar.
+- "the door on the side of the stairs... closes when you hit the candle. i
+  hope that works the first time": IT NEVER CLOSES. Two visual lies: the
+  fixed +1.9 rad swing parked the lit panel 19 degrees past perpendicular
+  INSIDE the aperture — from the stair approach it reads as a shut door the
+  moment the candle lights it; and a real state bug (Door.update's rattle
+  block writes baseRy-relative wobble, pose write guarded by |d|>0.001) let a
+  rattle landing in a ~0.16s window freeze the door pixel-perfect CLOSED
+  forever while logically open — "skull through the closed door", exactly.
+  Now: per-door openAngle (voidDoor 2.75 lies flat along the wall), pose
+  computed every frame, rattle relative to pose. The beat itself was always
+  first-hit-completable, infinitely retryable, death-proof (probe-verified).
+- "you have to walk right through that thing in the doorway... it should
+  maybe come apart": the bell-circuit latch assembly hung at face height
+  INSIDE the cellar doorway (x 9.40 in an 8.35..9.65 aperture), colliderless,
+  forever. Now circuitLatch.comeApart() fires at BOTH cellarOpen commit
+  orders: the whole assembly tears off, falls dt-integrated in the
+  detachBoard idiom, and settles in a heap at the east jamb base (x>=9.7,
+  y<=0.35) — the fallen hardware IS the open read.
+- "the bell at the bottom of the basement stairs. you have to hit that?":
+  YES — it is the incinerator's pilot, and canon (WALKTHROUGH, comments,
+  playthrough) says it is REQUIRED, but the requirement had been dropped in
+  code when the draft was rewritten — he completed the furnace without ever
+  striking it, which is WHY nothing was attributable. Restored: firebox,
+  door-interact and wake all gate on pilotLit; the cold refusal now travels
+  (choke at the mouth then knocks climbing the pilot's riser). Also fixed the
+  early-door-open path that swallowed the wake announcement forever (interact
+  set incin.awake with a stale two-flag condition; the ticker's !awake guard
+  then never fired the knock+fire-breath). The furnace is now a scoreboard:
+  pilot -> door slits breathe; pump -> gauge needle + missing-half duct
+  knock; draft -> wake breath + standing flames; all + door open -> mouth
+  2.4. The pilot fixture itself stood half-buried in the return-stair wedge
+  ("looks kind of odd the way it is settled there") — moved to clear floor
+  at (3.35, B, 5.72), backboard against the wall, line re-aimed EAST into
+  the ceiling toward the furnace it feeds.
+- "the basement was catching me again": reproduced — a diagonal descent of
+  the hanging flight pins dead against an invisible side wall. DEVIATION
+  from the diagnosis, probe-proven: the blocker is NOT the tagged stair
+  guard but the untagged storey-wall AABB hanging into the head window 2cm
+  in front of it; the shed is keyed on a side-boundary predicate (±0.15m of
+  the flight edge, feet-on-treads only) and sheds blocked velocity along the
+  flight axis downhill, with an uphill climb guard so it can never drag a
+  climbing player back. Plus: basement respawn nudged (9,-3,4.5)->(9,-3,4.9)
+  — the old point sat INSIDE tread 10's collider and every respawn frame-one
+  shoved the player 0.35m. Stair guards also grew a mid-height rail so the
+  collider volume reads filled, not invisible.
+- "the room with all the contraptions is still a mess... i don't know which
+  thing does it": measured ON/OFF frame-luminance ratio was 1.11x, the rev
+  lasted 1.05s at ~10-24 deg/s wheel speed, and the strike collar sat
+  DIRECTLY BEHIND the caged lamp on the approach sightline — pre-draft
+  throws aimed at the collar were intercepted by the lamp's larger target
+  sphere and PARKED instead ("i don't know which thing does it", literally).
+  Now: collar moved 1.3m east and made the biggest/brightest ring in the
+  room; the lamp cage rebuilt into a skull-sized cradle (the one shape that
+  says PUT THE SKULL HERE); hold lengthened 1.05->2.6s with progress read at
+  the fixture and in the room; ON is a different room — wheels at flywheel
+  speed, every gauge face lit, work-lamps flooding the row; the walk-in
+  sentence and the furnace nudge flare the dials so the room points at
+  itself. (Playthrough beat timing updated for the longer hold.)
+- "clear and consistent handles": the basement bilco hatch's handle bar +
+  brackets EXISTED with the correct worn-bright material and had never
+  rendered a pixel — hand-rolled offsets placed them ~1-3cm INSIDE the tilted
+  panel's volume ("a slab of concrete with nothing on it"). Lifted out along
+  the panel normal. The ossuary lid and underfalls hatch handles had the
+  SAME bug in a different key: the pale diffuse hex transposed into the
+  emissive slot (0x22282a diffuse = soot-black bar). Both now 0x8f9694.
+  Every other openable audited clean (inventory in the session record).
+  DEFERRED: one shared makeHandle() constructor so a handle can never be
+  hand-derived wrong again — do it in a quiet pass.
+- THE MARROW ("it doesn't seem like my skull can touch them... sometimes my
+  skull goes right through the item"): truce-mode statues were hit-inert BY
+  CONSTRUCTION (the hit path gated on hunting; plinth colliders answered
+  with generic wall-thud), and a non-qualifying relic pass was perfectly
+  silent (take requires yielded && outbound; no else branch anywhere). Now:
+  truce hits answer (rotation-only shiver + marble crack + impact ring,
+  never displacement — the truce holds); non-qualifying relic passes answer
+  (dry dead knock + flinch, and when the gate is the guardian, the refusal
+  points AT the guardian: eye-flare + whisper); once yielded the relic
+  broadcasts takeable with the dangle's own heartbeat grammar (throb, rise,
+  brightened glow) — the pulse he already loves, taught one scene earlier.
+- "the gate for the path under the cemetery didn't have a very visible
+  handle... at the end it just kind of was sky if you looked up": the lid's
+  1.92 rad swing carried the handle 0.11m INSIDE the cap wall (open = handle
+  entombed), and the up-view through the mouth was a measured 0.0-luminance
+  void plane indistinguishable from the night sky — E on empty sky. Now:
+  lid opens 1.62 rad (leans on the wall, bar proud and lit), handle
+  worn-bright, and the mouth wears a throat — curbs + root beams the
+  shaftGlow lights, black only between them; climbing out kicks a decaying
+  settle on the arrival lid so you see the thing you just used still moving.
+  (tools/probe-ossuary.mjs also un-broke: it now fires the real interact.)
+- "some of those hanging balls should be glowing brighter or more
+  distinctly": the chain knots peaked at RGB(77,116,139) over a few pixels
+  — dimmer than the held skull — and the knit cross-branches were only
+  discarded within 3 spline-metres of each knot, so the APPROACH sightline
+  (eye at 1.65m to knot at 7m) always crossed branch height. Now: knot
+  emissive ~2.4, a soft additive corona sprite per road knot (depthTest ON —
+  partial occlusion leaves most of the glow; never through walls), a slow
+  per-knot-phase breath, and the knit/canopy discard widened to the full run
+  spans (seed 62-68, road 160-204) with RNG-consumption discipline preserved
+  verbatim (every rng call still executes; only the push is withheld — the
+  rest of the forest is pixel-identical).
+- "still walking through rocks to get to the exit... i didn't see the enemy
+  that used to be in there once": (1) cave dressing placed a full 360-degree
+  rock ring around every chamber with no corridor gaps — audit found 219
+  skin instances inside the walkable union, plus a 4.5m visual-only west
+  wall crossing the hatch-cistern entry; now every dress instance is pushed
+  radially clear of the route union (+0.35m margin) and the west wall is a
+  north-only segment WITH a real collider, the southwest quadrant honestly
+  open. (2) THE DROWNED CHOIR WAS NEVER GONE: an honest-walk sim showed it
+  spawn on schedule, stalk, and commit a full attack — with a measured
+  maximum forward-view-cone reveal of 0.000 over the entire walk; every
+  reveal fires astern of a forward-walking player, and its dry opacity floor
+  was 0.001. Now it drenches ITSELF crossing the same spray curtains the
+  player walked through (reveal + positional sprayReveal only — pursuit
+  math untouched) and carries a permanent faint water-glint column
+  (dry floor ~0.10) so an honest walk meets it.
+
+## Verification
+
+All four gates green on the final source: smoke ALL PASS (436 draws / 1018
+geometries in-sample, zero errors), autotest 24/24, regressions 78/78,
+playthrough COMPLETE. Focused battery green: house-critical-path,
+basement-foundations 8, house-chase-doors 10, house-return-horror 12,
+house-expansion, failure-state 20, pump-release, horror-expansion 16,
+choir-route-occlusion 6, creature-audio, underfalls-expansion 13,
+district-culling 14 (max 445/450), exterior-expansion 12, forest-hardening,
+grave-arena, enemy-stain 5, standing-postclear 2, perf-pool. Visual audit
+(36 vantages) clean; archive cradle and bilco handle confirmed by eyeball.
+
+THREE PRE-EXISTING FAILURES, NOT FROM THIS PASS — proven by running the
+identical suites on the untouched claude/visual-pass tip in a separate
+worktree, interleaved to control machine state:
+- forest-nervous-system 'synchronous Start' — ~315ms vs the 250ms ceiling on
+  BOTH trees (baseline 322, ours 314). Inherited boot cost, most likely the
+  visual pass's occlusion-grid bake; fix by slicing the bake, not by raising
+  the ceiling. All 8 of its behaviour checks pass; the prewarm-slice check
+  passes on both trees when the machine is quiet (ours 32.6ms vs baseline
+  40.3 — ours is actually faster).
+- pause-title-regression — crashes at its live-mode boot-ready wait
+  (line ~338) identically on BOTH trees. It passed in the visual-pass
+  battery, so the machine's Chrome/driver state shifted since. Environmental.
+- render-perf mirror cadence — 33.3ms p50 on BOTH trees when the machine has
+  been under sustained GPU load (a locked 30Hz compositor state); identical
+  16.7ms healthy cadence on both trees when quiet. Thermal, not scene cost.
+
+## Queue: pass 2, from Alex tonight, designs finished
+
+His words verbatim in the session record (scratchpad alex-words-aug14-
+round2.md; fold into this file with the pass-2 commit): the bedroom arrival
+rework (searchable room, hidden bell, bone-click approach, the skull
+SHATTERS the strong-glass window and lands in your hands, flickering human
+head before it settles — replaces waking already holding it; playthrough
+act-0 beats rewritten to the new truth), the knock-a-lot front door payoff
+(ends with one small knock from INSIDE), the house chaser nav fix (stairs +
+stalls; supersedes "deliberately left"), the window watcher ACTUALLY ENTERS
+(sash up, folds through, drops inside, sash stays cracked), the archive
+stands CHUG audibly while running, and the pump-gallery far pawl latches
+ITSELF when you reach the far side ("unless you were really thinking about
+it, you probably wouldn't realize that that is what locks the gate down").
+
+Deliberately left: a held throw aimed out the open void doorway can poise
+outside the roofless house shell (probe phase D; Alex has not flagged it).
+
+---
+
 # HANDOFF - 2026-08-14, THE VISUAL PASS (branch claude/visual-pass)
 
 Alex: "Let's do a complete visual pass on this game and make everything look

@@ -1411,6 +1411,31 @@ function buildOssuaryRoute(game) {
   addMeshBox(wallMat, OX - 2.45, DECK_Y, OZ + 33.93, 0.9, 0.2, 0.46, 'hatch deck south');
   addMeshBox(wallMat, OX - 3.075, DECK_Y, OZ + 34.7, 0.45, 0.2, 2.0, 'hatch deck west');
 
+  // The mouth wears a THROAT: looking up from the platform used to show a
+  // featureless black plane identical to night sky, with E offered on nothing.
+  // Curbs ring three open edges of the aperture (the cap wall frames the
+  // fourth — a deck curb there would intersect the open lid, which rests
+  // against that wall) and bone roots cross the mouth in the z band the lid's
+  // 1.141 m swing arc never reaches (arc tops at DECK_Y+0.88 at z+34.5, lower
+  // west of it). Ring, never roof: the exitMouth raycast stays clear. All lit
+  // by the existing shaftGlow — no new lights.
+  addMeshBox(wallMat, OX - 2.95, DECK_Y + 0.4, OZ + 34.75, 0.15, 0.6, 1.3, 'exit mouth curb');
+  addMeshBox(wallMat, OX - 1.95, DECK_Y + 0.4, OZ + 34.75, 0.15, 0.6, 1.3, 'exit mouth curb');
+  addMeshBox(wallMat, OX - 2.45, DECK_Y + 0.4, OZ + 34.05, 1.15, 0.6, 0.15, 'exit mouth curb');
+  // header proud of the cap wall face, above the open lid's resting top edge
+  // (lid tip reaches DECK_Y+1.21) and shy of the void plane at DECK_Y+1.6
+  addMeshBox(wallMat, OX - 2.45, DECK_Y + 1.42, OZ + 35.32, 1.15, 0.3, 0.16, 'exit mouth header');
+  const addMouthRoot = (y, z, r, len, yawTilt) => {
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, len, 6), boneMat);
+    root.position.set(OX - 2.45, y, z);
+    root.rotation.set(0, yawTilt, Math.PI / 2);
+    root.receiveShadow = true;
+    routeRoot.add(root);
+  };
+  addMouthRoot(DECK_Y + 0.92, OZ + 34.32, 0.042, 1.06, 0.07);
+  addMouthRoot(DECK_Y + 1.06, OZ + 34.44, 0.036, 1.02, -0.1);
+  addMouthRoot(DECK_Y + 1.22, OZ + 34.37, 0.03, 1.1, 0.16);
+
   // the lid: a bolted iron panel, chain X, hasp and fat padlock underneath —
   // the game's existing sealed-then-open language (the basement bilco kit).
   // Everything is DRIVEN parametrically off state.exitT so a forced restore
@@ -1428,8 +1453,11 @@ function buildOssuaryRoute(game) {
   // "things you can activate look distinct" — the lid wears the hatch-handle
   // language: a bar bolted to its underside, catching light the moment the
   // lid stands open above the climb.
+  // color/emissive pair copied from the basement bilco handle (house.js) —
+  // pale worn metal, bright by value: the emissive hex was transposed into
+  // the color slot here once and the bar rendered soot-black.
   const lidHandleMat = new THREE.MeshStandardMaterial({
-    color: 0x22282a, roughness: 0.4, metalness: 0.7,
+    color: 0x8f9694, roughness: 0.4, metalness: 0.7,
     emissive: 0x22282a, emissiveIntensity: 0.85,
   });
   const lidHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.46, 8), lidHandleMat);
@@ -1696,7 +1724,7 @@ function buildOssuaryRoute(game) {
   const state = {
     origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
     unlocked: false, route: null, inOssuary: false, solved: false,
-    pulling: false, progress: 0, slabT: 0, exitT: 0,
+    pulling: false, progress: 0, slabT: 0, exitT: 0, arrivalKick: 0,
     surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider,
     mechanism, wheel, weight, lidPivot, hatchChains, resident: null, target: null,
     unlock(route = 'ritual') {
@@ -1721,6 +1749,7 @@ function buildOssuaryRoute(game) {
       this.progress = 0;
       this.slabT = 0;
       this.exitT = 0;
+      this.arrivalKick = 0;
       surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
       surfaceSlab.rotation.x = 0;
       surfacePit.visible = false;
@@ -1769,6 +1798,9 @@ function buildOssuaryRoute(game) {
     game.forest?.recentre(player.pos);
     game.checkpoint('forest');
     game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
+    // kick the forest-side lid: the ticker rocks it to rest over the next
+    // couple of seconds, so turning around shows a hatch still settling
+    state.arrivalKick = 0.35;
     state._justExited = true;
   };
   const climbOut = () => { state._pendingClimbOut = true; };
@@ -2009,7 +2041,10 @@ function buildOssuaryRoute(game) {
     // blooms. All poses derive from exitT so a forced restore (director
     // teleport, respawn) seats the entire far end with one assignment.
     hatchChains.position.y = -smoothstep(0.04, 0.34, state.exitT) * 1.85;
-    lidPivot.rotation.x = smoothstep(0.3, 0.98, state.exitT) * 1.92;
+    // 1.62 rad (~93 deg) leans the open lid back against the cap wall with the
+    // handle bar proud of it, facing the climber. 1.92 carried the handle and
+    // most of the panel 0.11 m INSIDE the wall. Regression asserts > 1.6.
+    lidPivot.rotation.x = smoothstep(0.3, 0.98, state.exitT) * 1.62;
     if (!hatchCreaked && state.exitT > 0.32) {
       hatchCreaked = true;
       game.audio.stoneGrind({
@@ -2021,6 +2056,12 @@ function buildOssuaryRoute(game) {
     // the forest-side mouth opens on the same payout — parametric off exitT
     // like everything else at the far end, so one forced assignment seats it
     state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, state.exitT) * 1.85;
+    // the climb-out settle: an additive rock that decays to zero, so the
+    // pose stays parametric off exitT once the kick has spent itself
+    if (state.arrivalKick > 0) {
+      state.arrivalKick = Math.max(0, state.arrivalKick - dt * 0.16);
+      state.arrival.pivot.rotation.x += Math.sin(time * 9.5) * state.arrivalKick * 0.2;
+    }
 
     // the kennel: a held weight raises the shutter; letting go drops it
     {
@@ -3502,12 +3543,19 @@ export class Forest {
     })();
 
     const trunks = [], canopies = [], branches = [], shrubs = [], roots = [], sideMasses = [];
-    // The chain's flight envelope: no centreline canopy and no cross-branches
-    // near a knot — a 7 m pivot swing needs the air above the road. The RNG is
+    // The chain's flight envelope AND its approach sightline: the eye-to-knot
+    // ray climbs from 1.65 m to 7 m, crossing branch height (2.9-4.3 m) within
+    // ~10 m of the VIEWER — so a 3 m disc around each knot protected the swing
+    // air but left every knit branch along the walked run sitting between the
+    // eye and the next knot. Clear the whole run spans instead. The RNG is
     // still consumed exactly as before and only the RESULT is discarded, so
     // every other tree in the forest stays where it has always been.
     const chainS = this.chain ? [this.chain.seedS, ...this.chain.knotS] : [];
-    const nearChain = (i) => chainS.some((s) => Math.abs(i - s) < 3);
+    const chainRuns = this.chain ? [
+      [this.chain.seedS - 3, this.chain.seedS + 3],
+      [this.chain.knotS[0] - 5, this.chain.knotS[this.chain.knotS.length - 1] + 4],
+    ] : [];
+    const inChainRun = (i) => chainRuns.some(([a, b]) => i >= a && i <= b);
     for (let i = 2; i < this.length - 2; i += 2) {
       const hw = this.halfW[i];
       for (const side of [-1, 1]) {
@@ -3539,7 +3587,7 @@ export class Forest {
         // a 1.62-scale blob at y 8.0 has a lower edge near 6.4 m — it would
         // swallow a 7.0 m chain knot. rng fully consumed above; only the push
         // is withheld.
-        if (!nearChain(i)) canopies.push(blob);
+        if (!inChainRun(i)) canopies.push(blob);
       }
       // and branches knit across it, low enough to duck under
       if (rng.chance(0.13)) {
@@ -3552,8 +3600,9 @@ export class Forest {
         mid.x += -a.tz * rng.range(-0.65, 0.65);
         mid.z += a.tx * rng.range(-0.65, 0.65);
         // the player passes through 2.9-4.3 m at the bottom of every chain
-        // arc; a knit branch there is a clothesline. rng consumed as before.
-        if (!nearChain(i)) branches.push({ a: av, b: mid }, { a: mid, b: bv });
+        // arc; a knit branch there is a clothesline, and anywhere along the
+        // run it is a bar across the next knot. rng consumed as before.
+        if (!inChainRun(i)) branches.push({ a: av, b: mid }, { a: mid, b: bv });
       }
     }
     // shrub walls line the corridor — the surfaces you actually walk between.
@@ -4097,8 +4146,12 @@ export class Forest {
     const knotMat = M.headstone.clone();
     if (knotMat.color) knotMat.color.multiplyScalar(1.28);
     if ('emissive' in knotMat) {
+      // The knot is the AIMING surface and must out-value the rope (1.35) and
+      // the held skull. There is no bloom pass in this renderer, so a 0.19 m
+      // dodecahedron's screen read is [few pixels] x [tone-mapped emissive]:
+      // the emissive has to do all the work, the corona sprites the rest.
       knotMat.emissive = new THREE.Color(0x59666b);
-      knotMat.emissiveIntensity = 0.85;
+      knotMat.emissiveIntensity = 2.4;
     }
 
     const segs = [];
@@ -4202,6 +4255,42 @@ export class Forest {
     knotMesh.instanceMatrix.needsUpdate = true;
     knotMesh.name = 'chain pale knots';
     scene.add(knotMesh);
+
+    // corona per knot — the beacon idiom the mausoleum relic already uses.
+    // No bloom pass exists, so the glow has to be geometry: one shared 64px
+    // radial-gradient texture, one additive sprite per pivot. depthTest stays
+    // TRUE (a glow through a trunk reads as a bug); at ~1.6 m across, a 0.17 m
+    // branch or the 0.12 m support bough only bites a slice out of it.
+    const coronaTex = (() => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const cx = c.getContext('2d');
+      const grad = cx.createRadialGradient(32, 32, 2, 32, 32, 30);
+      grad.addColorStop(0, 'rgba(190,210,214,0.9)');
+      grad.addColorStop(0.5, 'rgba(150,175,180,0.35)');
+      grad.addColorStop(1, 'rgba(150,175,180,0)');
+      cx.fillStyle = grad;
+      cx.fillRect(0, 0, 64, 64);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    })();
+    const coronas = new THREE.Group();
+    coronas.name = 'chain knot coronas';
+    knots.forEach((p) => {
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: coronaTex, transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, opacity: 0.8,
+      }));
+      halo.scale.set(1.6, 1.6, 1);
+      halo.position.copy(p);
+      coronas.add(halo);
+    });
+    scene.add(coronas);
+    this._chainKnotMat = knotMat;
+    this._chainKnotBase = knotMat.emissiveIntensity;
+    this._chainCoronas = coronas.children;
+    this._chainPulseT = 0;
 
     // Link only the five consecutive road knots. The seed knot teaches the
     // verb into a side pocket and should not call across half the forest.
@@ -4569,6 +4658,20 @@ export class Forest {
     }
     this._writeForkClosures(dt);
     this._updateForestStoryProps(dt);
+    // the chain knots breathe: a slow shared emissive pulse plus per-corona
+    // phase so each knot reads as its own live object, not six copies of one.
+    // dt accumulator, value+motion only — never below the rope's 1.35.
+    this._chainPulseT += dt;
+    if (this._chainKnotMat && this._chainKnotBase) {
+      this._chainKnotMat.emissiveIntensity =
+        this._chainKnotBase * (0.8 + 0.2 * Math.sin(this._chainPulseT * 2.4));
+    }
+    if (this._chainCoronas) {
+      for (let i = 0; i < this._chainCoronas.length; i++) {
+        this._chainCoronas[i].material.opacity =
+          0.66 + 0.18 * Math.sin(this._chainPulseT * 2.4 + i * 0.35);
+      }
+    }
     const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
     this.sealAnim.forEach((a, i) => {

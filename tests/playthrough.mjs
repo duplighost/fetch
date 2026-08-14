@@ -238,9 +238,12 @@ try {
     // Fire has one home now: the pilot is COLD until the guest flame's embers
     // are carried down and offered to it, and the furnace refuses to wake
     // until the pilot burns. This is the leg that makes the void-door beat
-    // necessary instead of skippable.
+    // necessary instead of skippable. The fixture now stands on clear floor
+    // against the south wall west of the return-stair foot (wick at
+    // 3.35,-2.12,5.55), no longer buried in the stair wedge.
     walkTo(8.2, 5.2, 8);
-    throwAt(7, -2.1, 5.31, 0.35);
+    walkTo(5.0, 5.3, 8);
+    throwAt(3.35, -2.12, 5.55, 0.35);
     for (let t = 0; t < 4 && !g.flags.has('pilotLit'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('carried-the-fire-down-and-lit-the-pilot', g.flags.has('pilotLit'),
@@ -282,10 +285,12 @@ try {
     walkTo(-18.9, 0.6, 10);
     walkTo(-18.9, 3.4, 8);
     walkTo(-16.3, 4.15, 8);
-    // land the skull on the caged lamp and hold: the room revs, the draft opens
+    // land the skull on the cradle lamp and hold: the room revs, the draft
+    // opens (draftHold.required is 2.6s now — a watchable rev, so hold the
+    // input past the commit; the park would finish it either way)
     aimAt(-16.25, -0.88, 4.72);
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
-    F.stepWith(1.9, { throwHeld: true });
+    F.stepWith(3.2, { throwHeld: true });
     F.stepWith(1 / 120, { throwReleased: true });
     waitHeld();
     beat('archive-lamp-hold-opens-the-draft', g.flags.has('archiveDraftOpened'),

@@ -750,10 +750,13 @@ export class World {
               ['left', ramp.x0, ramp.x0 + guardThickness],
               ['right', ramp.x1 - guardThickness, ramp.x1],
             ]) {
-              // Render a real open rail (post + stepped handrail), while its
-              // continuous AABB below keeps fast diagonal movement from ever
-              // slipping through the narrow gaps between posts.
+              // Render a slatted rail (post + top + mid rail): the registered
+              // AABB below is a continuous solid so fast diagonal movement can
+              // never slip between posts — the visual must read filled too,
+              // or contact lands in what the eye says is open air.
               this.box(guardMat, (x0 + x1) / 2, top - 0.045,
+                z, x1 - x0, 0.09, z1 - z0);
+              this.box(guardMat, (x0 + x1) / 2, (bottom + top) / 2,
                 z, x1 - x0, 0.09, z1 - z0);
               this.box(guardMat, (x0 + x1) / 2, (bottom + top) / 2,
                 z1 - 0.045, x1 - x0, h, 0.075);
@@ -781,6 +784,8 @@ export class World {
               ['right', ramp.z1 - guardThickness, ramp.z1],
             ]) {
               this.box(guardMat, x, top - 0.045,
+                (z0 + z1) / 2, x1 - x0, 0.09, z1 - z0);
+              this.box(guardMat, x, (bottom + top) / 2,
                 (z0 + z1) / 2, x1 - x0, 0.09, z1 - z0);
               this.box(guardMat, x1 - 0.045, (bottom + top) / 2,
                 (z0 + z1) / 2, 0.075, h, z1 - z0);
@@ -1033,6 +1038,9 @@ export class Door {
     this.locked = cut.opts.locked || null;   // key id, 'never', or 'boards'
     this.heavy = !!cut.opts.heavy;
     this.secret = !!cut.opts.secret;
+    // rad swing when open — per-door so a panel can lie flat along a wall
+    // instead of parking inside its own aperture (voidDoor reads closed at 1.9)
+    this.openAngle = (cut.opts && cut.opts.openAngle) || 1.9;
     this.open = false;
     this.anim = 0;
     this.target = 0;
@@ -1167,19 +1175,23 @@ export class Door {
     const d = this.target - this.anim;
     if (Math.abs(d) > 0.001) {
       this.anim = clamp(this.anim + Math.sign(d) * speed * dt, 0, 1);
-      const e = this.anim < 0.5 ? 2 * this.anim * this.anim : 1 - Math.pow(-2 * this.anim + 2, 2) / 2;
-      if (this.secret) {
-        this.group.position.y = this.floor + this.h / 2 - e * (this.h - 0.15);
-      } else {
-        this.group.rotation.y = (this.group.userData.baseRy ??= this.group.rotation.y) + e * 1.9;
-      }
     }
+    // pose derives from anim every frame: a rattle that outlives the swing
+    // must never leave a logically-open door frozen at the closed rotation
+    const e = this.anim < 0.5 ? 2 * this.anim * this.anim : 1 - Math.pow(-2 * this.anim + 2, 2) / 2;
+    const baseRy = (this.group.userData.baseRy ??= this.group.rotation.y);
+    let pose = baseRy;
+    if (this.secret) {
+      this.group.position.y = this.floor + this.h / 2 - e * (this.h - 0.15);
+    } else {
+      pose = baseRy + e * this.openAngle;
+    }
+    this.group.rotation.y = pose;
     // locked jiggle: the knob works, the panel knocks in its frame, nothing gives
     if (this.rattleT > 0) {
       this.rattleT -= dt;
-      const baseRy = (this.group.userData.baseRy ??= this.group.rotation.y);
       const k = this.rattleT > 0 ? Math.sin(this.rattleT * 60) * Math.min(1, this.rattleT * 4) : 0;
-      this.group.rotation.y = baseRy + k * 0.012;
+      this.group.rotation.y = pose + k * 0.012;
       if (this.knobs) this.knobs.rotation.x = k * 0.6;
     }
   }

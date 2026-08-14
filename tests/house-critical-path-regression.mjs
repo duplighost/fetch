@@ -486,7 +486,8 @@ try {
     const pilotPos = pilot.target.object.getWorldPosition(g.player.pos.clone());
     g.enemies.clear();
     const leftRespawnStairsForPilot = walkStairRoute('pilot');
-    const reachedPilotApproach = walkTo(5.2, 3.55, 6) && walkTo(7, 3.55, 8);
+    // the pilot stands against the south wall west of the stair foot now
+    const reachedPilotApproach = walkTo(5.6, 5.2, 6) && walkTo(4.9, 5.35, 6);
     const reachedPilot = leftRespawnStairsForPilot && reachedPilotApproach;
     throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
     waitHeld();
@@ -500,7 +501,7 @@ try {
     // page's subject; this page's subject is the pilot's two-state contract.
     g.flag('ateFlame');
     const leftRespawnStairsForRelight = walkStairRoute('relight');
-    const reachedRelight = walkTo(5.2, 3.55, 6) && walkTo(7, 3.55, 8);
+    const reachedRelight = walkTo(5.6, 5.2, 6) && walkTo(4.9, 5.35, 6);
     throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
     waitHeld();
     const pilotIgnited = g.flags.has('pilotLit') && pilot.flame.visible
@@ -561,11 +562,12 @@ try {
     walkLeg(-18.9, 0.6, 10);
     walkLeg(-18.9, 3.4, 8);
     walkLeg(-16.3, 4.15, 8);
-    // the archive half of the draft: land the skull ON the caged lamp and
+    // the archive half of the draft: land the skull IN the cradle lamp and
     // HOLD — the held weight revs the room until the draft commits
+    // (draftHold.required is 2.6s: hold the input past the commit)
     aimAt(-16.25, -0.88, 4.72);
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
-    F.stepWith(1.9, { throwHeld: true }, false);
+    F.stepWith(3.2, { throwHeld: true }, false);
     F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
     waitHeld(3);
     const draftOpened = g.flags.has('archiveDraftOpened');
@@ -584,6 +586,14 @@ try {
     walkLeg(9.8, -1.7, 10);
     useAt(10.71, -2.1, -1.52);
     F.stepWith(0.7, {}, false);
+    // Pin the restored pilot gate at the real firebox: with the pilot state
+    // withdrawn (Set-level state-restore probe, no flag events re-fired), an
+    // otherwise-complete throw must refuse without offering.
+    g.flags.delete('pilotLit');
+    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
+    waitHeld(3);
+    const pilotGateRefused = !g.flags.has('skullOffered') && !g.incinerator.offered;
+    g.flags.add('pilotLit');
     throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
     const incineratorAccepted = g.flags.has('skullOffered') && g.incinerator.offered;
     for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1, {}, false);
@@ -658,6 +668,7 @@ try {
       pumpReturned,
       pumpLatched,
       draftOpened,
+      pilotGateRefused,
       incineratorAccepted,
       fireRefused,
       ashKeyFetched,
@@ -704,8 +715,8 @@ try {
       && basementBranch.pilotLitPersisted,
     'the cold pilot refuses fire but rings the circuit, survives death cold, and lights only from a carried flame',
     basementBranch);
-  check(basementBranch.incineratorAccepted,
-    'the relit pilot is what powers the drafted incinerator',
+  check(basementBranch.pilotGateRefused && basementBranch.incineratorAccepted,
+    'the relit pilot is what powers the drafted incinerator — and without it the firebox refuses',
     basementBranch);
   check(basementBranch.basementWalkLegs.every((leg) => leg.reached)
       && basementBranch.pumpAnchored
