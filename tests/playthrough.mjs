@@ -277,6 +277,15 @@ try {
       && g.flags.has('pumpGalleryLatched') && g.pumpGallery.gateOpen,
     { anchored: pumpAnchored, progress: g.pumpGallery.progress,
       latched: g.pumpGallery.latched, player: g.player.pos.toArray() });
+    // the draft has two halves: the crossing, then the archive collar at the
+    // end of the same ceiling line — the back room is necessary now
+    walkTo(-18.9, 0.6, 10);
+    walkTo(-18.9, 3.4, 8);
+    walkTo(-16.3, 4.15, 8);
+    throwAt(-16.3, -0.72, 5.58, 0.3);
+    beat('archive-collar-opens-the-draft', g.flags.has('archiveDraftOpened'),
+      { player: g.player.pos.toArray() });
+    walkTo(-18.9, 3.2, 8); walkTo(-18.9, 0.4, 8);
     walkTo(-12.6, -3, 14, true); walkTo(-9.2, -3, 8, true);
     walkTo(-4.8, -3, 8, true); walkTo(-1.5, -1.5, 10, true);
 
@@ -592,7 +601,7 @@ try {
     throwAt(g.clearingCenter.x, 8, g.clearingCenter.z + 20.5, 0.9);
     for (let t = 0; t < 5 && !g.flags.has('waterfallTaken'); t += 0.1) F.stepWith(0.1);
     beat('skull-given-to-the-waterfall', g.flags.has('waterfallTaken') && g.skull.mode === 'gone', g.skull.mode);
-    F.stepWith(8);                                   // the bridge rises
+    F.stepWith(10.5);                                // the bridge rises — ten stones now
     beat('bridge-rose', g.bridgeStones.every((s) => s.position.y > 0.05));
 
     // the falls kept the skull but not the keepsake — it's on the shore.

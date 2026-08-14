@@ -23,7 +23,10 @@ const STAGE_BY_ACT = { bedroom: 0, house: 1, basement: 2, graveyard: 3, forest: 
 const HOUSE_RESIDENT_DELAY = 18;
 const FOG_BY_ACT = {
   bedroom: 0.028, house: 0.03, basement: 0.06, graveyard: 0.034,
-  forest: 0.055, clearing: 0.018, cave: 0.07, mirror: 0.012,
+  // cave 0.07 was the densest fog in the game — with 0.42 ambient it read as
+  // "feel your way through rocks". 0.055 (forest-equal) lets the new water
+  // curtains be seen down a corridor while the air still hangs wet.
+  forest: 0.055, clearing: 0.018, cave: 0.055, mirror: 0.012,
 };
 const FOG_COLOR_BY_ACT = {
   // Every outdoor act's fog == its own background (eaten-path's law): when they

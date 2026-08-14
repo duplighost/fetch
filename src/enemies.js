@@ -1696,7 +1696,12 @@ export class Enemies {
       // just stunned and auto-pops it — making the quiet option impossible.
       // A hit grants 0.6s immunity; popping takes a deliberate second THROW.
       e.iframes = Math.max(0, (e.iframes || 0) - dt);
-      if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8) {
+      // game.skullPower (the iron canine, optional graveyard relic) sharpens
+      // the bite: slower contacts still count, stuns hold longer, blows land
+      // harder. It NEVER bypasses the stun-then-deliberate-second-throw
+      // grammar — the quiet/loud two-tier kill is the game's law.
+      const power = game.skullPower || 1;
+      if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8 / power) {
         if (this._skullIntersects(e, skull.prevPos, skull.pos)) {
           e.iframes = 0.6;
           const speed = skull.vel.length();
@@ -1716,15 +1721,15 @@ export class Enemies {
             // QUIET tier: it staggers, gives ground, and its voice gasps
             this._releaseGraveClaim(e, 0.65);
             e.state = 'stunned';
-            e.stunT = e.spec.stun;
+            e.stunT = e.spec.stun * power;
             e.recoilT = 0.12;
             if (!e.knockV) e.knockV = new THREE.Vector3();
             e.knockV.set(travX / travL, 0, travZ / travL)
-              .multiplyScalar(clamp(speed * 0.03, 0.45, 0.9));
+              .multiplyScalar(clamp(speed * 0.03 * power, 0.45, 0.9 * power));
             game.impact('hurt', skull.pos);
             game.audio.thud({ pos: e.pos, gain: 0.55 + hitInt * 0.35, rate: 0.9 + hitInt * 0.3, intensity: hitInt, crack: true });
             if (e.loop && e.loop.choke) e.loop.choke();
-            skull._flourishT = 0.3;                  // the tooth CLACK is the hit marker
+            skull._flourishT = 0.3 + (power - 1) * 0.2;   // the tooth CLACK is the hit marker
             game.audio.catchThud({ pos: skull.pos, gain: 0.35, rate: 1.8 });
             skull.vel.copy(away).multiplyScalar(speed * 0.35);
             skull.beginReturn('hit');

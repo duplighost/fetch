@@ -113,6 +113,20 @@ export function createUnderfallsLayout(center) {
       radius: 5.25,
       strength: 1.08,
     },
+    // the new route-spanning curtains get their own crossing pulses: the
+    // first veil just inside the falls, and the last one before the hatch
+    {
+      name: 'entry-veil',
+      pos: new THREE.Vector3((main[0].x + main[1].x) / 2, 1.3, (main[0].z + main[1].z) / 2),
+      radius: 4.2,
+      strength: 0.7,
+    },
+    {
+      name: 'hatch-veil',
+      pos: new THREE.Vector3((main[11].x + main[12].x) / 2, 1.3, (main[11].z + main[12].z) / 2),
+      radius: 4.2,
+      strength: 0.72,
+    },
   ];
   const bounds = {
     minX: C.x - 10,
@@ -952,8 +966,10 @@ function buildSluice(game, layout, state) {
     const yaw = Math.atan2(next.x - prev.x, next.z - prev.z);
     const gateMatrix = transformMatrix(p.x, p.y, p.z, 0, yaw, 0);
     for (const side of [-1, 1]) {
+      // posts stood at w-0.455 to their inner face — inside the clamp, so
+      // the player brushed through iron. They frame the lane now, not block it.
       postMatrices.push(gateMatrix.clone().multiply(transformMatrix(
-        side * (p.w - 0.34), 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
+        side * (p.w + 0.12), 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
     }
     topMatrices.push(gateMatrix.clone().multiply(transformMatrix(
       0, 3.72, 0, 0, 0, 0, p.w * 2.1, 0.25, 0.36)));

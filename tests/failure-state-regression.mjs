@@ -35,6 +35,7 @@ try {
       g.flag('ateFlame');
       g.flag('pilotLit');
       g.flag('pumpGalleryLatched');
+      g.flag('archiveDraftOpened');   // the draft's second half: the archive collar
       const fireDoor = g.world.interactables.find((o) => o.userData.inter?.id === 'incineratorDoor');
       fireDoor.userData.inter.action();
       F.stepWith(0.2, {}, false);

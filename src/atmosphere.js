@@ -1474,7 +1474,11 @@ function buildCaveDress(game, track, own, tickers) {
       toothMatrices.push(compose(x + nx * side * (halfW + 0.18), floorY + 4.24, z + nz * side * (halfW + 0.18),
         Math.PI, rng.range(0, TAU), 0, rng.range(0.65, 1.15), h, rng.range(0.65, 1.15)));
       if (rng.chance(0.58)) {
-        toothMatrices.push(compose(x - nx * side * (halfW + 0.18), floorY + h * 0.42, z - nz * side * (halfW + 0.18),
+        // floor spikes used to sit at halfW+0.18 minus their own radius —
+        // INSIDE the movement clamp, so the player walked through rock,
+        // which is the exact "feeling your way through rocks" complaint.
+        // They stand clear of the lane now; the walls keep their teeth.
+        toothMatrices.push(compose(x - nx * side * (halfW + 0.62), floorY + h * 0.42, z - nz * side * (halfW + 0.62),
           0, rng.range(0, TAU), 0, rng.range(0.55, 0.95), h * 0.75, rng.range(0.55, 0.95)));
       }
     }
@@ -1609,6 +1613,32 @@ function buildCaveDress(game, track, own, tickers) {
       [overflow.x - 3.25, overflow.y, overflow.z - 0.7, 2.45, 5.6, 0.66],
       [overflow.x + 3.05, overflow.y, overflow.z + 1.8, 1.35, 4.6, -0.52],
     ];
+    // WALK-THROUGH WATER, ACROSS the route. Alex: "if you have to walk
+    // through things, they should be waterfalls and not rocks." The sheets
+    // above hang BESIDE the lane; these span it, perpendicular to their leg,
+    // so the traverse's tight moments are curtains of falling water the
+    // player passes through — same instanced draw, no collider, no lights.
+    // A pooled candle descriptor at each curtain makes them the corridor's
+    // luminous landmarks (descriptors are census-free).
+    const curtainAt = (a, b, lift = 0) => {
+      const mx = (a.x + b.x) / 2;
+      const mz = (a.z + b.z) / 2;
+      const my = ((a.y || 0) + (b.y || 0)) / 2 + lift;
+      const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+      const width = ((a.w || 2.5) + (b.w || 2.5)) + 0.6;
+      game.world.candles.push({ x: mx, y: my + 1.35, z: mz, intensity: 0.55, r: 4.2 });
+      return [mx, my, mz, width, 4.55, yaw];
+    };
+    drops.push(
+      curtainAt(layout.main[0], layout.main[1]),
+      curtainAt(layout.main[1], layout.main[2]),
+      curtainAt(layout.main[8], layout.main[9]),
+      curtainAt(layout.main[9], layout.main[10]),
+      curtainAt(layout.main[11], layout.main[12]),
+    );
+    if (layout.secret?.[0] && layout.secret?.[1]) {
+      drops.push(curtainAt(layout.secret[0], layout.secret[1]));
+    }
     const dropMat = own(new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -1633,7 +1663,7 @@ function buildCaveDress(game, track, own, tickers) {
           float bead = 0.5 + 0.5 * sin(vUv.y * 71.0 - uTime * 8.4 + vUv.x * 17.0);
           float edge = smoothstep(0.0,0.13,vUv.x) * smoothstep(0.0,0.13,1.0-vUv.x);
           float foot = 1.0 - smoothstep(0.0,0.20,vUv.y);
-          vec3 col = mix(vec3(0.13,0.24,0.29), vec3(0.74,0.88,0.90), seam * 0.5 + foot * 0.35);
+          vec3 col = mix(vec3(0.15,0.27,0.32), vec3(0.82,0.93,0.96), seam * 0.5 + foot * 0.35);
           gl_FragColor = vec4(col, edge * (0.25 + seam * 0.24 + bead * 0.08 + foot * 0.22));
         }
       `,
