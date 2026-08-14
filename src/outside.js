@@ -2115,16 +2115,22 @@ function buildWreckedCar(game) {
   const { world, scene, mats: M } = game;
   const car = new THREE.Group();
   car.name = 'wrecked station wagon';
-  const paint = M.metal.clone();
-  paint.color.setHex(0x273139);
-  paint.roughness = 0.72;
-  paint.metalness = 0.46;
-  const rust = M.metal.clone();
-  rust.color.setHex(0x3b302b);
-  rust.roughness = 0.92;
+  // The shell, the crush and the glasshouse are all real now — what was left of
+  // "the car still looks like not a car" is that it wore a flat metal tint and
+  // came back as a clean plastic model of a wreck. M.carPaint is dead paint:
+  // chalked, blistered, rusted out of the seams, road dirt up the flanks.
+  // The map carries the albedo, exactly like the rest of this kit — a pale
+  // colour here would multiply the painted value straight back up.
+  const paint = M.carPaint;
+  const rust = M.carPaint.clone();
+  rust.color.setHex(0xb08c6a);   // the same surface, biased toward oxide
+  rust.roughness = 0.95;
+  // Glass that has stood outside for years is not a mirror. Rough it right up
+  // and drop the transmission — a clean 0.12-roughness pane was catching the
+  // moon like a showroom and was the brightest thing on the whole wreck.
   const glass = new THREE.MeshStandardMaterial({
-    color: 0x111d24, roughness: 0.12, metalness: 0.35,
-    transparent: true, opacity: 0.76,
+    color: 0x0d151b, roughness: 0.55, metalness: 0.1,
+    transparent: true, opacity: 0.82,
   });
   const tyre = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.98 });
   const lamp = new THREE.MeshBasicMaterial({ color: 0xdde6de });

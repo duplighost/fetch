@@ -16,6 +16,36 @@ const rgb = (r, g, b) => `rgb(${r | 0},${g | 0},${b | 0})`;
 
 /* ---------------- shared painter helpers ---------------- */
 
+// Scale a finished canvas to a target mean value.
+//
+// This exists because of one measured fact about this game (see
+// tools/probe-prop-surface.mjs). The light the player carries is a 58-candela
+// point light with decay 1.6, which delivers irradiance ~131 at 0.6 m, 43 at
+// 1.2 m, 19 at 2 m and 4.4 at 5 m. A surface clips to white as soon as
+// albedo x irradiance passes 1.0 — so anything the player can stand next to
+// has to sit below about 0.05 linear albedo or it blows out and every bit of
+// painted detail in it is destroyed. That is why this whole texture kit is
+// authored so dark, and it is why a prop given an honest mid-grey iron surface
+// (0.174 measured) came back as white plastic no matter how many rivets it had.
+//
+// Painting bright and scaling at the end keeps the painters readable and puts
+// the value decision in one documented place instead of thirty constants.
+function toMeanValue(g, w, h, target) {
+  const img = g.getImageData(0, 0, w, h);
+  const d = img.data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4) sum += (d[i] * 0.2126 + d[i + 1] * 0.7152 + d[i + 2] * 0.0722);
+  const mean = sum / (d.length / 4) / 255;
+  if (mean <= 0.001) return;
+  const k = target / mean;
+  for (let i = 0; i < d.length; i += 4) {
+    d[i] = Math.min(255, d[i] * k);
+    d[i + 1] = Math.min(255, d[i + 1] * k);
+    d[i + 2] = Math.min(255, d[i + 2] * k);
+  }
+  g.putImageData(img, 0, 0);
+}
+
 // per-pixel value jitter — monochrome, so it can never introduce hue
 function grain(g, w, h, amt, r) {
   const img = g.getImageData(0, 0, w, h);
@@ -502,6 +532,146 @@ function metalPaint(g, w, h, r) {
   grain(g, w, h, 0.07, r);
 }
 
+// Riveted machine iron — the boiler, the tanks, the incinerator shell.
+//
+// These were all wearing the generic `metal` map at repeat 1, which on a
+// 3.3 m circumference tank stretches a 256 px texture until it is a smooth
+// gradient: the boiler read as a pale plastic canister with a hole in it, and
+// it is a puzzle object the player is asked to study. Machine iron has plate
+// seams, rivets, soot climbing out of the firebox and rust standing in the
+// bottom few inches, and every one of those is an edge for a moving light.
+// Authored to tile ~3x around a tank, so the rivet courses read as courses.
+function machineIronPaint(g, w, h, r) {
+  g.fillStyle = rgb(46, 46, 48);
+  g.fillRect(0, 0, w, h);
+  // rolled-plate mottling
+  stains(g, w, h, 9, r, '18,17,16', 0.26, 0.06, 0.3);
+  stains(g, w, h, 5, r, '96,94,88', 0.09, 0.05, 0.2);
+  // horizontal plate seams with a lit upper arris and a shadow under
+  const seams = 3;
+  for (let i = 1; i <= seams; i++) {
+    const y = (i / (seams + 1)) * h + r.gauss() * 3;
+    g.fillStyle = 'rgba(8,8,9,0.55)';
+    g.fillRect(0, y, w, 2.5);
+    g.fillStyle = 'rgba(150,152,150,0.10)';
+    g.fillRect(0, y - 1.5, w, 1.2);
+  }
+  // rivet courses along every seam and around the rims
+  const rivet = (x, y, rad) => {
+    g.fillStyle = 'rgba(10,10,11,0.5)';
+    g.beginPath(); g.arc(x, y + rad * 0.45, rad, 0, TAU); g.fill();
+    g.fillStyle = `rgba(122,124,122,${0.22 + r.float() * 0.16})`;
+    g.beginPath(); g.arc(x, y, rad * 0.92, 0, TAU); g.fill();
+    g.fillStyle = 'rgba(176,180,178,0.20)';
+    g.beginPath(); g.arc(x - rad * 0.28, y - rad * 0.3, rad * 0.42, 0, TAU); g.fill();
+  };
+  const courses = [0.055, 0.5, 0.945];
+  for (let c = 0; c < seams + courses.length; c++) {
+    const y = c < courses.length
+      ? courses[c] * h
+      : ((c - courses.length + 1) / (seams + 1)) * h + 6;
+    const n = 14;
+    for (let i = 0; i < n; i++) rivet((i + 0.5) * (w / n) + r.gauss() * 1.2, y, 2.1 + r.float() * 0.8);
+  }
+  // soot climbing, and rust standing in the bottom
+  for (let i = 0; i < 9; i++) {
+    const x = r.float() * w, len = h * (0.2 + r.float() * 0.5), lw = 4 + r.float() * 16;
+    const gr = g.createLinearGradient(0, 0, 0, len);
+    gr.addColorStop(0, `rgba(9,8,8,${0.3 + r.float() * 0.3})`);
+    gr.addColorStop(1, 'rgba(9,8,8,0)');
+    g.fillStyle = gr;
+    g.fillRect(x - lw / 2, 0, lw, len);
+  }
+  const rustBed = g.createLinearGradient(0, h, 0, h * 0.55);
+  rustBed.addColorStop(0, 'rgba(74,48,30,0.40)');
+  rustBed.addColorStop(1, 'rgba(74,48,30,0)');
+  g.fillStyle = rustBed; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, 220, ['#4a3120', '#2a2622', '#5c3d26', '#1a1918'], r, 0.5, 2.2);
+  cracks(g, w, h, 4, r, 'rgba(12,11,10,0.45)', 0.9, 9);
+  grain(g, w, h, 0.08, r);
+  // You stand about 1.6 m from the boiler to use it, and the lantern in your
+  // hands delivers ~27 there (tools/probe-light-attribution.mjs: the carried
+  // light is 90% of what any close prop is lit by — not the room, not the
+  // moon). At the 0.174 this originally painted to that is five times over
+  // clipping, and a clipped surface has no rivets on it no matter how many
+  // were painted. 0.026 lands the tank near mid-value at working distance,
+  // which is where the bump map can actually carve.
+  //
+  // 0.018 is a COMPROMISE and worth naming as one: at 1.6 m it still sits high,
+  // and at 4 m across the room it is already dim. No single albedo serves both,
+  // because the lantern's near field is ~130 and its far field ~2 — a hundred
+  // to one across the room you are standing in. That range, not this number, is
+  // what stops close props having any material identity. See
+  // tools/probe-lantern-curve.mjs for the A/B.
+  toMeanValue(g, w, h, 0.018);
+}
+
+// Dead automotive paint on a wreck that has sat in a graveyard.
+//
+// The car's geometry was rebuilt properly — crushed shell, real glasshouse,
+// arches — and then wore a flat metal tint, so it came back as a clean plastic
+// model of a car, which is most of what "the car still looks like not a car"
+// survives as. Paint that has stopped being paint: chalked and blotchy, clear
+// coat gone in patches, rust standing along the bottom and blooming out of
+// every seam, and a spray of road dirt up the flanks.
+function carPaintPaint(g, w, h, r) {
+  g.fillStyle = rgb(44, 52, 58);
+  g.fillRect(0, 0, w, h);
+  // chalking: paint oxidises unevenly, in big soft fields
+  stains(g, w, h, 10, r, '96,104,108', 0.16, 0.1, 0.4);
+  stains(g, w, h, 8, r, '16,20,24', 0.24, 0.08, 0.34);
+  // clear-coat failure: hard-edged pale islands with a dark lip
+  for (let i = 0; i < 7; i++) {
+    const x = r.float() * w, y = r.float() * h, rad = 8 + r.float() * 26;
+    g.beginPath();
+    for (let p = 0; p <= 13; p++) {
+      const a = (p / 13) * TAU, rr = rad * (0.55 + r.float() * 0.7);
+      const vx = x + Math.cos(a) * rr, vy = y + Math.sin(a) * rr * 0.8;
+      if (p === 0) g.moveTo(vx, vy); else g.lineTo(vx, vy);
+    }
+    g.closePath();
+    g.fillStyle = `rgba(120,124,120,${0.12 + r.float() * 0.12})`;
+    g.fill();
+    g.strokeStyle = 'rgba(20,16,12,0.35)'; g.lineWidth = 1; g.stroke();
+  }
+  // rust: blooms with a bright core and a dark bleed, the way it actually goes
+  for (let i = 0; i < 16; i++) {
+    const x = r.float() * w, y = h * (0.45 + r.float() * 0.55), rad = 4 + r.float() * 15;
+    const gr = g.createRadialGradient(x, y, 1, x, y, rad);
+    gr.addColorStop(0, `rgba(112,64,32,${0.36 + r.float() * 0.3})`);
+    gr.addColorStop(0.55, 'rgba(72,42,24,0.26)');
+    gr.addColorStop(1, 'rgba(48,30,18,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    // pinholes where it has gone through
+    g.fillStyle = 'rgba(14,11,9,0.6)';
+    for (let p = 0, n = r.int(2, 7); p < n; p++) {
+      const a = r.float() * TAU, d = r.float() * r.float() * rad;
+      g.beginPath(); g.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, 0.6 + r.float() * 1.5, 0, TAU); g.fill();
+    }
+  }
+  // road dirt sprayed up from the bottom edge
+  const dirt = g.createLinearGradient(0, h, 0, h * 0.4);
+  dirt.addColorStop(0, 'rgba(38,32,24,0.55)');
+  dirt.addColorStop(1, 'rgba(38,32,24,0)');
+  g.fillStyle = dirt; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, 260, ['#3a3128', '#221d18', '#4c4034'], r, 0.4, 2);
+  // scratches — long, shallow, barely lighter
+  for (let i = 0; i < 22; i++) {
+    g.strokeStyle = `rgba(150,154,152,${0.05 + r.float() * 0.09})`;
+    g.lineWidth = 0.7 + r.float();
+    const y = r.float() * h, x = r.float() * w, len = 14 + r.float() * 70;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + len, y + r.gauss() * 3); g.stroke();
+  }
+  cracks(g, w, h, 5, r, 'rgba(16,13,11,0.4)', 0.8, 10);
+  grain(g, w, h, 0.07, r);
+  // Measured: at the distance you first see the wreck the carried lantern is
+  // 91% of its light and the body came back at 0.26 mean — against a graveyard
+  // averaging 0.03. That is why it read as a clean pale model of a car parked
+  // in a dark field. A derelict should be one of the DARKER things out there,
+  // with the headstones staying the pale landmarks. 0.032 puts it under them.
+  toMeanValue(g, w, h, 0.032);
+}
+
 // weathered pale granite — must stay LIGHTER than everything around it
 function headstonePaint(g, w, h, r) {
   g.fillStyle = rgb(172, 170, 162);
@@ -764,6 +934,20 @@ export function makeMaterials() {
   M.carpet       = lam(bump(T(256, 256, 21, carpetPaint, 2, 2), 0.06));
   M.ceiling      = lam(bump(T(256, 256, 22, ceilingPaint, 2, 2), 0.07));
   M.metal        = std({ ...bump(T(256, 256, 23, metalPaint), 0.10), roughness: 0.5, metalness: 0.7 });
+  // Machinery gets its own map at its own tiling: repeat 3 around a tank puts
+  // the rivet courses at rivet scale instead of stretching one 256 px sheet
+  // around three and a bit metres of circumference. Low metalness on purpose —
+  // there is no environment map in this game, so a metallic surface is one that
+  // goes black except where a light hits it dead on.
+  // Roughness 0.95 / metalness 0, and the reason is measured. Dielectric
+  // specular uses a fixed F0 of 0.04 REGARDLESS of albedo, so under a lantern
+  // delivering ~22 at working distance a semi-glossy surface wears a white
+  // sheen that darkening the map cannot touch: the boiler stayed pale plastic
+  // through a 6.7x albedo cut because what was pale was never the albedo.
+  // Sooty cast iron is nearly matte, and matte is what lets the map be seen.
+  M.machine      = std({ ...bump(T(512, 512, 32, machineIronPaint, 3, 1), 0.42), roughness: 0.95, metalness: 0.0 });
+  // The wreck. Extrude UVs run in world units, so repeat 1 is one metre a tile.
+  M.carPaint     = std({ ...bump(T(512, 512, 33, carPaintPaint, 1, 1), 0.20), roughness: 0.93, metalness: 0.0 });
   M.headstone    = lam(bump(T(256, 256, 24, headstonePaint), 0.14));
   M.rock         = std({ ...bump(T(256, 256, 25, rockPaint, 2, 2), 0.26), roughness: 0.6, metalness: 0.05 });
   M.curtain      = lam({ map: T(256, 256, 26, curtainPaint), side: THREE.DoubleSide });

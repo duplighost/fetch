@@ -130,6 +130,8 @@ function createFurnitureKit(game) {
     rugEdge: tint(M.carpet, 0x252c30),
     brass: new THREE.MeshStandardMaterial({ color: 0xa98748, roughness: 0.34, metalness: 0.78 }),
     iron: M.metal,
+    // Riveted, sooted, rusting plate for machinery the player studies up close.
+    machine: M.machine,
     // Soot, not polished iron: the carried point light is intentionally fierce
     // and made an ordinary metal flue flare back into Alex's pale ceiling fang.
     flue: new THREE.MeshBasicMaterial({ color: 0x070909 }),
@@ -490,12 +492,16 @@ function createFurnitureKit(game) {
       parts.push(object);
       return object;
     };
-    part(cylinder(f, 0.52, 0.52, 1.18, D.iron, 0, 0.63, 0, 14), 'tank');
-    part(cylinder(f, 0.38, 0.52, 0.22, D.iron, 0, 1.33, 0, 14), 'shoulder');
+    // Riveted machine iron, not the generic metal map. At repeat 1 that map
+    // stretched a 256 px sheet around 3.3 m of circumference and resolved into
+    // a smooth gradient — the boiler read as a pale plastic canister with a
+    // hole in it, and it is a puzzle object the player is asked to study.
+    part(cylinder(f, 0.52, 0.52, 1.18, D.machine, 0, 0.63, 0, 20), 'tank');
+    part(cylinder(f, 0.38, 0.52, 0.22, D.machine, 0, 1.33, 0, 20), 'shoulder');
     box(f, 0.58, 0.5, 0.035, D.black, 0, 0.56, 0.53);
     box(f, 0.44, 0.045, 0.04, D.brass, 0, 0.8, 0.56);
     for (const sx of [-1, 1]) part(
-      cylinder(f, 0.035, 0.05, 0.18, D.iron, sx * 0.28, 0.09, 0, 8),
+      cylinder(f, 0.035, 0.05, 0.18, D.machine, sx * 0.28, 0.09, 0, 8),
       sx < 0 ? 'foot-left' : 'foot-right');
     // The old 1.15m flue ended at y=-0.425: 12.5cm through the authored
     // basement ceiling. Besides looking like a white fang, it could disappear
