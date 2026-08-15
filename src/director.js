@@ -260,7 +260,15 @@ export class Director {
     g.enemies.clear();
     this.kneeler = null;
     this._kneelerGrace = 0;
-    // arm the waterfall; the skull begins asking
+    // The falls arrive FROZEN. A bargain cannot be offered to something that
+    // is not moving, so the target stays cold and the skull does not start
+    // asking until the water does — buildFrozenFalls calls armWaterfall() the
+    // moment the ice lets go, and a restored save arrives already thawed.
+    if (g.flags.has('fallsThawed')) this.armWaterfall();
+  }
+
+  armWaterfall() {
+    const g = this.game;
     for (const t of g.world.fetchTargets) if (t.id === 'waterfall') t.enabled = true;
     this._gesturing = true;
   }

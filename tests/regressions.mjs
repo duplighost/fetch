@@ -1203,6 +1203,12 @@ try {
     F.start();
     F.teleport('clearing');
     F.stepWith(1 / 120, {}, false);
+    // the falls arrive FROZEN now and the bargain is not on the table until
+    // both fires are lit; this scenario is about what happens AFTER it is
+    // taken, so hand it the thawed world the two machines would have made
+    g.flag('fallsThawed');
+    g.director.armWaterfall();
+    F.stepWith(1 / 120, {}, false);
 
     const waterfall = g.world.fetchTargets.find((target) => target.id === 'waterfall');
     let directive = null;

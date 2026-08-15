@@ -6017,6 +6017,332 @@ export function buildClearing(game) {
     game.flag('locketKept');
     game.audio.glassTink({ pos: game.player.pos, gain: 0.5, rate: 0.95 });
   });
+
+  buildFrozenFalls(game);
+}
+
+// ------------------------------------------------------- the frozen falls
+// You come out of a forest that sealed behind you, into the first place that
+// does not want you dead — and the thing you were promised is STOPPED. The
+// falls are a wall of ice. A bargain cannot be offered to something that is
+// not moving, so the sacrifice is not on the table until the water is.
+//
+// Two machines, one at each end of the shore, and they are deliberately
+// nothing alike: the west one is a WHEEL you hold with the skull's weight
+// (the ossuary counterweight's grammar, verbatim), the east one is an iron
+// plate you TOLL three times (the resonant graves' grammar, verbatim). Each
+// one lights a fire line — a visible run of pipe along the shore to a brazier
+// array under the ice — and both lit is the thaw. No new input, no new verb,
+// nothing the player has not already been taught.
+function buildFrozenFalls(game) {
+  const { world, scene, mats: M } = game;
+  const C = game.clearingCenter;
+  const FX = C.x, FZ = C.z + 19.55;
+  const gh = (x, z) => world.groundHeightAt(x, z, 3);
+
+  const state = game.frozenFalls = {
+    left: false, right: false, thawed: false, thawT: 0, tolls: 0,
+    wheelHold: 0, wheelSolved: false,
+  };
+
+  // ---- THE ICE ------------------------------------------------------------
+  // One merged mesh of teeth hanging across the fall's mouth. Cold, and dark
+  // enough to survive the shore's own light: an ice wall that clips to white
+  // is a white rectangle, and a white rectangle is not frightening.
+  const iceMat = new THREE.MeshStandardMaterial({
+    color: 0x38505c, roughness: 0.22, metalness: 0.12,
+    transparent: true, opacity: 0.93,
+    emissive: 0x0e1a22, emissiveIntensity: 0.5,
+  });
+  const teeth = [];
+  for (let i = 0; i < 30; i++) {
+    const u = i / 29;
+    const x = -3.05 + u * 6.1;
+    const len = 3.4 + Math.abs(Math.sin(i * 2.3)) * 5.6 + (1 - Math.abs(u - 0.5) * 2) * 5.0;
+    const w = 0.24 + Math.abs(Math.cos(i * 1.7)) * 0.2;
+    const g = new THREE.ConeGeometry(w, len, 5);
+    g.rotateX(Math.PI);
+    g.translate(x, 19.2 - len / 2, Math.sin(i * 3.1) * 0.16);
+    teeth.push(g);
+  }
+  // and the sheet behind them, so the mouth reads as SHUT, not fringed
+  teeth.push(new THREE.BoxGeometry(6.2, 19, 0.34).translate(0, 9.6, -0.22));
+  const ice = new THREE.Mesh(mergeGeometries(teeth), iceMat);
+  ice.position.set(FX, 0, FZ);
+  ice.castShadow = true;
+  scene.add(ice);
+  state.ice = ice;
+
+  // ---- THE FIRE LINES + BRAZIERS -----------------------------------------
+  const pipeMat = new THREE.MeshStandardMaterial({
+    color: 0x2c2724, roughness: 0.62, metalness: 0.66,
+    emissive: 0x000000, emissiveIntensity: 0,
+  });
+  const brazierMat = new THREE.MeshStandardMaterial({
+    color: 0x2a2320, roughness: 0.7, metalness: 0.55,
+    emissive: 0x000000, emissiveIntensity: 0,
+  });
+  const makeSide = (side, mx, mz) => {
+    const s = { lit: false, glow: 0, lamps: [] };
+    const my = gh(mx, mz);
+    // the run: shore-hugging pipe on short trestles, machine -> falls
+    const parts = [];
+    const steps = 9;
+    for (let i = 0; i < steps; i++) {
+      const t0 = i / steps, t1 = (i + 1) / steps;
+      const x0 = mx + (FX + side * 3.7 - mx) * t0, z0 = mz + (FZ - 0.8 - mz) * t0;
+      const x1 = mx + (FX + side * 3.7 - mx) * t1, z1 = mz + (FZ - 0.8 - mz) * t1;
+      const y0 = gh(x0, z0) + 0.42, y1 = gh(x1, z1) + 0.42;
+      const len = Math.hypot(x1 - x0, z1 - z0, y1 - y0);
+      const g = new THREE.CylinderGeometry(0.055, 0.055, len, 6);
+      g.rotateZ(Math.PI / 2);
+      g.rotateY(-Math.atan2(z1 - z0, x1 - x0));
+      g.translate((x0 + x1) / 2 - mx, (y0 + y1) / 2 - my, (z0 + z1) / 2 - mz);
+      parts.push(g);
+      if (i % 2 === 0) {
+        parts.push(new THREE.BoxGeometry(0.1, 0.42, 0.1)
+          .translate(x0 - mx, y0 - my - 0.21, z0 - mz));
+      }
+    }
+    const pipe = new THREE.Mesh(mergeGeometries(parts), pipeMat.clone());
+    pipe.position.set(mx, my, mz);
+    scene.add(pipe);
+    s.pipe = pipe;
+
+    // the array at the fall's foot: four bowls on stems under the ice
+    const bowls = [];
+    for (let i = 0; i < 4; i++) {
+      const bx = FX + side * (3.1 + i * 0.05) - side * i * 0.72;
+      const bz = FZ - 0.75 + (i % 2) * 0.22;
+      const by = gh(bx, bz);
+      bowls.push(new THREE.CylinderGeometry(0.24, 0.13, 0.2, 9)
+        .translate(bx - FX, by + 0.62, bz - FZ));
+      bowls.push(new THREE.CylinderGeometry(0.05, 0.07, 0.52, 6)
+        .translate(bx - FX, by + 0.26, bz - FZ));
+      const lamp = { x: bx, y: by + 0.85, z: bz, intensity: 0, r: 5.5 };
+      world.candles.push(lamp);
+      s.lamps.push(lamp);
+    }
+    const array = new THREE.Mesh(mergeGeometries(bowls), brazierMat.clone());
+    array.position.set(FX, 0, FZ);
+    scene.add(array);
+    s.array = array;
+
+    s.light = () => {
+      if (s.lit) return false;
+      s.lit = true;
+      game.flag(side < 0 ? 'fallsFireWest' : 'fallsFireEast');
+      const at = new THREE.Vector3(mx, my + 0.9, mz);
+      game.audio.fireRoar?.({ pos: at, gain: 0.7, rate: 0.8 });
+      game.audio.unlock({ pos: at, gain: 0.7, rate: 0.6 });
+      // the flame runs the line: four knocks travelling to the falls
+      for (let i = 0; i < 4; i++) {
+        const t = (i + 1) / 4;
+        game.after(0.2 + i * 0.24, () => game.audio.knock({
+          pos: new THREE.Vector3(mx + (FX - mx) * t, my + 0.6, mz + (FZ - mz) * t),
+          gain: 0.42, rate: 0.9 + i * 0.12, verb: 0.6,
+        }), { global: true });
+      }
+      game.after(1.35, () => game.audio.fireRoar?.({
+        pos: new THREE.Vector3(FX + side * 2.4, 1.2, FZ - 0.8), gain: 0.95, rate: 0.62,
+      }), { global: true });
+      return true;
+    };
+    return s;
+  };
+  const west = makeSide(-1, C.x - 13.5, C.z + 12.4);
+  const east = makeSide(1, C.x + 13.5, C.z + 12.4);
+  state.west = west;
+  state.east = east;
+
+  // ---- WEST: the wheel you hold ------------------------------------------
+  {
+    const mx = C.x - 13.5, mz = C.z + 12.4, my = gh(mx, mz);
+    const shed = new THREE.Group();
+    shed.position.set(mx, my, mz);
+    scene.add(shed);
+    state.shed = shed;
+    const post = (px, pz) => {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.4, 0.16), M.wood || M.bark);
+      p.position.set(px, 1.2, pz);
+      p.castShadow = true;
+      shed.add(p);
+    };
+    post(-1.05, -0.85); post(1.05, -0.85); post(-1.05, 0.85); post(1.05, 0.85);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.14, 2.2), M.wood || M.bark);
+    roof.position.set(0, 2.46, 0);
+    roof.rotation.z = 0.09;
+    roof.castShadow = true;
+    shed.add(roof);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.09, 7, 16), M.metal);
+    wheel.position.set(0, 1.28, -0.72);
+    wheel.rotation.y = Math.PI / 2;
+    wheel.castShadow = true;
+    shed.add(wheel);
+    for (let i = 0; i < 4; i++) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.2, 0.06), M.metal);
+      spoke.position.set(0, 1.28, -0.72);
+      spoke.rotation.x = (i / 4) * Math.PI;
+      shed.add(spoke);
+    }
+    state.wheel = wheel;
+    const anchorPos = new THREE.Vector3(mx, my + 1.28, mz - 0.72);
+    state.wheelTarget = world.addFetchTarget({
+      id: 'fallsWheel', object: wheel, radius: 0.85,
+      onHit(skull, at) {
+        if (state.wheelSolved) return 'return';
+        if (skull.mode !== 'outbound') return 'continue';
+        skull.anchorAt(anchorPos, { maxHold: 5.0, puzzleId: 'fallsWheel' });
+        game.impact('locked', at || anchorPos);
+        game.audio.metalDrop({ pos: anchorPos, gain: 0.6, rate: 0.68 });
+        return 'anchor';        // the directive the sweep needs; null let it home
+      },
+    });
+    state.wheelAnchor = anchorPos;
+  }
+
+  // ---- EAST: the plate you toll ------------------------------------------
+  {
+    const mx = C.x + 13.5, mz = C.z + 12.4, my = gh(mx, mz);
+    const frame = new THREE.Group();
+    frame.position.set(mx, my, mz);
+    scene.add(frame);
+    state.frame = frame;
+    for (const sx of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.15, 2.6, 0.15), M.metal);
+      leg.position.set(sx * 0.95, 1.3, 0);
+      leg.castShadow = true;
+      frame.add(leg);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.16, 0.16), M.metal);
+    beam.position.set(0, 2.56, 0);
+    frame.add(beam);
+    const plateMat = new THREE.MeshStandardMaterial({
+      color: 0x1f2422, roughness: 0.44, metalness: 0.82,
+      emissive: 0x000000, emissiveIntensity: 0,
+    });
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.78, 0.09, 20), plateMat);
+    plate.rotation.x = Math.PI / 2;
+    plate.position.set(0, 1.42, 0);
+    plate.castShadow = true;
+    frame.add(plate);
+    for (const sx of [-1, 1]) {
+      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 1.05, 5), M.metal);
+      chain.position.set(sx * 0.52, 1.98, 0);
+      frame.add(chain);
+    }
+    state.plate = plate;
+    state.plateMat = plateMat;
+    state.plateHome = new THREE.Vector3(mx, my + 1.42, mz);
+    world.addFetchTarget({
+      id: 'fallsPlate', object: plate, radius: 0.9,
+      onHit(skull) {
+        if (east.lit) return 'continue';
+        if (skull.mode !== 'outbound') return 'continue';
+        if (state.tollCd > 0) return 'return';
+        state.tollCd = 0.85;
+        state.tolls++;
+        state.plateRing = 1;
+        game.flag('fallsToll:' + state.tolls);
+        game.audio.bellRing({ pos: state.plateHome, gain: 0.9 + state.tolls * 0.1,
+          rate: 0.62 + state.tolls * 0.12, verb: 0.95, dark: true });
+        game.impact('pop', state.plateHome);
+        game.enemies?.resonancePulse?.(state.plateHome, 9, 1.5);
+        if (state.tolls >= 3) east.light();
+        return 'return';
+      },
+    });
+  }
+
+  // ---- the ticker: every pose derived, so a restore seats the whole thing --
+  // These stand two hundred metres past the forest and were still costing 21
+  // draw calls in the HOUSE's view — house-after-cave lives five under a 450
+  // ceiling. They exist from the act the forest begins, and not before.
+  state.roots = [ice, west.pipe, west.array, east.pipe, east.array,
+    state.shed, state.frame].filter(Boolean);
+  for (const r of state.roots) r.visible = false;
+  game.frozenFallsRoots = state.roots;
+
+  game.tickers.push((dt, time) => {
+    const near = game.act === 'forest' || game.act === 'clearing'
+      || game.act === 'cave' || game.act === 'mirror';
+    for (const r of state.roots) {
+      if (r === ice && state.thawed) { r.visible = false; continue; }
+      r.visible = near;
+    }
+    if (game.flags.has('fallsFireWest')) west.lit = true;
+    if (game.flags.has('fallsFireEast')) east.lit = true;
+    state.tollCd = Math.max(0, (state.tollCd || 0) - dt);
+    if (state.plateRing > 0) {
+      state.plateRing = Math.max(0, state.plateRing - dt * 1.1);
+      state.plate.rotation.z = Math.sin(state.plateRing * 34) * 0.09 * state.plateRing;
+      state.plateMat.emissiveIntensity = state.plateRing * 0.9;
+      state.plateMat.emissive.setHex(0x7d3f16);
+    }
+
+    // the wheel: the ossuary's contract, on a different machine
+    if (!state.wheelSolved) {
+      const s = game.skull;
+      const weighing = s && s.mode === 'anchored'
+        && s.anchor && s.anchor.puzzleId === 'fallsWheel';
+      state.wheelHold = weighing
+        ? Math.min(1.7, state.wheelHold + dt)
+        : Math.max(0, state.wheelHold - dt * 1.5);
+      state.wheel.rotation.x = (state.wheelHold / 1.7) * TAU * 1.6;
+      if (state.wheelHold >= 1.7) {
+        state.wheelSolved = true;
+        state.wheelTarget.enabled = false;
+        west.light();
+      }
+    }
+
+    // a lit line and its array run hot: emissive on the iron, and the four
+    // brazier descriptors come up. Value and motion, never hue alone.
+    for (const s of [west, east]) {
+      s.glow += ((s.lit ? 1 : 0) - s.glow) * Math.min(1, dt * 1.1);
+      const flick = s.glow * (0.86 + Math.sin(time * 7.3 + (s === west ? 0 : 2.1)) * 0.14);
+      s.pipe.material.emissive.setHex(0x6b2c08);
+      s.pipe.material.emissiveIntensity = flick * 0.75;
+      s.array.material.emissive.setHex(0x8a3a0a);
+      s.array.material.emissiveIntensity = flick * 1.5;
+      for (const lamp of s.lamps) lamp.intensity = flick * 1.05;
+    }
+
+    // ---- THE THAW ----------------------------------------------------------
+    // Both fires, and the ice lets go. The teeth shorten and calve from the
+    // middle out, the sheet behind them thins, and the falls start again — and
+    // ONLY then does the bargain exist to be offered.
+    if (west.lit && east.lit && !state.thawed) {
+      if (state.thawT === 0) {
+        game.audio.stoneGrind({ pos: new THREE.Vector3(FX, 6, FZ), gain: 0.9, rate: 0.42, verb: 0.9 });
+        game.audio.duck(0.25, 3.2);
+        for (let i = 0; i < 5; i++) {
+          game.after(0.5 + i * 0.62, () => game.audio.glassShatter({
+            pos: new THREE.Vector3(FX + Math.sin(i * 2.1) * 2.4, 3 + i * 2.4, FZ), gain: 0.6,
+          }), { global: true });
+        }
+      }
+      state.thawT += dt;
+      const p = Math.min(1, state.thawT / 4.2);
+      const e = p * p * (3 - 2 * p);
+      ice.scale.set(1 - e * 0.12, 1 - e, 1 - e * 0.4);
+      ice.position.y = 19.2 * e;                    // it retreats UP the face
+      iceMat.opacity = 0.93 * (1 - e * 0.92);
+      if (p >= 1) {
+        state.thawed = true;
+        ice.visible = false;
+        game.flag('fallsThawed');
+        game.audio.splash?.({ pos: new THREE.Vector3(FX, 1.2, FZ), gain: 0.9, rate: 0.7 });
+        game.director?.armWaterfall?.();
+      }
+    }
+    // restore: a reload past the thaw finds the water already running
+    if (!state.thawed && game.flags.has('fallsThawed')) {
+      state.thawed = true;
+      ice.visible = false;
+      state.thawT = 4.2;
+    }
+  });
 }
 
 // --------------------------------------------------------------------- cave

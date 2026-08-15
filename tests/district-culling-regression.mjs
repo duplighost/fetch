@@ -422,7 +422,10 @@ try {
     // player at z 30.7 when they come back up instead of 34.6 — below the
     // forest's detail-pop threshold. So the snapshot is now taken with the
     // forest asleep, and it waking as the forest act begins is exactly right.
-    const allowedWake = new Set(forest.detailRoots || []);
+    // ...and the frozen falls' machines belong to the same family: they stand
+    // past the forest and only exist from the act the forest begins.
+    const allowedWake = new Set([...(forest.detailRoots || []),
+      ...(g.frozenFallsRoots || [])]);
     const unexpectedForwardDiff = [];
     for (const [object, visible] of beforeForwardExit.scene) {
       if (object.parent !== g.scene) {

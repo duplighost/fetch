@@ -868,8 +868,55 @@ try {
     { const pr2 = f.project(g.player.pos.x, g.player.pos.z); beat('reached-the-clearing', g.act === 'clearing', { act: g.act, pos: [+g.player.pos.x.toFixed(1), +g.player.pos.z.toFixed(1)], s: pr2 && pr2.s, len: f.length, dead: g.dead, enemies: g.enemies.list.map(e=>e.kind+':'+e.state+'@'+Math.round(e.pos.x)+','+Math.round(e.pos.z)), spawnLog: (g.spawnLog||[]).slice(-14) }); }
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
 
-    // ---- ACT 5: the waterfall ------------------------------------------
+    // ---- ACT 5: the frozen falls, then the waterfall ---------------------
     for (let t = 0; t < 5 && g.skull.mode !== 'held'; t += 0.2) F.stepWith(0.2);   // hands full? wait
+    const CC = g.clearingCenter, FF = g.frozenFalls;
+    const wfTarget = () => g.world.fetchTargets.find((t) => t.id === 'waterfall');
+    beat('the-falls-arrive-frozen',
+      !!FF && FF.thawed === false && FF.ice.visible === true
+      && wfTarget().enabled === false,
+      { thawed: FF && FF.thawed, armed: wfTarget().enabled });
+
+    // WEST: the wheel takes the skull's weight, the ossuary's own grammar
+    walkTo(CC.x - 13.5, CC.z + 9.6, 40);
+    aimAt(FF.wheelAnchor.x, FF.wheelAnchor.y, FF.wheelAnchor.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    beat('the-wheel-catches-the-skull',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'fallsWheel',
+      { mode: g.skull.mode, dead: g.dead,
+        player: g.player.pos.toArray().map((v) => +v.toFixed(1)),
+        want: FF.wheelAnchor.toArray().map((v) => +v.toFixed(1)),
+        skull: g.skull.pos.toArray().map((v) => +v.toFixed(1)) });
+    F.stepWith(2.1, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
+    beat('the-west-fire-runs-the-line', FF.west.lit === true && g.flags.has('fallsFireWest'));
+
+    // EAST: three tolls on the iron plate, the resonant graves' own grammar.
+    // AROUND the basin's south rim — the pool's outer radius reaches z+7.0 and
+    // a straight line between the two machines walks into deep water.
+    walkTo(CC.x - 11.0, CC.z + 4.0, 25);
+    walkTo(CC.x + 11.0, CC.z + 4.0, 35);
+    walkTo(CC.x + 13.5, CC.z + 9.4, 25);
+    for (let n = 0; n < 3 && !FF.east.lit; n++) {
+      throwAt(FF.plateHome.x, FF.plateHome.y, FF.plateHome.z, 0.4);
+      F.stepWith(1.0);
+      waitHeld();
+    }
+    beat('the-east-fire-answers-on-the-third-toll',
+      FF.east.lit === true && FF.tolls >= 3 && g.flags.has('fallsFireEast'),
+      { tolls: FF.tolls, dead: g.dead, mode: g.skull.mode,
+        player: g.player.pos.toArray().map((v) => +v.toFixed(1)),
+        want: FF.plateHome.toArray().map((v) => +v.toFixed(1)),
+        skull: g.skull.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    for (let t = 0; t < 8 && !FF.thawed; t += 0.2) F.stepWith(0.2);
+    beat('both-fires-thaw-the-falls',
+      FF.thawed === true && g.flags.has('fallsThawed')
+      && FF.ice.visible === false && wfTarget().enabled === true,
+      { thawed: FF.thawed, armed: wfTarget().enabled });
+
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 6, 30);
     throwAt(g.clearingCenter.x, 8, g.clearingCenter.z + 20.5, 0.9);
     for (let t = 0; t < 5 && !g.flags.has('waterfallTaken'); t += 0.1) F.stepWith(0.1);
