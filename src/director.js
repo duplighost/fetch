@@ -6,11 +6,14 @@ import { clamp, lerp, damp, smoothstep } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
-  // THE WAKE: at the bed's edge, facing the moonlit window across a dark
-  // room — the first frame resolves as dark room / glassed window / tree
-  // beyond. (x sits just clear of the bed frame at 9.76 so frame one never
-  // clips the mattress.)
-  bedroom: { x: 9.6, z: 3.3, yaw: 2.37, y: 3.6 },
+  // THE WAKE: STANDING on the rug beside the bed, facing the moonlit window
+  // across a dark room — the first frame resolves as dark room / glassed
+  // window / tree beyond, with the bed you did not wake IN and its thrown-back
+  // covers at your right hand. x 9.36 with the 0.34 capsule reaches 9.70 —
+  // 3.5 cm clear of the bed posts at 9.735, close enough to read as
+  // just-got-up. The camera sits above every loose cover box, and z 3.05 stays
+  // out of the nightstand's collider (z 3.665).
+  bedroom: { x: 9.36, z: 3.05, yaw: 2.47, y: 3.6 },
   house: { x: -1.5, z: 3, yaw: Math.PI, y: 3.6 },
   basement: { x: 9, z: 4.9, yaw: 0.5, y: -3.0 },  // z >= 4.85 clears the last tread's collider — no frame-one shove
   graveyard: { x: -8, z: 8, yaw: -2.86 },       // car left, gate/bodies ahead

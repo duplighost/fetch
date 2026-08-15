@@ -1250,6 +1250,21 @@ export class Skull {
       }
     }
 
+    // ceiling — the same contract as the ground, at the other end. Without it
+    // a throw at the roof left the house entirely and the room answered with
+    // nothing at all, which is the one thing a gameplay surface may never do.
+    if (w.ceilingHeightAt) {
+      const ch = w.ceilingHeightAt(this.pos.x, this.pos.z, this.pos.y);
+      if (ch < Infinity && this.pos.y + r > ch) {
+        this.pos.y = ch - r;
+        if (this.vel.y > 0) {
+          this.vel.y *= -0.62;
+          this.vel.x *= 0.96; this.vel.z *= 0.96;
+          this._bounceFx(Math.abs(this.vel.y));
+        }
+      }
+    }
+
     // AABBs: push out along shallowest axis, reflect, bounce GAINS speed
     for (const c of w.colliders) {
       if (c.skullPass) continue;               // the open window lets it through

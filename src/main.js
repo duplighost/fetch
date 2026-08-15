@@ -21,6 +21,7 @@ const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const _impV = new THREE.Vector3();
+const OCC_AXES = ['x', 'y', 'z'];   // slab-test order for the E-pick occlusion
 const VERSION = '0.5.0-intruder';
 const GORE_CAP = 64;
 
@@ -1179,13 +1180,15 @@ class Game {
     // !introFlicker: throws wait for the arrival flicker to settle ("Then you
     // can throw it") — an input gate in kind with verbsLive, never control
     // theft: camera and movement stay live for the whole 3.6s.
+    if (this._emptyAnswerT > 0) this._emptyAnswerT -= dt;
     if (verbsLive && frame.throwPressed && this.skull.mode === 'held' && !this.skull.introFlicker) this.skull.tryThrow(ctx);
+    if (verbsLive && frame.throwPressed && this.skull.mode === 'gone') this._emptyHandAnswer();
     // release ends an outbound throw AND lets go of a rope — one grammar, and
     // the anchored case is handled inside _updateAnchored so the swing and the
     // skull let go on the same frame
     if (frame.throwReleased && this.skull.mode === 'outbound') this.skull.beginReturn('snap');
     if (verbsLive && frame.callTap) {
-      if (this.skull.mode === 'gone') this.director.onVoidCall();
+      if (this.skull.mode === 'gone') { this.director.onVoidCall(); this._emptyHandAnswer(); }
       else this.snapBuffer = FEEL_PROFILE.snapBuffer;
     }
     if (this.snapBuffer > 0) {
@@ -1289,6 +1292,23 @@ class Game {
       return;
     }
     this.snapBuffer = FEEL_PROFILE.snapBuffer;
+    this._emptyHandAnswer();
+  }
+
+  // Empty hands answer. Before the skull arrives every verb is a dead switch:
+  // press LMB, tap RMB, hit E into the air, and the game does not acknowledge
+  // the press at all — which reads as broken input rather than as absence. One
+  // soft, positional tick of a hand closing on nothing. No words, no HUD, and
+  // rate-limited so it cannot be machine-gunned into comedy.
+  _emptyHandAnswer() {
+    if (this.skull.mode !== 'gone' || this.flags.has('skullArrived')) return;
+    if (this._emptyAnswerT > 0) return;
+    this._emptyAnswerT = 0.5;
+    if (!this._emptyPos) this._emptyPos = new THREE.Vector3();
+    this.audio.thud({
+      pos: this.camera.getWorldPosition(this._emptyPos).clone(),
+      gain: 0.055, intensity: 0.85, verb: 0.12,
+    });
   }
 
   _crosshairTarget() {
@@ -1299,9 +1319,55 @@ class Game {
     const hits = this._ray.intersectObjects(this.world.interactables, false);
     for (const h of hits) {
       const inter = h.object.userData.inter;
-      if (inter && inter.enabled !== false) return inter;
+      if (!inter || inter.enabled === false) continue;
+      if (this._occluded(h.distance, h.object)) continue;
+      return inter;
     }
     return null;
+  }
+
+  // Reach, not x-ray. The pick ray is cast against the interactables LIST, so
+  // for the whole life of the game nothing in the world could block it: E
+  // selected — and the crosshair grew — straight through beds, walls and shut
+  // doors. Solid geometry standing between you and the thing now wins.
+  // Two deliberate exemptions, both real cases in this house: an interact that
+  // LIVES inside something solid (a firebox target inside the boiler shell)
+  // still answers, and so does anything picked while you stand inside a
+  // collider yourself. Colliders, not meshes: the merged shell has no
+  // per-object geometry to raycast, and the AABB list is the same truth the
+  // player's own body collides against.
+  _occluded(dist, obj) {
+    const cols = this.world.colliders;
+    if (!cols || !cols.length) return false;
+    const lim = dist - 0.12;      // grazing the surface you reach past is not blocking
+    if (lim <= 0) return false;
+    if (!this._occP) this._occP = new THREE.Vector3();
+    const o = this._ray.ray.origin, d = this._ray.ray.direction;
+    const tp = obj.getWorldPosition(this._occP);
+    for (let i = 0; i < cols.length; i++) {
+      const c = cols[i];
+      if (c.max.y - c.min.y < 1e-4) continue;              // collapsed: opened door, broken pane
+      if (tp.x >= c.min.x - 0.03 && tp.x <= c.max.x + 0.03
+        && tp.y >= c.min.y - 0.03 && tp.y <= c.max.y + 0.03
+        && tp.z >= c.min.z - 0.03 && tp.z <= c.max.z + 0.03) continue;
+      if (o.x >= c.min.x && o.x <= c.max.x && o.y >= c.min.y
+        && o.y <= c.max.y && o.z >= c.min.z && o.z <= c.max.z) continue;
+      let t0 = 0, t1 = lim, blocked = true;
+      for (const ax of OCC_AXES) {
+        const dv = d[ax];
+        if (Math.abs(dv) < 1e-8) {
+          if (o[ax] < c.min[ax] || o[ax] > c.max[ax]) { blocked = false; break; }
+          continue;
+        }
+        let a = (c.min[ax] - o[ax]) / dv, b = (c.max[ax] - o[ax]) / dv;
+        if (a > b) { const s = a; a = b; b = s; }
+        if (a > t0) t0 = a;
+        if (b < t1) t1 = b;
+        if (t0 > t1) { blocked = false; break; }
+      }
+      if (blocked) return true;
+    }
+    return false;
   }
 
   _updateWindowAimAffordance(dt) {

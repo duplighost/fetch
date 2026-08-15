@@ -186,6 +186,28 @@ export class Player {
       this.grounded = true;
     }
 
+    // CEILINGS. Nothing in this player had ever tested upward: the slabs were
+    // render-only, so a jump in the cellar (apex 0.97 in a 2.45 m room) put the
+    // head inside the ceiling and the next ground query resolved the storey
+    // above — you could climb out of the basement through its own lid. Head
+    // height, not eye. A bump answers once, quietly, then rate-limits.
+    this._headCd = Math.max(0, (this._headCd || 0) - dt);
+    if (this.world.ceilingHeightAt) {
+      const ch = this.world.ceilingHeightAt(this.pos.x, this.pos.z, this.pos.y);
+      if (ch < Infinity && this.pos.y + HEAD > ch) {
+        this.pos.y = Math.max(gh, ch - HEAD);
+        if (this.fallV > 0) {
+          if (this._headCd <= 0) {
+            this._headCd = 0.7;
+            if (!this._headPos) this._headPos = new THREE.Vector3();
+            this._headPos.set(this.pos.x, ch - 0.05, this.pos.z);
+            this.audio.knock({ pos: this._headPos, gain: 0.2, rate: 0.8, verb: 0.45 });
+          }
+          this.fallV = 0;
+        }
+      }
+    }
+
     // world may clamp us into a corridor (forest spline)
     if (this.world.postClamp) this.world.postClamp(this.pos, dt);
 

@@ -860,15 +860,18 @@ function furnish(game) {
       world.box(D.linenDirty, fx, F + 0.011, 4.8, 0.018, 0.008, 0.14);
       if (fx < 9.9) world.box(D.linenDirty, fx, F + 0.011, 1.7, 0.018, 0.008, 0.14);
     }
-    // the loose corner flap — lies where the notch is, folds back north
+    // The loose corner flap. It hinges on its WEST edge (x 9.9) and folds
+    // OUTWARD, west, onto the rug's own south-west body — open floor, in front
+    // of the player, away from the bed. (It used to hinge north, which folded
+    // it under the bed and, with the sign inverted, through the floor.)
     const flap = new THREE.Group();
-    flap.position.set(10.65, F + 0.042, 2.6);
+    flap.position.set(9.9, F + 0.042, 2.175);
     const flapBody = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.018, 0.85), D.rug);
-    flapBody.position.set(0, 0, -0.425);
+    flapBody.position.set(0.75, 0, 0);
     flapBody.castShadow = flapBody.receiveShadow = true;
     flap.add(flapBody);
     const flapBound = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.008, 0.09), D.rugEdge);
-    flapBound.position.set(0, 0.013, -0.805);
+    flapBound.position.set(0.75, 0.013, -0.38);
     flap.add(flapBound);
     scene.add(flap);
     P.rug = { flap, pos: new THREE.Vector3(10.65, F + 0.05, 2.2) };
@@ -896,12 +899,23 @@ function furnish(game) {
   {
     const boardPivot = new THREE.Group();
     boardPivot.position.set(11.03, F + 0.024, 2.16);
-    boardPivot.rotation.z = 0.003;    // barely proud until the rug frees it
+    // NEGATIVE z-rotation lifts the free west end; positive drove it down
+    // through the floor. -0.006 is the lying-under-the-rug pose (5 mm proud at
+    // the tip) and the rug's finish() lifts it to a clearly openable -0.075.
+    boardPivot.rotation.z = -0.006;
     const board = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.016, 0.11), M.woodFloor);
     board.position.set(-0.425, 0, 0);
     board.castShadow = board.receiveShadow = true;
     boardPivot.add(board);
     scene.add(boardPivot);
+
+    // The seam. A board you are meant to lift has to LOOK liftable before you
+    // lift it: three merged shadow slivers ring the loose board's free end and
+    // long edges, so once the rug flap is off, the eye finds an outline in the
+    // floor instead of a floor. Merged geometry — zero extra draws.
+    world.box(darkLine, 10.16, F + 0.004, 2.16, 0.05, 0.008, 0.13);
+    world.box(darkLine, 10.605, F + 0.004, 2.222, 0.9, 0.008, 0.022);
+    world.box(darkLine, 10.605, F + 0.004, 2.098, 0.9, 0.008, 0.022);
 
     const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.008, 0.16), new THREE.MeshBasicMaterial({ color: 0x040404 }));
     cavity.position.set(10.62, F + 0.008, 2.16);
@@ -965,8 +979,15 @@ function furnish(game) {
     mk(0.9, 0.06, 0.85, D.linen, -0.78, 0.56, 0.42, 0, 0.1, 0.5);     // the frozen wave over the edge
     mk(0.62, 0.05, 0.55, D.linenDirty, -1.02, 0.26, 0.5, 0, 0.25, 1.05); // tail hanging toward the floor
     root.add(on);
+    // transparent/opacity 0 AT BUILD so the reveal can fade instead of popping
+    // — the material compiles once, at boot, with the rest of the room.
+    // 0x544f45 is 0.089 linear — the exact number the bodies were clipping at
+    // before the props pass, and half a metre from a 58 cd lantern it rendered
+    // as a pale slab laid ON the mattress. A compression is DARKER than the
+    // cloth around it: 0.021 linear, dark by value only, as the comment always
+    // claimed it was.
     const imprint = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.012, 1.85),
-      new THREE.MeshLambertMaterial({ color: 0x544f45 }));
+      new THREE.MeshLambertMaterial({ color: 0x2b2823, transparent: true, opacity: 0 }));
     imprint.position.set(0.1, 0.591, -0.02);   // a sleeper's compression, slightly too long
     imprint.visible = false;
     root.add(imprint);
@@ -982,7 +1003,11 @@ function furnish(game) {
     hk(0.4, 0.09, 0.35, D.linenDirty, -1.28, 0.28, 0.2, 1.1, 0.1);
     heap.visible = false;
     root.add(heap);
-    P.covers = { root, on, imprint, heap, pos: new THREE.Vector3(10.1, F + 0.7, 3.7) };
+    P.covers = {
+      root, on, imprint, heap,
+      roll: on.children.map((c) => c.rotation.z),   // the drag tips each piece off its own base roll
+      pos: new THREE.Vector3(10.1, F + 0.7, 3.7),
+    };
   }
 
   // ---- wardrobe with loose hinged doors + interior ------------------------
@@ -1119,6 +1144,19 @@ function furnish(game) {
       matches, pos: new THREE.Vector3(8.66, F + 0.35, 4.26),
     };
   }
+
+  // ---- the furniture becomes solid ----------------------------------------
+  // furnish() emits merged geometry only; nothing in this house had ever
+  // called addCollider, so every wardrobe and bed in the game was a hologram
+  // ("you can walk through the furniture"). These four are the pieces the
+  // player wakes among and can reach — AABBs derived from the kit's own
+  // numbers, not eyeballed. Tops sit above feet+STEP_UP (0.5) or the mover
+  // skips them as walkable steps; the loose animated parts (bed covers,
+  // wardrobe leaves, slid drawers) stay collider-free so they can move.
+  world.addCollider(9.73, F, 2.23, 11.37, F + 0.62, 4.47);      // bed: posts + frame + mattress top (4.175)
+  world.addCollider(4.40, F, 4.58, 5.90, F + 2.20, 5.26);       // wardrobe carcass (doors swing free)
+  world.addCollider(8.70, F, 5.22, 10.00, F + 1.00, 5.82);      // dresser carcass
+  world.addCollider(8.33, F, 3.665, 9.03, F + 0.69, 4.295);     // nightstand, ry -0.08 bounded
 
   K.oilLamp(9.35, bedroomDresser.top + 0.01, 5.45);
   K.book(8.68, F + 0.68, 3.98, 0.18, 2);
@@ -1647,6 +1685,11 @@ function bedroomAct(game) {
   pane.position.copy(WIN_C);
   scene.add(pane);
   const glassCollider = world.addCollider(6.15, 4.6, 5.8, 7.85, 6.2, 6.2);
+  // No aiming glint on glass that cannot break. The glint's whole meaning is
+  // "you can throw through here" — and before the arrival there is nothing to
+  // throw and nothing to throw it through. It came back on with the shatter.
+  const winOpening = world.windowOpenings.find((o) => o.id === 'bedroomWindow');
+  if (winOpening) winOpening.glint.visible = false;
 
   const shardMat = paneMat.clone();
   shardMat.opacity = 0.74;
@@ -1676,7 +1719,7 @@ function bedroomAct(game) {
 
   // ---- the arrival state machine (exposed for tests) ----------------------
   let bellInter = null, glassInter = null;
-  let bellCool = 0, rockT = 0, moanOn = false, mercyT = 8, burstT = -1;
+  let bellCool = 0, rockT = 0, moanOn = false, mercyT = 40, mercySeen = -1, burstT = -1;
   const arrival = game.bedroomArrival = {
     state: 'searching', t: 0, searchedCount: 0, bellFound: false, bellRung: false,
     // Teleport's contract (main.js _completeArrivalInstant): a debug/test jump
@@ -1696,6 +1739,7 @@ function bedroomAct(game) {
         if (pane.parent) pane.parent.remove(pane);
         glassCollider.max.y = glassCollider.min.y;
         shards.visible = true;
+        if (winOpening) winOpening.glint.visible = true;
       }
       if (glassInter) glassInter.enabled = false;
       if (bellInter) bellInter.enabled = false;
@@ -1807,16 +1851,36 @@ function bedroomAct(game) {
   // S3 BED COVERS — dragged fully off onto the floor; revealed: the mattress
   // imprint of a sleeper, slightly too long. Persistent heap swap.
   addSearchable('covers', hitBox(10.15, F + 0.64, 3.75, 1.6, 0.35, 1.6), {
-    dur: 0.85,
+    dur: 1.0,
     sound: () => game.audio.clothDrag({ pos: P.covers.pos, rate: 0.9 }),
     drive: (e, p) => {
       const on = P.covers.on;
-      on.position.set(-1.1 * e, -0.42 * e, 0.18 * e);
-      on.rotation.z = 0.85 * e;
-      on.scale.set(1 - 0.15 * e, 1 - 0.38 * e, 1 - 0.2 * e);
-      if (p >= 0.55) P.covers.imprint.visible = true;
+      // Two beats, no arc. DRAG: the weight slides west across the mattress at
+      // its own height, clearing the frame. FALL: what has cleared drops and
+      // packs down into a floor pile that lands on the pre-built heap's pose,
+      // so the swap at the end is a settle, not a teleport. (The old drive
+      // rolled the whole group about the bed's centreline at FLOOR level: it
+      // swept all three pieces through the frame and finished 20 cm under the
+      // floorboards, which is the "odd" Alex saw.)
+      const slide = Math.min(1, e / 0.42);
+      const f = Math.min(1, Math.max(0, (e - 0.2) / 0.8));
+      const fall = f * f * (3 - 2 * f);
+      on.position.set(-0.42 * slide - 0.50 * fall, 0.01 * fall, -0.16 * fall);
+      on.scale.set(1 - 0.38 * fall, 1 - 0.66 * fall, 1 - 0.20 * fall);
+      // and each piece tips as its own weight goes over the rail — without
+      // this the three boxes stay perfectly flat and read as sliding boards
+      const roll = P.covers.roll;
+      on.children.forEach((c, i) => { c.rotation.z = roll[i] + fall * (0.45 + i * 0.25); });
+      if (p >= 0.5) {
+        P.covers.imprint.visible = true;                      // fades up, never pops
+        P.covers.imprint.material.opacity = Math.min(1, (p - 0.5) / 0.32);
+      }
     },
-    finish: () => { P.covers.on.visible = false; P.covers.heap.visible = true; },
+    finish: () => {
+      P.covers.imprint.material.opacity = 1;
+      P.covers.on.visible = false;
+      P.covers.heap.visible = true;
+    },
   });
 
   // S4 RUG CORNER — folds back; revealed: claw gouges toward the door (F1c)
@@ -1825,14 +1889,14 @@ function bedroomAct(game) {
   addSearchable('rug', P.rug.flap.children[0], {
     dur: 0.7,
     sound: () => game.audio.clothDrag({ pos: P.rug.pos, rate: 1.35 }),
-    drive: (e) => { P.rug.flap.rotation.x = -2.7 * e; },
+    drive: (e) => { P.rug.flap.rotation.z = 2.95 * e; },   // west, over onto the rug
     finish: () => {
       for (const it of boardInters) it.enabled = true;
       let t = 0;
-      game.tickers.push((dt) => {          // the freed board settles proud
-        if (t >= 0.3) return;
+      game.tickers.push((dt) => {          // the freed board settles PROUD — 64 mm
+        if (t >= 0.3) return;              // of lifted end, with a knock to point at it
         t += dt;
-        P.board.pivot.rotation.z = 0.003 + 0.017 * Math.min(1, t / 0.3);
+        P.board.pivot.rotation.z = -0.006 - 0.069 * Math.min(1, t / 0.3);
         if (t >= 0.3) game.audio.knock({ pos: P.board.pos, gain: 0.2, rate: 1.1 });
       });
     },
@@ -1846,13 +1910,16 @@ function bedroomAct(game) {
       game.audio.creak({ pos: P.board.pos, gain: 0.5, rate: 0.7 });
       P.board.cavity.visible = true;
       P.bell.group.visible = true;
-    },
-    drive: (e) => { P.board.pivot.rotation.z = 0.02 + 0.59 * e; },
-    finish: () => {
-      game.audio.knock({ pos: P.board.pos, gain: 0.38, rate: 0.75, verb: 0.5 });
+      // The bell is FOUND the instant it can be seen. It used to stay inert
+      // for the 0.8 s the board takes to swing — a visible thing that ignored
+      // E, which reads as a broken game.
       arrival.bellFound = true;
       if (arrival.state === 'searching') arrival.state = 'bellFound';
       if (bellInter) bellInter.enabled = true;
+    },
+    drive: (e) => { P.board.pivot.rotation.z = -(0.075 + 0.535 * e); },   // hinges UP and props
+    finish: () => {
+      game.audio.knock({ pos: P.board.pos, gain: 0.38, rate: 0.75, verb: 0.5 });
     },
   });
 
@@ -1936,7 +2003,17 @@ function bedroomAct(game) {
 
   // ---- THE BELL: strike it where it lies ----------------------------------
   bellInter = world.registerInteract(hitBox(10.42, F + 0.16, 2.16, 0.52, 0.4, 0.5), 'bedroomBell', () => {
-    if (bellCool > 0) return;
+    if (bellCool > 0) {
+      // Cooling down is not the same as doing nothing. A strike inside the
+      // window still moves the bell and still ticks — EXCEPT inside the
+      // authored silence after a real summon, which is the whole point of
+      // that silence.
+      if (arrival.state !== 'called' && arrival.state !== 'incoming') {
+        rockT = Math.max(rockT, 0.2);
+        game.audio.thud({ pos: P.bell.pos, gain: 0.11, rate: 0.62 });
+      }
+      return;
+    }
     const canSummon = (arrival.state === 'searching' || arrival.state === 'bellFound')
       && !game.flags.has('skullArrived') && game.skull.mode === 'gone';
     if (canSummon) {
@@ -1998,6 +2075,7 @@ function bedroomAct(game) {
       glassInter.enabled = false;
       glassCollider.max.y = glassCollider.min.y;   // the added collider ONLY — never the skullPass base
       shards.visible = true;
+      if (winOpening) winOpening.glint.visible = true;   // the aperture is real now; it may advertise itself
       fireBurst();
       game.audio.glassShatter({ pos: WIN_C, gain: 1.0 });
     } else {
@@ -2036,9 +2114,11 @@ function bedroomAct(game) {
     arrival.t = 0;
   };
 
-  // Discoverability mercy, built DARK: once most of the room has been
-  // searched, a faint muffled tink from under the floor. One line to enable.
-  const BELL_MERCY_TINK = false;
+  // Discoverability mercy, LIVE but restrained: one distant knock from under
+  // the floorboards after a long searchless wander, then a long wait before
+  // the next. It is the house answering, not a hint system — no words, no
+  // HUD, no arrow — and any search at all restarts the clock.
+  const BELL_MERCY_KNOCK = true;
 
   // ---- the one ticker that runs the room ----------------------------------
   game.tickers.push((dt) => {
@@ -2060,12 +2140,12 @@ function bedroomAct(game) {
       }
       if (burstT > 1.2) { burstT = -1; burst.visible = false; }
     }
-    if (BELL_MERCY_TINK && arrival.state === 'searching' && !arrival.bellFound
-      && arrival.searchedCount >= 5) {
+    if (BELL_MERCY_KNOCK && arrival.state === 'searching' && !arrival.bellFound) {
+      if (arrival.searchedCount !== mercySeen) { mercySeen = arrival.searchedCount; mercyT = 40; }
       mercyT -= dt;
       if (mercyT <= 0) {
-        mercyT = 6 + Math.random() * 4;
-        game.audio.glassTink({ pos: P.board.pos, gain: 0.11, rate: 0.55, verb: 0.85 });
+        mercyT = 26 + Math.random() * 12;
+        game.audio.knock({ pos: P.board.pos, gain: 0.16, rate: 0.5, verb: 0.9 });
       }
     }
 
@@ -2108,9 +2188,18 @@ function bedroomAct(game) {
           // segment B: exponential-bend homing on the LIVE camera cradle —
           // the catch happens wherever the player actually looks. Local
           // numbers only; no FEEL constant is read or written.
+          // The cradle rides the player's FACING, not their pitch. Looking at
+          // the floor used to put it below the boards and looking up put it in
+          // the ceiling — and the flight runs in mode 'gone', which has no
+          // collision, so the skull visibly dived through both. Horizontal aim
+          // only, chest height taken off the camera: the catch still happens
+          // where you are looking, it just can never happen inside the house.
           const look = game.camera.getWorldDirection(_cB);
-          _cradle.copy(cam).addScaledVector(look, 1.35);
-          _cradle.y -= 0.4;
+          const hl = Math.hypot(look.x, look.z);
+          if (hl > 0.05) _cradle.set(look.x / hl, 0, look.z / hl);
+          else _cradle.set(-Math.sin(game.player.yaw), 0, -Math.cos(game.player.yaw));
+          _cradle.multiplyScalar(1.15).add(cam);
+          _cradle.y = cam.y - 0.42;
           _des.copy(_cradle).sub(s.pos);
           const d = _des.length() || 1;
           _des.divideScalar(d).multiplyScalar(26);

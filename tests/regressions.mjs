@@ -1430,7 +1430,7 @@ try {
     );
 
     // the two-step find: rug corner reveals the floorboard, floorboard the bell
-    useAt(10.4, 1.25, 10.65, 3.64, 2.35);   // S4 rug corner
+    useAt(10.4, 1.25, 10.65, 3.64, 2.02);   // S4 rug corner
     F.stepWith(1.2, {}, false);
     useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
     F.stepWith(1.2, {}, false);
@@ -1545,7 +1545,7 @@ try {
     );
 
     // the bell is still findable, and still answers
-    useAt(10.4, 1.25, 10.65, 3.64, 2.35);   // S4 rug corner
+    useAt(10.4, 1.25, 10.65, 3.64, 2.02);   // S4 rug corner
     F.stepWith(1.2, {}, false);
     useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
     F.stepWith(1.2, {}, false);

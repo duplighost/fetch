@@ -164,7 +164,10 @@ try {
         && !g.bedroomProps.bell.group.visible && g.skull.mode === 'gone',
         { state: A.state, bellFound: A.bellFound, bellRung: A.bellRung });
 
-      search('rug', 10.4, 1.25, 10.65, 3.64, 2.35);       // S4 gouges + the board
+      // z 2.02, not 2.35: E respects occlusion now, and the bed's south rail
+      // overhangs the rug notch from z 2.23 — the old aim point reached the
+      // flap THROUGH the bed, which a player never could.
+      search('rug', 10.4, 1.25, 10.65, 3.64, 2.02);       // S4 gouges + the board
       search('floorboard', 10.3, 1.35, 10.6, 3.64, 2.16); // S5 the bell
       beat('the-room-answers-search',
         A.searchedCount === 9

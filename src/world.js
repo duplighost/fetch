@@ -369,6 +369,29 @@ export class World {
     return best > -Infinity ? best : terrain;
   }
 
+  // The lowest lid above a point, or Infinity where there is none. Ceiling
+  // slabs were render-only for the whole life of the house: a jump in the
+  // cellar put the camera inside the slab and groundHeightAt then resolved the
+  // storey above, so you could climb out through the ceiling — and a thrown
+  // skull simply left through the roof, answering nothing. Ceiling holes are
+  // the stair shafts: they are a way UP, so they must not carry a lid.
+  ceilingHeightAt(x, z, curY) {
+    let best = Infinity;
+    for (const room of this.rooms) {
+      if (room.ceilY === undefined) continue;
+      if (x < room.x0 || x > room.x1 || z < room.z0 || z > room.z1) continue;
+      if (room.ceilY <= curY + 0.05) continue;     // a storey we are already above
+      if (room.ceilY >= best) continue;
+      let holed = false;
+      for (const hle of (this.ceilHoles || [])) {
+        if (hle.lv !== room.level) continue;
+        if (x >= hle.x0 && x <= hle.x1 && z >= hle.z0 && z <= hle.z1) { holed = true; break; }
+      }
+      if (!holed) best = room.ceilY;
+    }
+    return best;
+  }
+
   // --------------------------------------------------------- house compiler
   // tables: { origin:[ox,oz], levels:{name:{floor,ceil}}, rooms, doors, windows,
   //           ramps, floorHoles, ceilHoles }
@@ -386,7 +409,7 @@ export class World {
         for (let cz = z0; cz <= z1; cz++)
           cellMaps[lv].set(cx + ',' + cz, room);
       this.rooms.push({
-        id, level: lv, floorY: T.levels[lv].floor,
+        id, level: lv, floorY: T.levels[lv].floor, ceilY: T.levels[lv].ceil,
         x0: wx(x0), z0: wz(z0), x1: wx(x1 + 1), z1: wz(z1 + 1),
       });
     }
@@ -417,6 +440,7 @@ export class World {
     }
     const ceilHoles = (T.ceilHoles || []).map(([lv, x0, z0, x1, z1]) =>
       ({ lv, x0: wx(x0), z0: wz(z0), x1: wx(x1 + 1), z1: wz(z1 + 1) }));
+    this.ceilHoles = ceilHoles;   // the stair shafts; ceilingHeightAt must see through them
 
     // normalize door/window specs onto edges: H edge (cx,cz) between (cx,cz-1)/(cx,cz);
     // V edge (cx,cz) between (cx-1,cz)/(cx,cz)
