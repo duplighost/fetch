@@ -1,3 +1,316 @@
+# HANDOFF - 2026-08-15: THE CHANGE-ORDER BUILD (branch claude/aug15-notes) — PLAN WRITTEN, WORK NOT STARTED
+
+Written by Claude Fable 5 for Claude Opus 5 (Alex is nearly out of weekly
+allowance on Fable — ~10% left — and will switch models; he asked for the whole
+plan written down so "he'll know exactly how to do all the things"). Everything
+below is plan + decisions + traps. NO IMPLEMENTATION HAS HAPPENED YET on this
+branch. Work at a fast pace, lean spend: no agent fan-outs, batch your edits,
+run the four gates once mid-build and once at the end, not per-edit.
+
+## Where you are
+
+- Worktree `C:\Users\Alex\Projects\fetch-aug15`, branch `claude/aug15-notes`,
+  branched off `ca8ec27` = `claude/feedback-aug14-2` = game PR #27 (still OPEN)
+  = what is LIVE on qualiacology.com/fetch via site PRs #61+#62. You are
+  stacking on an unmerged PR; that is fine and deliberate. Do not rebase.
+- THE SPEC IS `docs/CHANGE-ORDER-2026-08-15.md` (committed beside this file).
+  It came from Alex via another AI that organized his notes ("mostly they just
+  tried to organize my notes"). Treat it as spec, with the exceptions below.
+- Alex's own words in chat (these outrank the change order where they differ):
+  "you start out inside the bed, and can walk through the furniture. the
+  animation with the covers coming off the bed is odd. and the area where the
+  bell is really isn't even somewhere that looks like you can open it."
+  "if something you know they said is wrong, don't bother. we don't need to
+  run infinite tests on this to check it. i can always playtest. so lets fix a
+  few things, add the new areas. and get it on the website!"
+- Before anything: read `AGENTS.md` (laws + gates), skim newest section of the
+  OLD handoff below this one (round-2, what just shipped), and
+  `docs/WALKTHROUGH.md` (current route you are about to restructure).
+
+## Spec exceptions (judgment already applied — don't relitigate)
+
+- SKIP change-order §4's furnace-contraption bullet ("make it genuinely
+  control the furnace"). The pictured cage/counterweight is the OPTIONAL
+  crawl-room secret (shutter + dog skeleton + ball). Alex's own notes retract
+  the complaint ("the photographed cage/counterweight is the optional basement
+  secret, not a required furnace step"). Leave it alone.
+- DO §17 (skeletal hands in the final room) even though Alex said the bottom
+  of his HTML notes was unclear/ignorable — the zip's change order states it
+  cleanly, it is small, and it pairs with §9's skull-less skeleton at the tree
+  top (the player IS the body the skull came from; that is the twist landing).
+- Every "Do not resurrect" bullet at the end of the change order is real and
+  matches project history. Obey them.
+
+## The plan, in build order
+
+Task list already exists in the session task tracker (12 tasks); mirror here:
+
+1. BEDROOM/OPENING (§1 + Alex chat). house.js/main.js.
+   - Move wake position OUT of the bed footprint (notes say: move wake BEFORE
+     making bed solid), then give bed/wardrobe/dresser/nightstands real
+     colliders. Furniture colliders exist as a pattern elsewhere in house.js
+     furnishings — copy the established box-collider idiom.
+   - Fix the covers-off animation ("odd") — find the covers search in the
+     nine-searchable table (round-2 opening, house.js). Simplest honest fix:
+     covers slide off along bed axis and settle as a floor heap, no arcing
+     through geometry.
+   - Rug reveal: rehinge so it folds OUTWARD (away from bed), not into it.
+   - Floorboard: reveal rotation must raise the free end ABOVE the floor
+     (currently rotates down through it), and the cavity must READ as openable
+     BEFORE it opens (Alex: "isn't even somewhere that looks like you can open
+     it") — proud board end + gap shadow + the rug gouges pointing at it.
+   - Bell: E works the instant the bell is visible (kill the inert interval).
+   - Escalation cue: the existing mercy/escalation cue for the rug→board→bell
+     chain is reportedly disabled — find it, re-enable restrained (one distant
+     under-floor knock after long searchless wander; no HUD, no text).
+   - No window glint until the strong glass is actually broken.
+   - E targeting: nearer solid geometry must block selecting through it (the
+     interact pick is likely distance/angle-based — add an occlusion raycast;
+     remember camera.updateMatrixWorld() before any sim-only raycast).
+   - Incoming-skull arrival: authored window→chest route (clamped spline, no
+     camera-pitch-following into floor/ceiling); keep timeout as fallback only.
+   - Pre-skull dead inputs: tiny authored response for LMB/RMB/E when empty-
+     handed pre-arrival (a soft wrist/breath tick, positional, no words).
+   - Ceilings: add head+skull collision for house ceilings (check how rooms
+     compile in HOUSE_TABLES; ceiling slabs likely render-only). Skull-vs-
+     ceiling should answer (dull wood knock), not pass through the roof.
+2. HOUSE EXTERIOR SIGHTLINES (§2) + BASEMENT STAIRS (§3) + TRANSITION FEEL
+   (§4 minus the skipped bullet).
+   - Windows on the house's west/side: extend the EXISTING far-treeline
+     silhouette + ground via world.box() into the merged grass batch — this
+     was already scoped in the 08-14 session as ~0 draw cost (house-after-cave
+     is at 445/450 draws — WATCH THAT CEILING). Keep the original key tree
+     recognizable from the graveyard (§11 too).
+   - Stair skirt: make the broad stone mass under the kitchen→basement flight
+     physical to match its look — BUT the corridor under the cellar ramp is
+     REAL WALKWAY holding the basement spawn; a previous "fix" bricked the
+     spawn and playthrough caught it. Make the visible mass agree with a
+     collider that stops OUTSIDE the walkway, or open up the underside
+     visually. house.js ~575 region (skirt), HOUSE_TABLES.ramps.
+   - Basement→graveyard: dress the hatch exit so the arrival reads connected
+     (continuity props both sides, same masonry family), no new route.
+3. COMBINED UPGRADE + PIERCE (§5). outside.js (hero grave #6 rubble + the old
+   mausoleum-key flow) + skull.js + enemies.js + marrow.js.
+   - The gravestone that used to yield the mausoleum key now reveals ONE
+     optional pickup: Iron Canine (game.skullPower=2) + danger sense (the
+     marrow relic heartbeat, moved here). Available from graveyard entry,
+     any time. Keep the canine's post-unlock haloed-fang read; keep danger-
+     sense pulse ON the skull ornament (pulse scales with nearest enemy).
+   - MARROW no longer rewards danger sense; its endpoint reward becomes Gate
+     Key 2 (see 5 below). Remove the relic-as-danger-sense grant, keep the
+     relic take/statue-hunt phase change intact.
+   - PIERCE: with skullPower>=2, a qualifying powered hit on an ORDINARY enemy
+     (walkers/risen/ground-emergers) kills decisively, keeps momentum
+     (no stop-and-pop interrupt of flight), and may continue into the NEXT
+     ordinary enemy behind. DO NOT touch FEEL_PROFILE; hook at the hit-
+     resolution branch in skull.js/enemies.js where stun-then-pop resolves —
+     powered+ordinary = pop-through (no stun stage), specials (Resident,
+     Kneeler, Presence, statues, Choir, window watcher, bosses) keep existing
+     rules. Key-in-jaw must NOT weaken qualifying hits (there was a false
+     suspicion; verify no code path actually does this — if none does, done).
+4. GRAVEYARD BATTLE TIGHTEN + THREE-ROUTE REVEAL (§6). director.js/enemies.js.
+   - Stragglers: wave enemies must stay engaged/locatable — give unengaged
+     wave members a converge-on-player drive + audible tell so the fight
+     doesn't end in hide-and-seek. Keep wave counts 4/5/6 and strike-claim
+     bounds.
+   - On battle resolution (either route — ritual resolution should reveal the
+     routes too; the change order says "defeating the battle" but Route A
+     ritual IS a valid resolution and must not dead-end): fire the THREE-ROUTE
+     REVEAL — sequential is fine and cheaper to read: mausoleum 1 false door
+     grinds clear, then mausoleum 2 seal cracks open, then the key-tree
+     strings drop their glowing balls with a positional chime cascade. Each an
+     unmistakable, watchable state change AT the object. No hue-only reads
+     (brightness/motion/sound).
+5. GATE KEYS 1-3 (§7/8/9). outside.js + marrow.js.
+   - KEY 1: mausoleum 1 (the west/required one with the ossuary under-yard)
+     opens keyless post-battle; the EXISTING under-yard route + counterweight
+     hold stays intact but its payoff changes: instead of opening the surface
+     gate, the counterweight lowers/reveals GATE KEY 1 (fetchable, rides the
+     jaw). The far climb/deck-hatch exit is now OBSOLETE as a forest entrance
+     (see 6) — seal the far end shut (collapsed rubble is fine) and let the
+     player walk back out the way they came (entrance stays two-way pre- and
+     post-solve; it already is).
+   - KEY 2: relocate MARROW's entrance beneath mausoleum 2 (the east/sealed
+     one that held the canine shrine — the canine moved to the gravestone in
+     3). Mausoleum 2 opens keyless post-battle; descend to the existing
+     marrow district (the district itself does NOT move — it is at (70,-10)
+     and position-heavy; move only the ENTRANCE/EXIT plumbing: the pit-mouth
+     E-verb, the placement step, the rope/bone exit toggle return point).
+     SCRIPT TRAP from the marrow build: place-inside-pit-same-tick gets
+     ejected by the not-yet-collapsed collider — step once after flagging
+     before placement. Retire the old NE grave-pit mouth: collapse it to
+     scenery (rubble-choked, ember dead, no E). Relic endpoint now also
+     yields GATE KEY 2 (relic keepsake beat stays; key rides jaw after).
+     Keep: Presence body-approach yield (skull passes THROUGH it — do not
+     make it hittable), statues freeze-watched/hunt-unobserved/skull-shove,
+     the escort/knock beat out. No statue-placement puzzle. District seal
+     laws: every seal must spare world.lightRoot; per-tick visibility drives
+     defer to district cullers.
+   - KEY 3: the ORIGINAL key tree (the one outside the bedroom window that
+     held the bedroom key — it must be visible/recognizable from the
+     graveyard; if the yard-side sightline is weak, that's part of §2/§11
+     dressing). Post-battle, glowing balls on shiny strings descend from its
+     boughs = a readable climb (use the forest chain-knot ball grammar the
+     player already learned; brightness ladder, ≤ courteous step gaps, jump-
+     step or step-hold — NO new input). Top: GATE KEY 3 + a skeleton
+     deliberately missing its skull (posed so the absence reads: intact spine
+     ending at empty cervical cradle, maybe a hollow where a head would rest).
+     Safe way down: descending ball path on the far side or a slide-pole —
+     must be walkable while jaw carries the key (fetch-grab outbound guards!).
+     Do NOT extend toward the house roof.
+6. THREE-KEY GATE + TRANSITION + APPROACH (§10/12/13) + PERIMETER (§11).
+   - Gate: three visible sockets on the iron forest gate posts. Throw the
+     carrying skull at a socket (or E at arm's length — same grammar as door
+     locks) to BANK that key; it stays visibly installed (key silhouette
+     proud of the socket, catches the lantern). Any order. All three in →
+     the gate swings with its existing proper creak + a three-clunk
+     unlock cascade. This is now THE one forest entrance: walking through
+     commits the forest act + checkpoint (reuse the far-hatch commit logic,
+     relocated to the gate threshold).
+   - Obsolete transition pieces (§12, figures 7/8): the under-yard far climb
+     + chained deck hatch + forest-side arrival mouth stop being a forest
+     entrance (sealed per 5-KEY1). Remove the walk-over drop-through on the
+     surface side, remove/retire its handle verbs, keep the geometry as
+     sealed scenery (cheap) rather than deleting the district. Playthrough
+     and probe-ossuary must be rerouted accordingly.
+   - Approach (§13): the surface stretch gate→forest-spline start gets
+     staging (leaning stones, a dead lamp post family with ONE pre-created
+     light or none — NEVER add/remove lights at runtime; borrow via
+     world.reserveLoanLights if needed) + 2-3 ground-emerging enemies placed
+     off-path as authored scares (the nursery-walker rise idiom / risen-body
+     emergence), tuned as a transition, not an arena.
+   - Perimeter (§11): dress the yard edges — wall/fence continuation, tree
+     masses, terrain lift, fog — so edges stop reading as map end. Cost
+     discipline: instanced/merged into existing batches (world.box into
+     merged grass batch idiom; the far-treeline silhouette extension).
+     WATCH draws: house-after-cave 445/450 ceiling; run district-culling
+     tool after.
+7. FOREST BOUNDS + BOULDER + EDGES (§14). outside.js.
+   - Close the out-of-bounds walks back toward graveyard/house (probe with a
+     bounds walker; candidates: terrainHeightFn region seams + corridor
+     clamp edges). AABB-only engine: angled anything gets a fat hitbox —
+     prefer stepped short boxes along an edge (the fallen-log lesson).
+   - The faceted boulder: collider must match visible mass (stepped boxes).
+   - Dress left/right waterfall/forest edges as authored (feeds §15 sides).
+8. FROZEN WATERFALL LAYER (§15/16) — BUILD LEAN, REUSE EVERYTHING.
+   - Arrival state: falls frozen/blocked — visually: the three noise ribbons
+     stilled (freeze their scroll, whiten/brighten, add icicle teeth via
+     merged boxes), sacrifice trigger DISARMED until thaw.
+   - LEFT route: compact path (7) → creepy shed + skull-operated WHEEL (reuse
+     the counterweight-wheel hold grammar verbatim) → environmental fight
+     that uses the machinery (e.g. Standing-Kind pair among freeze-fog
+     statuary where the wheel's moving chain is the safe lane). On wheel
+     completion: fire system LIGHTS permanently (reuse pilot/riser
+     fire-line language: flame runs a visible brass/iron line from shed to
+     falls-side brazier array, ice near it slumps/darkens+drips).
+   - RIGHT route: distinct — e.g. bell/resonance mechanism (reuse resonant-
+     grave pulse) + a ground-emerger ambush arena where standing in the
+     machine's vent-heat column is the counterplay. Its own fire line +
+     brazier array on completion.
+   - BOTH lit → thaw beat: ribbons restart dark-to-bright, icicle teeth
+     calve off (dt-integrated falls, the detachBoard idiom), THEN the
+     existing grown-skull-turns-toward-falls + sacrifice + stones + veil
+     progression continues untouched. §16: verify no helper silently
+     restores the skull post-sacrifice (mode 'gone' stays law; hands lower).
+   - Persistence: both fire systems + thaw are permanent flags on game
+     (checkpoint-safe, respawn-safe), same family as pilotLit/ateFlame.
+9. ENDING SKELETAL HANDS (§17). finale.js/main.js hands rig.
+   - In the final room (wrong bedroom / mirror contact), after the mirrors
+     wake: raise the authored hands pose once (the rig already has authored
+     poses: held/lowered/gone) and the hands ARE skeletal — swap the hand
+     material/mesh to bone (reuse skull bone material family) for the finale
+     act only. No text. Give it a quiet beat (stillness) to land. It rhymes
+     with the tree-top skeleton missing its skull: the player is the body.
+     Do not steal camera or input — the raise is a viewmodel pose, look/move
+     stay live.
+10. GATES (task 10). tests/.
+   - playthrough.mjs: reroute — battle → (any authored order; pick
+     tree-key LAST if the climb needs the most step-tuning) key routes →
+     bank three keys at gate → gate walk-through commits forest → approach
+     → forest → frozen-falls LEFT + RIGHT wheels → thaw → sacrifice →
+     underfalls → finale (assert skeletal-hand material active). Known bot
+     traps: pre-opening doors makes its own useAt toggle them shut; firebox
+     staging needs pilotLit+archiveDraftOpened; statues hunt from the
+     INSTANT of the relic grab — re-seat statues before staging checks;
+     dead means verbsLive false (a kill two legs back surfaces as "throw
+     never launched").
+   - regressions.mjs: retire/replace pins that assert the OLD route (ossuary
+     far hatch commits forest; marrow NE pit entrance; relic grants danger
+     sense; gate opens from counterweight). Add pins: three sockets bank
+     keys any order + gate only opens at 3; old pit mouth inert; pierce
+     kills ordinary + passes through, specials immune; frozen falls block
+     sacrifice until both fires; skeletal hands finale-only; covers/rug/
+     floorboard reveal directions; bell E-live-when-visible; E occlusion;
+     ceiling collision (skull answers, never exits roof).
+   - autotest 26: feel laws must stay green UNTOUCHED (if pierce breaks a
+     feel check, the pierce hook is in the wrong place — it must live in
+     hit RESOLUTION, not flight).
+   - smoke: new-geometry draw budgets under ceilings per act.
+   - Run cadence (budget): full four gates ONCE after step 6, once after 9,
+     final full pass before deploy. Use targeted probes in between.
+11. VISUAL VERIFICATION (task 11): tools/shot-areas + shot-horizons +
+   shot-visual-audit on changed acts; OPEN THE PNGS AND LOOK (project law:
+   every wrong conclusion came from reasoning instead of looking). Legibility
+   is measurable: luminance ratios ≥ ~1.6x ON/OFF at every new read.
+12. DEPLOY (task 12). Site repo `C:\Users\Alex\Projects\qualiacology` — read
+   its AGENTS.md first (its rules differ; PowerShell 5.1: no &&, commit via
+   -F file). Flow: commit game branch → push → PR on duplighost/fetch (note
+   in body it stacks on #27) → copy src/ into site fetch/src/ → site feature
+   branch + PR → run `node build/qa/fetch-boot-check.mjs` against a local
+   serve of the site tree (it is TWO-PHASE: lit skull-less room on the real
+   path + held-pass via teleport contract) → inspect Netlify preview →
+   **merge ONLY with Alex's explicit approval** → verify production boot.
+
+## Traps that will bite you (all hard-won, all real)
+
+- Edit files with the Edit tool; `node -e` multi-line replaces silently fail
+  on this tree (CRLF).
+- `stepWith(seconds, controls)` — SECONDS FIRST; movement key is `moveZ`.
+- Never add/remove a light at runtime (shader recompile storm); pre-create or
+  loan from world.reserveLoanLights. Never let a light sit in a subtree a
+  culler hides; every district seal spares world.lightRoot.
+- Fog: ride fogColorTarget/bgColorTarget (one weather system in main.js),
+  never scene.fog directly; fog colour asserts compare via getHex().
+- Derived-visibility lines must model EVERY legitimate state of their object
+  (the carried-key-invisible saga); fetch-grabs need outbound guards.
+- Every gameplay-looking surface must ANSWER a throw (silence reads as
+  broken); every state change broadcasts AT the object; never hue-only (Alex
+  is colorblind).
+- Anything the player walks up to: albedo ≲0.03 linear; close props are fixed
+  with GEOMETRY, not material tuning. Lantern falloff is DECIDED (58/1.6/11.5)
+  — do not re-propose.
+- AABB-only colliders: angled shapes need stepped box rows.
+- Headless screenshots: canvas.toDataURL only (page.screenshot = black).
+- Playthrough runs muted (`?test=1&mute=1`).
+- The shared checkout `Projects\fetch-claude` main working tree is STALE and
+  shared with Codex — never work there; this worktree is yours.
+- Site repo on this machine: no `&&` in PowerShell 5.1; `git commit -F file`.
+
+## Open decisions already made (don't reopen)
+
+- Ossuary far exit: seal it, reroute forest entry through the three-key gate
+  (change order §12 explicitly allows removing obsolete pieces).
+- MARROW district geometry stays at (70,-10); only entrance plumbing moves.
+- Waterfall layer is built LEAN from existing grammars (wheel-hold, fire
+  lines, resonance, ground-emergers) — no new input verbs, no new enemy AI
+  from scratch.
+- Ritual (quiet) resolution ALSO reveals the three routes — both resolutions
+  converge (the change order only says "defeating the battle"; do not strand
+  the quiet player).
+
+## Budget + working style (Alex's words)
+
+"you only have 10 percent of your weekly allowance left... do the best you
+can at a fast pace." So: no multi-agent fan-outs, no exploratory rewrites,
+batch edits, gates at the cadence above, ship working > ship everything. If
+budget forces triage, the priority order is: 1 (his chat asks) → 3/4/5/6
+(the restructure) → 10/12 (gates+deploy) → 7 → 8 lean → 9 → 2/11 polish.
+A subsystem map with exact file:line anchors for all of the above was being
+generated by six read-only mappers when this was written; if their reports
+survive in the session, use them; if not, the file pointers above are enough.
+
+---
+
 # HANDOFF - 2026-08-14, ROUND 2: SILENCE READS AS BROKEN (branch claude/feedback-aug14-2)
 
 Alex's second live-play list of the day, plus a diagnosis that names the
