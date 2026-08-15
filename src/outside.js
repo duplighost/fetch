@@ -1291,9 +1291,14 @@ function buildKeyTreeClimb(game) {
     // the top one is the reason the climb exists: it has to land on the thing
     // waiting up there, or the payload of the whole staircase is a silhouette
     // nobody can see
-    const lamp = { x: s.x, y: s.y + (i === STEPS - 1 ? 0.9 : 0.35), z: s.z,
-      intensity: 0, r: i === STEPS - 1 ? 3.6 : 4.2 };
+    const top = i === STEPS - 1;
+    const lamp = { x: s.x, y: s.y + (top ? 0.95 : 0.35), z: s.z,
+      intensity: 0, r: top ? 3.2 : 4.2 };
     world.candles.push(lamp);
+    // the top one sits a metre off bone at the top of a dark tree: at the
+    // side lamps' strength it clipped the skeleton to flat white and took the
+    // sculpt with it. It only has to separate the shape from the sky.
+    lamp.want = top ? 0.42 : 1.05;
     lamps.push(lamp);
   }
 
@@ -1337,7 +1342,24 @@ function buildKeyTreeClimb(game) {
   // the cradle where a head would rest — and nothing in it. The whole point of
   // the tree top is the shape of the absence.
   put(new THREE.TorusGeometry(0.085, 0.019, 5, 12), 0, 1.33, 0.04, Math.PI / 2 - 0.16);
-  const bones = new THREE.Mesh(mergeGeometries(boneParts), M.bone);
+  // M.bone is authored for the SKULL, which draws in the viewmodel pass with
+  // its own lamps. Worn by a world prop you climb up to, the carried lantern
+  // (91% of what any near prop is lit by, per probe-light-attribution) clipped
+  // it to flat white and took the whole sculpt with it — the empty cradle at
+  // the top of the spine is the only thing this object is FOR. Its own darker
+  // clone: the shape survives, and it still reads as the same bone the skull
+  // is made of, because it is.
+  // Halving the albedo twice changed almost nothing, which is the tell: what
+  // is blowing it out is the EMISSIVE the skull carries so it can be its own
+  // lamp. A body in a tree is not a lamp.
+  const worldBone = M.bone.clone();
+  // ...and the number that actually matters is the albedo against the LAW:
+  // the lantern delivers ~131 irradiance at arm's length, so anything you walk
+  // up to lives at 0.03 linear or it clips. M.bone is ~0.62 linear.
+  worldBone.color.multiplyScalar(0.06);
+  if (worldBone.emissive) worldBone.emissive.setHex(0x000000);
+  worldBone.emissiveIntensity = 0;
+  const bones = new THREE.Mesh(mergeGeometries(boneParts), worldBone);
   bones.position.set(top.x, top.y, top.z);
   bones.rotation.y = Math.atan2(CX - top.x, CZ - top.z);
   bones.castShadow = true;
@@ -1385,7 +1407,7 @@ function buildKeyTreeClimb(game) {
     }
     const lit = game.act === 'graveyard';
     for (const lamp of lamps) {
-      lamp.intensity += ((lit ? 1.15 : 0) - lamp.intensity) * Math.min(1, dt * 2);
+      lamp.intensity += ((lit ? lamp.want : 0) - lamp.intensity) * Math.min(1, dt * 2);
     }
   });
 }

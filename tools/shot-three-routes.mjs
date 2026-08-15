@@ -50,8 +50,13 @@ try {
     await shoot('02-the-tree-lets-its-lights-down');
     look(5.5, 18.5, 5.5, 4.0, 13.6);
     await shoot('03-the-staircase-from-below');
-    look(5.5, 16.4, 5.5, 7.6, 13.6);
-    await shoot('04-the-top-and-the-skeleton');
+    // from ON the top tread, where the player actually meets it
+    {
+      const st = g.keyTreeClimb.steps;
+      const top = st[st.length - 1], stand = st[st.length - 3];
+      look(stand.x, stand.z, top.x, top.y + 0.7, top.z, stand.y);
+      await shoot('04-the-top-and-the-skeleton');
+    }
 
     // the east mausoleum's seal, given by the funeral, and the way down
     look(15.6, 27.6, 15.6, 1.1, 29.6);
