@@ -47,16 +47,67 @@ lit pilot + latched pump
   -> forest tree/forks/mire rope -> waterfall -> Underfalls hatch -> mirror contact
 ```
 
-## Act 0 — locked bedroom
+## Act 0 — the bedroom, before the skull
 
-The game begins with control already live. The open window frames a tree branch
-and a hanging key.
+**(2026-08-14 rework, Alex's spec.)** You no longer wake holding the skull.
+You wake empty-handed at the edge of a bed whose covers were thrown back by a
+body that is not there, in a dim room: an oil lamp, a patch of moon through
+window glass. The window is **strong glass that cannot be broken** by anything
+you have — E on it answers with a dull solid knock, deliberately rattle-free
+(rattle grammar means openable-but-locked; this is a wall that happens to be
+glass). The door wears an iron slide-latch on YOUR side.
 
-1. Throw the skull through the window and hit the key. The jaw closes around it
-   and the skull returns with the key visibly held.
-2. Throw the key-carrying skull at the bedroom-door lock. The lock consumes the
-   key and the door opens after the key turns. Walking to the door and pressing
-   E while the skull carries the correct key also works.
+### Search the room
+
+Nine searchables answer E with one small animation, one positioned sound, and
+one persistent world change. The crosshair-grow is the only affordance, and a
+spent search stops growing the crosshair — that is the completion read.
+
+- **Curtains** — draw wide along the rod, rings ticking; permanent sightline
+  to the tree and the hanging key before the window matters.
+- **Dresser** — the middle drawer slides out: pressed linens and a coiled
+  leather leash.
+- **Wardrobe** — both doors creak open; empty iron hangers swing and tick for
+  a few seconds; one child-sized coat among adult absence.
+- **Bed covers** — dragged fully off onto the floor; revealed, the mattress
+  imprint of a sleeper, slightly too long.
+- **Nightstand** — a small drawer; a candle stub and matches that roll audibly.
+- **Framed art** (a small sincere painting of a waterfall under the moon) —
+  straightening it swings it aside; behind it the wallpaper is unfaded in a
+  rectangle LARGER than the frame, mirror-proportioned. It settles crooked
+  the other way.
+- **Door latch** — the bolt slides back with an iron judder... and the door
+  still holds (locked rattle, no knob read). It was never the latch.
+- **Rug corner** — folds back: four claw gouges in the boards aimed at the
+  door, and the proud end of a floorboard. This gates the next one.
+- **Loose floorboard** (enabled by the rug search, under the bed edge) —
+  hinges up and stays propped; in the joist cavity, a small tarnished brass
+  bell on a rotted collar strap, beside a scrap of chewed rope.
+
+### Ring the bell
+
+E strikes the bell where it lies — no pickup. It dings loud, dark, and
+wrong-long, and the house ducks quiet to listen. Into that silence: a lot of
+clicking of bones in the distance, from the direction of the window, closer
+and closer with a soar underneath, until the skull BURSTS through the window —
+shattering it inward, the glass collider collapsed forever, jagged shard teeth
+left ringing the frame — and lands in your hands. For a few seconds it
+flickers back and forth between a mashing, menacingly chattering human head
+and bone before it settles into the skull. Camera and movement stay live the
+whole time; only throws wait for the settle ("Then you can throw it").
+
+The arrival can never take the tree key on the way in: the scripted inbound
+flight runs in mode `gone` (no fetch target can fire), and the approach path
+is authored wide of the branch. Afterwards the key still hangs, its target
+still enabled.
+
+### Then the room it always was
+
+1. Throw the skull through the now-open aperture and hit the key. The jaw
+   closes around it and the skull returns with the key visibly held.
+2. Throw the key-carrying skull at the bedroom-door lock. The lock consumes
+   the key and the door opens after the key turns. Walking to the door and
+   pressing E while the skull carries the correct key also works.
 3. A throw with no key or the wrong key produces one locked impact and rattle;
    its returning path does not hit the lock a second time.
 
@@ -65,8 +116,16 @@ fetching the bedroom key, throw out, **hold**, steer beneath/around the leaves,
 and touch the locket. This is not another key. The skull keeps it on its jaw for
 the journey, and it receives a small ending in the clearing.
 
-This room teaches the entire game without a tutorial: aim, outbound contact,
-fetch, return, physical locks, and the held-flight possibility.
+Restarts and test state: dying or restarting **before** the arrival keeps the
+room skull-less — finished searches persist (they are world truth) and a found
+bell returns to found-but-unrung. Restarting **after** the arrival keeps the
+skull and the broken window, and the bell verb stays spent. Debug/test
+teleports to any act complete the arrival instantly and silently — that is the
+canonical post-arrival setup every test suite leans on.
+
+This room teaches search (E and the crosshair-grow), then summoning, then the
+entire throw grammar without a tutorial: aim, outbound contact, fetch, return,
+physical locks, and the held-flight possibility.
 
 ## Act 1 — upstairs house
 

@@ -48,7 +48,9 @@ async function scenario(name, evaluate) {
     await page.waitForFunction(
       () => window.__FETCH && window.__FETCH.ready === true && window.__game,
       null,
-      { timeout: 60000, polling: 100 },
+      // 300s: boots take 24-45s when a concurrent agent's test battery owns
+      // the GPU (see HANDOFF 2026-08-14). Wall-clock slowness is not failure.
+      { timeout: 300000, polling: 100 },
     );
     const result = await page.evaluate(evaluate);
     for (const check of result.checks || []) record(name, check);
@@ -82,6 +84,14 @@ try {
     const FIXED_DT = 1 / 120;
 
     F.start();
+    // THE NEW OPENING: a fresh boot wakes empty-handed; the skull arrives by
+    // shattering the bedroom window only after the bell is found and rung.
+    // This scenario is about the throw/growth laws, not the arrival — jump
+    // through the canonical test contract (a hard teleport completes the
+    // arrival silently and hands over the skull) before exercising the
+    // grammar. The arrival itself is asserted by the bedroom-arrival
+    // scenarios below and by the playthrough's act-0 beats.
+    F.teleport('bedroom');
     F.stepWith(FIXED_DT, {}, false);
 
     const skull = g.skull;
@@ -1260,6 +1270,13 @@ try {
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
 
     F.start();
+    // Complete the bedroom arrival FIRST (hard-teleport contract), exactly as
+    // a real run reaches the mirror room with 'skullArrived' long since
+    // flagged. Only then does the waterfall's vanish() hold: teleport's
+    // instant-completion keys on the missing flag, and simulating the
+    // bargain before the flag exists would resurrect the skull.
+    F.teleport('bedroom');
+    F.stepWith(0.2, {}, false);
     g.skull.vanish();
     const audioCalls = [];
     for (const name of ['skullMoanStart', 'skullMoanUpdate', 'skullMoanStop', 'catchThud', 'gasp']) {
@@ -1368,6 +1385,224 @@ try {
     );
 
     return { checks, diagnostics: { audioCalls, guard, half: g.finale.half } };
+  });
+
+  // ---- THE NEW OPENING: three arrival traps -------------------------------
+  // Alex: "Make sure it doesn't get the key on the way in when you first meet
+  // it shattering the window." The room boots skull-less; the bell (hidden
+  // under a floorboard, gated behind the rug search) summons the skull through
+  // the strong-glass window. These scenarios drive the real interact
+  // dispatcher — hard player placement is setup, every E press is a real
+  // input frame — then assert the three state truths restarts must preserve.
+
+  await scenario('arrival-never-takes-the-key', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.stepWith(0.5, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    // stand at a probe-verified pose, put the crosshair on the world point,
+    // press E through the real input frame
+    const useAt = (sx, sz, tx, ty, tz) => {
+      g.player.pos.set(sx, 3.6, sz);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player._sync(0);
+      const cam = g.camera.getWorldPosition(new (g.scene.position.constructor)());
+      const dx = tx - cam.x, dy = ty - cam.y, dz = tz - cam.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      g.player._sync(0);
+      F.stepWith(1 / 60, {}, false);
+      F.stepWith(0.06, { interactPressed: true }, false);
+    };
+
+    check(
+      'the room boots skull-less behind strong glass',
+      g.skull.mode === 'gone' && g.skull.root.parent === null
+        && A.state === 'searching' && !glass.broken && !!glass.pane.parent
+        && glass.collider.max.y > glass.collider.min.y,
+      { mode: g.skull.mode, state: A.state, broken: glass.broken },
+    );
+
+    // the two-step find: rug corner reveals the floorboard, floorboard the bell
+    useAt(10.4, 1.25, 10.65, 3.64, 2.35);   // S4 rug corner
+    F.stepWith(1.2, {}, false);
+    useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
+    F.stepWith(1.2, {}, false);
+    check(
+      'the rug-then-floorboard find surfaces the bell',
+      g.bedroomSearch.rug.done && g.bedroomSearch.floorboard.done
+        && A.bellFound && A.state === 'bellFound',
+      { state: A.state, bellFound: A.bellFound },
+    );
+    useAt(10.0, 1.5, 10.42, 3.7, 2.16);     // ring it where it lies
+    check('the bell answers with the summons', A.bellRung && A.state === 'called', A.state);
+
+    // run the whole arrival; sample the flight's mode/carry the entire way
+    const trace = [];
+    for (let i = 0; i < 170 && A.state !== 'done'; i++) {
+      F.stepWith(0.15, {}, false);
+      trace.push({
+        state: A.state,
+        mode: g.skull.mode,
+        carry: g.skull.carry ? g.skull.carry.id : null,
+      });
+    }
+    check(
+      'the summons runs to the settled catch',
+      A.state === 'done' && g.flags.has('skullArrived')
+        && g.skull.mode === 'held' && !g.skull.introFlicker,
+      { state: A.state, mode: g.skull.mode },
+    );
+    check(
+      'the inbound flight ran in mode gone (no target can fire)',
+      trace.some((r) => r.state === 'inbound' && r.mode === 'gone'),
+      { states: [...new Set(trace.map((r) => r.state + '/' + r.mode))] },
+    );
+    check(
+      'the window burst inward and stays burst',
+      glass.broken && glass.pane.parent === null
+        && glass.collider.max.y === glass.collider.min.y && glass.shards.visible,
+      { broken: glass.broken },
+    );
+    const treeKey = g.world.fetchTargets.find((t) => t.id === 'treeKey');
+    check(
+      'the arrival never takes the key',
+      g.skull.carry === null && trace.every((r) => r.carry === null)
+        && !g.flags.has('gotBedroomKey')
+        && !!treeKey && treeKey.enabled === true && treeKey.object.parent === g.scene,
+      {
+        carry: g.skull.carry,
+        everCarried: trace.some((r) => r.carry !== null),
+        treeKeyEnabled: treeKey?.enabled ?? null,
+        keyInScene: treeKey ? treeKey.object.parent === g.scene : null,
+      },
+    );
+
+    return { checks, diagnostics: { samples: trace.length } };
+  });
+
+  await scenario('restart-before-arrival-keeps-the-room-skull-less', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.stepWith(0.5, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    const useAt = (sx, sz, tx, ty, tz) => {
+      g.player.pos.set(sx, 3.6, sz);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player._sync(0);
+      const cam = g.camera.getWorldPosition(new (g.scene.position.constructor)());
+      const dx = tx - cam.x, dy = ty - cam.y, dz = tz - cam.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      g.player._sync(0);
+      F.stepWith(1 / 60, {}, false);
+      F.stepWith(0.06, { interactPressed: true }, false);
+    };
+
+    // two honest searches, then die-and-restart in the search phase
+    useAt(9.35, 4.1, 9.35, 4.12, 5.2);      // S1 dresser
+    F.stepWith(1.2, {}, false);
+    useAt(6.0, 4.6, 5.99, 5.2, 5.84);       // S6 curtains
+    F.stepWith(1.4, {}, false);
+    const searchedBefore = A.searchedCount;
+    F.pause('regression');
+    F.restartCheckpoint();
+    F.stepWith(0.5, {}, false);
+
+    check(
+      'restart keeps the room skull-less',
+      g.skull.mode === 'gone' && g.skull.root.parent === null
+        && !g.flags.has('skullArrived') && A.state === 'searching',
+      { mode: g.skull.mode, state: A.state },
+    );
+    check(
+      'searches persist across the restart (they are world truth)',
+      searchedBefore === 2 && A.searchedCount === 2
+        && g.bedroomSearch.dresser.done && g.bedroomSearch.curtains.done
+        && Math.abs(g.bedroomProps.dresser.group.position.z - (5.235 - 0.24)) < 0.02,
+      {
+        searched: A.searchedCount,
+        drawerZ: +g.bedroomProps.dresser.group.position.z.toFixed(3),
+      },
+    );
+    check(
+      'the glass is still whole and strong',
+      !glass.broken && !!glass.pane.parent
+        && glass.collider.max.y > glass.collider.min.y && !glass.shards.visible,
+      { broken: glass.broken },
+    );
+
+    // the bell is still findable, and still answers
+    useAt(10.4, 1.25, 10.65, 3.64, 2.35);   // S4 rug corner
+    F.stepWith(1.2, {}, false);
+    useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
+    F.stepWith(1.2, {}, false);
+    check(
+      'the bell is still findable after the restart',
+      A.bellFound && A.state === 'bellFound' && A.searchedCount === 4,
+      { state: A.state, searched: A.searchedCount },
+    );
+    useAt(10.0, 1.5, 10.42, 3.7, 2.16);
+    check('and still re-ringable', A.bellRung && A.state === 'called', A.state);
+
+    return { checks, diagnostics: { searched: A.searchedCount } };
+  });
+
+  await scenario('restart-after-arrival-keeps-skull-and-broken-window', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('bedroom');                   // completes the arrival (test contract)
+    F.stepWith(0.3, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    check(
+      'teleport hands over the post-arrival room',
+      g.flags.has('skullArrived') && g.skull.mode === 'held'
+        && A.state === 'done' && glass.broken,
+      { state: A.state, mode: g.skull.mode },
+    );
+
+    F.pause('regression');
+    F.restartCheckpoint();
+    F.stepWith(0.5, {}, false);
+
+    check(
+      'restart keeps the skull in the hands',
+      g.flags.has('skullArrived') && g.skull.mode === 'held'
+        && !g.skull.introFlicker && A.state === 'done',
+      { mode: g.skull.mode, state: A.state, flicker: !!g.skull.introFlicker },
+    );
+    check(
+      'restart keeps the broken window broken',
+      glass.broken && glass.pane.parent === null
+        && glass.collider.max.y === glass.collider.min.y && glass.shards.visible,
+      { broken: glass.broken, shards: glass.shards.visible },
+    );
+    const bellInter = g.world.interactables
+      .map((o) => o.userData.inter).find((i) => i && i.id === 'bedroomBell');
+    check(
+      'the bell verb stays spent',
+      !!bellInter && bellInter.enabled === false,
+      { found: !!bellInter, enabled: bellInter?.enabled ?? null },
+    );
+
+    return { checks, diagnostics: null };
   });
 } finally {
   await browser.close().catch(() => {});

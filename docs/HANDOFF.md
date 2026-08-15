@@ -171,6 +171,17 @@ worktree, interleaved to control machine state:
   been under sustained GPU load (a locked 30Hz compositor state); identical
   16.7ms healthy cadence on both trees when quiet. Thermal, not scene cost.
 
+RESOLVED, same day: Alex confirmed a Codex session was running ITS OWN test
+battery on another game on this machine the whole time. Every "environmental"
+failure above is contention on the shared GTX 980M: boots measured at 24-45s
+under load (shader compile starvation), which also blew autotest's 90s goto
+timeout after the pass-2a merge — with a long timeout the suite PASSES 24/24
+on the combined tree, and the harness GPU was probe-verified as real D3D11
+(ANGLE/NVIDIA, not swiftshader). LESSON FOR THE NEXT SESSION: before believing
+a timing-flavoured red (goto timeouts, cadence, cold-start ceilings), check
+for a concurrent agent's Chrome fleet — `Get-Process` for codex/cua_node — and
+re-run on a quiet machine or A/B against the base tree, interleaved.
+
 ## Queue: pass 2, from Alex tonight, designs finished
 
 His words verbatim in the session record (scratchpad alex-words-aug14-
@@ -188,6 +199,112 @@ it, you probably wouldn't realize that that is what locks the gate down").
 
 Deliberately left: a held throw aimed out the open void doorway can poise
 outside the roofless house shell (probe phase D; Alex has not flagged it).
+
+## PASS 2 — LANDED (same night, this branch)
+
+The queue above is done. Alex's words, verbatim, from the session record
+(scratchpad alex-words-aug14-round2.md), folded in as promised:
+
+> "For the first room of the game:
+> window is originally strong glass that can't be broken.
+> (the player has to look around the room. opening stuff and getting feedback
+> visually and sound effects. Make room more interesting and detailed with
+> more creepy stuff but some of it being stuff that would be a room and a lot
+> of stuff you can search and make a small change in it with an animation
+> when you search. and make the new improve room foreshadowing somehow a bit
+> too. though I'm not sure how, but you could figure something out.)
+> Eventually you find a bell you can activate (Hide it in a clever place.
+> when you activate it and in loudly dings in a realistic but kind of spooky
+> bell sound). Suddenly you hear a lot of clicking of bones in the distance
+> in the direction of the glass window. the bones sounds and soar sounds get
+> closer and closer unthil the skull bursts through the window, shattering
+> it, and landing in your hands. For a few secibds it flockers back and
+> forth between a human head while mashing and meacingly chattering its jaw
+> bones befire it becomes that skull be know and love from the rest of the
+> game. Then you can throw it to get the key. Make sure it doesn't get the
+> key on the way in when you firs meet it shattering the window."
+
+> "Rest of the house:
+> If you knock a lot on that Spooky door on the first floor that lets you
+> knock, it should have a terrifying effect."
+
+> "You can fix the chasing monster in the house. He gets stuck on the stairs
+> and often stuck a lot of places where he can't find his way to you."
+
+> "And fix the second floor window enemy so it actually comes in the window?"
+
+> "those machines should really start chugging whatever it is that is
+> supposed to work."
+
+> "But unless you were really thinking about it, you probably wouldn't
+> realize that that is what locks the gate down. I'd probably just automate
+> it somehow."
+
+What shipped, all on claude/feedback-aug14-2:
+
+- **THE NEW OPENING (Act 0 replaced).** The room boots skull-less
+  (Skull.bootAbsent, vanish()'s census-safe light parking made recoverable);
+  wake at the bed edge facing the window, covers thrown back off a body that
+  isn't there, iron slide-latch on YOUR side of the door. Nine E-searchables
+  (dresser/leash, wardrobe/child coat, covers/imprint, rug/claw gouges,
+  floorboard/BELL, curtains, nightstand, framed falls painting over a
+  mirror-shaped unfaded patch, door latch that slides and the door still
+  holds), each one press -> one dt animation -> one HRTF synth -> one
+  persistent change. The bell is a dog's collar-bell hidden under the
+  floorboard, gated behind the rug search; E rings it where it lies
+  (bellRing dark variant + duck), two seconds of silence, then
+  boneApproachStart glides in from past the graveyard (click density and
+  pitch ARE the approach), the moan joins late, the pane shatters inward
+  (glassShatter, pooled burst, shard teeth stay forever, added collider
+  collapses — the base skullPass collider is never touched), the scripted
+  flight homes on the LIVE camera in mode 'gone' and lands in the hands;
+  3.6s human-head/skull flicker with mashing jaw chatter (stage-5 sculpt,
+  presentation only); throws gated by skull.introFlicker until the settle —
+  then the tree-key beat proceeds exactly as it always did. KEY GUARD, his
+  "Make sure" clause, is triple: mode-'gone' flight (no _checkTargets), a
+  path authored wide of the branch, and regression traps asserting
+  carry===null with the treeKey enabled after arrival. State plumbing:
+  'skullArrived' flag; Game.teleport auto-completes the arrival silently
+  (the canonical post-arrival test setup); director.respawn is three-way
+  (waterfall -> vanish; pre-arrival -> re-assert absence, searches persist,
+  bell back to found-but-unrung; else holdNow).
+- **The front door answers** (frontDoorKnockAct): staged knock-back ladder
+  through the boot-built under-door light seam, ending in the one-shot
+  stage-3 answer — the blow, the walk around the house, and the last small
+  knock from INSIDE, right behind you.
+- **The house chaser fixed**: houseNav stair links + mid-flight cell
+  fallback, cross-storey BFS routes, freeze gates retired (windT now means
+  "genuinely failing", not "on another storey"), Marrow's best-approach
+  stall clock + unseen-only relocate + face-of-travel, walker door-besiege
+  paw. He climbs the stairs to you now.
+- **The window watcher ACTUALLY ENTERS**: sash slides up with a creak, the
+  figure folds through, drops inside, skitters into the house dark; the
+  sash stays cracked open after.
+- **The archive stands CHUG** while the draft runs — per-stand phase,
+  pistons in time, positional.
+- **The pump-gallery far pawl latches ITSELF** when you reach the far side
+  with the bridge down — heavy clank, winch release; early-release
+  rewind/retry unchanged.
+
+GATES, run serially on the final combined source (FETCH_PORT=8834, system
+Chrome D3D11): smoke ALL PASS (583 draws in-sample, zero errors); autotest
+26/26 (was 24 — new 'act0-boots-skull-less' and 'teleport-grants-the-skull',
+and the key->lock check now delivers by aiming the live camera and throwing,
+because outbound guide steering follows the camera and the old synthetic
+mid-air spawn behind the shut door predates the authored wake spawn);
+regressions 97/97 (three new arrival scenarios: 'arrival-never-takes-the-key'
+drives rug->floorboard->bell through the real interact dispatcher and traces
+the whole flight carry-null; the two restart scenarios pin the
+pre/post-arrival respawn truths; scenario 1 and finale-contact gained the
+canonical teleport insert); playthrough COMPLETE at 48 beats (was 40 — act 0
+now walks all nine searches by real input, proves the bell hidden until
+found, rings it, and rides the arrival through 'the-window-broke-inward',
+'it-landed-in-your-hands', 'it-did-not-take-the-key' and
+'throws-wait-for-the-settle' before the key beats run unchanged).
+pause-title-regression 25/25 — its checkpoint-restart block assumed a held
+skull at boot and now completes the arrival via the teleport contract first.
+WALKTHROUGH.md Act 0 rewritten to the new truth; DESIGN.md carries a dated
+addendum with Alex's spec verbatim above the preserved original beat.
 
 ---
 

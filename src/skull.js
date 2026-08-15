@@ -110,6 +110,14 @@ export class Skull {
     this._jawSnapT = 2.5;
     this._spin = 0;
 
+    // bedroom-arrival state. _absentLights records where the parked lights
+    // live (bootAbsent/arriveRestore); introFlicker is the human-head strobe
+    // that runs in the hands right after the window catch (beginIntroFlicker,
+    // driven in _updateHeld). Both presentation-side: no FEEL constant reads
+    // or writes either.
+    this._absentLights = null;
+    this.introFlicker = null;
+
     this._buildMesh();
     this._buildViewmodel();
     this._buildTether();
@@ -624,6 +632,10 @@ export class Skull {
   }
 
   _applyPendingStageIfUnseen() {
+    // The arrival flicker owns the stage machinery outright for its 3.6s —
+    // no growth request may interleave with the strobe. It ends by settling
+    // to setStage(0), which also zeroes pendingStage (boot state).
+    if (this.introFlicker) return;
     if (this.pendingStage <= this.stage) return;
     if (this.mode === 'gone') { this.setStage(this.pendingStage); return; }
     if (this.mode === 'held') return;              // guaranteed foreground view
@@ -778,6 +790,81 @@ export class Skull {
     this.audio.skullMoanStop();
   }
 
+  bootAbsent() {
+    // THE NEW OPENING: a fresh run wakes empty-handed — the skull is not in
+    // the world yet; it arrives later by shattering the bedroom window.
+    // This is exactly vanish()'s proven census-safe parking pattern (root
+    // removed, every light in the subtree parked in the pinned census root
+    // and muted) minus the waterfall connotations — and, unlike vanish(),
+    // recoverable: each light's home parent and local transform is recorded
+    // so arriveRestore() can put everything back. Must only run AFTER
+    // World.pinLightCensus (the pin counts these lights with skull.root as a
+    // carrier FIRST; parking via lightRoot keeps the census constant).
+    this.mode = 'gone';
+    this.anchor = null;
+    this._catchFx = null;
+    this.introFlicker = null;
+    const lightRoot = this.world?.lightRoot;
+    if (lightRoot) {
+      this._absentLights = this._absentLights || [];
+      const carried = [];
+      this.root.traverse((o) => { if (o.isLight) carried.push(o); });
+      for (const light of carried) {
+        if (!this._absentLights.some((r) => r.light === light)) {
+          this._absentLights.push({
+            light,
+            parent: light.parent,
+            position: light.position.clone(),
+            quaternion: light.quaternion.clone(),
+            scale: light.scale.clone(),
+          });
+        }
+        lightRoot.attach(light);
+        light.visible = false;   // World.pinLight mutes to black, never hides
+      }
+    }
+    if (this.root.parent) this.root.parent.remove(this.root);
+    this.tether.visible = false;
+    this.audio.skullMoanStop();
+  }
+
+  arriveRestore() {
+    // The restore half of bootAbsent(): root back under the scene, lights back
+    // in their home sockets, unmuted. Mode STAYS 'gone' — the bedroom arrival
+    // script owns the scripted inbound flight (in 'gone' no _collide and no
+    // _checkTargets can ever run, which is the key guard) and calls holdNow()
+    // itself at the catch. Teleport's instant completion calls this too, then
+    // holdNow() immediately. Order matters: the root joins the scene BEFORE
+    // the lights re-enter it, so no light ever sits in a detached subtree
+    // (which would drop it from the census and recompile every lit material).
+    if (!this.root.parent) this.scene.add(this.root);
+    this.root.traverse((o) => { if (!o.isLight) o.layers.set(0); });
+    this.root.position.copy(this.pos);
+    this.root.scale.setScalar(1);
+    for (const r of this._absentLights || []) {
+      r.parent.add(r.light);
+      r.light.position.copy(r.position);
+      r.light.quaternion.copy(r.quaternion);
+      r.light.scale.copy(r.scale);
+      r.light.visible = true;   // the pinLight setter unmutes colour; the count never moves
+    }
+    this._absentLights = null;
+  }
+
+  beginIntroFlicker() {
+    // The arrival script calls this right after holdNow(): for ~3.6s the
+    // caught thing strobes human head <-> bone before settling as the skull
+    // we know. Opens ON the head — the shock lands the same frame as the
+    // catch. Driven per-frame in _updateHeld; presentation only.
+    this.introFlicker = {
+      t: 0, dur: 3.6,
+      next: 0.09 + Math.random() * 0.1,
+      showHead: true,
+      snapT: 0.3, snapHold: 0,
+    };
+    this.setStage(5);
+  }
+
   setThreat(level, dir) {
     this.threat = clamp(level, 0, 1);
     if (dir) this.threatDir.copy(dir);
@@ -864,23 +951,58 @@ export class Skull {
     this.camera.getWorldPosition(V.f);
     if (V.e.distanceToSquared(V.f) > 1e-6) this.root.lookAt(V.f);
 
-    // jaw: slow drift open, then SNAP shut. while charging it opens wide.
-    this._jawSnapT -= dt;
-    if (c > 0.05) {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.5 + c * 0.25, 8, dt);
-    } else if (this.threat > 0.02) {
-      // chatter: rate and bite scale with threat — this is the radar
-      const rate = 6 + this.threat * 20;
-      this.jaw.rotation.x = Math.max(0, Math.sin(t * rate * TAU * 0.5)) * (0.05 + this.threat * 0.14);
-      this.audio.skullChatter(this.threat, this.root.getWorldPosition(V.c));
-    } else if (this._jawSnapT < 0.35 && this._jawSnapT > 0) {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.4, 3, dt);   // slow creep open
-    } else if (this._jawSnapT <= 0) {
-      this.jaw.rotation.x = 0;                                       // SNAP
-      this._jawSnapT = 3 + Math.random() * 6;
-      this.audio.skullChatter(0.25, this.root.getWorldPosition(V.c));
+    // THE FLICKER (bedroom arrival): for ~3.6s after the window catch the
+    // thing in your hands strobes human head <-> bone. Irregular 80-220ms
+    // swaps — shape/brightness/timing carry the read, never hue — with the
+    // intervals lengthening over the last 1.2s so the head visibly LOSES and
+    // it settles as the skull. While it runs, the jaw mashes (~11 Hz) with
+    // hard bite snaps and the radar voice plays at maximum from the hold pos:
+    // the loudest chatter in the game, in your own hands, teaching the threat
+    // sound in the same stroke. Presentation plus one input gate in main.js;
+    // every FEEL constant untouched.
+    if (this.introFlicker) {
+      const f = this.introFlicker;
+      f.t += dt;
+      if (f.t >= f.dur) {
+        this.setStage(0);      // it becomes the skull we know; pendingStage 0 = boot state
+        this.jaw.rotation.x = 0;
+        this.introFlicker = null;
+      } else {
+        if (f.t >= f.next) {
+          f.showHead = !f.showHead;
+          this.setStage(f.showHead ? 5 : 0);
+          let interval = 0.08 + Math.random() * 0.14;          // irregular strobe
+          const settle = smoothstep(f.dur - 1.2, f.dur, f.t);  // the last 1.2s
+          interval *= 1 + settle * 2.2;                        // it slows...
+          if (!f.showHead) interval *= 1 + settle * 0.8;       // ...and bone holds longest
+          f.next = f.t + interval;
+        }
+        // menacing jaw mash with irregular hard bite snaps
+        f.snapT -= dt;
+        if (f.snapT <= 0) { f.snapT = 0.26 + Math.random() * 0.42; f.snapHold = 0.055; }
+        if (f.snapHold > 0) { f.snapHold -= dt; this.jaw.rotation.x = 0; }
+        else this.jaw.rotation.x = Math.max(0, Math.sin(f.t * 11 * TAU)) * 0.34;
+        this.audio.skullChatter(1.0, this.root.getWorldPosition(V.c));
+      }
     } else {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0, 6, dt);
+      // jaw: slow drift open, then SNAP shut. while charging it opens wide.
+      this._jawSnapT -= dt;
+      if (c > 0.05) {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.5 + c * 0.25, 8, dt);
+      } else if (this.threat > 0.02) {
+        // chatter: rate and bite scale with threat — this is the radar
+        const rate = 6 + this.threat * 20;
+        this.jaw.rotation.x = Math.max(0, Math.sin(t * rate * TAU * 0.5)) * (0.05 + this.threat * 0.14);
+        this.audio.skullChatter(this.threat, this.root.getWorldPosition(V.c));
+      } else if (this._jawSnapT < 0.35 && this._jawSnapT > 0) {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.4, 3, dt);   // slow creep open
+      } else if (this._jawSnapT <= 0) {
+        this.jaw.rotation.x = 0;                                       // SNAP
+        this._jawSnapT = 3 + Math.random() * 6;
+        this.audio.skullChatter(0.25, this.root.getWorldPosition(V.c));
+      } else {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0, 6, dt);
+      }
     }
     if (this.carry) {
       // An occupied mouth never seals the objective behind its own teeth.

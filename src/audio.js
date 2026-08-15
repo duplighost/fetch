@@ -51,6 +51,7 @@ export class GameAudio {
     this._chatter = null;
     this._chatAcc = 0.9; // head start: first jaw tick lands almost immediately
     this._moan = null;
+    this._boneApproach = null;
     this._loops = new Set();
     // Forest story props are ordinary owned loop handles, but their separate
     // set makes the two-voice budget an invariant of the audio engine rather
@@ -856,6 +857,7 @@ export class GameAudio {
     } else this._hbT = 0;
 
     this._updateChatter(dt);
+    this._updateBoneApproach(dt);
   }
 
   _thump(vol) {
@@ -922,6 +924,82 @@ export class GameAudio {
       pos: opts.pos, gain: 0.55 * (opts.gain ?? 1),
       rate: (0.9 + Math.random() * 0.2) * (opts.rate ?? 1), verb: opts.verb ?? 0.4,
     });
+  }
+
+  // Wood-on-wood: a swollen window sash forced up its frame. Stick-slip
+  // judder over a mid bandpass sweep with a low wood body under it — shorter
+  // and drier than stoneGrind (which reads as masonry) and far below the
+  // hinge squeal register of doorOpen.
+  sashScrape(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.72 / r;
+    const out = this._bus(opts, dur + 0.4, 1, opts.verb ?? 0.4);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2.4;
+    bp.frequency.setValueAtTime(215 * r, t);
+    bp.frequency.linearRampToValueAtTime(345 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.05, dur);
+    const jud = ctx.createOscillator(); jud.type = 'square'; jud.frequency.value = 12.5 * r;
+    const judDepth = ctx.createGain(); judDepth.gain.value = 0.14;
+    jud.connect(judDepth).connect(g.gain);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.15);
+    jud.start(t); jud.stop(t + dur + 0.15);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(92 * r, t);
+    o.frequency.linearRampToValueAtTime(74 * r, t + dur);
+    const og = ctx.createGain();
+    this._env(og, t, 0.16, 0.04, dur * 0.9);
+    o.connect(og).connect(out);
+    o.start(t); o.stop(t + dur + 0.1);
+  }
+
+  // A drawer riding its wooden runners: a small dry falling scrape with a
+  // faint wood body under it. The bedroom searchables' furniture voice —
+  // quieter and shorter than sashScrape (a whole swollen sash forced up its
+  // frame), no stick-slip judder, nowhere near doorOpen's hinge squeal.
+  // house.js sequences any stop-knock after it on its own dt clock.
+  woodSlide(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.4 / r;
+    const out = this._bus(opts, dur + 0.3, 1, opts.verb ?? 0.25);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.8;
+    bp.frequency.setValueAtTime(250 * r, t);
+    bp.frequency.linearRampToValueAtTime(180 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.4, 0.04, dur);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.1);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(88 * r, t);
+    o.frequency.linearRampToValueAtTime(72 * r, t + dur);
+    const og = ctx.createGain();
+    this._env(og, t, 0.1, 0.05, dur * 0.85);
+    o.connect(og).connect(out);
+    o.start(t); o.stop(t + dur + 0.08);
+  }
+
+  // Bedclothes dragged over a mattress edge: a lowpassed noise swell that
+  // breathes up and settles, darkening as the cloth lands. Deliberately the
+  // one search voice with NO transient — everything else in the room knocks,
+  // ticks, or scrapes; cloth answers by moving air.
+  clothDrag(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.6 / r;
+    const out = this._bus(opts, dur + 0.4, 1, opts.verb ?? 0.28);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+    lp.frequency.setValueAtTime(720 * r, t);
+    lp.frequency.linearRampToValueAtTime(330 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.34, dur * 0.4, dur * 0.6);
+    src.connect(lp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.15);
   }
 
   doorOpen(heavy, opts = {}) {
@@ -1033,17 +1111,33 @@ export class GameAudio {
   // inharmonic partials and long positional tail make the window relay audible
   // from either floor, so its causal payoff cannot be mistaken for a loose
   // latch.  Brightness, motion and this sound all tell the same state change.
+  //
+  // opts.dark: the bedroom hand bell — the same honest strike on the wrong
+  // bell. The partial stack sits lower, every decay is stretched ~1.8x into a
+  // 4-5s tail, and the fundamental is a PAIR ~4 cents apart so the tail beats
+  // slowly (~0.9 Hz) against itself. Realistic but kind of spooky: the
+  // wrongness lives entirely in the tail, never in the strike.
   bellRing(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const rate = opts.rate ?? 1;
-    const out = this._bus(opts, 3.4, 0.92, opts.verb ?? 0.78);
-    for (const [frequency, peak, decay, phase] of [
-      [512, 0.42, 2.7, 0],
-      [731, 0.3, 2.35, 0.35],
-      [1049, 0.19, 1.85, 0.8],
-      [1486, 0.1, 1.25, 1.2],
-    ]) {
+    const dark = !!opts.dark;
+    const out = this._bus(opts, dark ? 5.9 : 3.4, 0.92, opts.verb ?? 0.78);
+    const partials = dark
+      ? [
+        [370, 0.4, 4.85, 0],
+        [370.86, 0.33, 4.6, 0],  // detuned twin of the fundamental (~4 cents)
+        [528, 0.3, 4.2, 0.35],
+        [758, 0.19, 3.35, 0.8],
+        [1073, 0.1, 2.25, 1.2],
+      ]
+      : [
+        [512, 0.42, 2.7, 0],
+        [731, 0.3, 2.35, 0.35],
+        [1049, 0.19, 1.85, 0.8],
+        [1486, 0.1, 1.25, 1.2],
+      ];
+    for (const [frequency, peak, decay, phase] of partials) {
       const oscillator = ctx.createOscillator();
       oscillator.type = 'sine';
       oscillator.frequency.value = frequency * rate;
@@ -1096,6 +1190,67 @@ export class GameAudio {
     }
   }
 
+  // Something answers through the front door: ONE heavy muffled thump from
+  // beyond the wood. The sine body drops with opts.rate so a phrase can get
+  // heavier knock by knock, and the lowpassed noise is the muffle — a bigger
+  // space than yours is on the other side (baseVerb 0.5). Phrases are
+  // sequenced from house.js on its dt ticker; each call here is one thump, so
+  // tests can count calls. knock() ignores opts.rate by contract (every
+  // existing caller passes one and would retune), hence this sibling voice.
+  knockBack(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 1.1, 1, opts.verb ?? 0.5);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(74 * r, t);
+    o.frequency.exponentialRampToValueAtTime(40 * r, t + 0.16);
+    const g = ctx.createGain();
+    this._env(g, t, 0.6, 0.004, 0.32);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.44);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 480;
+    const g2 = ctx.createGain();
+    this._env(g2, t, 0.35, 0.003, 0.14);
+    src.connect(lp).connect(g2).connect(out);
+    src.start(t); src.stop(t + 0.2);
+  }
+
+  // THE BLOW: the front door struck from outside, frame and wall taking it
+  // with the panel. Three diminishing frame-shudder pulses ride behind the
+  // slam, and the sub swells underneath the way sting()'s does.
+  doorBoom(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 1.9, 1, opts.verb ?? 0.45);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(52 * r, t);
+    o.frequency.exponentialRampToValueAtTime(30 * r, t + 0.3);
+    const g = ctx.createGain();
+    this._env(g, t, 0.9, 0.003, 0.5);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.62);
+    const slam = ctx.createBufferSource(); slam.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300;
+    const sg = ctx.createGain();
+    this._env(sg, t, 0.6, 0.002, 0.25);
+    slam.connect(lp).connect(sg).connect(out);
+    slam.start(t); slam.stop(t + 0.32);
+    for (const [i, at] of [0.12, 0.26, 0.42].entries()) {
+      const shudder = ctx.createBufferSource(); shudder.buffer = this._noiseBuf;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 150; bp.Q.value = 2;
+      const gg = ctx.createGain();
+      this._env(gg, t + at, 0.25 - i * 0.075, 0.004, 0.1);
+      shudder.connect(bp).connect(gg).connect(out);
+      shudder.start(t + at); shudder.stop(t + at + 0.16);
+    }
+    const sub = this.subGain.gain;
+    sub.cancelScheduledValues(t);
+    sub.setValueAtTime(Math.max(0.0001, sub.value), t);
+    sub.exponentialRampToValueAtTime(Math.max(0.0002, 0.2 * (opts.gain ?? 1)), t + 0.28);
+    sub.exponentialRampToValueAtTime(0.0001, t + 1.4);
+  }
+
   metalDrop(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
@@ -1121,6 +1276,32 @@ export class GameAudio {
     this._env(g, t, 0.9, 0.3, 1.8);
     src.connect(bp).connect(g).connect(out);
     src.start(t); src.stop(t + 2.2);
+  }
+
+  // One working beat of an archive pressure stand: a low damped piston thump
+  // with a soft bandpassed exhaust hiss trailing it. house.js sequences the
+  // six stands on phase-offset dt clocks while the furnace draft is open —
+  // each call is one cycle, positional, transient. No standing loop nodes
+  // exist to scope, leak, or stop; leaving the district just stops the calls.
+  archiveChug(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 0.75, 1, opts.verb ?? 0.3);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(86 * r, t);
+    o.frequency.exponentialRampToValueAtTime(57 * r, t + 0.13);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.004, 0.24);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.34);
+    const hiss = ctx.createBufferSource(); hiss.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(760 * r, t + 0.05);
+    bp.frequency.linearRampToValueAtTime(430 * r, t + 0.34);
+    const hg = ctx.createGain();
+    this._env(hg, t + 0.05, 0.13, 0.03, 0.26);
+    hiss.connect(bp).connect(hg).connect(out);
+    hiss.start(t + 0.05); hiss.stop(t + 0.42);
   }
 
   fireRoar(opts = {}) {
@@ -1256,6 +1437,68 @@ export class GameAudio {
       o.connect(g).connect(out);
       o.start(t); o.stop(t + 0.4);
     }
+  }
+
+  // The bedroom window gives way: one 25ms crack of raw high noise as the
+  // pane fails all at once, a shower of staggered glassTink shard partials
+  // scattering after it, and the frame taking the blow underneath. Long verb
+  // tail — the room keeps the event after the glass is gone. One-shot;
+  // house.js owns the choreography around it.
+  glassShatter(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 2.6, 1, opts.verb ?? 0.75);
+    const crack = ctx.createBufferSource(); crack.buffer = this._noiseBuf;
+    const hp = ctx.createBiquadFilter(); hp.type = 'bandpass'; hp.Q.value = 0.55;
+    hp.frequency.value = 4200 * r;
+    const cg = ctx.createGain();
+    this._env(cg, t, 0.95, 0.001, 0.06);
+    crack.connect(hp).connect(cg).connect(out);
+    crack.start(t); crack.stop(t + 0.1);
+    // shards: 10-14 tink partials at randomized rates over the first 180ms
+    const bases = [2350, 3620, 5210];
+    const n = 10 + ((Math.random() * 5) | 0);
+    for (let i = 0; i < n; i++) {
+      const at = t + Math.random() * 0.18;
+      const o = ctx.createOscillator();
+      o.frequency.value = bases[(Math.random() * 3) | 0] * r * (0.72 + Math.random() * 0.62);
+      const g = ctx.createGain();
+      this._env(g, at, 0.05 + Math.random() * 0.1, 0.002, 0.16 + Math.random() * 0.24);
+      o.connect(g).connect(out);
+      o.start(at); o.stop(at + 0.5);
+    }
+    // the frame takes it: knock's low body, once, heavy
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(95 * r, t);
+    o.frequency.exponentialRampToValueAtTime(55 * r, t + 0.1);
+    const g = ctx.createGain();
+    this._env(g, t, 0.6, 0.003, 0.3);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.42);
+  }
+
+  // E on the pre-arrival bedroom pane. Deliberately RATTLE-FREE: lockedRattle's
+  // clacking grammar means "openable but locked", and this window is neither —
+  // it answers as one dull solid mass, a wall that happens to be glass. Single
+  // damped low body plus one quiet surface tick; nothing loose anywhere in it.
+  glassKnock(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 0.6, 1, opts.verb ?? 0.22);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(140 * r, t);
+    o.frequency.exponentialRampToValueAtTime(112 * r, t + 0.09);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.003, 0.16);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.28);
+    const tick = ctx.createBufferSource(); tick.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.6;
+    bp.frequency.value = 2400 * r;
+    const tg = ctx.createGain();
+    this._env(tg, t, 0.09, 0.001, 0.03);
+    tick.connect(bp).connect(tg).connect(out);
+    tick.start(t); tick.stop(t + 0.06);
   }
 
   splash(opts = {}) {
@@ -1569,6 +1812,99 @@ export class GameAudio {
       for (const nd of m.nodes) { try { nd.stop(); } catch {} }
       try { m.p.disconnect(); m.vs.disconnect(); m.out.disconnect(); } catch {}
     }, 700);
+  }
+
+  // THE ANSWER TO THE BELL: bones on the night air. One persistent HRTF
+  // panner glides in from beyond the graveyard while house.js drives it per
+  // frame — the skullMoan lifecycle (start / update / stop), never timers.
+  // Two layers on the one panner: bone clicks emitted from a dt accumulator
+  // in update() using the CHATTER recipe — the same baked tick buffers, with
+  // density and pitch riding closeness exactly like the radar rides threat,
+  // so when the skull later chatters in your hands you recognize what flew at
+  // you — and a soar layer, the moan's bandpassed-noise whoosh, that only
+  // speaks once the thing is close (closeness > 0.5). house.js layers
+  // skullMoanStart on top for the final seconds; this voice is the bones,
+  // not the throat.
+  boneApproachStart(pos = null, opts = {}) {
+    if (!this._ready || this._boneApproach) return;
+    const ctx = this.ctx;
+    // Wider refDistance than the moan's: this voice is born ~40m out and must
+    // read as a distant detail rather than silence, while the exponential
+    // model still supplies the whole approach crescendo for free.
+    const p = this._panner(pos || { x: 0, y: 1.4, z: 0 }, opts.ref ?? 5.5, opts.roll ?? 1.1);
+    const out = ctx.createGain(); out.gain.value = 0.0001;
+    out.connect(p); p.connect(this.master);
+    const vs = ctx.createGain(); vs.gain.value = 0.45;
+    p.connect(vs).connect(this.verbBus);
+    const soar = ctx.createBufferSource(); soar.buffer = this._noiseBuf; soar.loop = true;
+    const sbp = ctx.createBiquadFilter(); sbp.type = 'bandpass'; sbp.frequency.value = 420; sbp.Q.value = 1.1;
+    const sg = ctx.createGain(); sg.gain.value = 0.0001;
+    soar.connect(sbp).connect(sg).connect(out);
+    soar.start();
+    out.gain.setTargetAtTime(0.55, ctx.currentTime, 0.3);
+    this._boneApproach = { p, out, vs, sbp, sg, closeness: 0, fresh: 0.4, acc: 0.8, nodes: [soar] };
+  }
+
+  boneApproachUpdate(pos, closeness) {
+    const h = this._boneApproach;
+    if (!h || !this._ready) return;
+    const t = this.ctx.currentTime;
+    if (pos) this._setPos(h.p, pos.x, pos.y, pos.z);
+    const c = clamp01(closeness);
+    h.closeness = c; h.fresh = 0.4;
+    const s = smoothstep01((c - 0.5) / 0.5);
+    h.sg.gain.setTargetAtTime(Math.max(0.0001, s * 0.5), t, 0.09);
+    h.sbp.frequency.setTargetAtTime(380 + c * 2400, t, 0.09);
+    h.out.gain.setTargetAtTime(0.42 + c * 0.5, t, 0.12);
+  }
+
+  // Click emission rides the engine clock like the radar's does, so the cloud
+  // freezes with the sim on pause and falls silent if its driver dies.
+  _updateBoneApproach(dt) {
+    const h = this._boneApproach;
+    if (!h) return;
+    h.fresh -= dt;
+    if (h.fresh <= 0) {
+      // The driving script stopped feeding us mid-beat: go quiet but keep the
+      // nodes — a resumed driver picks the voice back up, and
+      // boneApproachStop / stopAll still own the teardown.
+      const t = this.ctx.currentTime;
+      h.sg.gain.setTargetAtTime(0.0001, t, 0.2);
+      h.out.gain.setTargetAtTime(0.0001, t, 0.25);
+      return;
+    }
+    const c = h.closeness;
+    h.acc += dt * lerp(2, 14, smoothstep01(c)); // click density IS the approach
+    while (h.acc >= 1) {
+      h.acc -= 1;
+      const hard = smoothstep01((c - 0.3) / 0.7); // the radar's soft-to-hard mix
+      const set = Math.random() < hard ? this._tickHard : this._tickSoft;
+      // dest is pre-panner so every click glides with the cloud; verb 0 here
+      // because the handle's own send is post-panner and carries the tail
+      const gain = 0.5 + c * 0.55;
+      const rate = (0.92 + Math.random() * 0.16) * (0.82 + c * 0.5);
+      this._play(set[(Math.random() * set.length) | 0], { dest: h.out, verb: 0, gain, rate });
+      if (Math.random() < 0.2 + c * 0.45) {
+        // a knuckle of the cloud answers itself — bones, plural
+        this._play(set[(Math.random() * set.length) | 0], {
+          dest: h.out, verb: 0, when: 0.025 + Math.random() * 0.05,
+          gain: gain * 0.7, rate: rate * 1.06,
+        });
+      }
+    }
+  }
+
+  boneApproachStop() {
+    const h = this._boneApproach;
+    if (!h) return;
+    this._boneApproach = null;
+    const t = this.ctx.currentTime;
+    h.out.gain.cancelScheduledValues(t);
+    h.out.gain.setTargetAtTime(0.0001, t, 0.1);
+    setTimeout(() => {
+      for (const nd of h.nodes) { try { nd.stop(); } catch {} }
+      try { h.p.disconnect(); h.vs.disconnect(); h.out.disconnect(); } catch {}
+    }, 600);
   }
 
   // THE THREAT RADAR. Call per-frame with 0..1: rate and sharpness carry the
@@ -1993,6 +2329,7 @@ export class GameAudio {
     const t = this.ctx.currentTime;
     for (const h of Array.from(this._loops)) h.stop();
     this.skullMoanStop();
+    this.boneApproachStop();
     this._chatter = null;
     this._tension = 0;
     this._hbT = 0;

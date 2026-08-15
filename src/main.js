@@ -262,6 +262,14 @@ class Game {
     this.world.pinLightCensus(this.scene, [this.camera, this.skull.root]);
     this.world.freezeMoonShadow(this.renderer, this.scene, this.camera);
 
+    // THE NEW OPENING: a fresh run wakes empty-handed — the skull arrives
+    // later by shattering the bedroom window (bedroomAct owns that script;
+    // Skull.bootAbsent is the census-safe absence). Gated on the act truth so
+    // any future path that boots already past the arrival keeps its hands
+    // full. Must run AFTER pinLightCensus: the pin counts the skull's lights
+    // with skull.root as a carrier first, THEN bootAbsent parks them.
+    if (this.act === 'bedroom' && !this.flags.has('skullArrived')) this.skull.bootAbsent();
+
     this._buildGrain();
     this._exposeDebug();
     this._scheduleShaderWarmup();
@@ -473,6 +481,15 @@ class Game {
     const previousChoir = this.enemies.choir;
     const hadSpawnLog = Object.prototype.hasOwnProperty.call(this, 'spawnLog');
     const spawnLogLength = this.spawnLog?.length || 0;
+    // The absent skull (the new opening) is the other mesh set traverse()
+    // cannot see: bootAbsent() removed its root from every graph while its
+    // lights stayed behind in the pinned census. Without this, the skull's
+    // materials meet the held-pass light set for the first time on the catch
+    // frame of the arrival — one program link landing on the act's biggest
+    // beat. Stand the root in the scene for the compile (it carries no lights
+    // while absent, so the census cannot move) and take it out again after.
+    const skullStandIn = !this.skull.root.parent;
+    if (skullStandIn) this.scene.add(this.skull.root);
     try {
       // Ordinary figures and the Drowned Choir are built on demand, so nothing
       // already in the boot scene carries their exact Lambert/custom programs.
@@ -523,11 +540,21 @@ class Game {
     } finally {
       // Remove the stand-ins the instant the synchronous compile is done. The
       // driver's remaining link work needs no scene objects.
+      if (skullStandIn && this.skull.root.parent === this.scene) {
+        this.scene.remove(this.skull.root);
+      }
       for (const entity of warmEntities) {
         const index = this.enemies.list.indexOf(entity);
         if (index >= 0) this.enemies.list.splice(index, 1);
         entity.loop?.stop?.();
         entity.loop = null;
+        // Hand a borrowed lamp back BEFORE the body goes (the enemies.js
+        // removal law). Removing the Choir stand-in with the loaner still
+        // parented to it carried the light out of the scene: the census moved
+        // on the one path built to keep it still — every warmup-compiled
+        // program keyed on the wrong light count — and the loaner was never
+        // reclaimable, so the real Choir arrived lampless.
+        if (entity.mesh.userData?.light) this.world.returnLight?.(entity.mesh.userData.light);
         entity.mesh.removeFromParent();
       }
       this.enemies.choir = previousChoir || null;
@@ -1073,7 +1100,28 @@ class Game {
     this._syncPauseUi();
   }
 
+  _completeArrivalInstant() {
+    // Debug/test teleports force exact truthful state (the `if (hard)
+    // setStage(stage)` pattern): a jump to ANY act before the bedroom arrival
+    // completes the arrival instantly and silently — flag set, window swapped
+    // to its shattered truth (the bedroom act's hook), lights restored, skull
+    // in the hands. No flicker, no sounds. Idempotent: real arrivals set the
+    // flag in the act script and this becomes a no-op.
+    if (this.flags.has('skullArrived')) return;
+    this.flag('skullArrived');
+    this.bedroomArrival?.completeInstant?.();
+    if (this.skull.mode === 'gone') {
+      this.skull.arriveRestore();
+      this.skull.holdNow();
+    }
+    if (this.skull.introFlicker) {   // a mid-flicker teleport settles instantly
+      this.skull.introFlicker = null;
+      this.skull.setStage(0);
+    }
+  }
+
   teleport(act) {
+    this._completeArrivalInstant();
     if (TEST_MODE) {
       this.el.fade.style.transitionDuration = '0s';
       this.el.fade.style.opacity = 0;
@@ -1128,7 +1176,10 @@ class Game {
     // input → skull verbs. Alex's grammar: press throws, hold keeps it out,
     // release brings it home. The button is the tether.
     const verbsLive = !this.dead && !this.flags.has('ended') && !this._basementExit;
-    if (verbsLive && frame.throwPressed && this.skull.mode === 'held') this.skull.tryThrow(ctx);
+    // !introFlicker: throws wait for the arrival flicker to settle ("Then you
+    // can throw it") — an input gate in kind with verbsLive, never control
+    // theft: camera and movement stay live for the whole 3.6s.
+    if (verbsLive && frame.throwPressed && this.skull.mode === 'held' && !this.skull.introFlicker) this.skull.tryThrow(ctx);
     // release ends an outbound throw AND lets go of a rope — one grammar, and
     // the anchored case is handled inside _updateAnchored so the swing and the
     // skull let go on the same frame
@@ -1525,6 +1576,13 @@ async function runAutotest(game) {
   F.start();
 
   check('boot-ready', () => F.ready === true && game.started);
+  // THE NEW OPENING: a fresh boot wakes empty-handed at the bed edge — the
+  // skull is not in the world until the bedroom bell calls it through the
+  // window. Every teleport below still works because a hard jump completes
+  // the arrival instantly (the debug/test contract in _completeArrivalInstant).
+  check('act0-boots-skull-less', () => game.act === 'bedroom'
+    && game.skull.mode === 'gone' && game.skull.root.parent === null
+    && !game.flags.has('skullArrived'));
   check('hud-prints-no-words-during-play', () => {
     let text = '';
     for (const el of document.querySelectorAll('#hud *')) {
@@ -1537,6 +1595,8 @@ async function runAutotest(game) {
   // press throws; while held it stays out
   F.teleport('graveyard');
   F.stepWith(0.2);
+  check('teleport-grants-the-skull', () => game.skull.mode === 'held'
+    && game.flags.has('skullArrived'));
   game.player.yaw = -Math.PI / 2;   // face open ground, not the crashed car
   F.stepWith(FIXED_DT, { throwPressed: true, throwHeld: true });
   F.stepWith(1.2, { throwHeld: true });
@@ -1565,9 +1625,24 @@ async function runAutotest(game) {
   F.stepWith(0.4);
   check('tree-key-rides-in-the-teeth', () => game.skull.carry && game.skull.carry.id === 'bedroomKey');
   F.stepWith(3);
-  const door = game.world.doorById.bedroomDoor;
-  F.setSkull(door.group.position.x, door.group.position.y, door.group.position.z - 1.5, 0, 0, 12, 'outbound');
-  F.stepWith(0.4);
+  // Deliver it the way the game does: aim the live camera at the lock and
+  // throw. (The old synthetic mid-air spawn behind the shut door predates the
+  // authored bed-edge wake spawn; outbound guide steering follows the live
+  // camera, so the flight must be aimed, never teleported past the aim.)
+  const lockT = game.world.fetchTargets.find((t) => t.id === 'bedroomLock');
+  const lockPos = lockT.object.getWorldPosition(new THREE.Vector3());
+  {
+    const dx = lockPos.x - game.player.pos.x;
+    const dy = lockPos.y - (game.player.pos.y + 1.62);
+    const dz = lockPos.z - game.player.pos.z;
+    game.player.yaw = Math.atan2(-dx, -dz);
+    game.player.pitch = Math.max(-1.3, Math.min(1.3, Math.atan2(dy, Math.hypot(dx, dz))));
+    game.player._sync(0);
+  }
+  F.stepWith(FIXED_DT, { throwPressed: true, throwHeld: true });
+  F.stepWith(0.5, { throwHeld: true });
+  F.stepWith(FIXED_DT, { throwReleased: true });
+  for (let t = 0; t < 2 && !game.flags.has('bedroomOpen'); t += 0.1) F.stepWith(0.1);
   check('key-unlocks-the-bedroom-door', () => game.flags.has('bedroomOpen'));
   F.stepWith(2.5);
 

@@ -502,6 +502,85 @@ export class World {
         M[r.guardMat || r.mat || 'woodDark'] || M.woodDark,
       );
     }
+
+    // ----------------------------------------------- stair links (nav graph)
+    // The graph knew every room, door and hole but treated the storeys as
+    // separate islands, so a chasing body carried onto a flight by the ground
+    // walk fell off the map entirely and froze mid-staircase (Alex: "he gets
+    // stuck on the stairs"). Register each authored flight as ONE extra graph
+    // edge with a waypoint at either end ON the flight's centreline, so a
+    // routed body walks the axis and can never be shoved over the open side.
+    // Flights tagged noEnemyRoute — and any flight that touches the basement —
+    // never register: "the Resident does not follow you down, the door slams"
+    // stays an authored beat, and house-spawned walkers stay out of the
+    // basement forever. Purely additive: nothing consumes these links until
+    // the enemies' router asks for them.
+    this.houseNav.stairs = [];
+    for (const lv of Object.keys(this.houseNav.levels)) {
+      this.houseNav.levels[lv].stairAt = new Map();
+    }
+    for (const ramp of this.ramps) {
+      if (ramp.noEnemyRoute) continue;
+      const [loEnd, hiEnd] = this._stairEnds(ramp);
+      const lo = this._stairEndCell(loEnd);
+      const hi = this._stairEndCell(hiEnd);
+      // both ends must land on real, non-hole cells of two different storeys,
+      // neither of them the basement — otherwise the flight stays off-graph
+      if (!lo || !hi || lo.lv === hi.lv) continue;
+      if (lo.lv === 'basement' || hi.lv === 'basement') continue;
+      const link = {
+        id: ramp.id || 'stair:' + this.houseNav.stairs.length,
+        ramp,
+        lo: { lv: lo.lv, cx: lo.cx, cz: lo.cz, y: loEnd.y, pos: { x: loEnd.x, z: loEnd.z } },
+        hi: { lv: hi.lv, cx: hi.cx, cz: hi.cz, y: hiEnd.y, pos: { x: hiEnd.x, z: hiEnd.z } },
+      };
+      this.houseNav.stairs.push(link);
+      for (const end of [link.lo, link.hi]) {
+        const key = end.cx + ',' + end.cz;
+        const level = this.houseNav.levels[end.lv];
+        if (!level.stairAt.has(key)) level.stairAt.set(key, []);
+        level.stairAt.get(key).push(link);
+      }
+    }
+  }
+
+  // The two routable ends of a flight, low end first. The LOW waypoint sits
+  // 0.6 m inside the ramp (a step or two up from the foot); the HIGH waypoint
+  // sits 0.6 m beyond the top edge, on the upper storey's real floor. Both on
+  // the centreline of the flight.
+  _stairEnds(ramp) {
+    const inset = 0.6;
+    const midX = (ramp.x0 + ramp.x1) / 2;
+    const midZ = (ramp.z0 + ramp.z1) / 2;
+    const len = ramp.axis === 'z' ? ramp.z1 - ramp.z0 : ramp.x1 - ramp.x0;
+    const lowAt0 = ramp.y0 <= ramp.y1;   // which side of the run is the foot?
+    const lowY = Math.min(ramp.y0, ramp.y1)
+      + Math.abs(ramp.y1 - ramp.y0) * (inset / Math.max(inset, len));
+    const highY = Math.max(ramp.y0, ramp.y1);
+    const low = ramp.axis === 'z'
+      ? { x: midX, z: lowAt0 ? ramp.z0 + inset : ramp.z1 - inset, y: lowY }
+      : { x: lowAt0 ? ramp.x0 + inset : ramp.x1 - inset, z: midZ, y: lowY };
+    const high = ramp.axis === 'z'
+      ? { x: midX, z: lowAt0 ? ramp.z1 + inset : ramp.z0 - inset, y: highY }
+      : { x: lowAt0 ? ramp.x1 + inset : ramp.x0 - inset, z: midZ, y: highY };
+    return [low, high];
+  }
+
+  // Resolve a stair end to its nav cell: a storey whose floor is within the
+  // same 1.2 m band houseCellAt uses, whose cell exists and is not a hole.
+  _stairEndCell(end) {
+    const nav = this.houseNav;
+    if (!nav) return null;
+    const cx = Math.floor((end.x - nav.ox) / nav.cs);
+    const cz = Math.floor((end.z - nav.oz) / nav.cs);
+    for (const lv of Object.keys(nav.levels)) {
+      const level = nav.levels[lv];
+      if (Math.abs(level.floorY - end.y) > 1.2) continue;
+      const key = cx + ',' + cz;
+      if (!level.cells.has(key) || level.holes.has(key)) continue;
+      return { lv, cx, cz };
+    }
+    return null;
   }
 
   _emitWall(orient, ex, ez, floor, ceil, t, matA, matB, cuts, OX, OZ, lv, T) {
@@ -654,6 +733,26 @@ export class World {
       const key = cx + ',' + cz;
       if (!level.cells.has(key) || level.holes.has(key)) continue;
       return { lv, cx, cz };
+    }
+    // Mid-flight fallback: a body ON a stair run sits between the storey
+    // bands, and used to fall off the graph entirely — it could not even plan
+    // its way off the stairs (the probe's 10.9 s mid-staircase statue).
+    // Resolve it to the NEAREST end's cell, tagged with the flight, so routes
+    // can start from and end at bodies on stairs.
+    for (const r of this.ramps) {
+      if (x < r.x0 - 0.3 || x > r.x1 + 0.3 || z < r.z0 - 0.3 || z > r.z1 + 0.3) continue;
+      if (y < Math.min(r.y0, r.y1) - 1.2 || y > Math.max(r.y0, r.y1) + 1.2) continue;
+      const t = r.axis === 'z'
+        ? (z - r.z0) / Math.max(0.001, r.z1 - r.z0)
+        : (x - r.x0) / Math.max(0.001, r.x1 - r.x0);
+      const [lowEnd, highEnd] = this._stairEnds(r);
+      const lowAt0 = r.y0 <= r.y1;
+      const nearLow = lowAt0 ? t <= 0.5 : t > 0.5;
+      const ends = nearLow ? [lowEnd, highEnd] : [highEnd, lowEnd];
+      for (const end of ends) {
+        const cell = this._stairEndCell(end);
+        if (cell) return { lv: cell.lv, cx: cell.cx, cz: cell.cz, stair: r.id || null };
+      }
     }
     return null;
   }

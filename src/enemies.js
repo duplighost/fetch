@@ -1343,26 +1343,8 @@ export class Enemies {
           // the whole game and arrive three acts later as phantom stragglers.
           if (!e.home) e.home = { x: e.pos.x, z: e.pos.z };
           if (Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z) > 24) break;
-          const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
-          const d2 = toE.length();
-          const inView = d2 < 42 && camFwd.dot(toE.divideScalar(Math.max(d2, 0.001))) > 0.28;
-          let observed = false;
-          if (inView) {
-            e._losT = (e._losT || 0) - dt;
-            if (e._losT <= 0) {
-              // Sight is structural, not psychic: shut doors and walls freeze it;
-              // an open door (collapsed collider) or open window does not.
-              e._losT = 0.08;
-              const lookY = e.pos.y + Math.min(e.spec.h * 0.72, e.spec.h - 0.2);
-              e._losClear = !this._segmentBlocked(
-                camPos.x, camPos.y, camPos.z, e.pos.x, lookY, e.pos.z,
-              );
-            }
-            observed = !!e._losClear;
-          } else {
-            e._losT = 0;
-            e._losClear = false;
-          }
+          const d2 = Math.hypot(e.pos.x - camPos.x, e.pos.z - camPos.z);
+          const observed = this._isObserved(e, dt, camPos, camFwd);
           // e.tether (opt-in, metres from e.home) bounds the unobserved creep:
           // a tethered Standing One closes while your back is turned but never
           // leaves its post. The ossuary resident uses it — the corridor's
@@ -1388,6 +1370,12 @@ export class Enemies {
         }
         case 'stalk': {
           if (dist > 1 && sameLevel) {
+            if (e._stalkVia) {
+              // back on your storey: pure pursuit again, drop the climb plan
+              e._stalkVia = false;
+              e._via = null;
+              e._route = null;
+            }
             toP.normalize();
             this._moveWithPush(e, toP.x * e.spec.stalk * dt, toP.z * e.spec.stalk * dt);
             // A body that now inhabits the whole act must be audible while it
@@ -1399,6 +1387,37 @@ export class Enemies {
               e.stepT = 0.62 + Math.random() * 0.1;
               game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
             }
+          } else if (dist > 1 && !sameLevel
+            && (game.act === 'house' || game.act === 'bedroom')) {
+            // The stalk climbs now — quietly. Stalk pace, stalk cadence, the
+            // stairs' own wood underfoot as the tell; the wind-up mercy-tell
+            // below still cannot begin until it shares your storey.
+            e._navT = (e._navT || 0) - dt;
+            if (e._navT <= 0) {
+              e._navT = 0.9;
+              let route = this._houseRoute(e, { exclude: e._viaLast });
+              if (!route && e._viaLast) route = this._houseRoute(e);
+              if (route?.length) { e._route = route; e._via = route[0]; e._stalkVia = true; }
+              else { e._route = null; e._via = null; }
+            }
+            if (this._viaReached(e)) {
+              e._viaLast = e._via.door || e._viaLast;
+              e._route?.shift();
+              e._via = e._route?.[0] || null;
+            }
+            if (e._via) {
+              const dl = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z) || 1;
+              this._moveWithPush(e, (e._via.x - e.pos.x) / dl * e.spec.stalk * dt,
+                (e._via.z - e.pos.z) / dl * e.spec.stalk * dt);
+              e.stepT -= dt;
+              if (e.stepT <= 0) {
+                e.stepT = 0.62 + Math.random() * 0.1;
+                game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
+              }
+              // a stalking Resident still works a knob the same way it always
+              // has — the rattle-tell precedes the panel, unchanged grammar
+              if (e.kind === 'resident') this._tryOpenDoor(e, dt);
+            }
           }
           if (sameLevel && dist < 9 && (player.noise > 0.3 || dist < 5)) { e.state = 'wind'; e.windT = 0; }
           break;
@@ -1406,6 +1425,10 @@ export class Enemies {
         case 'wind': {
           // the wind-up IS the mercy: sound tells you it's coming before it moves
           e.windT += dt;
+          // seed the chase acceleration clock: windT and the ramp used to be
+          // one number; in the house windT now means "seconds of genuinely
+          // failing", so the speed curve rides _chaseT from the same start
+          e._chaseT = e.windT;
           if (e.windT === dt && !game.audio.enemyTell?.(e.kind, { pos: e.pos })) {
             game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
           }
@@ -1414,7 +1437,13 @@ export class Enemies {
           break;
         }
         case 'chase': {
-          if (!sameLevel) { e.windT += dt; break; }   // it waits below. it hears you.
+          // Storeys used to be a hard wall for the AI, which in the house
+          // meant a statue at the foot of the stairs — or worse, ON them —
+          // whenever you climbed. Indoors the graph now spans the storeys,
+          // so only the outdoor acts keep the patient wait.
+          const inHouse = game.act === 'house' || game.act === 'bedroom';
+          if (!sameLevel && !inHouse) { e.windT += dt; break; }   // it waits below. it hears you.
+          e._besiegeHold = false;
           if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
             const angle = e.orbitAngle + game.time * e.orbitSign * 0.22;
             const ring = 3.3 + (e.orbitAngle % 1.4);
@@ -1437,21 +1466,58 @@ export class Enemies {
             // walking player but just slower than a committed run, so spatial
             // mastery and a clean throw can actually create breathing room.
             const arenaPace = (e.graveArena || e.gravePressure) ? 0.8 : 1;
-            const sp = e.spec.chase * arenaPace * Math.min(1, 0.35 + e.windT * 0.4);
-            e.windT += dt;
+            // The acceleration ramp and the lose-interest clock used to be
+            // one number (windT). Split: _chaseT carries the ramp, seeded in
+            // the wind-up so the old curve is preserved; in the house windT
+            // now accrues ONLY while genuinely failing to progress, so the
+            // director's windT>9 beat reads "nine seconds of getting
+            // nowhere", never "nine seconds of you being upstairs".
+            // Outdoors both tick together, exactly as they always did.
+            const sp = e.spec.chase * arenaPace
+              * Math.min(1, 0.35 + Math.max(e.windT, e._chaseT || 0) * 0.4);
+            e._chaseT = (e._chaseT || 0) + dt;
+            if (!inHouse) e.windT += dt;
             // door-node steering: straight lines end at shut doors. When
             // progress stalls, route through the doorway that best closes on
             // the player. The Resident goes further: it does doors (below).
             let tx = player.pos.x, tz = player.pos.z;
+            let holding = false;
             const graveExit = (e.graveArena || e.gravePressure)
               ? this._graveEscapeTarget(e, player.pos)
               : null;
             if (graveExit) {
               tx = graveExit.x;
               tz = graveExit.z;
+            } else if (e._besiege) {
+              // THE BESIEGE: the graph proved the player sealed away behind a
+              // door this body cannot work. Grinding the panel forever looked
+              // exactly like the bug it was. Now it holds just off the door
+              // and paws it on a slow cadence — audible, answerable, and
+              // still only one opened door away from a real chase.
+              const bd = e._besiege.door;
+              e._navT = (e._navT || 0) - dt;
+              if (bd.open) {
+                e._besiege = null;
+                e._navT = 0;
+              } else if (e._navT <= 0) {
+                e._navT = 0.9;
+                const route = this._houseRoute(e, { exclude: e._viaLast });
+                if (route?.length) { e._route = route; e._via = route[0]; e._besiege = null; }
+              }
+              if (e._besiege) {
+                tx = e._besiege.x; tz = e._besiege.z;
+                if (Math.hypot(tx - e.pos.x, tz - e.pos.z) < 0.35) {
+                  holding = true;
+                  e._pawT = (e._pawT ?? 1.1) - dt;
+                  if (e._pawT <= 0) {
+                    e._pawT = 2.4 + Math.random() * 0.7;
+                    bd.rattleT = Math.max(bd.rattleT || 0, 0.5);
+                    game.audio.lockedRattle({ pos: bd.group.position, gain: 0.32, rate: 0.62 });
+                  }
+                }
+              } else if (e._via) { tx = e._via.x; tz = e._via.z; }
             } else if (e._via) {
-              const vd = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z);
-              if (vd < 0.9) {
+              if (this._viaReached(e)) {
                 // waypoint consumed: remember its door (the one-entry
                 // exclusion that prevents oscillating straight back through
                 // it) and SHIFT to the next leg instead of beelining
@@ -1466,19 +1532,61 @@ export class Enemies {
               e._navT = (e._navT || 0) - dt;
               if (e._navT <= 0) {
                 e._navT = 0.9;
-                const route = this._houseRoute(e, { exclude: e._viaLast });
+                let route = this._houseRoute(e, { exclude: e._viaLast });
+                // cross-storey the exclusion can wall off the ONLY path (one
+                // door guards the stairbay) — waiting politely there is the
+                // freeze Alex reported. Same-storey keeps the 0.8 s stall
+                // damping before the exclusion is dropped.
+                if (!route && !sameLevel && e._viaLast) route = this._houseRoute(e);
                 if (route?.length) { e._route = route; e._via = route[0]; }
                 else if (route) { e._route = null; e._via = null; }   // same room: beeline
+                else if (inHouse && e.kind !== 'resident') this._besiegeSetup(e);
               }
               if (e._via) { tx = e._via.x; tz = e._via.z; }
             }
-            const dl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
-            const dirX = (tx - e.pos.x) / dl, dirZ = (tz - e.pos.z) / dl;
+            if (inHouse && !sameLevel && !e._via && !e._besiege) {
+              // a storey away with no route to it (the cellar flights are
+              // authored off-graph): genuine failure. The lose-interest
+              // clock runs; the body does not grind at the ceiling.
+              e.windT += dt;
+              break;
+            }
             const preX = e.pos.x, preZ = e.pos.z;
-            this._moveWithPush(e, dirX * sp * dt, dirZ * sp * dt);
+            if (!holding) {
+              const dl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
+              const dirX = (tx - e.pos.x) / dl, dirZ = (tz - e.pos.z) / dl;
+              this._moveWithPush(e, dirX * sp * dt, dirZ * sp * dt);
+            }
             const moved = Math.hypot(e.pos.x - preX, e.pos.z - preZ);
-            if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
+            if (inHouse) {
+              // Marrow's best-approach rule: progress means closing on the
+              // CURRENT steering target. Corner-jitter (pushed out, walks
+              // back in, never past the corner) now reads as the stall it
+              // is, and an honest slow grind past furniture does not.
+              const tKey = e._via ? (e._via.x + '|' + e._via.z)
+                : (e._besiege ? 'besiege' : 'player');
+              const approach = Math.hypot(tx - e.pos.x, tz - e.pos.z);
+              if (e._bestKey !== tKey) {
+                e._bestKey = tKey; e._bestApproach = approach; e._noGainT = 0;
+              } else if (approach < (e._bestApproach ?? Infinity) - 0.005) {
+                e._bestApproach = approach; e._noGainT = 0;
+              } else {
+                e._noGainT = (e._noGainT || 0) + dt;
+              }
+              if (holding) {
+                e._stallT = 0; e._noGainT = 0;   // the besiege stands still on purpose
+              } else if (e._noGainT > 0.25) {
+                e._stallT = (e._stallT || 0) + dt;
+                e.windT += dt;
+              } else {
+                e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
+                e.windT = Math.max(0, e.windT - dt * 2);
+              }
+            } else if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
             else e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
+            if (e._stallT <= 0 && (e._unstuck1 || e._unstuck2)) {
+              e._unstuck1 = false; e._unstuck2 = false;
+            }
             if (e._stallT > 0.8) {
               if (e.graveArena || e.gravePressure) {
                 // House doorway nodes are poison for outdoor enemies: a risen
@@ -1497,7 +1605,8 @@ export class Enemies {
                     z: clamp(e.pos.z + px / pl * e._avoidSign * 3.5, 8.2, 40.2),
                   };
                 }
-              } else {
+                e._stallT = 0;
+              } else if (!inHouse) {
                 // Stalled anyway (furniture, another body): re-plan on the
                 // graph, dropping the exclusion if it is all that blocks us.
                 const route = this._houseRoute(e, { exclude: e._viaLast })
@@ -1505,14 +1614,63 @@ export class Enemies {
                   || null;
                 if (route?.length) { e._route = route; e._via = route[0]; }
                 else e._via = this._bestDoorNode(e);   // outside the graph
+                e._stallT = 0;
+              } else if (!holding) {
+                // The house's escalating unstick ladder (Marrow's watchdog):
+                // re-plan, then ONE in-room side-step, then — only unseen,
+                // only onto ground the graph already proved walkable, and
+                // always announced by a footstep from the new spot —
+                // relocate. An observed stall keeps straining instead: a
+                // body fighting the house, never a teleport in view.
+                if (!e._unstuck1) {
+                  e._unstuck1 = true;
+                  const route = this._houseRoute(e, { exclude: e._viaLast })
+                    || this._houseRoute(e)
+                    || null;
+                  if (route?.length) { e._route = route; e._via = route[0]; }
+                  else if (!e._via) e._via = this._bestDoorNode(e);
+                }
+                if (e._stallT > 2.5 && !e._unstuck2) {
+                  e._unstuck2 = true;
+                  const room = game.world.rooms.find((r) =>
+                    Math.abs(r.floorY - e.pos.y) < 1.2
+                    && e.pos.x >= r.x0 && e.pos.x <= r.x1
+                    && e.pos.z >= r.z0 && e.pos.z <= r.z1);
+                  if (room) {
+                    const pl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
+                    e._avoidSign = -(e._avoidSign || 1);
+                    const side = {
+                      x: clamp(e.pos.x - (tz - e.pos.z) / pl * e._avoidSign * 1.6,
+                        room.x0 + 0.4, room.x1 - 0.4),
+                      z: clamp(e.pos.z + (tx - e.pos.x) / pl * e._avoidSign * 1.6,
+                        room.z0 + 0.4, room.z1 - 0.4),
+                    };
+                    e._route = [side, ...(e._route || [])];
+                    e._via = e._route[0];
+                    e._bestKey = null;
+                  }
+                }
+                if (e._stallT > 6 && e._via && (e._via.door || e._via.stair)
+                  && game.time - (e._lastReloc ?? -99) > 8
+                  && !this._isObserved(e, dt, camPos, camFwd)) {
+                  e._lastReloc = game.time;
+                  e.pos.x = e._via.x; e.pos.z = e._via.z;
+                  const floorHint = e._via.y ?? (e._via.door ? e._via.door.floor : e.pos.y);
+                  e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, floorHint + 1);
+                  game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.7, rate: 0.9 });
+                  e._stallT = 0; e._noGainT = 0; e._bestKey = null;
+                  e._unstuck1 = false; e._unstuck2 = false;
+                }
               }
-              e._stallT = 0;
             }
+            e._besiegeHold = holding;
             if (e.kind === 'resident') this._tryOpenDoor(e, dt);
-            e.stepT -= dt;
-            if (e.stepT <= 0) {
-              e.stepT = 0.26 + Math.random() * 0.06;
-              game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
+            if (!holding) {
+              e.stepT -= dt;
+              if (e.stepT <= 0) {
+                e.stepT = 0.26 + Math.random() * 0.06;
+                game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
+              }
             }
           } else if (!game.dead) {
             // Every body obeys the same contact law: contact begins a readable,
@@ -1659,7 +1817,9 @@ export class Enemies {
       }
 
       // ---- gait ----
-      if (e.state === 'chase' || e.state === 'stalk') {
+      // a besieging body holds STILL at the door — pumping legs on a planted
+      // figure read as the grind it replaced. The paw cadence is its motion.
+      if ((e.state === 'chase' && !e._besiegeHold) || e.state === 'stalk') {
         const rate = e.state === 'chase' ? 11 : 3.5;
         e.phase += dt * rate;
         const L = e.mesh.userData.limbs;
@@ -1698,7 +1858,16 @@ export class Enemies {
         e.mesh.scale.y = e.spec.scale;
       }
       if (e.state !== 'dormant' && e.state !== 'dying' && dist > 0.1) {
-        e.mesh.rotation.y = Math.atan2(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
+        // Face of travel: a routed body walking a doorway or a flight looks
+        // where it is going (Marrow's rule) — hard-facing the player through
+        // a floor while marching the other way read as broken. Near the
+        // player, or unrouted, it locks eyes exactly as before.
+        const via = (e.state === 'chase' || e.state === 'stalk') && dist > 2 ? e._via : null;
+        const fx = via ? via.x : player.pos.x;
+        const fz = via ? via.z : player.pos.z;
+        if (Math.hypot(fx - e.pos.x, fz - e.pos.z) > 0.1) {
+          e.mesh.rotation.y = Math.atan2(fx - e.pos.x, fz - e.pos.z);
+        }
       }
       // a stunned Standing One resumes standing, not chasing
       if (e.state === 'wind' && e.kind === 'walker' && e.standing) { e.state = 'standing'; }
@@ -2274,18 +2443,24 @@ export class Enemies {
   // Real routing over the house's own cell graph (world.houseNav), replacing
   // blind steering toward whichever door happened to be open. BFS on a grid
   // this small (a few hundred cells) costs nothing, runs only on re-plan, and
-  // returns the first two DOORWAYS along the path — the only waypoints a
-  // straight-line steerer needs. `exclude` is the one-entry memory that stops
-  // a body oscillating back through the door it just used.
+  // returns the first few DOORWAYS along the path — the only waypoints a
+  // straight-line steerer needs. The storeys are one graph now: a registered
+  // stair link is one extra passable edge, and crossing it emits BOTH of the
+  // flight's centreline waypoints so the body walks the axis of the run while
+  // groundHeightAt carries its y — the same ground-height walk the player
+  // uses. `exclude` is the one-entry memory that stops a body oscillating
+  // back through the door it just used; stair edges never carry doors, so the
+  // exclusion passes through them untouched.
   _houseRoute(e, { exclude = null } = {}) {
     const world = this.game.world;
     const player = this.game.player;
     const from = world.houseCellAt(e.pos.x, e.pos.z, e.pos.y);
     const to = world.houseCellAt(player.pos.x, player.pos.z, player.pos.y);
-    if (!from || !to || from.lv !== to.lv) return null;
+    if (!from || !to) return null;
+    const nav = world.houseNav;
     const canOpen = e.kind === 'resident';
-    const start = from.cx + ',' + from.cz;
-    const goal = to.cx + ',' + to.cz;
+    const start = from.lv + '|' + from.cx + ',' + from.cz;
+    const goal = to.lv + '|' + to.cx + ',' + to.cz;
     if (start === goal) return [];
     const prev = new Map([[start, null]]);
     const queue = [start];
@@ -2293,10 +2468,25 @@ export class Enemies {
     let found = false;
     while (queue.length && !found) {
       const key = queue.shift();
-      const [cx, cz] = key.split(',').map(Number);
+      const [lv, cell] = key.split('|');
+      const [cx, cz] = cell.split(',').map(Number);
       for (const [dir, dx, dz] of DIRS) {
-        if (!world.housePassable(from.lv, cx, cz, dir, canOpen, exclude)) continue;
-        const nk = (cx + dx) + ',' + (cz + dz);
+        if (!world.housePassable(lv, cx, cz, dir, canOpen, exclude)) continue;
+        const nk = lv + '|' + (cx + dx) + ',' + (cz + dz);
+        if (prev.has(nk)) continue;
+        prev.set(nk, key);
+        if (nk === goal) { found = true; break; }
+        queue.push(nk);
+      }
+      if (found) break;
+      // the stair edge: when this cell is a registered flight end, the far
+      // end of the flight is one more neighbour
+      const links = nav.levels[lv]?.stairAt?.get(cell);
+      if (!links) continue;
+      for (const link of links) {
+        const here = link.lo.lv === lv && link.lo.cx + ',' + link.lo.cz === cell;
+        const other = here ? link.hi : link.lo;
+        const nk = other.lv + '|' + other.cx + ',' + other.cz;
         if (prev.has(nk)) continue;
         prev.set(nk, key);
         if (nk === goal) { found = true; break; }
@@ -2304,20 +2494,60 @@ export class Enemies {
       }
     }
     if (!found) return null;
-    // walk the path back and collect the doors it crosses, nearest first
-    const level = world.houseNav.levels[from.lv];
+    // walk the path back and collect the doorways and flights it crosses,
+    // nearest first
     const path = [];
     for (let k = goal; k; k = prev.get(k)) path.push(k);
     path.reverse();
     const waypoints = [];
-    for (let i = 1; i < path.length && waypoints.length < 2; i++) {
-      const [ax, az] = path[i - 1].split(',').map(Number);
-      const [bx, bz] = path[i].split(',').map(Number);
+    for (let i = 1; i < path.length && waypoints.length < 4; i++) {
+      const [alv, acell] = path[i - 1].split('|');
+      const [blv, bcell] = path[i].split('|');
+      if (alv !== blv) {
+        // a stair hop: emit both centreline waypoints in traversal order —
+        // unless the body is ALREADY on this flight, in which case only the
+        // far end matters (walking back to the near end first read as the
+        // dithering it was)
+        const link = (nav.levels[alv].stairAt.get(acell) || []).find((l) =>
+          (l.lo.lv === alv && l.lo.cx + ',' + l.lo.cz === acell && l.hi.lv === blv && l.hi.cx + ',' + l.hi.cz === bcell)
+          || (l.hi.lv === alv && l.hi.cx + ',' + l.hi.cz === acell && l.lo.lv === blv && l.lo.cx + ',' + l.lo.cz === bcell));
+        if (!link) continue;
+        const ascending = link.lo.lv === alv && link.lo.cx + ',' + link.lo.cz === acell;
+        const near = ascending ? link.lo : link.hi;
+        const far = ascending ? link.hi : link.lo;
+        const onThisFlight = i === 1 && from.stair === link.id;
+        if (!onThisFlight) {
+          waypoints.push({ x: near.pos.x, z: near.pos.z, y: near.y, stair: link.id });
+        }
+        if (waypoints.length < 4) {
+          waypoints.push({ x: far.pos.x, z: far.pos.z, y: far.y, stair: link.id });
+        }
+        continue;
+      }
+      const [ax, az] = acell.split(',').map(Number);
+      const [bx, bz] = bcell.split(',').map(Number);
       const o = az === bz ? 'V' : 'H';
       const ex = o === 'V' ? Math.max(ax, bx) : ax;
       const ez = o === 'H' ? Math.max(az, bz) : az;
-      const door = level.doorAt.get(o + '|' + ex + ',' + ez);
-      if (door) waypoints.push({ x: door.center.x, z: door.center.z, door });
+      const door = nav.levels[alv].doorAt.get(o + '|' + ex + ',' + ez);
+      if (door) {
+        waypoints.push({ x: door.center.x, z: door.center.z, door });
+        if (waypoints.length < 4) {
+          // the punch-through point: 0.7 m past the plane on the exit side.
+          // The 0.9 m consume radius can claim a door's centre from the
+          // WRONG side of the wall; without this the next leg aimed
+          // diagonally through the plaster beside the aperture and the body
+          // pinned there, replanned around, and orbited the room forever —
+          // Alex's "can't find his way to you", reproduced verbatim.
+          waypoints.push({
+            x: door.center.x + (o === 'V' ? Math.sign(bx - ax) * 0.7 : 0),
+            z: door.center.z + (o === 'H' ? Math.sign(bz - az) * 0.7 : 0),
+            door, exit: true,
+            nx: o === 'V' ? Math.sign(bx - ax) : 0,
+            nz: o === 'H' ? Math.sign(bz - az) : 0,
+          });
+        }
+      }
     }
     return waypoints;
   }
@@ -2336,6 +2566,81 @@ export class Enemies {
       e._via = null;
       e._viaLast = door;
     }
+  }
+
+  // Has the body reached its current steering waypoint? Plain waypoints use
+  // the 0.9 m radius. Door EXIT points are directional: they count only once
+  // the body is genuinely THROUGH the plane — a radius that large can claim
+  // a point on the far side of a wall from the near side, and a door marked
+  // "crossed" while the body still stands outside it poisons both the next
+  // leg and the one-entry exclusion memory.
+  _viaReached(e) {
+    const via = e._via;
+    if (!via) return false;
+    if (via.exit && via.door) {
+      return (e.pos.x - via.door.center.x) * (via.nx || 0)
+        + (e.pos.z - via.door.center.z) * (via.nz || 0) >= 0.35;
+    }
+    return Math.hypot(via.x - e.pos.x, via.z - e.pos.z) < 0.9;
+  }
+
+  // The Standing Kind's observed test, shared: the view cone, then a
+  // throttled structural line-of-sight (shut doors and walls freeze sight;
+  // an open door's collapsed collider or an open window does not), with the
+  // per-enemy hysteresis fields. The house watchdog's unseen-only relocate
+  // uses this SAME machinery — one law for "it never moves while seen".
+  _isObserved(e, dt, camPos, camFwd) {
+    const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
+    const d2 = toE.length();
+    const inView = d2 < 42 && camFwd.dot(toE.divideScalar(Math.max(d2, 0.001))) > 0.28;
+    if (!inView) {
+      e._losT = 0;
+      e._losClear = false;
+      return false;
+    }
+    e._losT = (e._losT || 0) - dt;
+    if (e._losT <= 0) {
+      // Sight is structural, not psychic: shut doors and walls freeze it;
+      // an open door (collapsed collider) or open window does not.
+      e._losT = 0.08;
+      const lookY = e.pos.y + Math.min(e.spec.h * 0.72, e.spec.h - 0.2);
+      e._losClear = !this._segmentBlocked(
+        camPos.x, camPos.y, camPos.z, e.pos.x, lookY, e.pos.z,
+      );
+    }
+    return !!e._losClear;
+  }
+
+  // A walker whose route to the player is provably sealed (every path ends
+  // at a door it cannot work) stops grinding the panel and besieges instead:
+  // it will hold just off the nearest shut door and paw it on a slow cadence.
+  // Only called when _houseRoute returned null; only arms when both bodies
+  // actually resolve on the graph — outside the house nothing changes.
+  _besiegeSetup(e) {
+    const world = this.game.world;
+    const player = this.game.player;
+    if (!world.houseCellAt(e.pos.x, e.pos.z, e.pos.y)) return;
+    if (!world.houseCellAt(player.pos.x, player.pos.z, player.pos.y)) return;
+    let best = null, bestD = 4;
+    for (const d of world.doors) {
+      if (d.open) continue;
+      if (Math.abs(d.floor - e.pos.y) > 1.8) continue;
+      const dd = Math.hypot(d.center.x - e.pos.x, d.center.z - e.pos.z);
+      if (dd < bestD) { bestD = dd; best = d; }
+    }
+    if (!best) return;
+    // hold 0.6 m off the panel, on this body's own side of the wall
+    const H = best.edge?.orient === 'H';
+    const side = H
+      ? Math.sign(e.pos.z - best.center.z) || 1
+      : Math.sign(e.pos.x - best.center.x) || 1;
+    e._besiege = {
+      door: best,
+      x: best.center.x + (H ? 0 : side * 0.6),
+      z: best.center.z + (H ? side * 0.6 : 0),
+    };
+    e._route = null;
+    e._via = null;
   }
 
   _bestDoorNode(e) {

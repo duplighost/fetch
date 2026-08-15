@@ -6,7 +6,11 @@ import { clamp, lerp, damp, smoothstep } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
-  bedroom: { x: 7.2, z: 1.5, yaw: Math.PI, y: 3.6 },   // the open window and hanging key own frame one
+  // THE WAKE: at the bed's edge, facing the moonlit window across a dark
+  // room — the first frame resolves as dark room / glassed window / tree
+  // beyond. (x sits just clear of the bed frame at 9.76 so frame one never
+  // clips the mattress.)
+  bedroom: { x: 9.6, z: 3.3, yaw: 2.37, y: 3.6 },
   house: { x: -1.5, z: 3, yaw: Math.PI, y: 3.6 },
   basement: { x: 9, z: 4.9, yaw: 0.5, y: -3.0 },  // z >= 4.85 clears the last tread's collider — no frame-one shove
   graveyard: { x: -8, z: 8, yaw: -2.86 },       // car left, gate/bodies ahead
@@ -96,6 +100,12 @@ export class Director {
   start() {
     const g = this.game;
     this.setAct('bedroom', true);
+    // THE WAKE: the real boot comes to slower than the stock fade — four
+    // seconds of surfacing at the bed edge. startGame's fadeIn(2.4) ran one
+    // line ago; overriding before the first paint restyles the same
+    // transition. (Test teleports still zero the DOM fade; canvas capture
+    // never sees it either way.)
+    g.fadeIn(4.0);
     // the first thing you hear: your own breath, the house settling, the jaw ticks
     this.after(4, () => g.audio.creak({ pos: new THREE.Vector3(2, 3.6, 0), gain: 0.4, verb: 0.4 }));
     this.after(9, () => g.audio.knock({ pos: new THREE.Vector3(-6, 0, -6), gain: 0.3, verb: 0.5 }));
@@ -1040,6 +1050,13 @@ export class Director {
     this._mirrorTransition = false;
     const saved = g.checkpointPose ? { ...g.checkpointPose } : null;
     const cp = saved?.act || g.lastCheckpoint || 'bedroom';
+    // Snapshot the arrival truth BEFORE the teleport below: Game.teleport
+    // auto-completes the bedroom arrival (the debug/test contract), but a
+    // death/restart is not a debug jump — a pre-arrival life must respawn
+    // into a pre-arrival room. bedroomArrival.completeInstant checks this
+    // guard and stands down; the tail re-asserts absence.
+    const preArrival = !g.flags.has('skullArrived');
+    this._respawnPreArrival = preArrival;
     g.enemies.clear();
     this.kneeler = null;
     this.resident = null;
@@ -1082,6 +1099,7 @@ export class Director {
     // teleport re-seated the forest on the ACT SPAWN; if a checkpoint pose then
     // moved us somewhere else, re-seat again on where we actually ended up.
     if (g.forest && g.act === 'forest') { g.forest.recentre(g.player.pos); g.player._sync(0); }
+    this._respawnPreArrival = false;
     if (g.flags.has('waterfallTaken')) {
       // The promise is already broken; death cannot un-break it or strand the
       // player with a half-raised bridge after scoped callbacks are cleared.
@@ -1089,6 +1107,16 @@ export class Director {
       if (g.caveZone) g.caveZone.enabled = true;
       if (g.waterfallBarrier) g.waterfallBarrier.max.y = g.waterfallBarrier.min.y;
       g.skull.vanish();
+    }
+    else if (preArrival) {
+      // THE ROOM BEFORE THE SKULL: teleport's instant-complete flagged the
+      // arrival mid-respawn (main.js half); take the flag back and re-assert
+      // absence. Search states persist — they are world truth — and the bell
+      // returns to the player's found-but-unrung state; a window already
+      // broken by a half-finished arrival stays broken.
+      g.flags.delete('skullArrived');
+      g.skull.bootAbsent();
+      g.bedroomArrival?.resetForRespawn?.();
     }
     else {
       g.skull.holdNow();

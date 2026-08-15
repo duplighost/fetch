@@ -10,7 +10,9 @@ let failed = false;
 
 try {
   const { page, errors } = await openPage(browser, `http://localhost:${server.port}/?test=1&mute=1`);
-  await page.waitForFunction('window.__FETCH && window.__FETCH.ready === true', null, { timeout: 60000 });
+  // 300s: boots take 24-45s when a concurrent agent's test battery owns the
+  // GPU (see HANDOFF 2026-08-14). Wall-clock slowness is not failure.
+  await page.waitForFunction('window.__FETCH && window.__FETCH.ready === true', null, { timeout: 300000 });
   page.on('console', (msg) => {
     const t = msg.text();
     if (t.startsWith('[beat]')) console.log('  ' + t.slice(7));
@@ -109,9 +111,120 @@ try {
     F.start();
     F.stepWith(0.5);
 
-    // ---- ACT 0: bedroom ------------------------------------------------
+    // ---- ACT 0: bedroom — THE NEW OPENING ------------------------------
+    // Alex: "window is originally strong glass that can't be broken. (the
+    // player has to look around the room...) Eventually you find a bell you
+    // can activate ... the skull bursts through the window, shattering it,
+    // and landing in your hands. ... Then you can throw it to get the key.
+    // Make sure it doesn't get the key on the way in." The bot lives the
+    // whole beat through the real input path: nine E-searches, the two-step
+    // bell find, the ring, the arrival, the settle — then the key.
     snap('00-wake');
-    walkTo(7.2, 4.6, 10);                          // step to the open window first
+    {
+      const A = g.bedroomArrival;
+      beat('wakes-empty-handed',
+        g.skull.mode === 'gone' && g.skull.root.parent === null
+        && !g.flags.has('skullArrived') && A.state === 'searching'
+        && !!g.skull._handPose && g.skull._handPose.g > 0.5,
+        { mode: g.skull.mode, state: A.state,
+          hands: g.skull._handPose ? +g.skull._handPose.g.toFixed(2) : null });
+
+      // A search is played like a player plays it: walk to the prop, put the
+      // crosshair on it, press E, let the small animation finish. A miss is
+      // re-aimed exactly as a player would; the assertions stay strict.
+      const search = (id, sx, sz, ax, ay, az, settle = 1.4) => {
+        const rec = g.bedroomSearch[id];
+        for (let tries = 0; tries < 3 && !rec.done; tries++) {
+          walkTo(sx, sz, 8);
+          useAt(ax, ay, az);
+          F.stepWith(0.05);
+        }
+        F.stepWith(settle);
+        return rec.done;
+      };
+      // west along the foot of the bed, then the room in a walking order
+      walkTo(8.8, 2.6, 8); walkTo(6.4, 2.8, 8);
+      search('curtains', 6.0, 4.6, 5.99, 5.2, 5.84);      // S6 sightline first
+      walkTo(8.2, 4.6, 8);
+      search('dresser', 9.35, 4.1, 9.35, 4.12, 5.2, 1.2); // S1 the leash
+      search('nightstand', 8.66, 5.15, 8.66, 4.14, 4.26, 1.0); // S7 matches roll
+      search('covers', 9.15, 4.1, 10.15, 4.25, 3.75);     // S3 the imprint
+      walkTo(8.6, 2.7, 8); walkTo(6.0, 2.9, 8);
+      search('wardrobe', 5.15, 3.2, 5.15, 4.7, 4.55);     // S2 hangers swing
+      search('art', 5.6, 2.35, 4.19, 5.08, 2.35, 2.2);    // S8 the missing mirror
+      search('latch', 5.5, 1.45, 4.09, 5.17, 1.45, 1.6);  // S9 door still holds
+
+      // Before the bell exists to the world, E at its exact hiding place
+      // reaches everything BUT it: the floor answers, the bell does not.
+      walkTo(10.0, 1.5, 8);
+      useAt(10.42, 3.7, 2.16);
+      F.stepWith(0.3);
+      beat('bell-hidden-until-found',
+        !A.bellFound && !A.bellRung && A.state === 'searching'
+        && !g.bedroomProps.bell.group.visible && g.skull.mode === 'gone',
+        { state: A.state, bellFound: A.bellFound, bellRung: A.bellRung });
+
+      search('rug', 10.4, 1.25, 10.65, 3.64, 2.35);       // S4 gouges + the board
+      search('floorboard', 10.3, 1.35, 10.6, 3.64, 2.16); // S5 the bell
+      beat('the-room-answers-search',
+        A.searchedCount === 9
+        && Object.values(g.bedroomSearch).every((r) => r.done)
+        && A.bellFound && A.state === 'bellFound',
+        { searched: A.searchedCount, state: A.state,
+          done: Object.fromEntries(Object.entries(g.bedroomSearch).map(([k, v]) => [k, v.done])) });
+
+      // ring it where it lies
+      for (let tries = 0; tries < 3 && !A.bellRung; tries++) {
+        walkTo(10.0, 1.5, 8);
+        useAt(10.42, 3.7, 2.16);
+        F.stepWith(0.1);
+      }
+      beat('bell-rung', A.bellRung && A.state === 'called', A.state);
+
+      // the answer: bones in the distance from the window's direction,
+      // closer and closer, until —
+      let t = 0;
+      for (; t < 16 && !g.bedroomGlass.broken; t += 0.1) F.stepWith(0.1);
+      beat('the-window-broke-inward',
+        g.bedroomGlass.broken
+        && g.bedroomGlass.collider.max.y === g.bedroomGlass.collider.min.y
+        && g.bedroomGlass.pane.parent === null
+        && g.bedroomGlass.shards.visible,
+        { afterS: +t.toFixed(1), state: A.state });
+      for (t = 0; t < 4 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1);
+      beat('it-landed-in-your-hands', g.skull.mode === 'held', g.skull.getState());
+      const treeKey = g.world.fetchTargets.find((tt) => tt.id === 'treeKey');
+      beat('it-did-not-take-the-key',
+        g.skull.carry === null && !g.flags.has('gotBedroomKey')
+        && !!treeKey && treeKey.enabled === true
+        && treeKey.object.parent === g.scene,
+        { carry: g.skull.carry ? g.skull.carry.id : null,
+          treeKeyEnabled: treeKey ? treeKey.enabled : null });
+
+      // "Then you can throw it": while it flickers and chatters, the press
+      // does nothing; when it settles into the skull we know, the same press
+      // throws. Aim at the near wall — never the window — so this scratch
+      // throw cannot reach the tree.
+      const flickerLive = !!g.skull.introFlicker;
+      aimAt(9.0, 4.6, 0.4);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+      const heldThroughFlicker = g.skull.mode === 'held';
+      F.stepWith(1 / 120, { throwReleased: true });
+      for (t = 0; t < 6 && g.skull.introFlicker; t += 0.1) F.stepWith(0.1);
+      for (t = 0; t < 2 && !g.flags.has('skullArrived'); t += 0.1) F.stepWith(0.1);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+      const throwsAfterSettle = g.skull.mode === 'outbound';   // sampled on the press step: the near wall poises it within 0.25s
+      F.stepWith(0.25, { throwHeld: true });
+      F.stepWith(1 / 120, { throwReleased: true });
+      waitHeld();
+      beat('throws-wait-for-the-settle',
+        flickerLive && heldThroughFlicker && !g.skull.introFlicker
+        && throwsAfterSettle && g.flags.has('skullArrived') && A.state === 'done',
+        { flickerLive, heldThroughFlicker, throwsAfterSettle, state: A.state });
+    }
+
+    // ---- and only now, the room it always was: the key in the tree -----
+    walkTo(7.2, 4.6, 10);                          // step to the window aperture
     throwAt(7.2, 5.7, 8.2, 0.75);                 // the key in the tree
     let ok = false;
     for (let t = 0; t < 4 && !ok; t += 0.1) { F.stepWith(0.1); ok = !!(g.skull.carry && g.skull.carry.id === 'bedroomKey'); }
