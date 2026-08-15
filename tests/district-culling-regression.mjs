@@ -339,8 +339,9 @@ try {
     const beforeMarrow = snapshotVisibility();
     g.flag('graveyardResolved');
     g.skull.holdNow();
-    // descent is a USED verb now: stand at the lip and take it directly
-    g.player.pos.set(11.8, 0.05, 36.2);
+    // descent is a USED verb now: stand at the lip and take it directly. The
+    // lip moved under the sealed mausoleum — read it off game.marrowPit.
+    g.player.pos.set(g.marrowPit.x, 0.05, g.marrowPit.z - 1.2);
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
     g.marrow.descend();
@@ -373,7 +374,14 @@ try {
     g.player._sync(0);
     marrow.ascend();
     F.step(1 / 120, 40, false);
-    const marrowRestoreDiff = visibilityDiff(beforeMarrow);
+    // The crypt now spits you out inside the sealed mausoleum at z 30.7, a
+    // metre south of the forest's detail-pop threshold — so the forest going
+    // back to sleep is the pop system doing its job, not the seal leaking. The
+    // seal's own contract (every OTHER exterior bit restored exactly) is what
+    // this pin is for, and that is still asserted.
+    const forestDetail = new Set(forest.detailRoots || []);
+    const marrowRestoreDiff = visibilityDiff(beforeMarrow)
+      .filter((entry) => ![...forestDetail].some((root) => entry.startsWith(label(root) + ':')));
     check(
       'the marrow exit restores every saved exterior visibility bit exactly',
       !marrow.inMarrow && !marrow.root.visible && marrowRestoreDiff.length === 0,
@@ -410,13 +418,19 @@ try {
     }
     const forwardRestoreDiff = visibilityDiff(beforeForwardExit);
     const allowedRetired = new Set(forest.backDistrictRoots || []);
+    // The marrow's mouth moved under the sealed mausoleum, which puts the
+    // player at z 30.7 when they come back up instead of 34.6 — below the
+    // forest's detail-pop threshold. So the snapshot is now taken with the
+    // forest asleep, and it waking as the forest act begins is exactly right.
+    const allowedWake = new Set(forest.detailRoots || []);
     const unexpectedForwardDiff = [];
     for (const [object, visible] of beforeForwardExit.scene) {
       if (object.parent !== g.scene) {
         unexpectedForwardDiff.push(`${label(object)}:removed`);
       } else if (object.visible !== visible) {
         const intentionalRetirement = visible && !object.visible && allowedRetired.has(object);
-        if (!intentionalRetirement) {
+        const intentionalWake = !visible && object.visible && allowedWake.has(object);
+        if (!intentionalRetirement && !intentionalWake) {
           unexpectedForwardDiff.push(`${label(object)}:${visible}->${object.visible}`);
         }
       }

@@ -324,6 +324,10 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     [-9, 14, 4.25], [15.6, 31.5, 3.5], [-14.6, 34.2, 3.5],
     [-7.2, 27, 1.9], [9.2, 23, 1.9], [-14.2, 18.4, 1.9], [11.8, 36.2, 1.9],
     [-15.2, 27.2, 1.9], [14.5, 19.4, 1.9], [7.4, 35, 1.9],
+    // the key tree and the staircase of lights that comes down out of it, and
+    // the lock-stone west of the forest gate — a new landmark without a
+    // reservation gets instanced headstones driven through it
+    [5.5, 12.8, 3.4], [-0.35, 41.72, 1.35],
   ];
   const stones = [];
   for (let row = 0; row < 9; row++) {

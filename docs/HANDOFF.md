@@ -1,11 +1,61 @@
-# HANDOFF - 2026-08-15: THE CHANGE-ORDER BUILD (branch claude/aug15-notes) — PLAN WRITTEN, WORK NOT STARTED
+# HANDOFF - 2026-08-15: THE CHANGE-ORDER BUILD (branch claude/aug15-notes)
+
+## STATUS — tasks 1, 3, 4, 5, 6-partial, 9, 10 are BUILT AND GREEN
+
+Opus 5 executed the plan below. What is done, in commits on this branch:
+
+- **Task 1, THE OPENING** (`93f5dcb`). Every item, plus three engine-level
+  fixes the notes implied but did not name: the E-pick was cast against the
+  interactables LIST alone (it selected, and grew the crosshair, through beds
+  and walls); ceilings were render-only for both player and skull
+  (`world.ceilingHeightAt` now exists); the arrival cradle followed camera
+  PITCH with no collision in mode 'gone'. New tool `tools/shot-opening.mjs`.
+- **Tasks 3/4/5/6, THE GRAVEYARD RESTRUCTURE.** Canine moved to hero grave #6
+  and carries danger-sense too; PIERCE implemented at the hit-resolution branch
+  in enemies.js (FEEL_PROFILE untouched); three-route reveal fires sequentially
+  from `_completeGraveyard`; keys 1/2/3 from counterweight / marrow relic /
+  key-tree climb; marrow entrance relocated under the sealed mausoleum; NE pit
+  retired to choked scenery; ossuary far hatch chained shut and its entrance
+  made two-way forever; three-keyhole lock-stone at the gate. New tool
+  `tools/shot-three-routes.mjs`.
+- **Task 9, SKELETAL HANDS.** `skull.becomeBone()` + `skull.raiseHands()`,
+  fired at `Finale._beginContact`.
+- **Task 10, GATES.** playthrough rerouted end to end (it now walks all three
+  key routes and banks them); regressions 110 with three new scenarios;
+  district-culling and the 450-draw ceiling held at 448 after a merge pass.
+
+**Two decisions taken during the build that differ from the plan, both because
+the plan's version was worse to play:**
+
+1. The marrow's GATE KEY 2 goes straight into the jaw with the relic, in the
+   same grab. The plan implied a second fetch at the altar — but the mourners
+   begin hunting on the frame the relic leaves it, and a second aimed throw
+   from a standing start there is a design that kills you for obeying it.
+2. The tree climb is 13 steps, not as many as would reach the boughs: at 16 it
+   topped out at 6.63 and put the skeleton INSIDE the canopy, where the payload
+   of the whole staircase was invisible. A lamp descriptor sits on the top
+   tread for the same reason.
+
+**STILL UNBUILT (in the plan's own triage order):** task 8 (the FROZEN
+WATERFALL layer, §15/16 — the largest remaining piece), task 7 (forest bounds
+and the faceted boulder, §14), task 2 (house exterior sightlines + basement
+stair mass), task 11's perimeter/approach dressing (§11/13). **Task 12, DEPLOY,
+has not run:** nothing from this branch is on the website yet.
+
+**Known open, seen while shooting:** the mausoleum interiors still read as
+clean bright boxes (Alex's own standing note). A merged dark floor slab went in
+to kill the bright green ground showing through, but the walls are still hot —
+that is a visual-pass item and it is on his list already.
+
+---
+
+## THE ORIGINAL PLAN (everything below was written before the work)
 
 Written by Claude Fable 5 for Claude Opus 5 (Alex is nearly out of weekly
 allowance on Fable — ~10% left — and will switch models; he asked for the whole
-plan written down so "he'll know exactly how to do all the things"). Everything
-below is plan + decisions + traps. NO IMPLEMENTATION HAS HAPPENED YET on this
-branch. Work at a fast pace, lean spend: no agent fan-outs, batch your edits,
-run the four gates once mid-build and once at the end, not per-edit.
+plan written down so "he'll know exactly how to do all the things"). Work at a
+fast pace, lean spend: no agent fan-outs, batch your edits, run the four gates
+once mid-build and once at the end, not per-edit.
 
 ## Where you are
 

@@ -610,10 +610,12 @@ try {
     // asserted a walk-through-visible-stone bug as if it were correct. The
     // behavioural truths: the solve happens, AND the way is still shut while
     // the stone still fills the corridor, AND it opens within a bounded time.
-    beat('held-counterweight-opens-gate-and-exit',
-      g.flags.has('graveyardCleared') && g.flags.has('ossuaryCleared')
-      && g.graveyardGate.opening
-      && g.ossuary.exitCollider.max.y > g.ossuary.exitCollider.min.y);
+    // The counterweight no longer opens the surface gate. It pays out the
+    // FIRST OF THREE KEYS, and the way out of the under-yard is the way in.
+    beat('counterweight-pays-out-the-first-key',
+      g.flags.has('ossuaryCleared') && !g.flags.has('graveyardCleared')
+      && !g.graveyardGate.opening && g.gateKeys.list[0].revealed,
+      { cleared: g.flags.has('graveyardCleared'), revealed: g.gateKeys.list[0].revealed });
     F.stepWith(1 / 120, { throwReleased: true });
     waitHeld();
     for (let t = 0; t < 4 && g.ossuary.exitCollider.max.y > g.ossuary.exitCollider.min.y; t += 0.1) {
@@ -621,42 +623,170 @@ try {
     }
     beat('exit-slab-sank-and-opened-the-way',
       g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
-    // THE CLIMB: flight A up the east side, the 90-degree turn, flight B to
-    // the hatch platform. The swap fires only at the TOP, under the open lid
-    // — so a rising climbPeakY is the proof the ascent was real ground
-    // contact, not a position write.
-    walkTo(-68.2, 19.8, 10);
-    let climbPeakY = g.player.pos.y;
-    const atHatchTop = () => g.player.pos.y > g.ossuary.origin.floor + 3.05
-      && g.player.pos.x < g.ossuary.origin.x - 2.0
-      && g.player.pos.z > g.ossuary.origin.z + 33.9;
-    for (let t = 0; t < 14 && !atHatchTop(); t += 0.1) {
-      const target = g.player.pos.z < 23.0 ? [-68.2, 23.6] : [-72.45, 24.65];
-      const dx = target[0] - g.player.pos.x, dz = target[1] - g.player.pos.z;
-      g.player.yaw = Math.atan2(-dx, -dz);
+    // the far hatch is chained shut for good — the forest has ONE door now
+    const climbOutInter = g.world.interactables
+      .map((o) => o.userData.inter).find((it) => it && it.id === 'ossuaryClimbOut');
+    beat('the-far-hatch-stays-sealed', !!climbOutInter && climbOutInter.enabled === false,
+      { enabled: climbOutInter ? climbOutInter.enabled : 'missing' });
+
+    walkTo(-70.0, 12.4, 12);
+    throwAt(-70.0, -3.05, 15.4, 0.5);
+    for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey1'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('first-key-rides-the-jaw', g.skull.carry?.id === 'gateKey1',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
+
+    // back down the baffled corridor and up through the mausoleum you entered
+    walkTo(-68.0, 10.8, 14); walkTo(-72.0, 5.6, 16); walkTo(-72.0, 3.4, 10);
+    walkTo(-68.0, -1.2, 16); walkTo(-68.0, -3.4, 10);
+    for (let t = 0; t < 6 && g.ossuary.inOssuary; t += 0.1) {
+      const dz = -9.9 - g.player.pos.z;
+      g.player.yaw = Math.atan2(0.6, -dz);
       F.stepWith(0.1, { moveZ: 1 });
-      climbPeakY = Math.max(climbPeakY, g.player.pos.y);
     }
-    // at the top the way out is USED, same grammar as every hatch: look
-    // into the open mouth under the lid and press E
-    if (!g.flags.has('ossuaryExited')) {
-      const mx = g.ossuary.origin.x - 2.45;
-      const mz = g.ossuary.origin.z + 34.75;
-      const my = g.ossuary.origin.floor + 5.43;
-      const dx = mx - g.player.pos.x, dz = mz - g.player.pos.z;
+    beat('walked-back-out-the-way-you-came', !g.ossuary.inOssuary && g.act === 'graveyard',
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    // ---- BANK ONE: the lock-stone west of the forest gate ---------------
+    const SOCK_X = 2 - 2.35, SOCK_Z = 41.72;
+    const bankKey = () => {
+      const s = g.gateKeys.sockets.find((so) => !so.filled);
+      walkTo(SOCK_X, SOCK_Z - 1.5, 45);
+      walkTo(SOCK_X, SOCK_Z - 0.95, 8);
+      const dz = (SOCK_Z - 0.42) - g.player.pos.z;
+      const dx = SOCK_X - g.player.pos.x;
       g.player.yaw = Math.atan2(-dx, -dz);
-      g.player.pitch = Math.max(-1.15, Math.min(1.15,
-        Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001)));
+      g.player.pitch = Math.atan2(s.at.y - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+      F.stepWith(1 / 120, { interactPressed: true });
+      F.stepWith(0.3, {});
+      return s.filled;
+    };
+    // SOUTH out of the mausoleum first: its walk-over throat is at the BACK
+    // (z 34.08..35.4, x within 0.58 of the door line) and the way out drops
+    // you a metre and a bit south of it. Walking north from there walks
+    // straight back down the stairs.
+    walkTo(-14.6, 30.8, 14);
+    walkTo(-8.0, 33.0, 25);
+    beat('first-key-banked', bankKey() && g.gateKeys.banked() === 1,
+      { banked: g.gateKeys.banked() });
+
+    // ---- KEY TWO: the marrow, under the sealed mausoleum -----------------
+    // around the east side: the mausoleum's own walls are solid and its only
+    // gap is the doorway in the south face
+    const MOUTH = g.marrowPit;
+    walkTo(8.0, 36.0, 30);
+    walkTo(18.6, 34.0, 25);
+    walkTo(18.6, 28.4, 20);
+    walkTo(MOUTH.x, 28.4, 16);
+    walkTo(MOUTH.x, MOUTH.z - 1.35, 12);
+    {
+      const dz = MOUTH.z - g.player.pos.z;
+      g.player.yaw = Math.atan2(0, -dz);
+      g.player.pitch = Math.atan2(0.02 - (g.player.pos.y + 1.62), Math.abs(dz) || 0.001);
       g.player._sync(0);
       F.stepWith(1 / 120, { interactPressed: true });
       F.stepWith(0.3, {});
     }
-    beat('ossuary-exits-up-the-shaft-climb',
-      g.flags.has('ossuaryExited') && !g.ossuary.inOssuary && climbPeakY > -1.16
-      && !g.enemies.list.some((e) => e.ossuaryResident && e.state !== 'dying'),
-      { player: g.player.pos.toArray(), climbPeakY: +climbPeakY.toFixed(2),
-        exitT: +g.ossuary.exitT.toFixed(3), gateOpening: g.graveyardGate.opening });
-    walkTo(2, 45, 10);
+    const M = g.marrow;
+    beat('the-mausoleum-floor-is-the-way-down', M.inMarrow === true && g.flags.has('marrow:entered'),
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    F.stepWith(8.0, {});                       // the introduction: it claws up, stares, folds
+    const P = M.presence.group;
+    // MARROW's way past a guardian is to walk into it until it yields
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 17);
+    g.player._sync(0);
+    for (let t = 0; t < 9 && !M.yielded; t += 0.1) {
+      const dx = P.position.x - g.player.pos.x, dz = P.position.z - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+    }
+    F.stepWith(2.0, {});
+    beat('the-guardian-yields-to-a-body-not-a-throw', M.yielded === true);
+
+    // the relic, then the key the altar was holding down — from the same pose,
+    // because the mourners begin hunting the instant the relic leaves
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
+    const relicY = M.origin.floor + 1.24, relicZ = M.origin.z + 26 - 2.2;
+    aimAt(M.origin.x, relicY, relicZ);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.3, { throwHeld: true });          // 2.4 m at launch speed: it is already there
+    F.stepWith(1 / 120, { throwReleased: true });
+    // TURN. A mourning statue is frozen for exactly as long as you are looking
+    // at it, and the theft starts the hunt on the frame it lands — so the beat
+    // after the throw is not "watch it come home", it is "turn around".
+    g.player.yaw = 0;                              // south, back down the hall, into their faces
+    g.player.pitch = 0;
+    g.player._sync(0);
+    F.stepWith(0.2, {});
+    beat('the-relic-is-kept', g.flags.has('marrow:relicKept'));
+    beat('second-key-comes-with-the-relic', g.skull.carry?.id === 'gateKey2',
+      { carry: g.skull.carry ? g.skull.carry.id : null, dead: g.dead });
+    // and OUT, at a run, WITHOUT waiting for the skull — the mourners begin
+    // hunting on the frame the relic leaves the altar, and standing still to
+    // watch your own throw come home is how you die here. The skull catches up
+    // on its own; that is the whole point of it.
+    for (let t = 0; t < 12 && M.inMarrow; t += 0.1) {
+      if (g.player.pos.z > M.origin.z + 2.4) {
+        const dz = (M.origin.z + 1.0) - g.player.pos.z;
+        const dx = M.origin.x - g.player.pos.x;
+        g.player.yaw = Math.atan2(-dx, -dz);
+        F.stepWith(0.1, { moveZ: 1, run: true });
+      } else {
+        aimAt(M.origin.x, M.origin.floor + 1.55, M.origin.z + 1.0);
+        F.stepWith(1 / 120, { interactPressed: true });
+        F.stepWith(0.2, {});
+      }
+    }
+    beat('climbed-back-out-of-the-marrow', !M.inMarrow && g.act === 'graveyard' && !g.dead,
+      { dead: g.dead, pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    walkTo(MOUTH.x, 28.4, 12);
+    walkTo(12.0, 26.5, 16);
+    beat('second-key-banked', bankKey() && g.gateKeys.banked() === 2,
+      { banked: g.gateKeys.banked() });
+
+    // ---- KEY THREE: up the tree that held the first key you ever fetched --
+    const climb = g.keyTreeClimb;
+    const climbTo = (i, maxS = 7) => {
+      const s = climb.steps[i];
+      let t = 0;
+      while (t < maxS) {
+        const dx = s.x - g.player.pos.x, dz = s.z - g.player.pos.z;
+        if (Math.hypot(dx, dz) < 0.22 && g.player.pos.y > s.y - 0.14) return true;
+        g.player.yaw = Math.atan2(-dx, -dz);
+        F.stepWith(0.08, { moveZ: 1 });
+        t += 0.08;
+      }
+      return g.player.pos.y > s.y - 0.22;
+    };
+    walkTo(5.5, 22.0, 40);
+    walkTo(climb.steps[0].x, climb.steps[0].z + 1.6, 20);
+    let treadPeakY = g.player.pos.y;
+    for (let i = 0; i < climb.steps.length; i++) {
+      climbTo(i);
+      treadPeakY = Math.max(treadPeakY, g.player.pos.y);
+    }
+    const top = climb.steps[climb.steps.length - 1];
+    beat('the-lights-are-a-staircase', treadPeakY > top.y - 0.5 && !g.dead,
+      { peak: +treadPeakY.toFixed(2), top: +top.y.toFixed(2) });
+    climbTo(climb.steps.length - 3);
+    throwAt(top.x, top.y + 0.95, top.z, 0.4);
+    for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey3'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('third-key-rides-the-jaw', g.skull.carry?.id === 'gateKey3',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
+    // down: the same treads, in reverse, and then off the bottom one
+    for (let i = climb.steps.length - 4; i >= 0; i--) climbTo(i, 4);
+    walkTo(5.5, 18.0, 30);
+
+    // ---- THE GATE TAKES THE THIRD ---------------------------------------
+    beat('third-key-banked-and-the-gate-gives',
+      bankKey() && g.gateKeys.banked() === 3 && g.flags.has('graveyardCleared'),
+      { banked: g.gateKeys.banked() });
+    for (let t = 0; t < 4 && !g.graveyardGate.opening; t += 0.1) F.stepWith(0.1);
+    beat('the-iron-gate-opens-on-three', g.graveyardGate.opening === true);
+    for (let t = 0; t < 4 && !g.graveyardGate.open; t += 0.1) F.stepWith(0.1);
+    walkTo(2, 45, 14);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later
 
@@ -807,6 +937,13 @@ try {
     F.stepWith(7);                                    // the slow fade + showEnd
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
     beat('the-walls-did-not-stop', closed && g.finale.half <= 0.38, +g.finale.half.toFixed(2));
+    // and the hands you have watched for the whole game turn out to be bone
+    const hs = g.skull._handSkin;
+    beat('the-hands-were-bone-all-along',
+      !!hs && g.skull._handsBone === true
+      && hs.skin.color.getHex() === g.mats.bone.color.getHex(),
+      { skin: hs ? hs.skin.color.getHexString() : null,
+        bone: g.mats.bone.color.getHexString() });
     beat('ended', g.flags.has('ended'));
 
     return { log, shots, dead: g.dead };

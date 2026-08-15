@@ -314,6 +314,8 @@ export class Skull {
     const skin = new THREE.MeshStandardMaterial({ color: 0x5d3f36, roughness: 0.97, metalness: 0 });
     const crease = new THREE.MeshStandardMaterial({ color: 0x4b3029, roughness: 1.0, metalness: 0 });
     const nailMat = new THREE.MeshStandardMaterial({ color: 0x6b5046, roughness: 0.82, metalness: 0 });
+    // held so the last room can change what they are made of
+    this._handSkin = { skin, crease, nail: nailMat };
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
 
     const mkFinger = (parent, x, y, z, scale, yaw) => {
@@ -591,8 +593,9 @@ export class Skull {
     // opening: a catch should feel caught, a throw should feel let go of.
     // 'gone' is permanent (the waterfall keeps what it takes): the hands
     // sink out of frame instead of waiting forever for a catch.
+    if (this._handRaise > 0) this._handRaise -= dt;
     const goneBlend = damp(this._handPose ? this._handPose.g : 0,
-      this.mode === 'gone' ? 1 : 0, 2.2, dt);
+      (this.mode === 'gone' && !(this._handRaise > 0)) ? 1 : 0, 2.2, dt);
     this._applyHandPose(damp(this._handPose ? this._handPose.t : 0, held ? 0 : 1, held ? 7 : 3.4, dt), goneBlend);
     this._handT = (this._handT || 0) + dt;
     const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
@@ -649,6 +652,30 @@ export class Skull {
   }
 
   // ---------------------------------------------------------------- state
+  // THE LAST ROOM. The hands you have watched all game are bone, and always
+  // were. A material swap only — same meshes, same rig, same authored poses,
+  // so nothing about the viewmodel's geometry or animation changes, only what
+  // it turns out to be made of. Colour is copied off the SKULL's own bone so
+  // the two read as the same body, which is the whole point.
+  becomeBone(boneMat) {
+    if (this._handsBone || !this._handSkin || !boneMat) return false;
+    this._handsBone = true;
+    const { skin, crease, nail } = this._handSkin;
+    skin.color.copy(boneMat.color);
+    skin.roughness = boneMat.roughness ?? 0.9;
+    crease.color.copy(boneMat.color).multiplyScalar(0.55);
+    crease.roughness = 1.0;
+    nail.color.copy(boneMat.color).multiplyScalar(0.82);
+    return true;
+  }
+
+  // Bring the sunken hands back up for a beat. 'gone' is permanent and the
+  // hands stopped waiting for a catch long ago; this is not a catch, it is
+  // being shown something. Camera and movement stay live throughout.
+  raiseHands(seconds = 6) {
+    this._handRaise = Math.max(this._handRaise || 0, seconds);
+  }
+
   holdNow() {
     this.mode = 'held';
     this.anchor = null;

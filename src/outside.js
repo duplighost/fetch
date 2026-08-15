@@ -268,6 +268,10 @@ function buildGraveyardLandmarks(game) {
     world.addCollider(x + 1.42, -0.5, z - 1.75, x + 1.82, 3, z + 1.75);
     world.addCollider(x - 1.82, -0.5, z - 1.75, x - 0.5, 3, z - 1.35);
     world.addCollider(x + 0.5, -0.5, z - 1.75, x + 1.82, 3, z - 1.35);
+    // A dark floor inside. The yard's lit grass reads through both mausoleums
+    // and turns a stone box into a bright green room — and the east one is a
+    // required route now, not a corner you glance into. Merged: zero draws.
+    world.box(M.dirt, x, 0.02, z, 3.0, 0.05, 3.0);
     landmarks.push(g);
   }
 
@@ -290,33 +294,47 @@ function buildGraveyardLandmarks(game) {
     }
     // The player reads a hole and walks around it; the skull can still cross
     // the opening, preserving combat lines and avoiding invisible ricochets.
-    const pitCollider = world.addCollider(x - 0.62, -0.8, z - 1.28, x + 0.62, 0.82, z + 1.28, { skullPass: true });
-    // the northeast pit is THE MARROW's mouth: once the yard's business is
-    // done it stops being a lie (marrow.js collapses this collider and the
-    // player can step down into somewhere that should not be under here)
-    if (x === 11.8) game.marrowPit = { pit, collider: pitCollider, x, z };
+    world.addCollider(x - 0.62, -0.8, z - 1.28, x + 0.62, 0.82, z + 1.28, { skullPass: true });
+    // The northeast pit used to be THE MARROW's mouth. The way down moved
+    // under the sealed mausoleum, where a funeral can unseal it; this one is
+    // choked with fallen spoil now, so it reads as a grave that gave up.
+    if (x === 11.8) {
+      for (let i = 0; i < 5; i++) {
+        world.box(soil, x + Math.sin(i * 2.3) * 0.34, 0.1 + (i % 2) * 0.04,
+          z - 0.9 + i * 0.45,
+          0.52 + (i % 3) * 0.1, 0.22, 0.46 + (i % 2) * 0.08, ry + i * 1.1);
+      }
+      // nothing left to look down into — and REMOVED, not hidden, because the
+      // back-district culler would set a hidden scene child visible again
+      scene.remove(pit);
+      continue;
+    }
     landmarks.push(pit);
   }
   game.graveLandmarks = landmarks;
   buildDestructibleGraves(game);
   buildResonantGraves(game);
   buildGraveyardGate(game);
-  buildSealedMausoleumSecret(game);
+  buildGraveyardUpgrade(game);
+  buildKeyTreeClimb(game);
   buildOssuaryRoute(game);
   buildMarrowArea(game);
 }
 
-// ------------------------------------------- the sealed mausoleum secret
-// Alex: "One of them should be locked. and a destructible gravestone should
-// have a key to it. Inside should be an optional powerup that makes your
-// skull do more damage. because right now one is empty and it would be
-// perfect for that." The east mausoleum takes a barred grate and a fat
-// padlock; the key lies in the rubble of the sixth hero grave once it is
-// toppled; inside, on a plinth, an IRON CANINE — take it and the skull's
-// bite sharpens (game.skullPower: stuns hold longer, blows land harder,
-// slower throws still count). Sockets deepen so the change reads on the
-// skull itself. Value and shape only; no words anywhere.
-function buildSealedMausoleumSecret(game) {
+// ------------------------------------------- the yard's optional bite
+// Alex: "a destructible gravestone should have a key to it. Inside should be
+// an optional powerup that makes your skull do more damage."
+//
+// The key and the padlock are retired — the east mausoleum has better business
+// now, since the way down into THE MARROW is under its floor and the funeral
+// itself unseals it. The powerup kept the rubble. Topple the sixth hero grave
+// and an IRON CANINE stands up out of the debris; take it and the skull's bite
+// sharpens: it PIERCES ordinary bodies clean through, stuns hold twice as
+// long, slower throws still count. A shard of the same iron rides the jaw and
+// beats faster the closer anything gets — one pickup, two senses, optional,
+// and reachable from the moment you walk into the yard. Sockets deepen so the
+// change reads on the skull itself. Value and shape only; no words anywhere.
+function buildGraveyardUpgrade(game) {
   const { world, scene, mats: M } = game;
   const m = game.sealedMausoleum;
   if (!m) return;
@@ -358,11 +376,48 @@ function buildSealedMausoleumSecret(game) {
   const grateCollider = world.addCollider(x - 0.52, -0.5, z - 1.95, x + 0.52, 2.4, z - 1.7,
     { id: 'mausoleumGrate' });
 
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.92, 0.46), M.headstone);
-  plinth.position.set(x, 0.46, z + 0.55);
-  plinth.castShadow = true;
-  plinth.receiveShadow = true;
-  scene.add(plinth);
+  // THE SEAL. No key opens this any more: the funeral does. The three-route
+  // reveal calls crack() and the yard watches the shackle give and the iron
+  // walk down into the ground. Restores off the flag so a reload never leaves
+  // the way down welded shut behind a resolved funeral.
+  const seal = game.sealedMausoleumSeal = {
+    open: false,
+    crack() {
+      if (seal.open) return false;
+      seal.open = true;
+      const at = new THREE.Vector3(x, 1.1, z - 1.9);
+      game.audio.unlock({ pos: at, gain: 0.9, rate: 0.62 });
+      game.audio.metalDrop({ pos: at, gain: 0.5, rate: 0.7 });
+      game.after(0.35, () => game.audio.stoneGrind({ pos: at, gain: 0.72, rate: 0.55, verb: 0.7 }));
+      return true;
+    },
+  };
+
+  // THE WAY DOWN. The floor of the sealed mausoleum has given way — four
+  // broken slabs around a hole that has no business being this deep. This is
+  // THE MARROW's mouth now; marrow.js binds its descent verb to this plane
+  // (game.marrowPit), which is why it must exist before buildMarrowArea runs.
+  {
+    // z+0.45 keeps a full metre of standing room between the hole and the
+    // doorway — you have to be able to lean over it, and to come back up
+    // into somewhere you can stand.
+    const PZ = z + 0.45;
+    const voidM = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    const pit = new THREE.Mesh(new THREE.PlaneGeometry(1.05, 1.5), voidM);
+    pit.rotation.set(-Math.PI / 2, 0, 0);
+    pit.position.set(x, 0.07, PZ);
+    scene.add(pit);
+    // merged into the shell: broken floor is dressing, and dressing does not
+    // get to spend draw calls in a district the house looks straight into
+    for (let i = 0; i < 4; i++) {
+      const side = i < 2 ? -1 : 1;
+      world.box(M.headstone, x + side * 0.76, 0.1, PZ - 0.38 + (i % 2) * 0.76,
+        0.52, 0.1, 0.72, side * 0.16);
+    }
+    const pitCollider = world.addCollider(x - 0.55, -0.8, PZ - 0.75, x + 0.55, 0.82, PZ + 0.75,
+      { skullPass: true });
+    game.marrowPit = { pit, collider: pitCollider, x, z: PZ };
+  }
   // "the actual object you collect should look cooler" — a real FANG now:
   // curved in two segments, a brass root band, side serrations, seated on
   // a dark bone cradle, breathing an additive halo, turning slowly on the
@@ -420,78 +475,30 @@ function buildSealedMausoleumSecret(game) {
     tooth.add(halo);
     tooth.userData.halo = halo;
   }
-  tooth.position.set(x, 1.14, z + 0.55);
-  tooth.visible = false;   // sealed behind the black doorway until unlocked;
-  scene.add(tooth);        // no reason to spend its draws from the house windows
-  const relicGlow = { x, y: 1.35, z: z + 0.55, intensity: 0, r: 4.5 };
+  // It stands where the key used to lie: clear of the debris, above the rubble
+  // of the sixth hero grave, turning under its own halo. Alex on the key that
+  // used to be here — "it should be above the rubble... float standing
+  // straight up in the air" — the reveal cannot be buried.
+  const TOOTH_HOME = new THREE.Vector3(18.52, 0.95, 37.5);
+  tooth.position.copy(TOOTH_HOME);
+  tooth.visible = false;   // until the stone comes down; no reason to spend its
+  scene.add(tooth);        // draws across the whole yard before then
+  const relicGlow = { x: TOOTH_HOME.x, y: TOOTH_HOME.y + 0.2, z: TOOTH_HOME.z, intensity: 0, r: 4.5 };
   world.candles.push(relicGlow);
 
-  // The key lies in the rubble of the toppled SIXTH hero grave — the stone
-  // nearest this mausoleum. Its visibility derives from the grave's own
-  // state every tick, so death resets can never desync it. It is its own
-  // mesh, never a debris-pool entry (the pool's census is asserted exact).
-  const key = makeKey(M);
-  key.scale.setScalar(1.4);
+  // The sixth hero grave is the stone that keeps it: two skull hits bring the
+  // stone down. Visibility derives from the grave's own state every tick, so a
+  // death reset can never desync the reveal — and the settle delay is Alex's
+  // ("i never saw the key... it is possible i collect i accidentally"): the
+  // SAME throw that topples the stone must not scoop the prize on its return
+  // leg. Outbound-only, and it gets a full breath in the rubble first.
   const keyGrave = () => game.destructibleGraves?.[5] || null;
-  // "its underneath the rubble. it should be above the rubble... float
-  // standing straight up in the air" — bow up, blade down, hovering clear
-  // of the debris so the reveal cannot be buried.
-  key.position.set(18.52, 0.85, 37.5);
-  key.rotation.set(0, 0, 0);
-  key.visible = false;
-  scene.add(key);
-  // "i didn't see the key... the skull wasn't holding a key" — the key now
-  // GLOWS in the rubble (descriptor + breathing scale) and keeps glowing in
-  // the skull's mouth after the grab, so the carry reads at a glance.
-  const keyGlow = { x: 18.52, y: 0.9, z: 37.5, intensity: 0, r: 4 };
-  world.candles.push(keyGlow);
-  // "i never saw the key... it is possible i collect i accidentally" — he
-  // did, and not by choice: the grab had no outbound guard, so the SAME
-  // throw that toppled the grave could scoop the key on its return leg,
-  // the second it appeared. Outbound-only now, plus a settle delay: the
-  // key gets a full breath in the rubble before it can be taken at all.
-  let keyRevealedAt = -1;
-  const keyTarget = world.addFetchTarget({
-    id: 'mausoleumKey', object: key, radius: 0.7, enabled: false,
-    onHit(skull) {
-      if (skull.mode !== 'outbound') return 'continue';
-      this.enabled = false;
-      skull.grab('mausoleumKey', key);
-      game.flag('gotMausoleumKey');
-      key.traverse((o) => {
-        if (o.isMesh && o.material && 'emissiveIntensity' in o.material) {
-          o.material.emissiveIntensity = 2.4;
-        }
-      });
-      return 'return';
-    },
-  });
-
-  const lockPos = new THREE.Vector3(x, 0.94, z - 1.94);
-  world.addFetchTarget({
-    id: 'mausoleumLock', object: lockBody, radius: 0.6,
-    onHit(skull, at) {
-      if (game.flags.has('mausoleumUnlocked')) return 'continue';
-      if (skull.mode !== 'outbound') return 'continue';
-      if (!skull.carry || skull.carry.id !== 'mausoleumKey') {
-        game.impact('locked', at || lockPos);
-        game.audio.lockedRattle({ pos: lockPos, gain: 0.72, rate: 0.8 });
-        return 'return';
-      }
-      const c = skull.dropCarry();
-      c.mesh.visible = false;
-      game.flag('mausoleumUnlocked');
-      game.audio.unlock({ pos: lockPos, gain: 0.85, rate: 0.7 });
-      game.after(0.4, () => game.audio.stoneGrind({ pos: lockPos, gain: 0.6, rate: 0.6 }));
-      return 'return';
-    },
-  });
+  let revealedAt = -1;
 
   const toothTarget = world.addFetchTarget({
-    id: 'ironCanine', object: tooth, radius: 0.55,
+    id: 'ironCanine', object: tooth, radius: 0.55, enabled: false,
     onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
-      if (!game.flags.has('mausoleumUnlocked')) return 'continue';
       if (game.flags.has('skullSharpened')) return 'continue';
       this.enabled = false;
       tooth.visible = false;
@@ -504,50 +511,60 @@ function buildSealedMausoleumSecret(game) {
     },
   });
 
-  let grateOpenT = 0;
+  let grateOpenT = 0, charm = null, charmMat = null, pulseT = 0;
   game.tickers.push((dt, time) => {
     const g5 = keyGrave();
     const toppled = g5 ? g5.hits >= 2 : false;
-    const gotten = game.flags.has('gotMausoleumKey');
-    // per-tick visibility must defer to the sealed districts' cullers — and
-    // a CARRIED key is always visible: this line used to hide the mesh the
-    // moment it was grabbed, which is the whole of "the skull wasn't
-    // holding a key". In the rubble: surface only. In the jaw: always.
+    const taken = game.flags.has('skullSharpened');
+    // Per-tick visibility, deferring to the sealed districts' cullers — the
+    // law the carried mausoleum key was written in blood to teach.
     const surfaceVisible = game.act === 'graveyard'
       && !game.ossuary?.inOssuary && !game.marrow?.inMarrow;
-    const carried = game.skull?.carry?.id === 'mausoleumKey';
-    key.visible = carried || (toppled && !gotten && surfaceVisible);
-    if (key.visible && keyRevealedAt < 0) keyRevealedAt = time;
-    if (!key.visible) keyRevealedAt = gotten ? keyRevealedAt : -1;
-    keyTarget.enabled = key.visible && keyRevealedAt >= 0 && (time - keyRevealedAt) > 0.9;
-    // the revealed key is unmissable: it breathes light and size
-    keyGlow.intensity += ((key.visible ? 1.3 + Math.sin(time * 2.6) * 0.25 : 0)
-      - keyGlow.intensity) * Math.min(1, dt * 3);
-    if (key.visible) key.scale.setScalar(1.4 + Math.sin(time * 2.6) * 0.09);
-    if (key.visible && !carried) {
-      key.position.y = 0.85 + Math.sin(time * 1.6) * 0.05;
-      key.rotation.y += dt * 0.9;
-    }
-    // the canine exists on screen only once the grate is open — and then it
-    // invites the throw: breathing, turning, bobbing under its halo
-    tooth.visible = game.flags.has('mausoleumUnlocked') && !game.flags.has('skullSharpened');
+    tooth.visible = toppled && !taken && surfaceVisible;
+    if (tooth.visible && revealedAt < 0) revealedAt = time;
+    if (!tooth.visible && !taken) revealedAt = -1;
+    toothTarget.enabled = tooth.visible && revealedAt >= 0 && (time - revealedAt) > 0.9;
     if (tooth.visible) {
+      // it invites the throw: breathing, turning, bobbing under its halo
       toothMat.emissiveIntensity = 0.85 + Math.sin(time * 3.1) * 0.35;
       tooth.rotation.y += dt * 0.55;
-      tooth.position.y = 1.14 + Math.sin(time * 1.8) * 0.022;
+      tooth.position.y = TOOTH_HOME.y + Math.sin(time * 1.8) * 0.05;
       if (tooth.userData.halo) {
         const hb = 0.62 + Math.sin(time * 2.3) * 0.08;
         tooth.userData.halo.scale.set(hb, hb, 1);
       }
     }
-    const unlocked = game.flags.has('mausoleumUnlocked');
-    if (unlocked && m.darkness.visible) m.darkness.visible = false;
-    grateOpenT += ((unlocked ? 1 : 0) - grateOpenT) * Math.min(1, dt * 1.4);
+    relicGlow.intensity += ((tooth.visible ? 1.5 + Math.sin(time * 2.6) * 0.25 : 0)
+      - relicGlow.intensity) * Math.min(1, dt * 2.4);
+
+    // THE SEAL, derived: the funeral opens it, and a reload restores it.
+    if (!seal.open && game.flags.has('graveyardResolved')) seal.open = true;
+    if (seal.open && m.darkness.visible) m.darkness.visible = false;
+    grateOpenT += ((seal.open ? 1 : 0) - grateOpenT) * Math.min(1, dt * 1.4);
     grate.position.y = -grateOpenT * 2.45;
     // the collider follows the sinking iron, never a flag
     grateCollider.max.y = Math.max(grateCollider.min.y, grate.position.y + 2.4);
-    relicGlow.intensity += (((unlocked && !game.flags.has('skullSharpened')) ? 1.5
-      : unlocked ? 0.45 : 0) - relicGlow.intensity) * Math.min(1, dt * 2);
+
+    // DANGER SENSE. A shard of the same iron rides the jaw and beats faster
+    // the nearer anything gets — the marrow relic's heartbeat, moved here so
+    // one optional pickup carries both senses. Value and motion only; it
+    // reads in any light and in any hue, which is the whole point.
+    if (charm) {
+      const p = game.player.pos;
+      let near = Infinity;
+      for (const e of (game.enemies?.list || [])) {
+        if (e.state === 'dying') continue;
+        const d = Math.hypot(e.pos.x - p.x, e.pos.z - p.z);
+        if (d < near) near = d;
+      }
+      const danger = clamp(1 - near / 14, 0, 1);
+      pulseT += dt * (0.9 + danger * 5.1);
+      const beat = Math.max(0, Math.sin(pulseT * Math.PI * 2));
+      const throb = beat * beat;
+      charm.scale.setScalar(0.4 * (1 + throb * (0.1 + danger * 0.16)));
+      charmMat.emissiveIntensity = 0.45 + throb * (0.4 + danger * 2.4);
+    }
+
     // idempotent application: respawn and reload keep the sharpened bite
     if (game.flags.has('skullSharpened') && !game._sharpenedApplied && game.skull?.sockets) {
       game._sharpenedApplied = true;
@@ -574,6 +591,21 @@ function buildSealedMausoleumSecret(game) {
         shell.layers.mask = src.layers.mask;
         src.parent.add(shell);
       }
+      // and the shard on the jaw, where a carried key would ride. It is a
+      // direct jaw child, so dropCarry can never take it and the next catch's
+      // holdNow() traverse puts it on the held layer with everything else.
+      charmMat = toothMat.clone();
+      const charmBrass = toothBrass.clone();
+      charm = new THREE.Group();
+      for (const src of [fangUpper, fangTip, rootBand]) {
+        const c = new THREE.Mesh(src.geometry, src === rootBand ? charmBrass : charmMat);
+        c.position.copy(src.position);
+        c.rotation.copy(src.rotation);
+        charm.add(c);
+      }
+      charm.scale.setScalar(0.4);
+      charm.position.set(-0.048, -0.035, 0.05);
+      game.skull.jaw.add(charm);
     }
   });
 }
@@ -1016,14 +1048,404 @@ function buildGraveyardGate(game) {
     if (gate.t >= 1) gate.open = true;
   });
   game.graveyardGate = gate;
+  buildGateSockets(game);
   game.graveyardLookbackRoots = [
     game.graveyardGround,
     game.graveyardFencePosts,
     gate.left,
     gate.right,
     gate.header,
+    game.gateKeys?.pier,
     ...gate.weights,
   ].filter(Boolean);
+}
+
+// --------------------------------------------------------- the three keys
+// The funeral opens three ways down and out of the yard, and each one ends in
+// a key. The gate takes all three, in any order — but only one can ride the
+// jaw at a time, so each is its own errand: fetch it, carry it back, bank it,
+// go again. A banked key stays standing proud in its socket and catches the
+// lantern, so the lock-stone is a progress bar made of iron with nothing
+// written on it.
+function buildGateSockets(game) {
+  const { world, scene, mats: M } = game;
+  const PX = FOREST_GATE.x - 2.35, PZ = 41.72;      // west of the leaves, inside the yard
+  const iron = new THREE.MeshStandardMaterial({ color: 0x2a2d2e, roughness: 0.66, metalness: 0.58 });
+
+  // The stone is MERGED into the yard's static shell (house-after-cave lives
+  // 5 draws under a 450 ceiling; a landmark that spends nine of them on itself
+  // is a landmark that costs an act). Only the three plates stay real meshes,
+  // because only they are raycast.
+  const pier = new THREE.Group();
+  pier.position.set(PX, 0, PZ);
+  scene.add(pier);
+  world.box(M.headstone, PX, 1.08, PZ, 0.74, 2.16, 0.62);
+  world.box(M.headstone, PX, 2.22, PZ, 0.92, 0.14, 0.8);
+  world.box(M.metal, PX, 0.28, PZ, 0.8, 0.09, 0.68);
+  // solid, like everything else in this yard now — and the socket plates sit
+  // proud of its south face, so the E-pick's occlusion test never eats them
+  world.addCollider(PX - 0.46, -0.5, PZ - 0.31, PX + 0.46, 2.3, PZ + 0.4);
+  // one instanced silhouette for all three banked keys: 1 draw, not 3 groups
+  const seatedGeo = mergeGeometries([
+    new THREE.BoxGeometry(0.05, 0.05, 0.26).translate(0, 0, 0.05),
+    new THREE.TorusGeometry(0.075, 0.022, 5, 10).rotateY(Math.PI / 2).translate(0, 0, 0.21),
+    new THREE.BoxGeometry(0.05, 0.11, 0.045).translate(0, -0.05, -0.05),
+    new THREE.BoxGeometry(0.05, 0.08, 0.045).translate(0, -0.035, -0.09),
+  ]);
+  const seatedMat = new THREE.MeshStandardMaterial({
+    color: 0xb9a878, roughness: 0.36, metalness: 0.72,
+    emissive: 0x3a2f16, emissiveIntensity: 0.5,
+  });
+  const seatedKeys = new THREE.InstancedMesh(seatedGeo, seatedMat, 3);
+  seatedKeys.castShadow = true;
+  seatedKeys.visible = false;
+  scene.add(seatedKeys);
+  const seatM4 = new THREE.Matrix4();
+  const reseat = () => {
+    let any = false;
+    for (let i = 0; i < 3; i++) {
+      const s = keys.sockets[i];
+      const on = s && s.filled;
+      if (on) any = true;
+      seatM4.makeScale(on ? 1 : 0.0001, on ? 1 : 0.0001, on ? 1 : 0.0001);
+      seatM4.setPosition(PX, 0.86 + i * 0.46, PZ - 0.46);
+      seatedKeys.setMatrixAt(i, seatM4);
+    }
+    seatedKeys.instanceMatrix.needsUpdate = true;
+    seatedKeys.visible = any;
+  };
+
+  const keys = game.gateKeys = {
+    pier, list: [null, null, null], sockets: [],
+    banked: () => game.gateKeys.sockets.filter((s) => s.filled).length,
+  };
+  // marrow.js lives in its own module and mints key 2 from inside its own
+  // district; handing the factory over on `game` keeps the import graph acyclic
+  game.makeGateKey = (n, parent, visibleWhen) => makeGateKey(game, n, parent, visibleWhen);
+
+  // three sockets, stacked — bottom to top, the way a tally reads
+  for (let i = 0; i < 3; i++) {
+    const y = 0.86 + i * 0.46;
+    const socket = { i, filled: false, at: new THREE.Vector3(PX, y, PZ - 0.42) };
+    keys.sockets.push(socket);
+
+    const bank = () => {
+      const carry = game.skull?.carry;
+      if (socket.filled || !carry || !/^gateKey[123]$/.test(carry.id)) return false;
+      const c = game.skull.dropCarry();
+      c.mesh.visible = false;
+      socket.filled = true;
+      reseat();
+      game.flag('gateKeyBanked:' + carry.id.slice(-1));
+      game.audio.unlock({ pos: socket.at, gain: 0.8, rate: 0.72 });
+      game.audio.metalDrop({ pos: socket.at, gain: 0.45, rate: 0.8 });
+      game.impact('pop', socket.at);
+      if (keys.banked() >= 3) keys.openTheGate();
+      return true;
+    };
+    socket.bank = bank;
+
+  }
+
+  // ONE faceplate carrying all three keyholes — one mesh, one verb, one throw
+  // target. Three separate plates cost three draw calls in a district the
+  // house looks straight into, and bought nothing: the read is the column of
+  // holes filling up, and the column is in the geometry.
+  const faceParts = [new THREE.BoxGeometry(0.36, 1.62, 0.06)];
+  for (let i = 0; i < 3; i++) {
+    faceParts.push(new THREE.BoxGeometry(0.13, 0.2, 0.03)
+      .translate(0, (0.86 + i * 0.46) - 1.32, -0.04));
+  }
+  const face = new THREE.Mesh(mergeGeometries(faceParts), iron);
+  face.position.set(0, 1.32, -0.34);
+  face.castShadow = true;
+  pier.add(face);
+  keys.face = face;
+
+  // the key goes into the lowest empty hole; the ORDER the three arrive in is
+  // the player's business, not the gate's
+  const bankAny = () => {
+    for (const s of keys.sockets) if (!s.filled && s.bank()) return true;
+    return false;
+  };
+  const lockAt = new THREE.Vector3(PX, 1.32, PZ - 0.42);
+  world.addFetchTarget({
+    id: 'gateSockets', object: face, radius: 0.62,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (bankAny()) return 'return';
+      // carrying nothing, or already full: the lock answers, so the throw is
+      // never met with silence
+      game.impact('locked', at || lockAt);
+      game.audio.lockedRattle({ pos: lockAt, gain: 0.6, rate: 0.95 });
+      return 'return';
+    },
+  });
+  // and at arm's length, the same grammar as every lock in this house
+  world.registerInteract(face, 'gateSockets', () => {
+    if (bankAny()) return;
+    game.audio.lockedRattle({ pos: lockAt, gain: 0.5, rate: 1.0 });
+  }).enabled = true;
+
+  // three clunks, then the iron gives. No counter anywhere: the sockets are
+  // the counter, and the gate's own creak is the reward.
+  keys.openTheGate = () => {
+    if (keys._opened) return;
+    keys._opened = true;
+    game.flag('graveyardCleared');
+    for (let i = 0; i < 3; i++) {
+      game.after(0.18 + i * 0.26, () => game.audio.knock({
+        pos: keys.sockets[i].at, gain: 0.7 - i * 0.06, rate: 0.52 + i * 0.1, verb: 0.6,
+      }), { global: true });
+    }
+    game.after(1.05, () => game.graveyardGate?.openGate?.(), { global: true });
+  };
+  // restore: a reload past the third key finds the gate already given
+  keys.restore = () => {
+    for (const s of keys.sockets) {
+      if (game.flags.has('gateKeyBanked:' + (s.i + 1))) s.filled = true;
+    }
+    reseat();
+    if (keys.banked() >= 3) keys._opened = true;
+  };
+  reseat();
+
+  // ONE descriptor for the whole stone, and a quiet one. Three at 1.35 stacked
+  // inside 2.4 m came out at ~47 each through the candle pool's x35 and turned
+  // the fence, the ground and the pier itself white — the lantern already
+  // delivers ~19 at two metres, which is the whole reason this kit is painted
+  // near-black. It brightens by a step per key: value, not a counter.
+  const stoneGlow = { x: PX, y: 1.36, z: PZ - 0.46, intensity: 0, r: 2.2 };
+  world.candles.push(stoneGlow);
+  game.tickers.push((dt, time) => {
+    const breath = Math.max(0, Math.sin(time * 1.7)) * 0.08;
+    const want = 0.16 + keys.banked() * 0.11 + breath;
+    stoneGlow.intensity += (want - stoneGlow.intensity) * Math.min(1, dt * 3);
+  });
+}
+
+// ------------------------------------------------------- the key tree
+// The tree outside the bedroom window — the one that held the first key you
+// ever fetched — stands inside the graveyard strip, and the funeral wakes it.
+// Glowing balls come down out of its boughs on strings and stay down: a
+// staircase, in the chain-knot language the forest already taught, climbed
+// with the movement you already have. No new verb, no new input. At the top,
+// GATE KEY 3, and a skeleton with a spine that ends in an empty cradle.
+function buildKeyTreeClimb(game) {
+  const { world, scene, mats: M } = game;
+  const CX = 5.5, CZ = 13.6;            // north of the trunk: the bough collider
+  const R = 1.15;                       // (x 2.2..8.8, z 8.6..12.0) owns the window side
+  // 13 steps tops out at 5.37, so the skeleton standing on it (1.33 tall) ends
+  // at 6.70 — clear UNDER the canopy's 7.04 underside. At 16 it climbed into
+  // the leaves and the whole payload of the climb was invisible.
+  const STEPS = 13, RISE = 0.42, PER_TURN = 12;
+  const BASE = 0.33;                    // first tread, low enough to step onto off the grass
+  const CANOPY_Y = 9.6;
+
+  const climb = game.keyTreeClimb = { dropped: false, t: 0, steps: [] };
+  for (let i = 0; i < STEPS; i++) {
+    const a = (i / PER_TURN) * TAU + 0.6;
+    climb.steps.push({
+      x: CX + Math.sin(a) * R, z: CZ + Math.cos(a) * R, y: BASE + i * RISE,
+    });
+  }
+  const top = climb.steps[STEPS - 1];
+
+  // one draw for every ball, one for every string; per-instance VALUE makes
+  // the ladder read without a single hue (he cannot use hue and never could)
+  const ballMat = new THREE.MeshBasicMaterial({ toneMapped: false });
+  const balls = new THREE.InstancedMesh(new THREE.SphereGeometry(0.2, 10, 8), ballMat, STEPS);
+  balls.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(STEPS * 3), 3);
+  const stringMat = new THREE.MeshLambertMaterial({ color: 0x6e6a5e });
+  const strings = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 5), stringMat, STEPS);
+  balls.visible = strings.visible = false;
+  scene.add(balls, strings);
+  climb.balls = balls;
+
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+  const pos = new THREE.Vector3();
+  const seat = (i, y) => {
+    const s = climb.steps[i];
+    m4.compose(pos.set(s.x, y, s.z), q.identity(), sc.set(1, 1, 1));
+    balls.setMatrixAt(i, m4);
+    const len = Math.max(0.05, CANOPY_Y - y);
+    m4.compose(pos.set(s.x, y + len / 2, s.z), q.identity(), sc.set(1, len, 1));
+    strings.setMatrixAt(i, m4);
+  };
+  for (let i = 0; i < STEPS; i++) {
+    // brighter as it rises: the eye is led up the tree, and the top tread is
+    // the brightest thing in the yard
+    const v = 0.34 + (i / (STEPS - 1)) * 0.62;
+    balls.setColorAt(i, new THREE.Color(v, v, v));
+    seat(i, CANOPY_Y);
+  }
+  balls.instanceMatrix.needsUpdate = true;
+  strings.instanceMatrix.needsUpdate = true;
+  if (balls.instanceColor) balls.instanceColor.needsUpdate = true;
+
+  // four descriptors so the climb LIGHTS itself; the pool is proximity-won and
+  // nothing else is near the tree once the yard is quiet
+  const lamps = [];
+  for (const i of [1, 6, STEPS - 1]) {
+    const s = climb.steps[i];
+    // the top one is the reason the climb exists: it has to land on the thing
+    // waiting up there, or the payload of the whole staircase is a silhouette
+    // nobody can see
+    const lamp = { x: s.x, y: s.y + (i === STEPS - 1 ? 0.9 : 0.35), z: s.z,
+      intensity: 0, r: i === STEPS - 1 ? 3.6 : 4.2 };
+    world.candles.push(lamp);
+    lamps.push(lamp);
+  }
+
+  // THE TREADS. Flat ramps, not colliders: groundHeightAt never reads collider
+  // tops, so a box is something you phase through, and a ramp is something you
+  // stand on. 0.42 of rise is inside the 0.55 step window, so the whole climb
+  // is a walk — and consecutive treads overlap in plan, so there is no gap to
+  // fall between. They only exist once the balls are down.
+  const treads = [];
+  for (let i = 0; i < STEPS; i++) {
+    const s = climb.steps[i];
+    const r = { id: 'keyTree:' + i, axis: 'z', x0: s.x - 0.43, x1: s.x + 0.43,
+      z0: s.z - 0.43, z1: s.z + 0.43, y0: s.y, y1: s.y };
+    treads.push(r);
+  }
+
+  // GATE KEY 3 and the body it was left with
+  // ONE mesh. Twenty-three little bones is twenty-three draw calls in a
+  // district the house has a clear line into, and this thing is a silhouette,
+  // not a prop you walk up to.
+  const boneParts = [];
+  const put = (geo, px, py, pz, rx, ry2, rz) => {
+    if (rx) geo.rotateX(rx);
+    if (ry2) geo.rotateY(ry2);
+    if (rz) geo.rotateZ(rz);
+    geo.translate(px, py, pz);
+    boneParts.push(geo);
+  };
+  for (let i = 0; i < 9; i++) {
+    put(new THREE.BoxGeometry(0.13, 0.075, 0.11), 0, 0.42 + i * 0.098, -0.06 + i * 0.012, 0.05);
+  }
+  put(new THREE.BoxGeometry(0.34, 0.14, 0.26), 0, 0.36, -0.06);            // pelvis
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      put(new THREE.TorusGeometry(0.15 - i * 0.012, 0.017, 4, 8, 2.1),
+        side * 0.02, 0.66 + i * 0.1, -0.02 + i * 0.01, Math.PI / 2, 0, side * 1.35);
+    }
+    put(new THREE.CapsuleGeometry(0.032, 0.3, 3, 5), side * 0.19, 0.78, 0.02, 0, 0, side * 0.5);
+    put(new THREE.CapsuleGeometry(0.036, 0.34, 3, 5), side * 0.13, 0.2, 0.1, 1.15);
+  }
+  // the cradle where a head would rest — and nothing in it. The whole point of
+  // the tree top is the shape of the absence.
+  put(new THREE.TorusGeometry(0.085, 0.019, 5, 12), 0, 1.33, 0.04, Math.PI / 2 - 0.16);
+  const bones = new THREE.Mesh(mergeGeometries(boneParts), M.bone);
+  bones.position.set(top.x, top.y, top.z);
+  bones.rotation.y = Math.atan2(CX - top.x, CZ - top.z);
+  bones.castShadow = true;
+  bones.visible = false;
+  scene.add(bones);
+  const gateKey3 = makeGateKey(game, 3, scene, () => game.act === 'graveyard'
+    && !game.ossuary?.inOssuary && !game.marrow?.inMarrow);
+
+  climb.drop = () => {
+    if (climb.dropped) return false;
+    climb.dropped = true;
+    balls.visible = strings.visible = true;
+    bones.visible = true;
+    for (const r of treads) world.ramps.push(r);
+    gateKey3.reveal(top.x, top.y + 0.95, top.z);
+    for (let i = 0; i < STEPS; i++) {
+      const s = climb.steps[i];
+      game.after(0.1 + i * 0.11, () => game.audio.glassTink({
+        pos: new THREE.Vector3(s.x, s.y, s.z), gain: 0.3, rate: 1.5 - i * 0.045, verb: 0.75,
+      }), { global: true });
+    }
+    return true;
+  };
+
+  game.tickers.push((dt, time) => {
+    if (game.flags.has('graveyardResolved') && !climb.dropped) climb.drop();
+    if (!climb.dropped) return;
+    // the balls pay out down their strings, low ones first, and settle
+    if (climb.t < 1) {
+      climb.t = Math.min(1, climb.t + dt * 0.42);
+      for (let i = 0; i < STEPS; i++) {
+        const s = climb.steps[i];
+        const p = clamp((climb.t - i * 0.045) / 0.45, 0, 1);
+        seat(i, CANOPY_Y + (s.y - CANOPY_Y) * (p * p * (3 - 2 * p)));
+      }
+      balls.instanceMatrix.needsUpdate = true;
+      strings.instanceMatrix.needsUpdate = true;
+    } else {
+      // settled: a slow breath in the string, so the ladder is never dead
+      for (let i = 0; i < STEPS; i++) {
+        seat(i, climb.steps[i].y + Math.sin(time * 0.9 + i * 0.7) * 0.012);
+      }
+      balls.instanceMatrix.needsUpdate = true;
+      strings.instanceMatrix.needsUpdate = true;
+    }
+    const lit = game.act === 'graveyard';
+    for (const lamp of lamps) {
+      lamp.intensity += ((lit ? 1.15 : 0) - lamp.intensity) * Math.min(1, dt * 2);
+    }
+  });
+}
+
+// One gate key: a mesh that appears at the end of its own route, is fetched
+// outbound-only into the jaw (never scooped on a return leg — that bug shipped
+// once already), and is spent into a socket at the gate.
+function makeGateKey(game, n, parent, visibleWhen) {
+  const key = makeKey(game.mats);
+  key.scale.setScalar(1.25);
+  key.visible = false;
+  (parent || game.scene).add(key);
+  const rec = {
+    n, key, revealed: false, home: new THREE.Vector3(),
+    reveal(x, y, z) {
+      rec.home.set(x, y, z);
+      key.position.copy(rec.home);
+      rec.revealed = true;
+    },
+    // Handed straight to the jaw. The marrow's altar pays out with the relic,
+    // in the same grab: making the player stand at that altar for a SECOND
+    // aimed throw is asking them to dawdle at the exact moment the room turns
+    // on them, which is the opposite of what the beat is for.
+    giveToJaw() {
+      if (rec.revealed && game.flags.has('got' + id)) return false;
+      rec.revealed = true;
+      rec.target.enabled = false;
+      game.skull.grab(id, key);
+      game.flag('got' + id);
+      return true;
+    },
+  };
+  const id = 'gateKey' + n;
+  rec.target = game.world.addFetchTarget({
+    id, object: key, radius: 0.7, enabled: false,
+    onHit(skull) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (skull.carry) return 'continue';        // one errand at a time
+      this.enabled = false;
+      skull.grab(id, key);
+      game.flag('got' + id);
+      return 'return';
+    },
+  });
+  game.gateKeys.list[n - 1] = rec;
+  game.tickers.push((dt, time) => {
+    const banked = game.flags.has('gateKeyBanked:' + n);
+    const carried = game.skull?.carry?.id === id;
+    // derived every tick, and modelling EVERY legitimate state of the object:
+    // in its socket-bound hand it is always visible, at its site only while
+    // the site itself is
+    key.visible = carried || (rec.revealed && !banked && !!visibleWhen());
+    rec.target.enabled = key.visible && !carried;
+    if (key.visible && !carried) {
+      key.position.y = rec.home.y + Math.sin(time * 1.6 + n) * 0.05;
+      key.rotation.y += dt * 0.9;
+      key.scale.setScalar(1.25 + Math.sin(time * 2.6 + n) * 0.08);
+    }
+  });
+  return rec;
 }
 
 // --------------------------------------------------------- the under-yard
@@ -1047,6 +1469,12 @@ function buildOssuaryRoute(game) {
   routeRoot.name = 'required graveyard ossuary';
   routeRoot.visible = false;
   scene.add(routeRoot);
+  // GATE KEY 1 lives in this district and rides its seal — a routeRoot child,
+  // so the culler owns its visibility and skull.grab lifts it clean out into
+  // the jaw when it is taken. noBatch or batchStaticGroup would bake it into
+  // the shell at the end of this build.
+  const gateKey1 = makeGateKey(game, 1, routeRoot, () => true);
+  gateKey1.key.userData.noBatch = true;
   const wallMat = M.stone.clone();
   wallMat.color.multiplyScalar(0.47);
   wallMat.roughness = 0.96;
@@ -1974,7 +2402,8 @@ function buildOssuaryRoute(game) {
         state.resident = res;
       }
     }
-    if (state.inOssuary && !state.solved && p.z < OZ + 0.28 && skull?.mode === 'held') {
+    // the entrance is two-way FOREVER now — it is the only way out of here
+    if (state.inOssuary && p.z < OZ + 0.28 && skull?.mode === 'held') {
       state.inOssuary = false;
       p.set(mausoleum.x, 0.04, mausoleum.z - 1.2);
       player.vel.set(0, 0, 0);
@@ -2013,10 +2442,11 @@ function buildOssuaryRoute(game) {
       state.pulling = false;
       state.target.enabled = false;
       game.flag('ossuaryCleared');
-      game.flag('graveyardCleared');
-      game.graveyardGate?.openGate?.('ossuary');
-      // (the exit collider is not collapsed here — it tracks the sinking
-      // slab in the ticker below, so the way opens when the stone is gone)
+      // The counterweight used to open the surface gate outright. It pays out
+      // a KEY now — one of three the gate wants — and the way out of here is
+      // the way you came in. (The exit collider is not collapsed here; it
+      // tracks the sinking slab in the ticker below, so the way opens when
+      // the stone is gone.)
       game.audio.metalDrop({ pos: anchorPos, gain: 0.88, rate: 0.62 });
       game.audio.duck(0.2, 2.8);
       game.checkpoint('graveyard');
@@ -2040,22 +2470,27 @@ function buildOssuaryRoute(game) {
     // chain X drops off the hatch, the lid swings, the glow in the mouth
     // blooms. All poses derive from exitT so a forced restore (director
     // teleport, respawn) seats the entire far end with one assignment.
-    hatchChains.position.y = -smoothstep(0.04, 0.34, state.exitT) * 1.85;
-    // 1.62 rad (~93 deg) leans the open lid back against the cap wall with the
-    // handle bar proud of it, facing the climber. 1.92 carried the handle and
-    // most of the panel 0.11 m INSIDE the wall. Regression asserts > 1.6.
-    lidPivot.rotation.x = smoothstep(0.3, 0.98, state.exitT) * 1.62;
-    if (!hatchCreaked && state.exitT > 0.32) {
+    // THE FAR END IS SEALED. It used to be the way into the forest; the forest
+    // has ONE door now and it is the gate the three keys open. Every pose at
+    // this end still derives from one number — that number is just nailed to
+    // zero, so the chains stay crossed on the lid, the lid stays down, and the
+    // shaft mouth reads as what it is: a way out that somebody shut.
+    const hatchT = 0;
+    hatchChains.position.y = -smoothstep(0.04, 0.34, hatchT) * 1.85;
+    lidPivot.rotation.x = smoothstep(0.3, 0.98, hatchT) * 1.62;
+    if (!hatchCreaked && hatchT > 0.32) {
       hatchCreaked = true;
       game.audio.stoneGrind({
         pos: new THREE.Vector3(OX - 2.45, DECK_Y, OZ + 34.75), gain: 0.5, rate: 0.9,
       });
     }
-    shaftGlow.intensity += ((1.0 + state.exitT * 3.4) - shaftGlow.intensity)
+    shaftGlow.intensity += ((1.0 + hatchT * 3.4) - shaftGlow.intensity)
       * Math.min(1, dt * 2.2);
-    // the forest-side mouth opens on the same payout — parametric off exitT
-    // like everything else at the far end, so one forced assignment seats it
-    state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, state.exitT) * 1.85;
+    state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, hatchT) * 1.85;
+
+    // GATE KEY 1, derived: the counterweight's real payout. Revealed off the
+    // solve rather than set by it, so a restored save finds it hanging.
+    if (state.solved && !gateKey1.revealed) gateKey1.reveal(OX, FLOOR + 1.15, OZ + 25.4);
     // the climb-out settle: an additive rock that decays to zero, so the
     // pose stays parametric off exitT once the kick has spent itself
     if (state.arrivalKick > 0) {
@@ -2136,9 +2571,10 @@ function buildOssuaryRoute(game) {
     // The way out is USED at the TOP of the climb: the lid stands open, the
     // bar on its underside catches the shaft light, and the crosshair only
     // offers the verb once the player is up on the deck with skull in hand.
-    exitMouthInter.enabled = state.inOssuary && state.solved && state.exitT > 0.98
-      && p.y > FLOOR + 3.05 && p.x < OX - 2.0 && p.z > OZ + 33.9
-      && skull?.mode === 'held';
+    // ...and it never is: the hatch is chained shut for good (hatchT above).
+    // The verb stays wired so the geometry keeps its language — a handle you
+    // can see, on a lid that does not move — but it can never be live.
+    exitMouthInter.enabled = false;
     // the armed verb executes HERE, where the old walk-over swap lived —
     // after this frame's cullers, before the seal restore below
     if (state._pendingClimbOut) { state._pendingClimbOut = false; doClimbOut(); }

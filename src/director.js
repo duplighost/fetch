@@ -202,7 +202,10 @@ export class Director {
         if (g.flags.has('graveyardCleared')) g.graveyardGate.openGate();
       }
       g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
-      if (g.flags.has('graveyardCleared') && g.ossuary) {
+      g.gateKeys?.restore?.();
+      // the counterweight's own flag, not the gate's: the gate is three keys
+      // now and the under-yard is only one of them
+      if (g.flags.has('ossuaryCleared') && g.ossuary) {
         g.ossuary.solved = true;
         g.ossuary.progress = 1;
         // exitT is the ONE number the far end derives from (slab, hatch
@@ -659,6 +662,20 @@ export class Director {
     a.t -= dt;
     if (alive > 0 || a.pending > 0) {
       a.engaged = true;
+      // STRAGGLERS. A wave that ends in hide-and-seek is not a fight. Every few
+      // seconds the survivors are re-pointed at the player, and any of them
+      // still far off answers out loud — so the last body is something you can
+      // hear coming, never something you have to go looking for.
+      a.callT = (a.callT || 0) - dt;
+      if (a.callT <= 0) {
+        a.callT = 5.5;
+        g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 70);
+        for (const e of g.enemies.list) {
+          if (!e.graveArena || e.state === 'dying') continue;
+          if (Math.hypot(e.pos.x - g.player.pos.x, e.pos.z - g.player.pos.z) < 9) continue;
+          g.audio.walkerRise({ pos: e.pos, gain: 0.34, rate: 0.86, verb: 0.7 });
+        }
+      }
       return;
     }
     if (a.engaged) {
@@ -744,12 +761,32 @@ export class Director {
     }
     g.ossuary?.unlock?.(route);
     g.audio.duck(0.2, 2.6);
+    this._revealGraveyardRoutes();
     // Resolution is irreversible, but its checkpoint sits at the route it
     // actually opened rather than at whichever corpse happened to die last.
     g.checkpoint('graveyard', {
       x: -14.6, y: 0.08, z: 31.2, yaw: 0, pitch: 0,
     });
     return true;
+  }
+
+  // THE THREE ROUTES. The funeral does not open the gate any more — it opens
+  // three ways to the three things the gate wants, and it says so out loud,
+  // one at a time. Sequential, not simultaneous: three state changes landing
+  // together is a flash, and three landing in order is a sentence. Each one
+  // happens AT its own object, in motion and value, never in hue.
+  _revealGraveyardRoutes() {
+    const g = this.game;
+    // 1. the west mausoleum's floor is already given (ossuary.unlock, above);
+    //    this is the beat that points at it
+    g.audio.sting(0.5);
+    g.after(0.5, () => g.audio.stoneGrind({
+      pos: new THREE.Vector3(-14.6, 0.4, 34.2), gain: 0.8, rate: 0.5, verb: 0.8,
+    }), { global: true });
+    // 2. the east mausoleum's seal gives
+    g.after(2.1, () => g.sealedMausoleumSeal?.crack?.(), { global: true });
+    // 3. and the tree lets its lights down
+    g.after(4.0, () => g.keyTreeClimb?.drop?.(), { global: true });
   }
 
   // ---------------------------------------------------------------- forest
@@ -1086,6 +1123,7 @@ export class Director {
       if (this.graveRitual) this.graveRitual.done = true;
       g.graveyardGate?.setRitualStage?.(3);
       g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
+      g.gateKeys?.restore?.();
       if (g.flags.has('graveyardCleared')) g.graveyardGate?.openGate?.();
     }
     g.teleport(cp);

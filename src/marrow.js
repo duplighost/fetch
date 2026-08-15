@@ -277,6 +277,9 @@ export function buildMarrowArea(game) {
   marrowRoot.name = 'the marrow';
   marrowRoot.visible = false;
   scene.add(marrowRoot);
+  // GATE KEY 2 — the crypt's share of the gate. A marrowRoot child, so the
+  // district's own seal owns its visibility until skull.grab lifts it out.
+  const gateKey2 = game.makeGateKey ? game.makeGateKey(2, marrowRoot, () => true) : null;
 
   // ---- the hall: MARROW's crypt vocabulary -------------------------------
   const fleshWall = new THREE.MeshLambertMaterial({ color: 0x35272a });
@@ -441,22 +444,26 @@ export function buildMarrowArea(game) {
   const darkEyes = { age: 0, life: 0.82, active: false, nextAt: 8 };
 
   // ---- the pit entrance (surface side) -----------------------------------
-  // the northeast open grave; game.marrowPit is set by buildGraveyard.
+  // The broken floor of the SEALED MAUSOLEUM; game.marrowPit is set by
+  // buildGraveyard, and every surface coordinate below is read from it — the
+  // mouth has moved once already and will not be hardcoded again.
   // "i didn't see any enemies from marrow if they existed" — the mouth was
   // too quiet. Once open it is UNMISSABLE now: a breathing ember shimmer
   // floats over the black, the glow is strong, the under-knocks carry
-  // twelve metres, and the moment the yard resolves the pit announces
-  // itself once across the graveyard.
-  const pitGlow = { x: 11.8, y: 0.45, z: 36.2, intensity: 0, r: 4.5 };
+  // twelve metres, and the moment the yard resolves the pit announces itself.
+  const MOUTH = game.marrowPit
+    ? { x: game.marrowPit.x, z: game.marrowPit.z }
+    : { x: 15.6, z: 31.95 };
+  const pitGlow = { x: MOUTH.x, y: 0.45, z: MOUTH.z, intensity: 0, r: 4.5 };
   world.candles.push(pitGlow);
   const pitEmber = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.95, 2.25),
+    new THREE.PlaneGeometry(0.95, 1.4),
     new THREE.MeshBasicMaterial({
       color: 0xff7a3a, transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
   pitEmber.rotation.x = -Math.PI / 2;
-  pitEmber.position.set(11.8, 0.03, 36.2);
+  pitEmber.position.set(MOUTH.x, 0.03, MOUTH.z);
   scene.add(pitEmber);
 
   const state = {
@@ -552,7 +559,7 @@ export function buildMarrowArea(game) {
     const player = game.player;
     if (state.inMarrow || game.act !== 'graveyard') return;
     if (!game.flags.has('graveyardResolved') || game.skull?.mode !== 'held') return;
-    if (Math.hypot(player.pos.x - 11.8, player.pos.z - 36.2) > 2.6) return;
+    if (Math.hypot(player.pos.x - MOUTH.x, player.pos.z - MOUTH.z) > 2.6) return;
     state.inMarrow = true;
     player.pos.set(MX, FLOOR, MZ + 1.5);
     player.vel.set(0, 0, 0);
@@ -582,14 +589,16 @@ export function buildMarrowArea(game) {
     if (player.pos.z > MZ + 3.4) return;
     state.inMarrow = false;
     exitPalette();
-    player.pos.set(11.8, 0.12, 34.6);
+    // up into the standing room between the hole and the mausoleum's doorway,
+    // facing the way out
+    player.pos.set(MOUTH.x, 0.12, MOUTH.z - 1.25);
     player.vel.set(0, 0, 0);
     player.fallV = 0;
     player.grounded = true;
-    player.yaw = Math.PI;
+    player.yaw = 0;
     player._sync(0);
     game.checkpoint('graveyard');
-    game.audio.stoneGrind({ pos: new THREE.Vector3(11.8, 0, 36.2), gain: 0.4, rate: 0.6 });
+    game.audio.stoneGrind({ pos: new THREE.Vector3(MOUTH.x, 0, MOUTH.z), gain: 0.4, rate: 0.6 });
   };
   const descend = () => { state._pendingDescend = true; };
   const ascend = () => { state._pendingAscend = true; };
@@ -633,15 +642,16 @@ export function buildMarrowArea(game) {
     // a grave clears its throat three times
     if (opened && !state._invited && game.act === 'graveyard') {
       state._invited = true;
-      game.after(2.4, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.62, rate: 0.46 }), { global: true });
-      game.after(3.1, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.66, rate: 0.42 }), { global: true });
-      game.after(3.9, () => game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.7, rate: 0.38 }), { global: true });
+      const under = new THREE.Vector3(MOUTH.x, -0.6, MOUTH.z);
+      game.after(2.4, () => game.audio.knock({ pos: under, gain: 0.62, rate: 0.46 }), { global: true });
+      game.after(3.1, () => game.audio.knock({ pos: under, gain: 0.66, rate: 0.42 }), { global: true });
+      game.after(3.9, () => game.audio.knock({ pos: under, gain: 0.7, rate: 0.38 }), { global: true });
     }
     if (opened && !state.inMarrow && game.act === 'graveyard' && time > state._knockAt) {
-      const nearPit = Math.hypot(p.x - 11.8, p.z - 36.2) < 12;
+      const nearPit = Math.hypot(p.x - MOUTH.x, p.z - MOUTH.z) < 12;
       state._knockAt = time + 6 + Math.random() * 4;
       if (nearPit) {
-        game.audio.knock({ pos: new THREE.Vector3(11.8, -0.6, 36.2), gain: 0.52, rate: 0.48 });
+        game.audio.knock({ pos: new THREE.Vector3(MOUTH.x, -0.6, MOUTH.z), gain: 0.52, rate: 0.48 });
       }
     }
     // descending and leaving are USED (E on the mouth, E on the way-up
@@ -659,23 +669,17 @@ export function buildMarrowArea(game) {
     marrowRoot.visible = state.inMarrow;
     syncMarrowVisibility();
 
-    // THE RELIC'S GIFT: danger-sense. The small wet piece of another game
-    // beats like a heart in the jaw, faster as something closes in — in the
-    // crypt, in the yard, everywhere it rides. Value and motion only.
-    if (state.dangle) {
-      let near = 99;
-      for (const e of (game.enemies?.list || [])) {
-        if (!e?.pos) continue;
-        const dd = Math.hypot(e.pos.x - p.x, e.pos.z - p.z);
-        if (dd < near) near = dd;
-      }
-      const danger = clamp(1 - near / 14, 0, 1);
-      state._pulseT = (state._pulseT || 0) + dt * (0.9 + danger * 5.1);
-      const beat = Math.max(0, Math.sin(state._pulseT * TAU));
-      const throb = beat * beat;
-      state.dangle.scale.setScalar(0.45 + throb * (0.1 + danger * 0.16));
-      const m = state.dangle.material;
-      m.emissiveIntensity = (m.userData.base ??= m.emissiveIntensity) + throb * (0.4 + danger * 2.4);
+    // The relic is a keepsake now and nothing more — danger-sense moved to the
+    // iron canine in the yard, so ONE optional pickup carries both senses
+    // instead of the crypt quietly owning half of them.
+    //
+    // GATE KEY 2: what the altar was actually holding down. Derived off
+    // relicKept, never set by the take, so a restored save finds it — and it
+    // goes straight into the jaw beside the relic, because the mourners begin
+    // hunting on the same frame and this is not a moment to stand still in.
+    if (state.relicKept && gateKey2 && !gateKey2.revealed) {
+      gateKey2.reveal(relic.position.x, relic.position.y, relic.position.z);
+      if (!game.skull.carry) gateKey2.giveToJaw();
     }
 
     if (!state.inMarrow) return;

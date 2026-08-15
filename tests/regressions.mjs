@@ -624,10 +624,13 @@ try {
     g.ossuary.solved = true;
     g.ossuary.exitT = 1;
     F.stepWith(0.4, {});
-    check('a forced restore seats slab, hatch lid and arrival mouth from exitT alone',
+    // The slab still sinks off exitT. The far end does NOT: the forest has one
+    // door now — the three-key gate — so the deck hatch is chained shut for
+    // good and its verb can never be live. Sealed scenery, and the pin says so.
+    check('a forced restore sinks the slab and leaves the far hatch chained',
       g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y
-      && g.ossuary.lidPivot.rotation.x > 1.6
-      && g.ossuary.arrival.pivot.rotation.x < -1.7,
+      && g.ossuary.lidPivot.rotation.x < 0.02
+      && g.ossuary.arrival.pivot.rotation.x > -0.02,
       { lid: +g.ossuary.lidPivot.rotation.x.toFixed(2),
         arrival: +g.ossuary.arrival.pivot.rotation.x.toFixed(2) });
 
@@ -657,23 +660,24 @@ try {
       if (samples.length && y < samples[samples.length - 1] - 0.3) regressed++;
       samples.push(+y.toFixed(2));
     }
-    // the top of the climb ends on a USED verb now: E into the open mouth
-    if (!g.flags.has('ossuaryExited') && atTop()) {
-      const mx = OX - 2.45, mz = OZ + 34.75;
-      const my = g.ossuary.origin.floor + 5.43;
-      const dx = mx - g.player.pos.x, dz = mz - g.player.pos.z;
-      g.player.yaw = Math.atan2(-dx, -dz);
-      g.player.pitch = Math.max(-1.15, Math.min(1.15,
-        Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001)));
-      g.player._sync(0);
-      F.stepWith(1 / 120, { interactPressed: true });
-      F.stepWith(0.3, {});
-    }
+    // The shaft is still a real climb — the flights, the turn, the platform,
+    // all reached by ground contact — it just does not lead OUT any more. So
+    // the pin keeps the thing worth keeping (a monotonic rise driven by input
+    // alone) and adds the seal: at the top, the mouth refuses.
+    const mx = OX - 2.45, mz = OZ + 34.75;
+    const my = g.ossuary.origin.floor + 5.43;
+    const dxT = mx - g.player.pos.x, dzT = mz - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxT, -dzT);
+    g.player.pitch = Math.max(-1.15, Math.min(1.15,
+      Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dxT, dzT) || 0.001)));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.3, {});
     const peak = Math.max(...samples);
-    check('the far exit is a grounded climb to the hatch, not a plane swap',
-      g.flags.has('ossuaryExited') && g.act === 'forest'
-      && peak > g.ossuary.origin.floor + 3.0 && regressed === 0,
-      { peak, regressed, act: g.act, pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    check('the shaft is still a grounded climb, and the hatch at the top is shut',
+      peak > g.ossuary.origin.floor + 3.0 && regressed === 0
+      && !g.flags.has('ossuaryExited') && g.act === 'graveyard' && g.ossuary.inOssuary,
+      { peak, regressed, act: g.act, exited: g.flags.has('ossuaryExited') });
 
     return { checks, diagnostics: { climbTail: samples.slice(-10) } };
   });
@@ -749,10 +753,13 @@ try {
       { enabled: g.marrowPit?.pit?.userData?.inter?.enabled });
     // descending is USED now, never walked-over: stand at the lip, look
     // into the mouth, E
-    g.player.pos.set(11.8, 0.05, 34.85);
+    // the mouth moved under the sealed mausoleum, where the funeral unseals
+    // it — read it off game.marrowPit rather than pinning the old coordinates
+    const MO = g.marrowPit;
+    g.player.pos.set(MO.x, 0.05, MO.z - 1.25);
     g.player.vel.set(0, 0, 0);
     g.player.yaw = Math.PI;
-    g.player.pitch = Math.atan2(0.018 - (0.05 + 1.62), 36.2 - 34.85);
+    g.player.pitch = Math.atan2(0.02 - (0.05 + 1.62), 1.25);
     g.player._sync(0);
     F.stepWith(1 / 120, { interactPressed: true });
     F.stepWith(0.3, {});
@@ -1602,6 +1609,124 @@ try {
       { found: !!bellInter, enabled: bellInter?.enabled ?? null },
     );
 
+    return { checks, diagnostics: null };
+  });
+
+  // THE THREE-KEY GATE. Any order, and only three opens it — the sockets are
+  // the counter, so the counter has to be right.
+  await scenario('gate-takes-three-keys-in-any-order', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+
+    check('the gate is shut and every socket is empty',
+      g.gateKeys.banked() === 0 && !g.graveyardGate.opening && !g.graveyardGate.open,
+      { banked: g.gateKeys.banked() });
+    // the retired northeast pit is scenery now: no verb, ever
+    const nearOldPit = g.world.interactables.filter((o) => {
+      const w = o.getWorldPosition(new g.skull.pos.constructor());
+      return Math.hypot(w.x - 11.8, w.z - 36.2) < 2.0;
+    });
+    check('the way down is under the sealed mausoleum, and the old grave is inert',
+      !!g.marrowPit && Math.abs(g.marrowPit.x - 15.6) < 0.2 && g.marrowPit.z > 30
+      && nearOldPit.length === 0,
+      { mouth: [g.marrowPit?.x, g.marrowPit?.z], strayVerbs: nearOldPit.length });
+
+    // bank out of order: middle socket, then top, then bottom
+    const order = [1, 2, 0];
+    let opened = null;
+    for (let i = 0; i < order.length; i++) {
+      const rec = g.gateKeys.list[i];
+      rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+      rec.giveToJaw();
+      const socket = g.gateKeys.sockets[order[i]];
+      const banked = socket.bank();
+      F.stepWith(0.1, {}, false);
+      check(`key ${i + 1} banks into socket ${order[i]}`,
+        banked === true && socket.filled === true
+        && g.gateKeys.banked() === i + 1,
+        { banked: g.gateKeys.banked(), filled: socket.filled });
+      if (i < 2) opened = g.graveyardGate.opening || g.graveyardGate.open;
+    }
+    check('two keys are not enough — the gate never twitched before the third',
+      opened === false, { opened });
+    F.stepWith(1.6, {}, false);
+    check('the third key gives the gate',
+      g.graveyardGate.opening === true && g.flags.has('graveyardCleared'),
+      { opening: g.graveyardGate.opening });
+    return { checks, diagnostics: null };
+  });
+
+  // THE PIERCE. The canine's real gift: ordinary bodies drop on contact and
+  // the skull keeps going. Unkillables are untouched by it.
+  await scenario('the-canine-pierces-ordinary-bodies', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    g.enemies.clear(() => true);
+    F.stepWith(0.2, {}, false);
+
+    const line = (power) => {
+      g.skullPower = power;
+      g.enemies.clear(() => true);
+      g.player.pos.set(0, 0, 20);
+      g.player.vel.set(0, 0, 0);
+      g.player.yaw = Math.PI;                      // +z, straight down the line
+      g.player.pitch = 0;
+      g.player._sync(0);
+      const a = g.enemies.spawn('walker', 0, 24, 'chase');
+      const b = g.enemies.spawn('walker', 0, 27, 'chase');
+      a.graveRiseT = 0; b.graveRiseT = 0;
+      F.stepWith(0.2, {}, false);
+      g.skull.holdNow();
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+      F.stepWith(0.75, { throwHeld: true }, false);
+      const state = { a: a.state, b: b.state, mode: g.skull.mode };
+      F.stepWith(1 / 120, { throwReleased: true }, false);
+      for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {}, false);
+      return state;
+    };
+
+    const plain = line(1);
+    check('at power 1 the first body is STUNNED and the throw comes home',
+      plain.a === 'stunned' && plain.b !== 'dying' && plain.mode !== 'outbound',
+      plain);
+    const sharp = line(2);
+    check('at power 2 the first body DROPS and the skull is still in flight',
+      sharp.a === 'dying' && (sharp.mode === 'outbound' || sharp.mode === 'poised'),
+      sharp);
+    check('and it reaches the body standing behind it',
+      sharp.b === 'dying', sharp);
+
+    // the unkillables keep every existing rule
+    g.enemies.clear(() => true);
+    g.skullPower = 2;
+    g.player.pos.set(0, 0, 20);
+    g.player.yaw = Math.PI;
+    g.player.pitch = 0;
+    g.player._sync(0);
+    const k = g.enemies.spawn('kneeler', 0, 25, 'chase');
+    k.graveRiseT = 0;
+    F.stepWith(0.2, {}, false);
+    g.skull.holdNow();
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(0.7, { throwHeld: true }, false);
+    check('a kneeler still cannot be put down, powered or not',
+      k.state !== 'dying', { state: k.state });
+    g.skullPower = 1;
     return { checks, diagnostics: null };
   });
 } finally {

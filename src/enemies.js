@@ -1877,10 +1877,12 @@ export class Enemies {
       // just stunned and auto-pops it — making the quiet option impossible.
       // A hit grants 0.6s immunity; popping takes a deliberate second THROW.
       e.iframes = Math.max(0, (e.iframes || 0) - dt);
-      // game.skullPower (the iron canine, optional graveyard relic) sharpens
-      // the bite: slower contacts still count, stuns hold longer, blows land
-      // harder. It NEVER bypasses the stun-then-deliberate-second-throw
-      // grammar — the quiet/loud two-tier kill is the game's law.
+      // game.skullPower (the iron canine, the optional graveyard pickup)
+      // sharpens the bite: slower contacts still count, stuns hold longer,
+      // blows land harder — and at power 2 an ORDINARY body is PIERCED. The
+      // stun-then-deliberate-second-throw grammar is still the game's law at
+      // power 1, and still the only way anything unkillable is ever handled;
+      // the fang is what buying out of it costs, and it is optional.
       const power = game.skullPower || 1;
       if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8 / power) {
         if (this._skullIntersects(e, skull.prevPos, skull.pos)) {
@@ -1893,7 +1895,18 @@ export class Enemies {
           const away = V.d.set(skull.pos.x - e.pos.x, (skull.pos.y - (e.pos.y + 1.2)) * 0.3, skull.pos.z - e.pos.z).normalize();
           const travX = skull.pos.x - skull.prevPos.x, travZ = skull.pos.z - skull.prevPos.z;
           const travL = Math.hypot(travX, travZ) || 1;
-          if (e.state === 'stunned' && e.spec.hp !== Infinity) {
+          if (power >= 2 && e.spec.hp !== Infinity) {
+            // PIERCE. The fang goes THROUGH: the body drops on the first
+            // contact and the skull is neither deflected nor sent home, so one
+            // throw can take the body standing behind this one, and the one
+            // behind that. Speed is bled, never zeroed — it drags, it does not
+            // stop. No flight clock is touched and no FEEL constant is read;
+            // this is a hit-resolution branch, exactly like the two below it.
+            this._pop(e, travX / travL, travZ / travL, speed);
+            skull.vel.multiplyScalar(0.86);
+            skull.jaw.rotation.x = 0.72;             // it does not even close its mouth
+            skull._flourishT = 0.5;
+          } else if (e.state === 'stunned' && e.spec.hp !== Infinity) {
             this._pop(e, travX / travL, travZ / travL, speed);
             skull.vel.copy(away).multiplyScalar(speed * 0.5);
             skull.jaw.rotation.x = 0.65;             // it comes back grinning

@@ -1081,6 +1081,14 @@ export class Finale {
     this._contactSurge = false;
     this._placeWalls();
 
+    // THE LAST THING YOU SEE IS YOUR OWN HANDS. They come up once — nothing is
+    // coming back to them, so this is not a catch, it is being shown something
+    // — and they are bone. The tree in the graveyard held a skeleton with an
+    // empty cradle where a head should be; this is the other half of that
+    // sentence, and the game never says either half out loud.
+    g.skull.becomeBone?.(g.mats?.bone);
+    g.skull.raiseHands?.(7);
+
     g.camera.updateMatrixWorld(true);
     g.camera.getWorldDirection(this._v0);
     this._v0.y = 0;
