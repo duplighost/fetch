@@ -146,6 +146,43 @@ function buildGraveyard(game) {
   world.box(M.dirt, 16, -0.06, -4, 8, 0.1, 22);
   world.box(M.dirt, 0, -0.06, -16, 40, 0.1, 5);
 
+  // ---- THE SIDES OF THE HOUSE THAT HAD NO OUTSIDE -------------------------
+  // Alex: "on some sides through the house the windows were open but it just
+  // kind of looks like black through the window and the end of the world."
+  // He was right and it was literal: the living room and the study look WEST,
+  // and west of the house there was ground for eight metres and then nothing —
+  // no horizon, no mass, so the aperture framed the void. A night window does
+  // not need light out there; it needs a SILHOUETTE to end on. So: ground out
+  // to forty metres, and a standing wood behind it.
+  //
+  // Every piece goes through world.box into materials the shell already
+  // batches (M.grass, M.bark), so the whole horizon costs ZERO draw calls —
+  // house-after-cave sits two under a 450 ceiling and cannot afford a mesh.
+  world.box(M.dirt, -30, -0.07, -6, 24, 0.1, 44);      // west apron
+  world.box(M.dirt, 30, -0.07, -6, 24, 0.1, 44);       // east, for the same reason
+  world.box(M.dirt, 0, -0.07, -30, 84, 0.1, 24);       // south, behind the porch
+  {
+    const wood = new RNG(0x51de);
+    // a ring of standing masses on the three blind sides. Distant enough that
+    // a tapered box IS a tree: at 30 m at night nothing reads but the shape.
+    const place = (x, z) => {
+      const h = 7.5 + wood.range(0, 5.5);
+      const ry = wood.range(0, TAU);
+      world.box(M.dirt, x, h * 0.42, z, 0.62, h * 0.84, 0.62, ry);
+      world.box(M.dirt, x, h * 0.82, z, 3.5, h * 0.3, 3.5, ry + 0.5);
+      world.box(M.dirt, x, h * 1.02, z, 2.4, h * 0.24, 2.4, ry - 0.4);
+    };
+    for (let i = 0; i < 22; i++) {                       // west wall of wood
+      place(-26 - wood.range(0, 13), -26 + i * 3.1 + wood.range(-1.4, 1.4));
+    }
+    for (let i = 0; i < 22; i++) {                       // east
+      place(26 + wood.range(0, 13), -26 + i * 3.1 + wood.range(-1.4, 1.4));
+    }
+    for (let i = 0; i < 26; i++) {                       // south, behind the drive
+      place(-38 + i * 3.05 + wood.range(-1.4, 1.4), -26 - wood.range(0, 13));
+    }
+  }
+
   // iron fence perimeter with one gap: the forest gate
   const fenceY = 1.1;
   const rails = [];
