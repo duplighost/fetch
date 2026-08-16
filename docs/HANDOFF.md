@@ -1,3 +1,269 @@
+# HANDOFF - 2026-08-16: ROUND THREE (branch claude/aug16-notes)
+
+Written by Claude Fable 5 for Claude Opus 5 — same arrangement as last round:
+Fable plans, Opus builds, and it worked. Work at a lean spend: no agent
+fan-outs, batch edits, targeted probes between gate runs.
+
+## Where you are
+
+- Worktree `C:\Users\Alex\Projects\fetch-aug16`, branch `claude/aug16-notes`,
+  branched off `3ff1a78` = `claude/aug15-notes` = game PR #28 (OPEN, stacked on
+  #27) = what is LIVE at qualiacology.com/fetch via site PRs #63-65. Your PR
+  will be #29, third storey of the same stack. Do not rebase anything.
+- THE SPEC is `docs/CHANGE-ORDER-2026-08-16.md` — Alex's live-play notes
+  verbatim, plus his six screenshots decoded. His words outrank this plan.
+- THE RECON is `docs/analysis/recon-2026-08-16.json` — eight subsystem reports
+  (summary / code_map / diagnosis / edit_points / risks) produced by parallel
+  readers against THIS exact tree on 2026-08-16. The `code_map` fields carry
+  the file:line anchors this plan deliberately does not repeat — read the
+  matching entry as you start each task. Line numbers drift as you edit; trust
+  function and flag names over numbers as the build progresses.
+- Read first: `AGENTS.md`, then the aug15 handoff section below this one (what
+  just shipped), then the spec, then the recon entry per task.
+- DEPLOY AUTHORIZATION: Alex, in chat, this round: "he should update the game
+  on my website when he's done." That is the explicit approval the merge law
+  requires. Merge the site PR once every gate and the boot-check are green,
+  then verify production boot.
+
+## What the recon overturned (read this before building anything)
+
+Three of Alex's items are not what they look like. Each still gets real work —
+but the work is legibility, not logic repair. This is the FETCH legibility law
+again: the recurring failure mode is working-but-illegible.
+
+1. **The gate logic is airtight.** Three banked sockets, no early-open path,
+   no double-banking, no persistence to import stale state (recon: gate).
+   What Alex lived: gateKey2 rides into the jaw SILENTLY with the marrow relic
+   grab, so his key count was off by one, and the sockets can also bank a
+   carried key on any grazing throw. His "partly opened" was the 2.1 s swing
+   observed mid-arc. The FLOATING THINGS are real and confirmed: the three
+   latch WEIGHTS (outside.js ~1030-1038) — an orphaned pre-aug15 "gate learns
+   the ritual" visual — get lerped to torso height in the walkway by
+   setRitualStage(3) and hang there chainless forever.
+2. **The ossuary entrance is NOT broken on this branch.** The recon reader
+   drove the live build headless and a WALKING player enters the west
+   mausoleum under-yard, walks back out two-way, finds the far end sealed, and
+   the counterweight pays out gateKey1 — fresh-resolution and restored-save
+   paths both verified. Alex's words match the aug14 build he played before,
+   OR the real live defect: the entrance is a silent walk-over trigger with NO
+   E-verb, NO fetch answer, NO prompt, and it looks exactly like the four
+   open-grave voids the game TEACHES are solid walls. Plus crossing without
+   the skull held refuses silently. So the game itself tells him not to try.
+   Fix the grammar, not the trigger. (Also tell Alex: hard-refresh — a stale
+   tab across the deploy shows the aug14 behavior. HANDOFF trap #1.)
+3. **The Drowned Choir exists, spawns, and is unchanged** — it is authored
+   invisible: arms at ~60% through the district, spawns 3-4 m BEHIND you,
+   chases your footstep breadcrumbs so it structurally stays in your rear
+   180°, and its dry materials sit at opacity 0.001-0.02. A walking player
+   hears ambience; a running player can never be caught. It was always "just
+   one" — Alex remembers right. The fix is presence, visibility floor, and
+   interception inside the view cone.
+
+## Decisions already taken (don't relitigate)
+
+- **Gate weights become the key tally**: re-key the weight ticker's `down`
+  off `gateKeys.banked()` — one weight drops per banked key, a readable count
+  — and at open they retract flush under the header, out of the walkway. Add
+  the walkway-band regression (gate recon, edit point 6).
+- **Key 2 must land audibly**: the auto-jaw at the marrow altar stays a single
+  grab, but it gets the unlock/metalDrop + skull-flourish answer so the third
+  key is a COUNTED event (gate recon, edit point 5) — except the relic is
+  leaving the altar entirely (below), so the sound rides the key take itself.
+- **Key tree**: ONE solid hit fells the payload — Alex's own words; do not
+  port the fallen-tree 3-hit count. The key is visible at the canopy top but
+  its fetch target enables only after the branch is hit. Gate the fetch at the
+  target/reveal timing, NEVER by adding LOS/reach guards in skull.js —
+  _checkTargets and FEEL_PROFILE are frozen.
+- **Marrow altar**: the relic LEAVES the altar; only gateKey2 remains ("so
+  just the key is there"). Reveal keys off guardian yield; the mourner hunt
+  and the escort beat re-trigger on flag 'gotgateKey2' (the key take), so the
+  room still turns on the frame the prize leaves it. With a single fetch there
+  is no second aimed throw, so aug15 decision #1's death-trap reasoning stays
+  satisfied without the silent auto-jaw.
+- **"Both powerups in the same spot"** = sequential double fetch at hero grave
+  #6's rubble: Iron Canine first (unchanged — pierce + danger sense), then the
+  RELIC reveals as a keepsake second fetch (offset ~0.6 m, enabled after
+  'skullSharpened', anti-scoop settle, jaw-dangle on take). The relic is
+  mechanically empty in this build — danger sense already lives on the canine
+  and skullPower has no level 3 — it is a keepsake and that is fine. Do not
+  invent a new mechanic for it.
+- **Basement = recon Proposal A**: the crawl-wing cage/counterweight is the
+  pump-works drive weight. The pump winch cradle refuses the skull (locked
+  rattle + impact + a knock-ladder nudge walking back to the cage) until
+  'crawlSecretSolved'. Keep the flag NAME verbatim. Conduit dressing via
+  world.box merged batches. Bonus while you are in the room (cheap, lawful):
+  give the decorative K.boiler door a refusal voice — lockedRattle + a knock
+  hop toward the real incinerator.
+- **Falls field: NO boss fights.** Alex replaced that idea with harmless
+  popups. Popups = the marrow walk-through-yield erupt/fold pattern in a
+  MERGED low-draw body (≤10 draws each — a raw Presence is ~78, never port it
+  as-is) plus Dark Eyes blink scares. No damage, no director.death, no
+  enemies.spawn — they live outside the Enemies system like the Presence does.
+- **Finale**: becomeBone at Finale.begin(); raiseHands(Infinity) at the
+  'still'→'closing' mirrors-wake transition (keep the contact-time call as a
+  no-op-safe reinforcement); REAL phalanx geometry grafted onto the existing
+  mkFinger k1/k2 rig. Preserve the `_handSkin.skin` object identity and the
+  color copy from g.mats.bone — the playthrough pin compares exactly that.
+
+## The plan, in build order
+
+Each task: read `docs/analysis/recon-2026-08-16.json` → that key's
+`code_map` + `edit_points` first. They are the instructions; this list is the
+order and the intent.
+
+1. **GATE — ground the weights, make the count legible** [recon: gate]
+   Weights re-keyed to banked(), retract at open, hanger geometry only if any
+   suspended pose survives; keep graveyardLookbackRoots coherent (it spreads
+   ...gate.weights); gate.reset() must stay symmetric with the new rest pose.
+   New regression: after third bank + 2.2 s, gate.open AND no weight occupies
+   the walk band. Small task, do it first, it removes a live embarrassment.
+
+2. **KEY TREE — the hanging branch** [recon: key-tree]
+   Replace the 13-ball climb inside buildKeyTreeClimb: on 'graveyardResolved'
+   ONE large branch pays down out of the canopy (house.js branch-cylinder
+   grammar, bigger; AABB collider; fetch target radius ~2.0-2.55 whose onHit
+   returns 'return'). One powered hit: branch tears/sways, skeleton BONES
+   (re-authored from the put() parts list as merged chunks or one instanced
+   set — NO skull among them, keep the empty head-cradle) and gateKey3 fall
+   via detachBoard-style tickers to the grass. Key target enables only
+   post-hit; reveal at the ground rest point; keep makeGateKey's API
+   untouched. Delete the tread ramps and step lamps; keep one candle
+   descriptor on the payload. Keep climb.drop()'s name/flag contract
+   (director calls it). The balls' flicker root cause (stale InstancedMesh
+   bounding sphere — the one builder missing frustumCulled=false) dies with
+   the balls; apply the idiom to any new InstancedMesh you make.
+   Playthrough KEY THREE section rewritten (climb beats → branch-hit beats);
+   'gate-takes-three-keys-in-any-order' survives untouched.
+
+3. **OSSUARY — give the entrance a voice** [recon: ossuary]
+   Factor the entry-swap body into doDescendOssuary(); register an
+   'ossuaryDescend' E-verb on the throat (marrow's arm-then-ticker grammar),
+   enabled when unlocked && !inOssuary && act graveyard; keep the walk-over
+   trigger calling the same function. Answer the skull-not-held cross with
+   the lockedRattle/knock refusal instead of silence. Brighten the throat
+   read (value/motion — entryLamp exists) so "descend here" separates from
+   the four solid grave voids. registerInteract adds an invisible hit mesh at
+   scene top level — userData.noBatch it and check the ossuary seal's
+   keepInOssuary set and district-culling. Rewrite tools/probe-ossuary.mjs
+   (STALE: teleports in, demands the retired forest exit, exits 1 today) to
+   walk the doorway and assert the aug15 truths.
+
+4. **MARROW — just the key; both powerups at the gravestone** [recon: marrow]
+   Remove the relic build/throb/take from the altar; gateKey2 reveals off
+   guardian yield at the altar top; hunt (marrow.js ~721) and escort beat
+   re-trigger on 'gotgateKey2'; keep the altar's skullPass collider; keep the
+   pre-yield refusal beat pointed at the key (a pre-yield throw must still
+   answer). At hero grave #6: clone the canine's proven reveal pattern for the
+   relic keepsake as a second sequential fetch (enabled after
+   'skullSharpened'), jaw-dangle built from the relic recipe so
+   respawn/reload re-derives it. Flag 'marrow:relicKept' disappears — tests
+   referencing it get rewritten (playthrough altar beats, 'marrow-descent'
+   regression). Watch the silent-'continue' trap: a throw at the key while
+   carry is occupied must answer.
+
+5. **BASEMENT — the counterweight earns its look** [recon: basement]
+   Proposal A exactly as specced: winch-cradle refusal + crawlSecret.nudge()
+   + conduit dressing from shutter wall to winch mast; seed
+   'crawlSecretSolved' in pump-release-recovery, house-critical-path,
+   house-expansion setups; new playthrough crawl-solve beat between the pilot
+   and pump legs; rename basement-foundations' 'optional reveal' wording.
+   Plus the K.boiler refusal voice (probe-epick's interactable count moves).
+
+6. **PERIMETER — close the void** [recon: perimeter]
+   Two M.dirt ground boxes close the west/east strips (z 16..44), optional
+   north band clear of the forest corridor mouth; extend the standing-mass
+   block with a NEW RNG seed APPENDED after the existing loops (the 0x51de
+   stream is position-order-dependent — inserting draws moves every existing
+   mass); densify 'far treeline silhouette' instances (~156→220) with a
+   nearer ring r 26..42 over the gaps; widen the grass-tuft scatter past the
+   rails; 4-6 masses for the house-side corridors. All zero-draw moves except
+   the optional +1-draw shrub-card mesh — check the 2-draw margin (448/450)
+   before choosing it. No colliders outside the fence. Keep the key tree
+   recognizable (≥6 m clear, below canopy height near it); keep clear of
+   mausoleums, lock-stone, gate stones, funeralPath.
+
+7. **FALLS FIELD — two paths, trees, popups, a stream, and no world's end**
+   [recon: falls-area]
+   Root EVERYTHING new in game.frozenFallsRoots (inherits act-gating and the
+   district-culling whitelist). Tree-line the two paths to the wheel and the
+   gong (extend/clone the instanced grove + fern batches); close the ground
+   past |x-C.x|≈28-30 with M.dirt aprons + standing masses, and lay the
+   layer's FIRST colliders as stepped AABB rows along the treeline curves —
+   keeping the playthrough walk lines clear: (C.x-13.5, C.z+9.6),
+   (C.x±11, C.z+4), (C.x+13.5, C.z+9.4). If ground widens, move
+   terrainHeightFn's clearing branch and the rendered plane IN LOCKSTEP.
+   Popups: 2-3 merged walk-through-yield eruptors per path + Dark Eyes
+   blinks; harmless, no damage. Stream: clone addFeeder with C-relative
+   points hugging x≈±(24..29), far sides only, clear of pipe runs and
+   braziers ("not in front of the things that create the two things").
+   'fallsWheel' onHit keeps returning 'anchor'. Stay C-relative — C is
+   runtime-computed from the forest spline. Fix tools/probe-bounds.mjs's
+   clearing walker (moves 0 m today — the "no escapes" verdict never tested
+   this act), then re-probe.
+
+8. **UNDERFALLS — let the Choir be seen** [recon: underfalls-finale, part A]
+   Earlier armed trigger (chapel-side) via _caveEcology/_updateCaveHorror —
+   beginDrownedChoir already enforces single-instance; give the early spawn a
+   choirSource AHEAD/lateral so the reveal lands inside the view cone; raise
+   the dry visibility floors (voidMat 0.02, droplet uOpacity 0.10 — value and
+   motion, never hue); lengthen reveal decays; consider exempting the choir's
+   pursuit from player-triggered spray slows. Respect the sluice |dy| gate —
+   intercept on flat storeys. horror-expansion pins 'no choir before the
+   displacement is visibly first' — update it deliberately. Add a choir-seen
+   playthrough beat (getDrownedChoirState + spawnLog probes exist); the bot
+   WALKS and the first catch is nonfatal only once — do not let the new
+   pressure kill it.
+
+9. **FINALE — hands of actual bone, raised when the mirrors wake**
+   [recon: underfalls-finale, part B]
+   becomeBone → Finale.begin(); raiseHands(Infinity) → the 'still'→'closing'
+   transition; rebuild mkFinger/mkHand volumes as bone (thin phalanx shafts +
+   condyle spheres at the k1/k2 joints, delete webbing + nails, 4-metacarpal
+   fan + carpal block) while preserving the k1/k2 group animation contract;
+   base the bone set on M.bone's map/bump; if too dark under the mirror-act
+   key, raise legibility via the _vmKey path or small emissive — never a new
+   light. The glass-press palms beat becomes visible for free once the raise
+   is early — verify the pose blend still composes (finale runs last in the
+   loop and wins). Keep the playthrough color-identity pin passing; add a
+   timing beat asserting hands visible by 'closing'.
+
+10. **GATES** — autotest 26 / regressions (110 + new pins − retired relic
+    pins) / smoke / playthrough (48 beats will change; re-pin the count) plus
+    district-culling and render-perf after the dressing tasks. Cadence: full
+    four gates once after task 7 and once at the end; targeted probes
+    between. Known flake: playthrough 'fire-refused-the-skull' fails ~1 in 3
+    (Resident chase) — re-run before believing it.
+
+11. **VISUAL VERIFICATION** — tools/shot-areas + shot-three-routes (route 3's
+    money shot changed) + shot-opening on touched acts; OPEN THE PNGS AND
+    LOOK. Legibility is measurable: ≥1.6x luminance ON/OFF at every new read.
+
+12. **DEPLOY** — commit game branch → push → PR #29 on duplighost/fetch (note
+    it stacks on #28) → copy src/ into site repo
+    `C:\Users\Alex\Projects\qualiacology` fetch/src/ (read ITS AGENTS.md
+    first; PowerShell 5.1: no &&, commit via -F file) → site feature branch +
+    PR → `node build/qa/fetch-boot-check.mjs` against a local serve (it is
+    TWO-PHASE) → Netlify preview → merge (Alex pre-approved this round, see
+    top) → verify production boot. Then tell Alex to HARD-REFRESH before he
+    retests (stale-tab trap).
+
+## Traps still true from last round (the short list)
+
+- Edit with the Edit tool; `node -e` multi-line replaces silently fail (CRLF).
+- `stepWith(seconds, controls)` — seconds FIRST; movement key is `moveZ`.
+- Never add/remove lights at runtime; candles are pooled descriptors; every
+  district seal spares world.lightRoot.
+- Fog rides fogColorTarget/bgColorTarget only.
+- AABB-only colliders; angled shapes = stepped box rows.
+- Headless screenshots: canvas.toDataURL only. Playthrough runs `?test=1&mute=1`.
+- The shared checkout `Projects\fetch-claude` is stale/shared — never work there.
+- `docs/SUBSYSTEM-MAP-2026-08-15.md` line numbers have DRIFTED — do not cite
+  it over the recon.
+- Back-district culler snapshot/restore stomps one-shot visibility writes made
+  while roots are hidden — drive poses from state each tick where possible.
+
+---
+
 # HANDOFF - 2026-08-15: THE CHANGE-ORDER BUILD (branch claude/aug15-notes)
 
 ## STATUS — tasks 1, 3, 4, 5, 6-partial, 9, 10 are BUILT AND GREEN

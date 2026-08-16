@@ -1,5 +1,19 @@
 # FETCH — current state of play
 
+> **2026-08-16 (NEWEST): ROUND THREE IS PLANNED AND WAITING TO BE BUILT.**
+> If you are Claude Opus 5 starting fresh: your worktree is
+> `C:\Users\Alex\Projects\fetch-aug16`, branch `claude/aug16-notes`. Read, in
+> order: the TOP section of `docs/HANDOFF.md` there (the build plan, written
+> for you), `docs/CHANGE-ORDER-2026-08-16.md` (Alex's playtest notes verbatim
+> — nine items: gate weights/three-key legibility, key-tree hanging branch,
+> ossuary entrance grammar, marrow key-only altar + both powerups at the
+> gravestone, basement counterweight wired required, graveyard/house perimeter
+> dressing, falls-field paths + popups + stream, Drowned Choir visibility,
+> skeletal finale hands), and per task the matching entry of
+> `docs/analysis/recon-2026-08-16.json` (file:line code maps + root-cause
+> diagnoses from eight parallel readers). Alex pre-approved this round's site
+> deploy in chat. Everything below this banner is the aug13-and-earlier story.
+
 > **2026-08-13 (newest):** the Codex six-notes pass (darkness/creatures/sound)
 > is LIVE on the site via qualiacology PR #52. The ossuary under-yard now has
 > its REAL exit: a two-flight masonry climb up a shaft, a chained deck hatch
