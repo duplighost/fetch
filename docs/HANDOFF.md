@@ -36,11 +36,40 @@ the plan's version was worse to play:**
    of the whole staircase was invisible. A lamp descriptor sits on the top
    tread for the same reason.
 
-**STILL UNBUILT (in the plan's own triage order):** task 8 (the FROZEN
-WATERFALL layer, §15/16 — the largest remaining piece), task 7 (forest bounds
-and the faceted boulder, §14), task 2 (house exterior sightlines + basement
-stair mass), task 11's perimeter/approach dressing (§11/13). **Task 12, DEPLOY,
-has not run:** nothing from this branch is on the website yet.
+- **Task 8, THE FROZEN FALLS** (§15/16). The falls arrive as ice and the
+  sacrifice target is not armed until they run (`director.armWaterfall()`). A
+  wheel west (the ossuary counterweight's contract — its fetch target MUST
+  `return 'anchor'`, returning null lets the skull come straight home) and an
+  iron plate tolled three times east (the resonant graves' contract). Each
+  lights a fire line to a brazier array; both = thaw. Flags
+  `fallsFireWest` / `fallsFireEast` / `fallsThawed`. They stand 200 m past the
+  forest and still cost 21 draws in the HOUSE's view, so they are act-gated
+  (`game.frozenFallsRoots`).
+- **Task 2's sightlines.** The living room and study look WEST and west of the
+  house was ground for 8 m then nothing. Ground to 40 m on three blind sides
+  plus 70 standing masses, ALL via `world.box` into **M.dirt** — the shell
+  already batches it, so the horizon costs zero draws. M.grass/M.bark cost two
+  and that is the entire house-after-cave margin.
+- **Task 12, DEPLOY: DONE.** Site PRs #63, #64 and #65 all merged; production
+  boot-checked green each time.
+
+**STILL UNBUILT:** the basement stair mass (§3), the approach dressing between
+the gate and the forest spline (§13) and the yard-perimeter pass (§11).
+
+**Task 7 (§14) is CLOSED BY MEASUREMENT, not by building:**
+`node tools/probe-bounds.mjs` walks twelve compass directions out of every act
+and reports *"no escapes: nobody left the world in any direction"*. Caveat for
+whoever revisits it — forest/clearing/cave/mirror all report `max walk 0m`,
+i.e. the walker never moved, so the probe only actually proves the graveyard.
+Fix the probe before trusting it on the forest. And the "faceted boulder" the
+change order names could not be found in `src/outside.js` at all; either it is
+in atmosphere.js under another name or the note refers to something that has
+since been resculpted. Ask Alex which rock he means before hunting further.
+
+**KNOWN FLAKE:** `tests/playthrough.mjs` fails at `fire-refused-the-skull` in
+the basement roughly one run in three — the Resident chase kills the bot. It
+failed once during this session and passed clean on re-run with no code change
+between. Re-run before believing a failure there.
 
 **Known open, seen while shooting:** the mausoleum interiors still read as
 clean bright boxes (Alex's own standing note). A merged dark floor slab went in
