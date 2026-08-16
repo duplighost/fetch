@@ -66,10 +66,41 @@ change order names could not be found in `src/outside.js` at all; either it is
 in atmosphere.js under another name or the note refers to something that has
 since been resculpted. Ask Alex which rock he means before hunting further.
 
-**KNOWN FLAKE:** `tests/playthrough.mjs` fails at `fire-refused-the-skull` in
-the basement roughly one run in three — the Resident chase kills the bot. It
-failed once during this session and passed clean on re-run with no code change
-between. Re-run before believing a failure there.
+## Two more, from Alex play-testing the live build
+
+- **The empty hand is silent — do not re-add the tick.** One soft sound was
+  wired to LMB / RMB / E-into-air before the skull arrives, on the "silence
+  reads as broken" law. That law came from the FIREBOX, which was a gameplay
+  surface refusing a real throw — a promise broken. A button with no verb
+  behind it and two visibly empty hands is not the same animal, and the tick
+  actively misled: it cannot tell "pressed nothing at nothing" from "pressed
+  the WRONG button at something", so it reassured in the one case that needed
+  correcting. A refusal beat was written to replace it and cut too, on Alex's
+  call: *"if it doesn't make a sound, that's better than even making a bad
+  sound that says no... because it's obvious it does nothing."* There is a note
+  in main.js where the function was.
+- **Bedroom moonlight.** The rug flap / loose board / bell corner sits at
+  z ~2.2 and was not dark, it was UNLIT — lamp at z 5.5 with a 4 m reach, moon
+  patch with a 3.6 m range and the corner 5.2 m away, and no player lantern
+  because the skull IS the lantern and has not arrived. A second moon light
+  falls across the boards and dies with the glass like its sibling. Built at
+  boot; the census is pinned.
+
+## Traps that cost real time — rule these out before debugging
+
+1. **A tab left open across a deploy** runs whatever it loaded and is
+   indistinguishable from a bug. "Stuck, can't interact with anything" was
+   this. Hard-refresh first, always.
+2. **He may be CLICKING, not pressing E.** LMB has no meaning before the skull
+   arrives. This is not a bug report, it is a controls question.
+3. **KNOWN FLAKE:** `tests/playthrough.mjs` fails at `fire-refused-the-skull`
+   in the basement roughly one run in three — the Resident chase kills the bot.
+   It failed twice during this session and passed clean on re-run with no code
+   change between. Re-run before believing a failure there.
+
+`tools/probe-epick.mjs` aims the crosshair at all 43 interactables in turn and
+reports which collider rejected any that fail — written for trap 1, kept for
+the occlusion test it exercises.
 
 **Known open, seen while shooting:** the mausoleum interiors still read as
 clean bright boxes (Alex's own standing note). A merged dark floor slab went in
