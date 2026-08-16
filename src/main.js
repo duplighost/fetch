@@ -1180,15 +1180,13 @@ class Game {
     // !introFlicker: throws wait for the arrival flicker to settle ("Then you
     // can throw it") — an input gate in kind with verbsLive, never control
     // theft: camera and movement stay live for the whole 3.6s.
-    if (this._emptyAnswerT > 0) this._emptyAnswerT -= dt;
     if (verbsLive && frame.throwPressed && this.skull.mode === 'held' && !this.skull.introFlicker) this.skull.tryThrow(ctx);
-    if (verbsLive && frame.throwPressed && this.skull.mode === 'gone') this._emptyHandAnswer();
     // release ends an outbound throw AND lets go of a rope — one grammar, and
     // the anchored case is handled inside _updateAnchored so the swing and the
     // skull let go on the same frame
     if (frame.throwReleased && this.skull.mode === 'outbound') this.skull.beginReturn('snap');
     if (verbsLive && frame.callTap) {
-      if (this.skull.mode === 'gone') { this.director.onVoidCall(); this._emptyHandAnswer(); }
+      if (this.skull.mode === 'gone') this.director.onVoidCall();
       else this.snapBuffer = FEEL_PROFILE.snapBuffer;
     }
     if (this.snapBuffer > 0) {
@@ -1292,25 +1290,24 @@ class Game {
       return;
     }
     this.snapBuffer = FEEL_PROFILE.snapBuffer;
-    this._emptyHandAnswer();
   }
 
-  // Empty hands answer. Before the skull arrives every verb is a dead switch:
-  // press LMB, tap RMB, hit E into the air, and the game does not acknowledge
-  // the press at all — which reads as broken input rather than as absence. One
-  // soft, positional tick of a hand closing on nothing. No words, no HUD, and
-  // rate-limited so it cannot be machine-gunned into comedy.
-  _emptyHandAnswer() {
-    if (this.skull.mode !== 'gone' || this.flags.has('skullArrived')) return;
-    if (this._emptyAnswerT > 0) return;
-    this._emptyAnswerT = 0.5;
-    if (!this._emptyPos) this._emptyPos = new THREE.Vector3();
-    this.audio.thud({
-      pos: this.camera.getWorldPosition(this._emptyPos).clone(),
-      gain: 0.055, intensity: 0.85, verb: 0.12,
-    });
-  }
-
+  // NOTE — the empty hand says nothing, deliberately. There used to be a soft
+  // tick on every dead press (LMB, RMB, E into the air) before the skull
+  // arrived, on the theory that silence reads as broken. That theory came from
+  // the firebox, and the firebox was a different animal: a gameplay surface
+  // refusing a real throw with no feedback at all, a promise broken. This is
+  // not that. There is no verb on the button, and the player's own hands are
+  // on screen and visibly empty.
+  //
+  // It also actively misled. One generic tick cannot tell "you pressed nothing
+  // at nothing" from "you pressed the WRONG button at something", so it
+  // answered both with the same reassuring sound — and Alex lost ten minutes
+  // clicking at a drawer the crosshair had just lit, hearing the game agree,
+  // and getting nothing. A refusal beat was tried in its place and cut for the
+  // same reason he cut the tick: "if it doesn't make a sound, that's better
+  // than even making a bad sound that says no... because it's obvious it does
+  // nothing." An empty hand is self-evident. Do not re-add this.
   _crosshairTarget() {
     if (!this._ray) { this._ray = new THREE.Raycaster(); this._center = new THREE.Vector2(0, 0); }
     this.camera.updateMatrixWorld();   // sim-only steps never render; the ray must not cast from a stale pose
