@@ -1231,8 +1231,24 @@ function furnish(game) {
   const moonPatch = new THREE.PointLight(0x9fb6cc, 7, 3.6, 2);
   moonPatch.position.set(7, 5.1, 5.55);
   scene.add(moonPatch);
+  // THE FLOOR THE ROOM HIDES ITS ONLY EXIT ON. The rug flap, the loose board
+  // and the bell all live at z ~2.2. The lamp is at z 5.5 with a 4 m reach —
+  // at 3.6 m through its own falloff it delivers nothing — and the moon patch
+  // has a 3.6 m range with the corner 5.2 m away. The player has no lantern
+  // either: the skull IS the lantern and it has not arrived. So the one corner
+  // the game requires you to search was lit by literally nothing.
+  //
+  // Moonlight across the boards is the motivated answer — it falls AWAY from
+  // the glass, onto that corner — and it dies with the glass like its sibling,
+  // so it lasts exactly as long as the stretch that needs it and is gone the
+  // moment the skull becomes your light. Built at boot: the light census is
+  // pinned and nothing may add a light at runtime.
+  const moonFloor = new THREE.PointLight(0x8fa6bd, 5.5, 7.4, 1.7);
+  moonFloor.position.set(9.9, F + 1.05, 2.95);
+  scene.add(moonFloor);
   P.lamp = bedroomLamp;
   P.moon = moonPatch;
+  P.moonFloor = moonFloor;
   game.bedroomProps = P;
 
   // Landing: runner, carved console, art and the curtained end window.
@@ -2130,6 +2146,7 @@ function bedroomAct(game) {
     // room light truth: brighter while skull-less, moon patch dies with the glass
     P.lamp.intensity = damp(P.lamp.intensity, arrival.state === 'done' ? 1.7 : 2.6, 1.4, dt);
     P.moon.intensity = damp(P.moon.intensity, glass.broken ? 0 : 7, 1.5, dt);
+    if (P.moonFloor) P.moonFloor.intensity = damp(P.moonFloor.intensity, glass.broken ? 0 : 5.5, 1.5, dt);
     // pooled shard burst
     if (burstT >= 0) {
       burstT += dt;
