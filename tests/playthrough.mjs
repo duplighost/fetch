@@ -781,7 +781,7 @@ try {
     const climb = g.keyTreeClimb;
     const key3 = g.gateKeys.list[2];
     walkTo(5.5, 22.0, 40);
-    walkTo(6.9, 19.2, 25);
+    walkTo(7.6, 18.4, 25);
     beat('the-tree-let-a-branch-down',
       climb.dropped === true && climb.arm.visible === true
       && climb.branchTarget.enabled === true,

@@ -1466,8 +1466,12 @@ function buildKeyTreeClimb(game) {
   // the codebase missing frustumCulled=false and r161 cached their bounding
   // sphere up at the canopy where they were built; and the key could be
   // fetched off the grass without climbing a step.)
+  // It hangs ACROSS the way in, not along it. Pointed south down the approach
+  // it was a five-metre limb seen end-on: a pole, foreshortened into nothing,
+  // with the key a speck behind it. Swung east it is a diagonal the whole
+  // length of the frame from the moment you come through the yard.
   const A = new THREE.Vector3(5.45, 6.7, 12.1);       // the shoulder, in the leaves
-  const B = new THREE.Vector3(6.4, 2.7, 15.9);        // the free end, at throwing height
+  const B = new THREE.Vector3(9.6, 2.7, 13.2);        // the free end, at throwing height
   const SPAN = B.clone().sub(A);
   const LEN = SPAN.length();
   const at = (t) => A.clone().addScaledVector(SPAN, t);
@@ -1595,7 +1599,11 @@ function buildKeyTreeClimb(game) {
   bones.visible = false;
   scene.add(bones);
   climb.bones = bones;
-  const BONE_REST = new THREE.Vector3(boneHang.x + 0.15, 0, boneHang.z + 0.5);
+  // OUT into the open lane, not straight down. Dropped where they hung, the
+  // key came to rest half a metre from the destructible headstone at
+  // (7.2, 13.4) — and that stone's own fetch target ate every throw aimed at
+  // the key, a metre short, in silence.
+  const BONE_REST = new THREE.Vector3(boneHang.x + 0.4, 0, boneHang.z + 2.3);
   const boneFall = { live: false, v: 0, spin: 0, t: 0 };
 
   // ...and the loose ones. One instanced set for all of them: the yard is one
@@ -1637,7 +1645,7 @@ function buildKeyTreeClimb(game) {
   // FEEL_PROFILE are frozen.
   const gateKey3 = makeGateKey(game, 3, scene, () => game.act === 'graveyard'
     && !game.ossuary?.inOssuary && !game.marrow?.inMarrow, () => climb.hit);
-  const KEY_REST = new THREE.Vector3(keyHang.x + 0.42, 0, keyHang.z + 0.78);
+  const KEY_REST = new THREE.Vector3(keyHang.x - 0.6, 0, keyHang.z + 2.4);
   const keyFall = { live: false, v: 0, x: 0, y: 0, z: 0 };
   climb.shards = shards;
   climb.keyRest = KEY_REST;

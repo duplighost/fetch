@@ -45,7 +45,7 @@ try {
 
     // the funeral resolves; the three routes reveal in order
     g.director._completeGraveyard('loud');
-    look(6.4, 21.0, 5.8, 5.4, 13.4);
+    look(7.0, 21.0, 7.2, 5.0, 12.8);
     await F.step(1 / 60, 150);
     await shoot('02-the-tree-lets-a-branch-down');
     // where the player stands to throw at it: the limb across the sky, the key
@@ -53,11 +53,11 @@ try {
     {
       const climb = g.keyTreeClimb;
       const hang = climb.branchTarget.pos;
-      look(6.9, 19.2, hang.x, hang.y, hang.z);
+      look(7.6, 18.4, hang.x, hang.y, hang.z);
       await shoot('03-the-branch-at-throwing-height');
       climb.tear(hang.clone());
       await F.step(1 / 60, 210);
-      look(6.6, 18.4, climb.keyRest.x, 0.6, climb.keyRest.z);
+      look(7.2, 18.0, climb.keyRest.x, 0.6, climb.keyRest.z);
       await shoot('04-the-key-and-the-bones-in-the-grass');
     }
 

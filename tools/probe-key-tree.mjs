@@ -43,7 +43,7 @@ try {
 
     // stand where a player would and throw ONCE at the hanging end
     const hang = climb.branchTarget.pos.clone();
-    g.player.pos.set(6.9, 0, 19.2);
+    g.player.pos.set(7.6, 0, 18.4);
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
     F.stepWith(0.2, {}, false);
@@ -70,18 +70,39 @@ try {
     g.player.pitch = Math.atan2(key3.home.y - e2,
       Math.hypot(key3.home.x - g.player.pos.x, key3.home.z - g.player.pos.z));
     g.player._sync(0);
+    const path = [];
+    // WHICH target eats the throw? Wrap every one of them and name the culprit
+    // instead of triangulating from positions.
+    const fired = [];
+    for (const t of g.world.fetchTargets) {
+      if (t._wrapped) continue;
+      t._wrapped = true;
+      const real = t.onHit;
+      t.onHit = function wrapped(...args) {
+        const d = real.apply(this, args);
+        fired.push({ id: t.id, directive: d ?? 'return', r: t.radius });
+        return d;
+      };
+    }
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
-    F.stepWith(0.45, { throwHeld: true }, false);
+    for (let i = 0; i < 24; i++) {
+      F.stepWith(0.02, { throwHeld: true }, false);
+      path.push([+g.skull.pos.x.toFixed(2), +g.skull.pos.y.toFixed(2),
+        +g.skull.pos.z.toFixed(2), g.skull.mode]);
+    }
     F.stepWith(1 / 120, { throwReleased: true }, false);
     for (let i = 0; i < 50 && g.skull.carry?.id !== 'gateKey3'; i++) F.stepWith(0.05, {}, false);
     snap('key fetched');
+    log.push({ at: 'the second throw, frame by frame', from: [+g.player.pos.x.toFixed(2),
+      +g.player.pos.z.toFixed(2)], want: key3.home.toArray().map((v) => +v.toFixed(2)),
+    fired, gotFlag: g.flags.has('gotgateKey3'), path: path.slice(0, 8) });
 
     return { log, draws: g.lastRender ? g.lastRender.drawCalls : null, dead: g.dead };
   });
   console.log(JSON.stringify(out, null, 1));
   if (errors.length) console.log('BROWSER ERRORS:', errors);
-  const last = out.log[out.log.length - 1];
-  console.log(last.carry === 'gateKey3' ? '\nPASS: one hit, then the key off the grass'
+  const fetched = out.log.find((l) => l.at === 'key fetched');
+  console.log(fetched?.carry === 'gateKey3' ? '\nPASS: one hit, then the key off the grass'
     : '\nFAIL: the key never reached the jaw');
 } finally {
   await browser.close();
