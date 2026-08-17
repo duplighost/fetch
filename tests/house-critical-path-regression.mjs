@@ -194,6 +194,7 @@ try {
     const guestAbsorbed = g.flags.has('ateFlame');
     const guestSource = g.flameCircuit?.source ?? null;
     g.flag('pumpGalleryLatched');
+    g.flag('crawlSecretSolved');    // the winch's drive weight; it has its own page too
     g.flag('archiveDraftOpened');   // this page proves the flame; the archive gate has its own page
     F.teleport('basement');
     g.enemies.clear();

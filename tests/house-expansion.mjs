@@ -333,6 +333,7 @@ try {
     g.player.grounded = true;
     g.player._sync(0);
     g.skull.holdNow();
+    g.flag('crawlSecretSolved');     // the winch's drive weight; it has its own page
 
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
     F.stepWith(0.45, { throwHeld: true }, false);

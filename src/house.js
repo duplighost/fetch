@@ -1367,6 +1367,36 @@ function furnish(game) {
   // boiler room: tank, boiler, pipes, pilot ember glow
   K.waterTank(10.6, B, -3.4);
   K.boiler(9.0, B, -5.0);
+  // The boiler has a door with hinges, a latch bar and a pressure gauge, and
+  // it is furniture — but it is furniture standing two metres from the one
+  // fire in this house that IS a puzzle, wearing the same face. It answers a
+  // throw now: a dead latch rattle, and two knocks hopping east to the
+  // incinerator, which is the fire that opens. Nothing that looks like a
+  // machine may meet a throw with silence.
+  {
+    const boilerDoor = new THREE.Vector3(9.0, B + 0.56, -4.5);
+    world.addFetchTarget({
+      id: 'boilerDoor', pos: boilerDoor.clone(), radius: 0.62,
+      onHit(skull, at) {
+        if (skull.mode !== 'outbound') return 'continue';
+        game.impact('locked', at || boilerDoor);
+        game.audio.lockedRattle({ pos: boilerDoor, gain: 0.55, rate: 0.62 });
+        const inc = game.incineratorPosition;
+        if (inc) {
+          for (let i = 1; i <= 2; i++) {
+            const t = i / 2;
+            const kp = new THREE.Vector3(
+              boilerDoor.x + (inc.x - boilerDoor.x) * t, B + 1.1,
+              boilerDoor.z + (inc.z - boilerDoor.z) * t);
+            game.after(0.2 + i * 0.24, () => game.audio.knock({
+              pos: kp, gain: 0.4 + i * 0.06, rate: 0.78 - i * 0.08,
+            }), { global: true });
+          }
+        }
+        return 'return';
+      },
+    });
+  }
   world.candles.push({ x: 9, y: B + 0.55, z: -5, intensity: 1.6, r: 3.5, }); // pilot
   // storeroom: open shelving, slatted crates, barrels and bottle silhouettes
   K.shelf(-2.55, B, -4.65, 0, 2.45, 1.72);
@@ -3414,6 +3444,28 @@ function buildCrawlCounterweightSecret(game, B) {
     holdTime: 0, progress: 0, requiredHold: 1.25,
     cage, cradle, shutter, remains, lamp,
     colliders: [frontCollider, sideCollider], target: null,
+    pulse: 0, nudgeCd: 0,
+    // "One of the basement contraptions in the picture is still not required
+    // for the puzzle for some reason." It IS required now: this weight is the
+    // pump-works drive weight, and the winch two rooms west will not take the
+    // skull until it hangs. When the winch refuses, the refusal POINTS —
+    // knocks walk back along the crawl wing from wherever the player is
+    // standing to the cage that owes them, and the cradle ring answers.
+    nudge() {
+      if (puzzle.solved || puzzle.nudgeCd > 0) return;
+      puzzle.nudgeCd = 2.6;
+      puzzle.pulse = 1.5;
+      const to = cradle.getWorldPosition(new THREE.Vector3());
+      const from = game.player.pos.clone();
+      for (let i = 1; i <= 3; i++) {
+        const t = i / 3;
+        const kp = new THREE.Vector3(from.x + (to.x - from.x) * t, B + 1.35,
+          from.z + (to.z - from.z) * t);
+        game.after(0.14 + i * 0.26, () => game.audio.knock({
+          pos: kp, gain: 0.36 + i * 0.06, rate: 0.84 - i * 0.09,
+        }), { global: true });
+      }
+    },
   };
   game.crawlSecret = puzzle;       // deterministic white-box/debug observability
 
@@ -3535,7 +3587,10 @@ function buildCrawlCounterweightSecret(game, B) {
     lampCore.material.opacity += (coreTarget - lampCore.material.opacity) * Math.min(1, dt * 3.5);
     const seamTarget = puzzle.solved ? 0 : 0.34 + breath * 0.025;
     sliverMat.opacity += (seamTarget - sliverMat.opacity) * Math.min(1, dt * 4.5);
-    coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0);
+    puzzle.nudgeCd = Math.max(0, puzzle.nudgeCd - dt);
+    puzzle.pulse = Math.max(0, puzzle.pulse - dt * 1.4);
+    coreMat.opacity = 0.035 + (weighing ? 0.28 + Math.sin(time * 17) * 0.04 : 0)
+      + puzzle.pulse * (0.3 + Math.sin(time * 21) * 0.06);
     // A sliver of somewhere leaks under the shutter BEFORE the solve: the
     // player can see there is a place back there worth opening. Dim enough
     // that the opened room still lands as a reveal.
@@ -5523,6 +5578,13 @@ function buildPumpGallery(game) {
   world.box(iron, -13.62, B + 0.028, -4.85, 0.09, 0.055, 3.3);
   world.box(iron, -14.21, B + 0.028, -3.2, 1.18, 0.055, 0.09);
   world.box(iron, -14.8, B + 0.62, -3.14, 0.07, 1.24, 0.07);
+  // ...and EAST, along the crawl wing's ceiling to the cage that hangs this
+  // drum's counterweight. Same merged batch, zero draws — but now the two
+  // machines are visibly one machine, which is the whole of Alex's note.
+  world.box(worn, -13.44, B + 2.24, -7.42, 0.07, 0.07, 1.3);
+  world.box(worn, -12.3, B + 2.24, -8.02, 2.35, 0.07, 0.07);
+  world.box(worn, -11.18, B + 2.24, -7.9, 0.07, 0.07, 0.3);
+  world.box(worn, -11.18, B + 1.98, -7.78, 0.07, 0.56, 0.07);
 
   const cradleBase = new THREE.Vector3(-14.18, B + 1.62, -6.8);
   const cradle = new THREE.Group();
@@ -6154,6 +6216,17 @@ function buildPumpGallery(game) {
     onHit(skull) {
       if (route.latched) return 'return';
       if (skull.mode !== 'outbound') return 'continue';
+      // THE DRIVE WEIGHT IS NOT HUNG. The crawl-wing cage is the counterweight
+      // this drum pulls against, and until it is latched the winch has nothing
+      // to lift with: it rattles, and the knocks walk back east to the cage.
+      // (That cage looked like machinery and did nothing for two rounds.)
+      if (!game.flags.has('crawlSecretSolved')) {
+        cradle.getWorldPosition(anchorPos);
+        game.impact('locked', anchorPos);
+        game.audio.lockedRattle({ pos: winch.position, gain: 0.62, rate: 0.66 });
+        game.crawlSecret?.nudge?.();
+        return 'return';
+      }
       this.enabled = false;
       route.armed = true;
       route.state = 'paying-out';

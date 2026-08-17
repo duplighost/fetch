@@ -1739,6 +1739,51 @@ try {
     return { checks, diagnostics: null };
   });
 
+  // THE CONTRAPTION THAT DID NOTHING. "One of the basement contraptions in the
+  // picture is still not required for the puzzle for some reason." The crawl
+  // cage is the pump-works drive weight now, and the winch says so.
+  await scenario('the-crawl-cage-is-the-pump-works-drive-weight', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('basement');
+    g.enemies.clear();
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+
+    const winch = g.world.fetchTargets.find((t) => t.id === 'pumpWinchCradle');
+    const at = g.pumpGallery.cradle.getWorldPosition(g.player.pos.clone());
+    F.setSkull(at.x, at.y, at.z, 0, 0, 0, 'outbound');
+    const refused = winch.onHit.call(winch, g.skull);
+    F.stepWith(0.1, {}, false);
+    check('the winch will not take the skull while the cage hangs empty',
+      refused === 'return' && g.skull.mode !== 'anchored'
+      && !g.flags.has('pumpWinchTouched'),
+      { directive: refused, mode: g.skull.mode });
+    check('and the refusal points back east at the cage that owes it',
+      g.crawlSecret.pulse > 0, { pulse: +g.crawlSecret.pulse.toFixed(2) });
+
+    g.flag('crawlSecretSolved');
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    F.setSkull(at.x, at.y, at.z, 0, 0, 0, 'outbound');
+    const accepted = winch.onHit.call(winch, g.skull);
+    check('with the weight hung, the winch takes it',
+      accepted === 'anchor' && g.flags.has('pumpWinchTouched'),
+      { directive: accepted });
+
+    // and while we are in this room: the decorative boiler wears a door, a
+    // latch bar and a gauge two metres from the fire that IS a puzzle
+    const boiler = g.world.fetchTargets.find((t) => t.id === 'boilerDoor');
+    check('the boiler that opens nothing at least answers a throw',
+      !!boiler && boiler.enabled === true);
+    return { checks, diagnostics: null };
+  });
+
   // ONE BROKEN STONE, TWO PRIZES, IN ORDER. "might as well remove that powerup
   // and put both powerups in the same spot as the first powerup is in now that
   // comes out of that destroyed gravestone."

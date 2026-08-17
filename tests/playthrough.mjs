@@ -376,6 +376,25 @@ try {
     // pressure line into the western works, pay out the bridge under a held
     // skull, cross under player control, and drop the far pawl.
     walkTo(-4.8, -3, 8); walkTo(-9.8, -3, 10);       // crawl-room pump doorway
+
+    // THE DRIVE WEIGHT, on the way past. The cage in the crawl wing is the
+    // counterweight the pump winch pulls against, and the winch refuses the
+    // skull until it hangs — "one of the basement contraptions in the picture
+    // is still not required for the puzzle for some reason."
+    walkTo(-9.5, -6.2, 10);
+    const crawlAim = g.crawlSecret.cradle.getWorldPosition(g.player.pos.clone());
+    aimAt(crawlAim.x, crawlAim.y, crawlAim.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    const crawlAnchored = g.skull.mode === 'anchored'
+      && g.skull.anchor?.puzzleId === 'crawlCounterweight';
+    F.stepWith(1.9, { throwHeld: true });             // requiredHold is 1.25
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false });
+    waitHeld(3);
+    beat('the-crawl-cage-hangs-the-pump-works-weight',
+      crawlAnchored && g.flags.has('crawlSecretSolved') && g.crawlSecret.solved === true,
+      { anchored: crawlAnchored, solved: g.crawlSecret.solved });
+
     walkTo(-12.62, -6.8, 12);
     const pumpAim = g.pumpGallery.cradle.getWorldPosition(g.player.pos.clone());
     aimAt(pumpAim.x, pumpAim.y, pumpAim.z);

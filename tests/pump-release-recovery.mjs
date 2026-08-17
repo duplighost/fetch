@@ -51,6 +51,10 @@ try {
     F.start();
     F.teleport('basement');
     g.enemies.list.length = 0;
+    // this page is about the winch's release and recovery, not its
+    // precondition: the crawl-wing cage hangs its drive weight, and that beat
+    // has its own page (basement-foundations + the playthrough)
+    g.flag('crawlSecretSolved');
 
     const settlePlayer = (x, z, yaw, pitch = 0) => {
       g.player.pos.set(x, -3, z);

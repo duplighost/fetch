@@ -116,7 +116,7 @@ try {
       const heldDirective = target.onHit.call(target, g.skull);
       F.stepWith(1.4, { throwHeld: true }, false);
       check(
-        'holding the thrown skull weighs, lifts, and permanently latches the optional reveal',
+        'holding the thrown skull weighs, lifts, and permanently latches the pump-works drive weight',
         heldDirective === 'anchor'
           && puzzle.solved
           && puzzle.state === 'latched'
