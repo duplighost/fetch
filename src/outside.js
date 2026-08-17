@@ -103,6 +103,16 @@ export function terrainHeightFn(game) {
         if (Math.hypot(x - st.position.x, z - st.position.z) < 1.03) return st.position.y + 0.25;
       }
       const lx = x - C.x, lz = z - C.z;
+      // THE THRESHOLD. "I died entering the cave." The Underfalls' own ground
+      // begins at z+20.35 and the cave's lateral clamp only engages when the
+      // act flips on that same line — so the last stride into the mouth was
+      // still the clearing, still three metres of basin under it, and a step
+      // off the stone there killed a player who could already see inside. This
+      // shelf is the floor of the stone lip buildClearing draws at the mouth
+      // (a collider cannot do it: groundHeightAt reads terrain, rooms and
+      // ramps, never colliders). The crossing keeps its water; arriving stops
+      // being fatal.
+      if (Math.abs(lx) <= 3.05 && lz >= 18.55 && lz <= 20.5) return 0.09;
       const r = Math.hypot(lx, lz);
       const poolR = Math.hypot(lx, lz - CLEARING_BASIN.centerZ);
       const basin = -CLEARING_BASIN.depth *
@@ -6588,11 +6598,61 @@ export function buildClearing(game) {
   scene.add(ground);
 
   // streams feeding a pool at the cliff face
-  const stream = new THREE.Mesh(new THREE.PlaneGeometry(3, 26), M.water);
+  //
+  // "the stream out of the primary waterfall should end in a pond." It used to
+  // stop dead — a 26 m ribbon whose south end simply ceased in open field,
+  // which is the read round four fixed for the FAR streams: a ribbon that
+  // ceases is the edge of the map. Same treatment, in the SAME mesh and the
+  // same material, so the whole terminus costs zero draw calls and zero
+  // geometries: the ribbon widens as it runs south and ends in standing water
+  // with a rock rim.
+  //
+  // Local space below is the plane's own — x across, +y SOUTH: the mesh is laid
+  // down by rotation.x and swung by rotation.z, which sends local +y to -z.
+  const streamParts = [new THREE.PlaneGeometry(3, 26)];
+  {
+    // the apron: 3 m wide where he wades, 5.7 m at the mouth of the pond
+    const skirt = new THREE.PlaneGeometry(1, 1);
+    const sp = skirt.attributes.position;
+    sp.setXY(0, -2.85, 14.2); sp.setXY(1, 2.85, 14.2);      // wide end, south
+    sp.setXY(2, -1.5, 9.0);   sp.setXY(3, 1.5, 9.0);        // into the ribbon
+    sp.needsUpdate = true;
+    streamParts.push(skirt);
+    const pond = new THREE.CircleGeometry(3.3, 26);
+    pond.scale(1.2, 1, 1);
+    pond.translate(0, 14.9, 0);
+    streamParts.push(pond);
+  }
+  const stream = new THREE.Mesh(mergeGeometries(streamParts, false), M.water);
   stream.rotation.x = -Math.PI / 2;
   stream.position.set(C.x - 4, 0.06, C.z + 2);
   stream.rotation.z = 0.2;
   scene.add(stream);
+  {
+    // A rim, so the water has an edge instead of a cut-off — the far ponds' own
+    // idiom (a circle of water and a ring of world.box rock the shell already
+    // batches). Ankle height, and solid: below STEP_UP a collider is a step you
+    // walk ONTO rather than a wall, so the rim never blocks the arrival walk —
+    // but nothing in this clearing should be a stone you pass through, which is
+    // the whole of his second note.
+    const rimGround = terrainHeightFn(game);
+    const rimRng = new RNG(0x70d0);
+    const toWorldX = (lx, ly) => C.x - 4 + (lx * Math.cos(0.2) - ly * Math.sin(0.2));
+    const toWorldZ = (lx, ly) => C.z + 2 - (lx * Math.sin(0.2) + ly * Math.cos(0.2));
+    for (let i = 0; i < 15; i++) {
+      const th = (i / 15) * TAU;
+      const lx = Math.sin(th) * (4.05 + rimRng.range(-0.2, 0.2));
+      const ly = 14.9 + Math.cos(th) * (3.45 + rimRng.range(-0.18, 0.18));
+      if (ly < 11.6 && Math.abs(lx) < 2.2) continue;         // leave the mouth open
+      const wx = toWorldX(lx, ly), wz = toWorldZ(lx, ly);
+      const h = rimRng.range(0.3, 0.44);
+      const w = rimRng.range(0.55, 0.95), d = rimRng.range(0.45, 0.8);
+      const y = rimGround(wx, wz);
+      world.box(M.rock, wx, y + h * 0.5, wz, w, h, d, th + rimRng.range(-0.3, 0.3));
+      const half = Math.max(w, d) * 0.55;
+      world.addCollider(wx - half, y - 0.9, wz - half, wx + half, y + h, wz + half);
+    }
+  }
   // The visible surface must cover the entire collision basin. It used to end
   // 1.2m before the mathematical depression, creating an invisible pit around
   // apparently dry shore.
@@ -6705,6 +6765,22 @@ export function buildClearing(game) {
     scene.add(st);
     game.bridgeStones.push(st);
   });
+
+  // THE THRESHOLD. "I died entering the cave." The crossing's last stone is at
+  // dz 20.42 and the Underfalls' own ground begins at dz 20.35 — but the cave's
+  // lateral clamp (installClamp) only engages once the act flips, and the act
+  // flips on the same line. So the last stride into the mouth was still the
+  // clearing, still over three metres of basin, and a step off the stone there
+  // killed a player who could already see the inside of the cave. A stone shelf
+  // at the cave's own floor height carries the walk from the last stone to the
+  // threshold: the crossing stays a crossing, and arriving stops being fatal.
+  // (The water either side of it is closed by the north lip in atmosphere.js.)
+  // It reaches back to z+18.55 on purpose: the ninth stone sits at 19.12 and
+  // resolves as ground only within 1.03 m of its centre, so a shelf that
+  // started at 18.92 still left a metre-wide slot at its south-west corner
+  // where a sideways step went straight through into the basin.
+  world.box(M.rock, C.x, -0.22, C.z + 19.55, 6.1, 0.62, 2.1);
+  world.addCollider(C.x - 3.05, -1.6, C.z + 18.55, C.x + 3.05, 0.09, C.z + 20.52);
 
   // the target behind the curtain of water
   world.addFetchTarget({
@@ -7132,15 +7208,99 @@ function buildFallsField(game, C, FX, FZ) {
     roots.push(steps);
   }
 
-  // ...and the OPPOSITE read at the basin. Its stone lip deliberately skips
-  // |x| < 3.0 — the bridge stones rise through that lane — which leaves a clean
-  // six-metre gap that looks exactly like a ford at the one place in the field
-  // where crossing kills you. Raised bank masses BESIDE the gap (never in it)
-  // turn that hole into a mouth.
-  for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
-    const th = s * (0.30 + i * 0.115);
-    const bx = Math.sin(th) * (8.6 + i * 0.18), bz = -Math.cos(th) * (8.6 + i * 0.18);
-    world.box(M.rock, C.x + bx, at(bx, bz) + 0.42, C.z + bz, 0.66, 1.15, 0.9);
+  // ---- 4b. THE SHORE ---------------------------------------------------
+  // Two of his notes are the same object, so they are one pass.
+  //
+  // "six concrete/brick blocks you walk through": they were meant to flank the
+  // basin's lip gap — the comment that used to sit here says so — but the
+  // maths lost CLEARING_BASIN.centerZ. `bz = -cos(th) * 8.6` stood them at
+  // C.z-8, eight metres out in the open field beside the centre stream instead
+  // of at the water's edge, and `world.box` bakes shell geometry with no
+  // collider, so they were six pale masses in a meadow that you walk straight
+  // through. The talus rim does it right: `z = CLEARING_BASIN.centerZ -
+  // sin(a) * r` (atmosphere.js).
+  //
+  // And the plunge pool: this basin is the ONLY walk-in death water in the game
+  // (director.js kills below y -1.5 in this act), and its shore was an open
+  // invitation — the stone lip skips |x| < 3.0 for the bridge lane, so the one
+  // place in the field where walking in kills you looked exactly like a ford.
+  // A stone lip all the way round says "not here" in value and shape, with no
+  // hue and no words, and the one gap is barred until the crossing is real.
+  //
+  // The ring itself is instanced onto the talus mesh in atmosphere.js — free,
+  // and lit like the rock beside it (a lit MeshStandard box blows to white
+  // under the lantern, which is how the first attempt at this reproduced his
+  // "concrete/brick" complaint at the water's edge instead of fixing it). What
+  // lives here is the one part that has to MOVE.
+  {
+    const ground = terrainHeightFn(game);
+    const groundAt = (bx, bz) => ground(C.x + bx, C.z + bz);
+    const LANE = 3.05;
+
+    // THE ONE GAP, BARRED. A low weir across the lane: lower than the ring, so
+    // the mouth still reads as the way through, and solid until the crossing is
+    // real. 6.85 keeps it clear of the pre-throw stance at z+6 and still stands
+    // at the water (the basin's edge is z+7.0); the tenth bridge stone comes up
+    // at z+7.35, right behind it. The bar goes down as that stone comes up.
+    const sillZ = 6.85;
+    const sillY = groundAt(0, sillZ);
+    const sillParts = [];
+    for (let i = -3; i <= 3; i++) {
+      // The talus vocabulary, not a wall: seven seated stones, one geometry.
+      const g = new THREE.DodecahedronGeometry(0.62, 0);
+      g.scale(1.15, 0.92, 0.86);
+      g.rotateY(i * 0.41);
+      g.rotateZ((i % 2 ? 1 : -1) * 0.09);
+      g.translate(i * 0.9, 0.17 + (i % 2 ? 0.06 : 0), Math.sin(i * 1.3) * 0.16);
+      sillParts.push(g);
+    }
+    // THE BRIDGE STONES' OWN MATERIAL, on purpose. Four values were
+    // photographed from the pose a player actually takes two metres away
+    // (near-band means: 0x46535d 50.9, 0x232c33 44.7, 0x0e1318 36.5, unlit
+    // 31.1) and the darker they got the less they read as rock — the unlit one
+    // came out a flat grey cutout. Then the same pose was shot AFTER the thaw,
+    // and the ten bridge stones at that exact distance are just as bright: pale
+    // near the lantern is what rock does in this game, and the bar is the same
+    // rock as the stones that replace it. What was wrong with the six masses
+    // was never their value; it was that they stood in a field and you walked
+    // through them.
+    const sill = new THREE.Mesh(mergeGeometries(sillParts, false), M.rock);
+    sill.name = 'basin lip: the bar across the crossing';
+    sill.castShadow = true;
+    sill.receiveShadow = true;
+    sill.position.set(C.x, sillY, C.z + sillZ);
+    scene.add(sill);
+    roots.push(sill);
+
+    const sillState = {
+      mesh: sill,
+      homeY: sillY,
+      collider: world.addCollider(C.x - LANE - 0.15, sillY - 1.4, C.z + sillZ - 0.45,
+        C.x + LANE + 0.15, sillY + 0.75, C.z + sillZ + 0.45),
+      sinking: false,
+      done: false,
+    };
+    game.basinSill = sillState;
+    // Idempotent and instant-able, because respawn has to assert the post-thaw
+    // world without replaying the beat. That is the law the stones and the
+    // caveZone already live by, and not following it is the gate softlock.
+    game.dropBasinSill = (instant = false) => {
+      sillState.collider.max.y = sillState.collider.min.y;
+      if (sillState.done) return;
+      sillState.sinking = true;
+      if (instant) {
+        sillState.mesh.position.y = sillState.homeY - 1.35;
+        sillState.done = true;
+      }
+    };
+    game.tickers.push((dt) => {
+      if (!sillState.sinking || sillState.done) return;
+      sillState.mesh.position.y -= dt * 0.9;
+      if (sillState.mesh.position.y <= sillState.homeY - 1.35) {
+        sillState.mesh.position.y = sillState.homeY - 1.35;
+        sillState.done = true;
+      }
+    });
   }
 
   // ---- 5. THE THINGS THAT POP UP ---------------------------------------

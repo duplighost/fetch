@@ -1350,10 +1350,28 @@ function installCaveVisibility(game, state) {
 function installBeats(game, layout, state) {
   const cameraPos = new THREE.Vector3();
   const cameraDir = new THREE.Vector3();
+  const entrance = layout.entrance;
   game.tickers.push((dt, t) => {
     const inCave = game.act === 'cave';
-    if (state.renderActive !== inCave) {
-      if (inCave) {
+    // DRESSED BEFORE YOU CAN SEE IN. His note: the entrance "loads 2 distinct
+    // things, one before the other". It does, and the first of them is a bare
+    // slab: the cave's structural rock is compiled into the world's shared
+    // batch and is therefore ALWAYS drawn, while the skin that breaks it into
+    // rock — and the stalactites, the mica, the cataracts — only appear when
+    // the act flips. From the last stones the mouth was one flat untextured
+    // face several metres wide (raycast: the shared rock batch at the mouth,
+    // south-facing, nothing in front of it). Wake the district a few metres
+    // early, once the bargain is struck, so the inside is already dressed the
+    // first time it is visible. The act line still owns everything else.
+    const nearMouth = !inCave
+      && game.flags.has('waterfallTaken')
+      && game.act === 'clearing'
+      && Math.abs(game.player.pos.x - entrance.x) < 13
+      && game.player.pos.z > entrance.z - 19
+      && game.player.pos.z < entrance.z + 5;
+    const dressed = inCave || nearMouth;
+    if (state.renderActive !== dressed) {
+      if (dressed) {
         for (const root of state.renderRoots || []) {
           root.visible = state.renderVisibility?.get(root) !== false;
         }
@@ -1363,11 +1381,11 @@ function installBeats(game, layout, state) {
           root.visible = false;
         }
       }
-      state.renderActive = inCave;
+      state.renderActive = dressed;
     }
-    if (state.lightsActive !== inCave) {
-      state.lightsActive = inCave;
-      for (const light of state.lights) light.visible = inCave;
+    if (state.lightsActive !== dressed) {
+      state.lightsActive = dressed;
+      for (const light of state.lights) light.visible = dressed;
     }
     // Underfalls is a sealed district, not nine global point lights and a set
     // of machines animating beneath every other act. Pause all of its visual

@@ -1071,6 +1071,13 @@ export class Director {
       this.after(1.2 + i * 0.7, () => {
         st.userData.rise = 0.12;
         g.audio.stoneGrind({ pos: st.position, gain: 0.5, rate: 0.8 + i * 0.05 });
+        // The bar across the lane goes down with the first stone, not with the
+        // bargain: until something is there to stand on, the water is still
+        // the thing that kills you.
+        if (i === 0) {
+          g.dropBasinSill?.();
+          if (g.basinSill) g.audio.stoneGrind({ pos: g.basinSill.mesh.position, gain: 0.42, rate: 0.62 });
+        }
       }, { global: true });
     });
     // NOTE the skull does not come back. no failsafe fires. the one broken promise.
@@ -1193,6 +1200,7 @@ export class Director {
       for (const st of g.bridgeStones) st.userData.rise = 0.12;
       if (g.caveZone) g.caveZone.enabled = true;
       if (g.waterfallBarrier) g.waterfallBarrier.max.y = g.waterfallBarrier.min.y;
+      g.dropBasinSill?.(true);
       g.skull.vanish();
     }
     else if (preArrival) {

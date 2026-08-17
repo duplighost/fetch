@@ -997,6 +997,94 @@ function buildClearingDress(game, track, own, tickers) {
       rng.range(-0.3, 0.3), rng.range(0, TAU), rng.range(-0.3, 0.3), scale * 1.5, scale, scale * 1.2));
     colours.push(darkRock.clone().multiplyScalar(rng.range(0.78, 1.12)));
   }
+
+  // THE LIP, and it is SOLID. Round five: the plunge pool is the only walk-in
+  // death water in the game (director.js kills below y -1.5 in this act), and a
+  // player driven at it from 24 bearings drowned on most of them. His answer,
+  // and the right one: ring the water line with bank you cannot walk through.
+  //
+  // These are instances on the talus mesh that is already being built two
+  // dozen lines above, so the whole ring costs no draw call and no geometry —
+  // and, more to the point, it inherits the talus VALUE. The first attempt used
+  // world.box(M.rock), which is also free, and the shot showed exactly what
+  // round four learned from the falls kin: a lit MeshStandard blows to white
+  // under the lantern, and the shore came out as a run of pale slabs — his
+  // "concrete/brick" complaint moved to the water's edge. Rock has to be lit
+  // like the rock beside it.
+  //
+  // The lane (|x| < 3.05, widening to 3.4 where it passes the veil) is the one
+  // gap: the bridge stones rise through it, and outside.js bars it with a sill
+  // that sinks when they do.
+  {
+    const world = game.world;
+    const ground = game.world.terrainHeight;
+    const LIP_R = CLEARING_BASIN.outerR + 0.1;
+    const LANE = 3.05, VEIL_LANE = 3.4, VEIL_Z = 18.5;
+    const RING = 52;
+    for (let i = 0; i < RING; i++) {
+      const th = (i / RING) * TAU;                 // 0 = the near shore, PI = the falls
+      const r = LIP_R + rng.range(-0.2, 0.2);
+      const x = Math.sin(th) * r;
+      const z = CLEARING_BASIN.centerZ - Math.cos(th) * r;
+      if (Math.abs(x) < (z > VEIL_Z ? VEIL_LANE : LANE)) continue;
+      // Stop short of the Underfalls' own ground (its bounds begin at z+20.35).
+      // A collider past that line is an invisible rock INSIDE the cave, and
+      // "I walked behind the first wall" is already one of his notes — the shore
+      // must not answer it with a stone he cannot see. The water north of here
+      // is unreachable anyway: everything inside the ring is behind the ring.
+      if (z > 19.8) continue;
+      const y = ground ? ground(C.x + x, C.z + z) : 0;
+      const scale = rng.range(0.86, 1.12);
+      const w = scale * 1.55, h = scale * 1.02, d = scale * 1.2;
+      // Seated so the crown stands ~0.9 over the ground: STEP_UP is 0.5, so
+      // this is a lip you go around, not a kerb you stroll over.
+      const cy = y + h * 0.42;
+      matrices.push(compose(C.x + x, cy, C.z + z,
+        rng.range(-0.22, 0.22), rng.range(0, TAU), rng.range(-0.22, 0.22), w, h, d));
+      // Darker than the shoulders behind them BECAUSE they are the rock the
+      // player walks up to: the lantern is most of what lights anything within
+      // two metres, and at the shoulders' value this ring photographed as a run
+      // of pale slabs (near-band mean 77 against a 13-30 scene). Value is also
+      // the only channel he reads — no part of this may lean on hue.
+      colours.push(darkRock.clone().multiplyScalar(rng.range(0.34, 0.52)));
+      const half = Math.max(w, d) * 0.62;
+      world.addCollider(C.x + x - half, y - 1.4, C.z + z - half,
+        C.x + x + half, cy + h * 0.62, C.z + z + half);
+    }
+
+    // AND THE NORTH LIP, straight, because the circle cannot reach it. The
+    // ring has to stop short of the Underfalls' ground at z+20.35, which
+    // leaves the water either side of the crossing's LAST stones open — and
+    // that is where he died entering the cave: the cave's lateral clamp only
+    // engages once the act flips at z+20.35, so a step sideways at z 19-20 is
+    // still the clearing, still three metres deep, and still fatal. Two short
+    // runs close it against the falls, leaving the lane itself untouched.
+    // These stand IN the water, not on the bottom. The first attempt seated
+    // them on ground() like the ring, and ground() out here is the basin floor
+    // three to five metres down — the colliders came out with their tops at
+    // y -0.32, -1.23, -2.33, entirely below the player, and the shore probe
+    // walked over them into the deep exactly as before. One crown height for
+    // the whole run, taken from its dry end, and each stone grown downward to
+    // meet whatever is under it.
+    const shoreY = ground ? ground(C.x + 8.1, C.z + 19.75) : 0;
+    for (const side of [-1, 1]) {
+      for (let x = 3.5; x <= 7.6; x += 0.9) {
+        const bx = side * x;
+        const bz = 19.75 + (x % 1.8 < 0.9 ? 0.12 : -0.14);
+        const floor = ground ? ground(C.x + bx, C.z + bz) : 0;
+        const top = shoreY + rng.range(0.82, 0.98);
+        const scale = rng.range(0.9, 1.12);
+        const w = scale * 1.5, d = scale * 1.2;
+        const h = Math.max(1.05, top - floor + 0.4);
+        matrices.push(compose(C.x + bx, top - h * 0.5, C.z + bz,
+          rng.range(-0.16, 0.16), rng.range(0, TAU), rng.range(-0.16, 0.16), w, h, d));
+        colours.push(darkRock.clone().multiplyScalar(rng.range(0.34, 0.52)));
+        const half = Math.max(w, d) * 0.6;
+        world.addCollider(C.x + bx - half, Math.min(floor, top) - 0.5, C.z + bz - half,
+          C.x + bx + half, top, C.z + bz + half);
+      }
+    }
+  }
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, matrices.length);
   matrices.forEach((matrix, i) => { rocks.setMatrixAt(i, matrix); rocks.setColorAt(i, colours[i]); });
   finishInstances(rocks, true, true);
@@ -1519,7 +1607,7 @@ function buildCaveDress(game, track, own, tickers) {
         }
       }
       if (i % 2 === 0) {
-        const sc = rng.range(0.44, 0.66);
+        const sc = rng.range(0.34, 0.52);
         rockTiers.push(3);
         rockMatrices.push(compose(x + rng.range(-halfW * 0.58, halfW * 0.58), floorY + 4.62, z + rng.range(-halfW * 0.58, halfW * 0.58),
           rng.range(-0.24, 0.24), rng.range(0, TAU), rng.range(-0.24, 0.24), sc * 1.35, sc * 0.58, sc * 1.12));
