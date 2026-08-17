@@ -318,6 +318,43 @@ export class Skull {
     this._handSkin = { skin, crease, nail: nailMat };
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
 
+    // "they must be actually bones like a skeleton. right now they don't look
+    // like that." They did not, and no recolour could make them: becomeBone
+    // used to retint the SAME fat capsules, webbing and fingernails, which is
+    // a bone-coloured glove. So the whole rig exists twice — flesh, and a real
+    // hand of phalanx shafts and condyles built INSIDE the same k1/k2 groups,
+    // hidden until the last room. The animation contract never notices.
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xbcb2a0, roughness: 0.62, metalness: 0 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0xa89d8b, roughness: 0.7, metalness: 0 });
+    this._handBoneMat = boneMat;
+    this._handJointMat = jointMat;
+    const flesh = this._handFlesh = [];
+    const bones = this._handBone = [];
+    const fleshy = (m) => { flesh.push(m); return m; };
+    const bony = (m) => { m.visible = false; bones.push(m); return m; };
+    // THREE shared geometries for eighty bones. Building one per bone put the
+    // mirror act at 1515 geometries against a 1500 gate; a capsule scaled
+    // unevenly is an ellipsoid-capped shaft, which is what a phalanx is.
+    const SHAFT = new THREE.CapsuleGeometry(0.006, 0.03, 3, 7);
+    const JOINT = new THREE.SphereGeometry(0.01, 8, 6);
+    const BLOCK = new THREE.BoxGeometry(1, 1, 1);
+    const shaft = (parent, r, len, z, s, mat = boneMat) => {
+      const m = bony(new THREE.Mesh(SHAFT, mat));
+      m.rotation.x = Math.PI / 2;
+      m.position.z = z * s;
+      m.scale.set((r / 0.006) * s, (len / 0.03) * s, (r / 0.006) * s);
+      parent.add(m);
+      return m;
+    };
+    const condyle = (parent, r, z, s) => {
+      const m = bony(new THREE.Mesh(JOINT, jointMat));
+      m.position.z = z * s;
+      const k = (r / 0.01) * s;
+      m.scale.set(k * 1.3, k * 1.05, k * 0.95);
+      parent.add(m);
+      return m;
+    };
+
     const mkFinger = (parent, x, y, z, scale, yaw) => {
       const k1 = new THREE.Group();
       k1.position.set(x, y, z);
@@ -357,6 +394,19 @@ export class Skull {
       k2.add(d);
       k1.add(k2);
       parent.add(k1);
+      for (const m of [s1, kn, s2, s3, pad, nail]) fleshy(m);
+      // the same finger in bone: three shafts, a knuckle and a joint, and a
+      // flared tuft where a fingertip has no pad to hide behind
+      shaft(k1, 0.0066, 0.032, 0.021, scale);
+      condyle(k1, 0.0102, 0.047, scale);
+      shaft(k2, 0.0057, 0.025, 0.018, scale);
+      condyle(k2, 0.0086, 0.0335, scale);
+      shaft(d, 0.0046, 0.015, 0.012, scale);
+      const tuft = bony(new THREE.Mesh(JOINT, boneMat));
+      tuft.position.set(0, 0, 0.0245 * scale);
+      const tk = 0.62 * scale;
+      tuft.scale.set(tk * 1.25, tk * 0.72, tk * 1.15);
+      d.add(tuft);
       return { k1, k2 };
     };
 
@@ -375,6 +425,34 @@ export class Skull {
       web.position.set(0, 0.004, 0.058);
       web.scale.set(2.05, 0.62, 0.7);
       hand.add(web);
+      fleshy(palm); fleshy(heel); fleshy(web);
+      // and the hand under the hand: a carpal block and a fan of four
+      // metacarpals reaching out to the finger roots. No palm sphere, no
+      // webbing — the gaps between the bones ARE the read.
+      const carpal = bony(new THREE.Mesh(BLOCK, jointMat));
+      carpal.position.set(0, 0.001, -0.026);
+      carpal.rotation.x = 0.1;
+      carpal.scale.set(0.062, 0.019, 0.036);
+      hand.add(carpal);
+      for (let i = 0; i < 4; i++) {
+        const tipX = (i - 1.5) * 0.028, tipZ = 0.062;
+        const rootX = (i - 1.5) * 0.0125, rootZ = -0.014;
+        const mc = bony(new THREE.Mesh(SHAFT, boneMat));
+        mc.position.set((tipX + rootX) / 2, 0.003, (tipZ + rootZ) / 2);
+        mc.rotation.x = Math.PI / 2;
+        mc.rotation.z = -Math.atan2(tipX - rootX, tipZ - rootZ);
+        mc.scale.set(1.03, 1.93, 1.03);
+        hand.add(mc);
+        const head = bony(new THREE.Mesh(JOINT, jointMat));
+        head.position.set(tipX * 0.94, 0.004, tipZ - 0.008);
+        head.scale.set(1.06, 0.87, 0.92);
+        hand.add(head);
+      }
+      const thumbMc = bony(new THREE.Mesh(SHAFT, boneMat));
+      thumbMc.position.set(side * -0.032, 0.017, -0.008);
+      thumbMc.rotation.set(Math.PI / 2, 0, side * 0.85);
+      thumbMc.scale.set(1.2, 1.4, 1.2);
+      hand.add(thumbMc);
       // Human fingers terminate at meaningfully different heights.  The old
       // near-flat profile made each hand read as four identical organ pipes,
       // especially while empty.  Mirror the hierarchy so the index remains
@@ -653,10 +731,17 @@ export class Skull {
 
   // ---------------------------------------------------------------- state
   // THE LAST ROOM. The hands you have watched all game are bone, and always
-  // were. A material swap only — same meshes, same rig, same authored poses,
-  // so nothing about the viewmodel's geometry or animation changes, only what
-  // it turns out to be made of. Colour is copied off the SKULL's own bone so
-  // the two read as the same body, which is the whole point.
+  // were — and Alex: "they must be actually bones like a skeleton. right now
+  // they don't look like that." They didn't, because this used to be a
+  // material swap: the same fat capsules, the same webbing between the finger
+  // roots, the same fingernails, painted bone. A glove.
+  // The flesh goes out and the skeleton underneath comes on: phalanx shafts
+  // and condyles inside the same k1/k2 groups, four metacarpals and a carpal
+  // block where the palm sphere was. Same rig, same authored poses, and the
+  // gaps between the bones are the read. Colour and surface are taken off the
+  // SKULL's own bone so the two are one body, which is the whole point — and
+  // _handSkin.skin keeps its identity and its copied colour, because that is
+  // the thing the playthrough compares.
   becomeBone(boneMat) {
     if (this._handsBone || !this._handSkin || !boneMat) return false;
     this._handsBone = true;
@@ -666,6 +751,18 @@ export class Skull {
     crease.color.copy(boneMat.color).multiplyScalar(0.55);
     crease.roughness = 1.0;
     nail.color.copy(boneMat.color).multiplyScalar(0.82);
+    if (this._handBoneMat) {
+      for (const [mat, k] of [[this._handBoneMat, 1], [this._handJointMat, 0.84]]) {
+        mat.color.copy(boneMat.color).multiplyScalar(k);
+        mat.map = boneMat.map || null;
+        mat.bumpMap = boneMat.bumpMap || null;
+        mat.bumpScale = boneMat.bumpScale ?? 1;
+        mat.roughness = boneMat.roughness ?? 0.62;
+        mat.needsUpdate = true;
+      }
+    }
+    for (const m of (this._handFlesh || [])) m.visible = false;
+    for (const m of (this._handBone || [])) m.visible = true;
     return true;
   }
 

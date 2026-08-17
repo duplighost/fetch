@@ -70,8 +70,12 @@ try {
     };
 
     if (!g.flags.has('waterfallTaken')) g.director.waterfallTaken();
-    g.skull.vanish();
     F.teleport('cave');
+    // AFTER the teleport, not before: the settle-arrival path (main.js, "skull
+    // in the hands") sees mode 'gone' and calls arriveRestore()+holdNow(), so
+    // vanishing first was silently undone and this page has been asserting a
+    // skull it kept putting back.
+    g.skull.vanish();
     F.stepWith(1 / 120, {}, false);
 
     const prelude = g.director._caveEcology;

@@ -288,19 +288,18 @@ export class Director {
     const waterfall = new THREE.Vector3(C.x, 0.65, C.z + 20.02);
     let choirSource;
     if (layout) {
-      // Four metres back along the last dry ambulatory: close enough that a
-      // walking player eventually earns a pressure commitment, far enough that
-      // its full audio-only warning plus ordinary forward motion remain mercy.
-      const lowerI = layout.main.indexOf(layout.lowerSluice);
-      const lower = layout.lowerSluice;
-      const behind = layout.main[Math.max(0, lowerI - 1)];
-      const dx = behind.x - lower.x, dz = behind.z - lower.z;
-      const d = Math.hypot(dx, dz) || 1;
-      const k = Math.min(4, d) / d;
+      // IT USED TO BEGIN BEHIND YOU, four metres back along the ambulatory —
+      // and then chase your own footstep breadcrumbs, which keeps it in your
+      // rear 180 degrees structurally, forever. Alex: "I still do not see any
+      // of those old enemies that used to be unique to the area under the
+      // waterfall." He never saw it because it was authored where he could
+      // not look. It stands across the chapel now, off the aisle you walk and
+      // wide of the false sighting you have just been taught to read: lateral,
+      // in the light, inside the cone of a player facing their own route.
       choirSource = new THREE.Vector3(
-        lower.x + dx * k,
-        lower.y + (behind.y - lower.y) * k,
-        lower.z + dz * k,
+        layout.chapel.x + 7.2,
+        layout.chapel.y,
+        layout.chapel.z + 6.6,
       );
     } else {
       choirSource = new THREE.Vector3(C.x, 0, C.z + 20.68);
@@ -327,7 +326,12 @@ export class Director {
       waterfall,
       foreshadow,
       choirSource,
-      choirTriggerZ: layout ? layout.chapel.z + 7 : -Infinity,
+      // ...and it arms in the chapel rather than at the lower sluice, which is
+      // roughly 60% of the way through the district: a running player could
+      // reach the hatch before it ever closed. Still after the passive
+      // displacement has had its moment (that beat is at the west aisle, six
+      // metres short of this line) — the false sighting is still first.
+      choirTriggerZ: layout ? layout.chapel.z + 1 : -Infinity,
       choirArmed: false,
     };
     // The passive displaced-spray figure in the pump chapel is the first visual

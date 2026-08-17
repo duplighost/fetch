@@ -794,6 +794,10 @@ export class Finale {
     this._dresserSnap = false;
     this.poses = [];
     this._mountExactSkull();
+    // The swap happens behind the fade, at the door, long before anything is
+    // raised — it is invisible until the hands come up, so the earliest moment
+    // is the safest one.
+    g.skull.becomeBone?.(g.mats?.bone);
 
     for (const o of this.resetProps) {
       o.position.copy(o.userData.homePosition);
@@ -1314,6 +1318,12 @@ export class Finale {
           this.phase = 'closing';
           g.audio.stoneGrind({ pos: this.panes[0].mesh.position,
             gain: 0.4, rate: 0.5, verb: 0.68 });
+          // "In the final room of the game, have the player raise their hands
+          // earlier." Here: the beat the mirrors wake and the walls begin to
+          // come in. Infinity survives the per-frame decay, so they stay up
+          // for the whole closing — which is also what finally makes the
+          // glass-press pose something anyone can see.
+          g.skull.raiseHands?.(Infinity);
         }
         break;
       case 'closing': {

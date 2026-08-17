@@ -982,12 +982,34 @@ try {
       && underfallsLayout.mainLength > 110
       && underfallsLayout.chambers?.length >= 5;
     const underfallsLegs = [];
+    let choirSeen = null;
     if (underfallsRouteReady) {
       for (const node of underfallsMain.slice(2)) {
         underfallsLegs.push(walkTo(node.x, node.z, 20));
+        // "I still do not see any of those old enemies that used to be unique
+        // to the area under the waterfall." It used to arm at the lower
+        // sluice, spawn behind you and chase your footprints, so a walking
+        // player never met it and a running one never could. Record the best
+        // look the walk ever gets: how close it came, and how much of it was
+        // actually on screen when it did.
+        for (let t = 0; t < 4; t++) {
+          const st = g.enemies.getDrownedChoirState?.();
+          if (!st) break;
+          const dx = st.pos[0] - g.player.pos.x, dz = st.pos[2] - g.player.pos.z;
+          const d = Math.hypot(dx, dz);
+          const fx = -Math.sin(g.player.yaw), fz = -Math.cos(g.player.yaw);
+          const facing = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
+          const seen = { d: +d.toFixed(2), facing: +facing.toFixed(2), state: st.state,
+            reveal: +Math.max(st.revealT / 1.35, st.wetT / 1.15).toFixed(2) };
+          if (!choirSeen || (seen.facing > 0.2 && seen.d < choirSeen.d)) choirSeen = seen;
+          break;
+        }
         if (g.dead) break;
       }
     }
+    beat('the-drowned-choir-comes-where-you-can-see-it',
+      !!choirSeen && choirSeen.d < 22 && !g.dead,
+      { best: choirSeen, spawns: (g.spawnLog || []).filter((s) => s[0] === 'choir').length });
     beat('crossed-the-underfalls', underfallsRouteReady
       && underfallsLegs.length === underfallsMain.length - 2
       && underfallsLegs.every(Boolean) && !g.dead,
@@ -1007,11 +1029,25 @@ try {
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
 
     // ---- ACT 6: the walls ----------------------------------------------
+    // "have the player raise their hands earlier." They come up at the beat
+    // the mirrors wake and the walls start in — not two seconds before black.
     let closed = false;
+    let raisedAtClosing = null;
     for (let t = 0; t < 90; t += 1) {
       F.stepWith(1, { moveX: (t % 4 < 2 ? 0.4 : -0.4), moveZ: 0.2 });   // squirm like a person
+      if (raisedAtClosing === null && g.finale.phase === 'closing') {
+        raisedAtClosing = {
+          raise: g.skull._handRaise, bone: g.skull._handsBone === true,
+          visible: (g.skull._handPose?.hands || []).some((h) => h.visible),
+          boneParts: (g.skull._handBone || []).filter((m) => m.visible).length,
+          half: +g.finale.half.toFixed(2),
+        };
+      }
       if (g.finale.phase === 'end') { closed = true; break; }
     }
+    beat('the-hands-come-up-when-the-mirrors-wake',
+      !!raisedAtClosing && raisedAtClosing.raise > 0 && raisedAtClosing.bone === true,
+      raisedAtClosing);
     F.stepWith(7);                                    // the slow fade + showEnd
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
     beat('the-walls-did-not-stop', closed && g.finale.half <= 0.38, +g.finale.half.toFixed(2));

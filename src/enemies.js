@@ -2138,7 +2138,9 @@ export class Enemies {
     e.age += dt;
     e.stateT += dt;
     e.phase += dt;
-    e.revealT = Math.max(0, e.revealT - dt);
+    // reveals decay slower than they used to: a sighting that lasts a second
+    // and a third is a sighting you can miss by blinking
+    e.revealT = Math.max(0, e.revealT - dt * 0.62);
     e.wetT = Math.max(0, e.wetT - dt);
     e.memoryT = Math.max(0, e.memoryT - dt);
     e.heardStrength = Math.max(0, e.heardStrength - dt * 0.24);
@@ -2162,7 +2164,9 @@ export class Enemies {
         if (e.stateT >= DROWNED_CHOIR.warning) {
           e.state = 'stalk';
           e.stateT = 0;
-          e.revealT = Math.max(e.revealT, 1.35);
+          // the moment it starts to move is the one sighting the whole rest of
+          // the district is built on — make it long enough to turn toward
+          e.revealT = Math.max(e.revealT, 2.4);
           game.audio.drownedSurge({ pos: e.pos, gain: 0.58, rate: 0.82 });
         }
         break;
@@ -2180,8 +2184,12 @@ export class Enemies {
         const hd = Math.hypot(hx, hz);
         if (hd > 0.12) {
           const heard = clamp(e.heardStrength, 0, 1);
+          // A player-thrown curtain of spray used to cut it to 8% — a
+          // ninety-two per cent stop, on a thing that already trails you by
+          // design. The counterplay survives at a third; being un-catchable
+          // does not, because a predator you can never meet is scenery.
           const speed = lerp(DROWNED_CHOIR.drySpeed, DROWNED_CHOIR.heardSpeed, heard)
-            * (e.wetT > 0 ? 0.08 : 1);
+            * (e.wetT > 0 ? 0.35 : 1);
           this._moveWithPush(e, hx / hd * speed * dt, hz / hd * speed * dt);
           game.underfalls?.clamp?.(e.pos, dt);
         }
@@ -2276,13 +2284,18 @@ export class Enemies {
       recoil,
     ), 0, 1);
     const U = e.mesh.userData;
-    U.voidMat.opacity = 0.02 + reveal * 0.8;
-    U.skinMat.opacity = 0.001 + reveal * 0.43;
-    U.wetMat.opacity = 0.001 + reveal * 0.25;
-    U.rimMat.opacity = 0.001 + reveal * 0.2;
-    U.mouthVoidMat.opacity = 0.001 + reveal * 0.92;
-    U.dropMat.uniforms.uOpacity.value = 0.10 + reveal * 0.62;
-    U.dropMat.uniforms.uSize.value = 0.052 + reveal * 0.032;
+    // THE DRY FLOORS WERE THE BUG. At 0.001-0.02 a standing Choir is not dim,
+    // it is absent — a walking player heard ambience and saw nothing, which is
+    // the whole of "I still do not see any of those old enemies". The floors
+    // carry a real silhouette now: a hole in the cave with wet glints on it,
+    // still far below a revealed one, and still value and motion only.
+    U.voidMat.opacity = 0.075 + reveal * 0.75;
+    U.skinMat.opacity = 0.018 + reveal * 0.42;
+    U.wetMat.opacity = 0.012 + reveal * 0.24;
+    U.rimMat.opacity = 0.014 + reveal * 0.19;
+    U.mouthVoidMat.opacity = 0.05 + reveal * 0.88;
+    U.dropMat.uniforms.uOpacity.value = 0.19 + reveal * 0.56;
+    U.dropMat.uniforms.uSize.value = 0.062 + reveal * 0.03;
     if (U.light) {
       U.light.intensity = reveal * (2.5 + pressure * 5.6);
       U.light.distance = 4.2 + reveal * 2.3;
