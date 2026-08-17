@@ -1,0 +1,1076 @@
+{
+  "_meta": {
+    "round": "2026-08-17 (Round Four)",
+    "produced_by": "six parallel readers against claude/aug16-notes tip 4e33618, collected 2026-08-17",
+    "how_to_use": "One key per subsystem task. Read the matching key's code_map + diagnosis + edit_points as you start each task. Line numbers drift as you edit - trust function and flag names over numbers as the build progresses.",
+    "keys": [
+      "window-scare",
+      "basement",
+      "gate-respawn",
+      "ossuary",
+      "falls-field",
+      "underfalls-finale"
+    ]
+  },
+  "window-scare": {
+    "summary": "The 'second room' is the upstairs LANDING (house.js:30, `['landing', 4, 7, 7, 9, 'first', {wall:'wallpaper'}]` — world x[-4,4], z[0,6]), reached through the bedroom door (house.js:59); the wallpapered room with the big graveyard-facing window in Alex's screenshot is its south window at world (-1, F+1.8, 6). The scare is the scripted first WINDOW WATCHER in `buildWindowWatchers` (house.js:4236-4528), site index 0 (house.js:4241), which climbs the pane and then runs the SASH/FOLD/SKITTER entry that shoves it through the window into the room. It genuinely flashes: the only interval in which the figure is fully framed above the sill with its palm on the glass is the 0.85 s `sash` phase (house.js:4397), and the in-room payoff is 0.55 s of folding plus 0.4167 s of visible fade (house.js:4410, 4424, 4434) — under one second each. Worse, three separate paths consume the scripted event permanently and instantly on first contact: stepping within 2.1 m of the window (house.js:4481), looking away for 0.55 s once it has been seen (house.js:4505, whose scripted guard at 4509 is dead code because the event spawns at exactly `w.t = 0.5`), and the unwatched creep at `dt/6` (house.js:4501) which self-completes the whole beat in 3 s whether or not the player ever faced it. Staring at it actually makes it leave sooner (`dt/3.1`, house.js:4489), it has no line-of-sight test (unlike `_isObserved`, enemies.js:2619), and its only audio cue fires on the same frame it becomes visible (house.js:4465-4467), inverting the audio-first law.",
+    "code_map": [
+      {
+        "file": "src/house.js",
+        "lines": "30, 33, 59-61, 85-87",
+        "what": "HOUSE_TABLES.rooms / doors / windows. `['landing', 4,7,7,9,'first']` and `['bedroom', 8,6,11,9,'first']`; door `['first',8,7,'W',{id:'bedroomDoor',locked:'bedroomKey'}]` = bedroom -> landing, so the landing IS room two. Grid->world is worldX = -12+(gx+0.5)*2, worldZ = -14+(gz+0.5)*2 (origin [-12,-14], CS=2). The landing's south window `['first', 5, 9, 'S', {}]` lands at x=-1, wall plane z=6 — exactly site[0]."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "769-771",
+        "what": "`world.addZone('bedroom', 4,-2,12,6, 3.0,7)` then `world.addZone('house', ...)`. zoneAt returns the first match (world.js:290-298), so act flips bedroom->house the instant the player crosses x<4 — the bedroom threshold. This is T0 for the beat."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "784",
+        "what": "`buildWindowWatchers(game)` call site inside buildHouse, alongside buildWindowRelay / buildSculleryCrawler."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4236-4246",
+        "what": "`function buildWindowWatchers(game)` + the 5-entry `sites` table. site[0] = `{ x: -1, floor: F, z: 6, nx: 0, nz: 1 }` — landing, graveyard side. F = HOUSE_TABLES.levels.first.floor = 3.6."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4250-4291",
+        "what": "The nine-mesh rig: `skin` MeshBasicMaterial 0x9aa090, `cloth` 0x23262a, head at local (0.06, 1.6, 0.53), hood 1.69, torso 1.0, palm 1.52, fingers 1.64. `fadeMats = [skin, cloth]` is the shared opacity handle used by the skitter fade. Unlit basic materials = brightness/shape read, no hue-only meaning."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4293-4335",
+        "what": "THE SASH. `sashSite = sites[0]`; `sashPane` adopted by scene.traverse matching a PlaneGeometry with color 0x0a1016 within 0.45 m of (x, F+1.8, z); house-owned `sashRail` box at F+1.02; `SASH_LIFT = 0.35` (4319); `entry = { state:'idle', t, lift, scuffI, from, to }` (4320-4323); `setSashLift` (4324-4328); `ENTRY_SCUFFS` four receding footsteps at t = 0.14 / 0.4 / 0.72 / 1.1 (4330-4335)."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4337-4349",
+        "what": "State object `w = { siteIndex:-1, active:false, t:0, lookAwayT:0, cooldown:6, seen:0, nextSite:0, fade:1 }` (4343) and the public handle `game.windowWatcher = { root, state:w, sites, entry, sashRail, get sashPane, force(i) }` (4345-4349). `force(i)` pins a site and zeroes cooldown — the deterministic test hook."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4357-4371",
+        "what": "`finishEntry()` — sets entry.state='done', pins the sash open at SASH_LIFT, hides root, resets fade/opacity, `w.seen++`, `w.cooldown = 24 + w.seen*9`, flags `windowWatcherSeen` + `windowWatcherEntered`."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4372-4385",
+        "what": "`vanish(reason)` — the kill switch. `w.seen++`, cooldown 24+seen*9, `root.visible=false`, flags `windowWatcherSeen`, and a whisper (gain 0.32 rate 0.44 for 'close', else 0.24/0.5). Because it increments `w.seen`, ANY vanish permanently destroys the scripted first haunting (see `scripted` at 4472)."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4386-4437",
+        "what": "The dt-driven ticker (registered on `game.tickers`, drained at main.js:1214 under FIXED_DT = 1/120, main.js:19). Entry state machine: `sash` ramps `smoothstep(0,0.7,entry.t)*SASH_LIFT` and exits at `entry.t >= 0.85` (4396-4397); `fold` lerps root from the pane to `(s.x, s.floor - 1.05, s.z - 0.55)` with `scale.y = 1 - sin(k*PI)*0.38` and `rotation.x = sin(k*PI)*0.7`, exiting at `entry.t >= 0.55` (4403-4418) + a thud; `skitter` slides toward (-1.3, 4.5), `w.fade -= dt*2.4` (4424) so `root.visible = w.fade > 0` (4426) goes false after 0.4167 s, plays the 4 scuffs, and `finishEntry()` at `entry.t >= 1.45` (4434). Act-change or death hard-finishes (4392)."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4438-4469",
+        "what": "Idle/arm path. Ticker returns early unless `game.act === 'house'` (4438) so the 6 s cooldown only runs after the bedroom threshold. Site pick uses `w.nextSite` (initially 0) (4444-4447). Scripted arm block (4462-4468): `w.t = 0.5`, `root.position.y = s.floor - 1.6 + smoothstep(0,1,w.t)*2.35` = F-0.425 (head world F+1.175 against a sill at F+1.0 — a ~0.18 m sliver), `root.visible = true`, and `game.audio.glassTink({gain:0.5, rate:0.5})` on the SAME frame."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4471-4512",
+        "what": "Active path. `scripted = w.seen === 0 && w.siteIndex === 0` (4472). `watched` = `dist < 8.5 && |eye.y - paneCenter.y| < 2.2 && fwd.dot(toPane) > 0.93` (4478-4479) — a ~21.6 deg half-cone, NO occlusion test. `if (planar < 2.1 && w.t > 0.05) vanish('close')` (4481). Watched advance `w.t += dt/3.1` (4489) with a glassTink crossing 0.78 (4495-4497). Unwatched scripted creep `w.t += dt/6` (4501). Look-away branch (4503-4511): `lookAwayT > 0.55` -> vanish('away'); the intended guard `if (scripted && w.t < 0.5)` (4509) can never be true because the scripted event spawns at exactly 0.5."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4513-4527",
+        "what": "Entry trigger: `if (scripted && w.t >= 1 && entry.state === 'idle')` -> entry.state='sash', root.visible=true, opacity 1, `game.audio.sashScrape({gain:0.85, rate:0.9})` + `glassTink({gain:0.3, rate:0.42})`. Only the first-ever event at site 0 can ever reach this; every later haunting keeps the vanish-outward grammar."
+      },
+      {
+        "file": "src/world.js",
+        "lines": "624-625, 670-695, 38-39",
+        "what": "Window aperture geometry: `y0 = floor + 1.0` (sill), `y1 = floor + 2.6` (head), `WIN_W = 1.4`. So the landing glass spans F+1.0..F+2.6, pane center F+1.8 — matches `paneCenter` at house.js:4473. At w.t = 1 the figure's head sits at F+2.35 (0.25 below the lintel), torso mid-pane: a fully legible pose that only exists during the 0.85 s sash phase."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "373-381, 30",
+        "what": "Act detection by zone — `zoneAt(player.pos)` with the forward-only order array; this is what starts the watcher's clock. `HOUSE_RESIDENT_DELAY = 18` (director.js:30) is the next house beat, so seconds 6-11 are otherwise uncontested. director.js has NO reference to windowWatcher — the beat lives entirely in house.js."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "4739-4807, 4809-4931",
+        "what": "REFERENCE IMPLEMENTATION — `buildSculleryCrawler`, the sibling watched-window scare that reads correctly. `watchedThroughAperture()` (4796-4807) = room test + dist < 5.4 + dot > 0.955. `gazeT >= 0.32` before it triggers (4819-4827). Progress advances ONLY while watched at `dt/4.15` (4828) and FREEZES rather than despawning on look-away. Once entered it demands `settledT >= 1.05` of watched hold before a `lookAwayT >= 0.38` may remove it (4885-4903). Proximity uses `proximityThreshold: 1.48` (4746) -> `beginProximityResolution` (4775-4794) with a visible 0.48 s recoil ease (4926) instead of a pop. Stage sounds at 1/2/3/4 (4873-4876) and wet proof left behind."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "5013-5021",
+        "what": "`isWatched(point, minDot = 0.91, maxDistance = 8.5)` inside buildHouseReturnHorror — the house's canonical view-cone helper, including the `Math.abs(eye.y - point.y) > 2.15` floor/ceiling reject. Same shape as the watcher's inline test but factored; the cleanest thing to reuse."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "2615-2637",
+        "what": "`_isObserved(e, dt, camPos, camFwd)` — the codebase's PROVEN-in-view pattern: view cone `camFwd.dot(toE) > 0.28` (2621) THEN a throttled structural line-of-sight `_segmentBlocked` refreshed every 0.08 s (2624-2631), with per-enemy hysteresis. Explicitly documented as 'one law for it never moves while seen'. This is the pattern to cite for a real 'has provably been in the player's view cone' gate."
+      },
+      {
+        "file": "src/audio.js",
+        "lines": "933-957, 1428-1440, 1355",
+        "what": "`sashScrape` (dur 0.72/rate, bandpass 215->345 Hz sweep, 12.5 Hz stick-slip judder, sine body 92->74 Hz) — a genuinely long, legible wood-on-wood cue, currently played AFTER the reveal. `glassTink` (2350/3620/5210 Hz partials, 0.3 s decay) and `whisper` are the only other cues the beat uses."
+      }
+    ],
+    "diagnosis": "It is not one bug; it is five, and they compound.\n\n1. THE DWELL IS GENUINELY SHORT. The figure is only fully framed above the sill — torso, palm and fingers in the glass — once `w.t` reaches 1. The very next tick fires the entry (house.js:4518), so the fully-risen pose exists for exactly the 0.85 s `sash` phase (house.js:4397). Everything before that is a head-sliver cresting a 1.0 m sill; everything after is descent. Total legible time at the pane: 0.85 s. That alone matches Alex's 'less than a second'.\n\n2. THE PAYOFF IS FADED OUT IN 0.42 s AND HALF-BURIED IN THE FLOOR. `fold` runs 0.55 s (house.js:4410) to `entry.to.y = s.floor - 1.05` (house.js:4401) — the root origin one metre BELOW the landing floorboards, which puts the torso (local y 1.0) inside the floor and leaves only head/shoulders at F+0.55. Then `skitter` fades `w.fade -= dt * 2.4` (house.js:4424), so `root.visible` goes false after 0.4167 s even though the phase runs 1.45 s (house.js:4434). The 'it is in the room with you' moment is under a second of half-clipped geometry.\n\n3. LOOKING AT IT MAKES IT LEAVE SOONER. Watched advance is `dt/3.1` (house.js:4489) vs the unwatched creep `dt/6` (house.js:4501). The same scalar that drives the climb also triggers the exit, so a player who does the right thing — turns and stares — burns the beat down in 1.55 s instead of 3.0 s. This is exactly backwards from the crawler, whose progress advances only while watched (house.js:4828) precisely so the player controls the pace.\n\n4. THREE INSTANT, PERMANENT KILL SWITCHES, ALL ARMED FROM FRAME ONE. (a) `if (planar < 2.1 && w.t > 0.05) vanish('close')` (house.js:4481) — the scripted event spawns at `w.t = 0.5` (house.js:4463), so the proximity trip is live immediately; walking up to the big graveyard window (the single most natural reaction, and the exact vantage in Alex's screenshot) deletes it in one frame with a whisper. (b) `lookAwayT > 0.55` -> `vanish('away')` (house.js:4505-4510); the author's own belt-and-braces guard `if (scripted && w.t < 0.5)` (house.js:4509) is DEAD CODE — spawn sets w.t to exactly 0.5 and the comparison is strict `<`, so it never protects anything. Glance, glance away for half a second, gone forever. (c) Every vanish does `w.seen++` (house.js:4375), and `scripted` is `w.seen === 0 && w.siteIndex === 0` (house.js:4472), so there is no second chance — subsequent hauntings are the generic climb-and-vanish, which never enters the window at all.\n\n5. IT IS GATED TO FIRE WHEN NOBODY IS LOOKING, AND IT COMPLETES ITSELF UNSEEN. `w.cooldown = 6` (house.js:4343) starts the moment the player crosses x<4 out of the bedroom zone (house.js:769-771). At WALK = 2.7 m/s (player.js:10) the player is 16 m of travel later — the landing's traffic runs along z~1 from the bedroom door at (4,1) to the nursery door at (-4,1) or the stair door at (1,0), i.e. westward/northward, with the window 5 m BEHIND at (-1,6) on a bearing ~39 deg off the walk direction, outside the `dot > 0.93` (~21.6 deg) cone (house.js:4479). Many players are already in the nursery at T+6. And because the unwatched creep (house.js:4501) completes in 3 s regardless, the whole sash/fold/skitter runs off-camera and `finishEntry` sets both flags (house.js:4369-4370). Proof: `windowWatcherSeen` and `windowWatcherEntered` show up in flag dumps of eight completely unrelated relay/void-door scenarios in tests/results/house-expansion.json (lines 211-212, 289-290, 476-477, 531-532, 586-587, 641-642, 815-816, 921-922) — nothing in those tests ever looked at the landing window.\n\n6. AUDIO-FIRST IS INVERTED. `glassTink` fires on the same frame as `root.visible = true` (house.js:4465-4467) — a 0.3 s decay chime from up to 8.5 m away, simultaneous with the reveal, not before it. The long, legible `sashScrape` (audio.js:933, 0.72 s sweep with judder) arrives only at the entry trigger (house.js:4524), i.e. after the figure has finished climbing. You never hear it before you see it.\n\n7. NO OCCLUSION TEST. `watched` (house.js:4478-4479) is pure distance + dot with no line-of-sight, unlike `_isObserved` (enemies.js:2619-2637). A player in the nursery facing the shared partition counts as 'watching', which advances the fast climb, sets `everWatched = true`, and then arms the 0.55 s look-away kill — all while the figure is behind a wall. Not culling; the opposite — it is being consumed through geometry.",
+    "edit_points": [
+      {
+        "n": 1,
+        "title": "Audio lead-in BEFORE any pixels (audio-first law)",
+        "anchor": "house.js:4462-4468, the `if (w.seen === 0 && w.siteIndex === 0)` arm block",
+        "change": "Introduce `const LEAD_IN = 1.4;` and a new `w.phase = 'listen'`. On arm: keep `w.t = 0.5` and position the rig, but leave `root.visible = false`; play `game.audio.sashScrape({ pos: paneCenter, gain: 0.45, rate: 1.25, verb: 0.6 })` (a scrape on the OUTSIDE of the sill) instead of the glassTink, then a `game.audio.creak` at LEAD_IN*0.5, and only reveal (`root.visible = true` + the existing `glassTink`) once `w.leadT >= LEAD_IN`. Model: the crawler will not become visible until `gazeT >= 0.32` and whispers at the moment of trigger (house.js:4819-4827). Constant to add: LEAD_IN = 1.4 s. Constant to move: the `glassTink({gain:0.5, rate:0.5})` on house.js:4467."
+      },
+      {
+        "n": 2,
+        "title": "Cap the unwatched creep so the beat can never be consumed off-camera",
+        "anchor": "house.js:4501, `w.t = Math.min(1, w.t + dt / 6)`",
+        "change": "Change to `w.t = Math.min(0.82, w.t + dt / 5)`. The figure still creeps up to a clearly-visible three-quarters pose unattended (so a head turned by the lead-in catches it mid-climb), but only WATCHED time (house.js:4489) can carry it the last 18% to 1.0. This makes the beat impossible to complete unseen, which is what the recorded flag dumps in tests/results/house-expansion.json prove is currently happening. Keep the existing act-change/death hard-finish at house.js:4392/4438 as the safety valve."
+      },
+      {
+        "n": 3,
+        "title": "Stop punishing the player for staring; make watching HOLD it, not hurry it",
+        "anchor": "house.js:4489, `w.t = Math.min(1, w.t + dt / 3.1)`",
+        "change": "Slow to `dt / 4.5` (matching the crawler's `dt / 4.15`, house.js:4828) so the climb from 0.5 reads as ~2.3 s of watched rise rather than 1.55 s. Pair with edit 4 so the total on-screen time goes UP when the player engages. Branch the rate on `scripted` if the four generic haunting sites should stay quick."
+      },
+      {
+        "n": 4,
+        "title": "Add a HOLD-AT-PANE state — the multi-second scare Alex is asking for",
+        "anchor": "house.js:4513-4526, the `if (scripted && w.t >= 1 && entry.state === 'idle')` trigger",
+        "change": "Insert a new `entry.state = 'press'` before `'sash'`. Add `const HOLD_AT_PANE = 3.0;`. During `press`: root stays at the fully-risen pose, `head.rotation` tracks the player by a small clamped yaw, a `glassTink({gain:0.5, rate:0.38})` fires as the palm settles, and `palm.position.z` eases 0.02 m further into the glass (a lean, not a pop). Only after `entry.t >= HOLD_AT_PANE` AND the view-cone proof of edit 5 is satisfied does it advance to `'sash'`. Add `'press'` to the state list at house.js:4387 so the entry branch owns the ticker. This alone converts the beat's legible dwell from 0.85 s to ~3.9 s."
+      },
+      {
+        "n": 5,
+        "title": "Only retreat/enter after it has PROVABLY been in the player's view cone",
+        "anchor": "house.js:4478-4479 (`watched`) and the new gate in edit 4",
+        "change": "Add `w.viewT = 0;` to the state object (house.js:4343) and accumulate `w.viewT += dt` only when `watched && losClear`. For `losClear`, follow the proven pattern in `_isObserved` (enemies.js:2619-2637): a throttled structural segment test refreshed every 0.08 s so a wall between the player and the pane does not count as watching. If you do not want to reach into enemies.js, reuse the local occluder-aware helper `isWatched(point, minDot = 0.91, maxDistance = 8.5)` at house.js:5013-5021 — it already carries the `Math.abs(eye.y - point.y) > 2.15` floor/ceiling reject — and add one `_segmentBlocked`-equivalent call. Gate: `const WATCH_PROOF = 2.0;` — the entry may not advance past `press` until `w.viewT >= WATCH_PROOF`. Also loosen the cone from `> 0.93` to `> 0.88` (~28 deg) so a player crossing the landing peripherally accrues proof. The cone change and the LOS gate must ship TOGETHER."
+      },
+      {
+        "n": 6,
+        "title": "Replace the look-away DELETE with the crawler's look-away FREEZE",
+        "anchor": "house.js:4503-4512",
+        "change": "For `scripted`, never call `vanish('away')`. Mirror house.js:4885-4903: while unwatched, simply stop advancing `w.t` (freeze the climb, leave it visible) — the exact behaviour pinned for the crawler by tests/house-critical-path-regression.mjs:878 ('looking away freezes its physical progress'). Delete the dead guard at house.js:4509 (`if (scripted && w.t < 0.5)` can never be true given `w.t = 0.5` at house.js:4463) and replace it with `if (scripted) { w.lookAwayT = 0; return; }`. Generic later hauntings (`!scripted`) keep the existing 0.55 s vanish grammar untouched."
+      },
+      {
+        "n": 7,
+        "title": "Stop the close-approach from deleting the scripted beat",
+        "anchor": "house.js:4481, `if (planar < 2.1 && w.t > 0.05) { vanish('close'); return; }`",
+        "change": "Exempt the scripted event: `if (!scripted && planar < 2.1 && w.t > 0.05) { vanish('close'); return; }`. Walking up to the window is the correct player response and must not cancel the payoff. Then, to keep the collider-free body out of the player capsule during `fold`/`skitter`, adopt the crawler's answer: a `proximityThreshold` (house.js:4746, 1.48 m) that triggers a visible recoil over ~0.48 s (house.js:4926) rather than an instant hide — i.e. the thing shrinks back toward the sash instead of blinking out."
+      },
+      {
+        "n": 8,
+        "title": "Slow the entry itself so the crossing is watchable",
+        "anchor": "house.js:4396-4397, 4406-4410, 4424, 4434",
+        "change": "sash: `smoothstep(0, 0.7, entry.t)` -> `smoothstep(0, 1.5, entry.t)` and the exit gate `entry.t >= 0.85` -> `entry.t >= 1.7`. fold: `smoothstep(0, 0.55, entry.t)` -> `smoothstep(0, 1.1, entry.t)` and `entry.t >= 0.55` -> `entry.t >= 1.1`. skitter: fade `w.fade - dt * 2.4` -> `w.fade - dt * 0.6` (1.67 s of visible retreat) and `entry.t >= 1.45` -> `entry.t >= 2.6`. Re-space `ENTRY_SCUFFS` (house.js:4330-4335) across the longer skitter: at 0.25 / 0.8 / 1.4 / 2.05. Net legible time from first sight to gone: ~9 s instead of ~1.8 s."
+      },
+      {
+        "n": 9,
+        "title": "Fix the in-room landing pose (currently half-sunk in the floorboards)",
+        "anchor": "house.js:4401, `entry.to.set(s.x - s.nx * 0.55, s.floor - 1.05, s.z - s.nz * 0.55)`",
+        "change": "`s.floor - 1.05` puts the root origin a metre below the landing floor, so the torso (local y 1.0, house.js:4268) is inside the boards and only the head clears at F+0.55. Use `s.floor - 0.30` and carry the crouch with `root.scale.y` instead, so head and shoulders sit at a legible crouch height. This is exactly the fix the crawler already documents at house.js:4852-4856 ('this weight shift leaves the head and shoulders visibly in-room')."
+      },
+      {
+        "n": 10,
+        "title": "Arm it when the player is actually IN the landing",
+        "anchor": "house.js:4343 (`cooldown: 6`) and the arm block at house.js:4444-4468",
+        "change": "6 s after the bedroom threshold routinely lands the player in the nursery or at the stair door. Gate the scripted arm on presence instead of a bare timer: require `game.act === 'house' && Math.abs(game.player.pos.y - F) < 1.5 && p.x > -4 && p.x < 4 && p.z > 0 && p.z < 6` (the landing's world bounds derived from house.js:30) plus a short settle, and raise the fallback `cooldown` to 9. Precedent: the crawler's `inScullery` box test at house.js:4798-4799."
+      }
+    ],
+    "risks": [
+      "Capping the unwatched creep (edit 2) means a player who never enters or never looks at the landing leaves the beat un-consumed. The act-change/death hard-finish at house.js:4392 and 4438 MUST stay so `windowWatcherEntered` and the permanently-cracked sash still land — several unrelated scenarios already record those flags (tests/results/house-expansion.json:211-212, 815-816) and the sash-open world state is described as 'forever' at house.js:4356.",
+      "Stretching the beat to ~9 s pushes it toward HOUSE_RESIDENT_DELAY = 18 (director.js:30). Combined with edit 10's presence gate (which delays arming until the player is in the landing), a slow player could have the watcher entering the window while the Resident is spawning. Check the overlap before shipping.",
+      "`root.visible` is currently written from five places (house.js:4426, 4457, 4465, 4490, 4521). Adding a `'press'` state and a lead-in invisible phase without auditing all five will produce exactly the one-frame pop the fix is meant to remove.",
+      "Adding a line-of-sight test (edit 5) either couples house.js to `Enemies._isObserved`/`_segmentBlocked` (enemies.js:2619-2637, private methods) or duplicates the ray. Prefer extracting the existing local `isWatched` at house.js:5013 into a shared helper rather than a third copy of the same dot-product.",
+      "Exempting the scripted event from the 2.1 m proximity vanish (edit 7) means a player can stand inside the fold/skitter path. The rig has no collider, so without the recoil replacement the figure will visibly pass through the player's head — the exact failure the crawler's 1.48 m tripwire (house.js:4746, 4913-4917) exists to prevent.",
+      "`sashPane` is adopted by a fragile scene.traverse that matches PlaneGeometry + color 0x0a1016 within 0.45 m (house.js:4304-4313). If the world's glass recipe drifts, sashPane is null and only `sashRail` moves. A slower, longer sash animation (edit 8) makes that silent failure far more visible on screen.",
+      "Slowing the watched climb rate (edit 3) also affects the four NON-scripted haunting sites (nursery, dining, kitchen, guest — house.js:4242-4245), which share the same `dt / 3.1` line. If you want the generic hauntings to stay quick, branch the rate on `scripted`.",
+      "Widening the cone from 0.93 to 0.88 (edit 5) with no LOS test would make the through-the-wall false-positive WORSE. Edit 5's cone change and its LOS gate must ship together, not separately."
+    ],
+    "tests": [
+      "NOTHING PINS THIS BEAT. A repo-wide grep for `windowWatcher` / `sashScrape` / `windowWatcherEntered` across tests/*.mjs and tests/lib/harness.mjs returns zero assertions — the only hits are recorded flag dumps in tests/results/house-expansion.json (lines 211-212, 289-290, 476-477, 531-532, 586-587, 641-642, 815-816, 921-922). Every one of the edits above can be made without breaking a single check, and equally, the current bug was never caught.",
+      "tests/house-critical-path-regression.mjs:873-891 — the model to copy verbatim for a new watcher test. It asserts the sibling crawler's exact aperture coordinates, `triggered && watched && progress > 0`, freeze-on-look-away (`Math.abs(away.progress - away.frozenAt) < 0.001`), the full stage history [0,1,2,3,4], `settledT >= 1.05`, `calls < 450 && triangles > 0` (renderer ceiling), and that it vanishes only after a genuine look-away. Also :976 (proximity) and :1059 (pre-entry).",
+      "tests/playthrough.mjs:244-256 — the only test that walks the landing: `walkTo(4.8,1,10); walkTo(3,1,8); walkTo(-1,2.5,10); beat('reached-landing', g.act === 'house')` then straight on to the nursery. It passes within a couple of metres of the window and asserts nothing about the watcher — a ready insertion point for a 'the second room's window scare was on screen for >= N seconds' beat.",
+      "tests/house-chase-doors-regression.mjs:187-203 — `g.player.pos.set(0, 3.6, 3)` is already a landing fixture on the first floor; reusable as the camera vantage for a deterministic watcher test.",
+      "tests/house-return-horror-regression.mjs:244 — the authored `'landing-turn'` coordinate `[0.8, 3.68, 1]`, and :63 comments on 'the bedroom/landing route gives a fair first look'. Same room, same sightline discipline; a good precedent for what 'a fair first look' is expected to mean in a test.",
+      "tests/house-expansion.mjs — runs the house scenarios that currently pick up windowWatcherSeen/Entered as side effects; if edit 2 lands, those flag dumps will change and the recorded JSON in tests/results/ will need regenerating. Nothing asserts on them, so no check should fail, but the diff will show up.",
+      "DETERMINISTIC HOOK ALREADY EXISTS: `game.windowWatcher.force(i)` (house.js:4348) pins a site and zeroes the cooldown; documented at docs/HANDOFF.md:1505. Combined with `game.windowWatcher.state` / `.entry` (house.js:4346) a new test can drive `force(0)`, park the camera at the landing-turn coordinate, step the fixed loop, and assert (a) the figure is visible above the sill for >= 3 s of continuous frames, (b) look-away freezes rather than deletes, (c) walking to 1.5 m does not consume the event, (d) `windowWatcherEntered` is never set while `root.visible` has been false for the whole run. Harness: tests/lib/harness.mjs (`ensureServer`, `launchBrowser`, `openPage`, `resultsPath`), and main.js:1560 exposes `step(dt, n, render)` for fixed-step driving."
+    ]
+  },
+  "basement": {
+    "summary": "The 'spikey thing' is the pump-gallery FAR PAWL — `pump-gallery-far-pawl`, src/house.js:5607-5625: a two-slab pale jaw (0.58 x 0.13 x 1.45 each) with ten 0.18m cone tines, group-positioned at (-17.48, B+0.42, -4.66) with B = -3.0. It is the physical lock of the pump-bridge crossing: latching it calls latchRoute() (house.js:6043-6061), which sets flag 'pumpGalleryLatched', pins route.progress = 1, and makes setGateOpen() (6246-6256) permanent — the barred near gate 'pump-gallery-near-gate' (5507-5519, collider id 'pumpBridgeGate') stays dropped instead of rising the moment you release the skull. That is exactly Alex's phrase 'locks the gate into place'. It has NO E-verb and NO collider of its own; it is driven by (a) a walk-over box test in the district ticker (6295-6298, `onFarLanding`: act==='basement' && y < B+2.2 && x < -17.28 && z in (-9.6, 1.9), while progress > 0.9) and (b) the fetch target 'pumpFarPawl' (6067-6078, radius 0.85, latches only when progress > 0.9, otherwise answers with impact('locked') + metalDrop). 'pumpGalleryLatched' is one of the three flags the incinerator requires (2934, 2983, 3037, 3051, 3064) alongside pilotLit and archiveDraftOpened, so it gates the furnace wake -> skull offering -> ash key -> hatch -> Act 3. The awkwardness Alex is reporting is real and is recorded in the code's own comment (5609-5611): the pawl was deliberately shoved 1.66 m NORTH of the bridge centerline, behind the north channel rail, because at 0.69 m tall on the walk line the player walked through its teeth. So the object that locks the gate is not the object you touch, and the actual latch is an invisible 6.9 x 11.5 m landing box. Alex is asking to reunite them: slide it to the west end of the bridge deck (x ~= -17.4..-17.9, z = -3) and either flatten it or sink it flush as a plate you step on. The move is cheap: the pawl is plain scene meshes (house.js props are NOT run through batchStaticGroup — that helper exists only in outside.js:35 and is applied to exterior roots), it owns no collider, and the west-bank pool light at house.js:6018 already sits at (-17.55, B+0.75, -3), i.e. directly over the proposed new position — that is the 'warm lamp glow' in the screenshot.",
+    "code_map": [
+      {
+        "file": "src/house.js",
+        "lines": "5607-5625",
+        "what": "THE SPIKEY THING. `const pawl = new THREE.Group()`, name 'pump-gallery-far-pawl', pawl.position.set(-17.48, B + 0.42, -4.66). jawTop Box(0.58,0.13,1.45) at local y +0.28; jawBottom same at -0.28; both use `pale` (0x858b85, emissive 0x121615 @0.34 — blows to white under the skull light). Ten ConeGeometry(0.055, 0.18, 5) tines at local x -0.31, z = i*0.25 for i in -2..2, y -0.12 (top jaw) / +0.12 (bottom jaw). Derived world AABB: x [-17.845, -17.19], y [-2.925, -2.235] = B+0.075 .. B+0.765, z [-5.385, -3.935]. 0.69 m tall, ~1.45 m long — matches the screenshot. Comment at 5609-5611 states why it is off-centre: 'Clamp the north bridge rail, never the player's centerline. The first pass put this dramatic jaw exactly where the camera crossed and let the player walk through its teeth.'"
+      },
+      {
+        "file": "src/house.js",
+        "lines": "5521-5534, 6003-6016",
+        "what": "THE WALKWAY. Five bridge segments, Box(0.5, 0.12, 2.04). Deployed deck x centres -15.12/-15.63/-16.14/-16.65/-17.16, deck footprint x [-17.41, -14.87], z [-4.02, -1.98], deck top y = B+0.135. THE END OF THE WALKWAY IS (x = -17.41, z = -3)."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "5485-5505",
+        "what": "THE CHANNEL AND THE 'STAIR RAILING'. Water plane 2.28x11.35 at (-16.08, B+0.018, -4.05). Two brick curbs via world.box at x = -17.27 and -14.89 (28 cm lip). Two skull-pass blocker colliders `pumpChannelNorth`/`pumpChannelSouth`. Iron rails at z = -4.17 and z = -1.83 — the north one is the railing next to the pawl in Alex's photo."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "5507-5519, 6246-6256, 6330-6332",
+        "what": "THE GATE IT LOCKS. Group 'pump-gallery-near-gate' at (-14.84, B, -3), 9 bars; collider `pumpBridgeGate`, skullPass, routeId 'pumpGallery'. setGateOpen(open) parks the collider at y -20..-19 when open. Called every frame as `setGateOpen(route.latched || route.progress > 0.94)` — WITHOUT the pawl the gate rises again the instant you let go of the skull. That is what 'locks the gate into place' means."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "6035-6061",
+        "what": "latchRoute(). Carries Alex's own earlier note verbatim ('make the hit box big enough so as long as you cross to the other side, it will just lock into place with the gate down'). Sets route.latched/progress=1/state='latched', disables route.target (the winch cradle), sets route.pawlDrive = 0, flags 'pumpGalleryLatched', then the audio answer: creak(pawl.position, 0.44/1.3) + stoneGrind(winch, 0.42/1.35), knock @0.26s + fireRoar @0.62s at incineratorPosition, knock @0.48s at pumpStands[2], whisper @1.05s at pumpStands[4]."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "6062-6078",
+        "what": "Fetch target `pumpFarPawl`, object: pawl, radius 0.85. Comment: 'The far pawl is a real fetch target now — Alex bumped it expecting that to be the lock.' progress > 0.9 -> latchRoute() + 'return'; otherwise route.clue = max(clue,1), impact('locked'), audio.metalDrop(pawl.position, 0.5/0.72), 'return'. skull.js:1450 resolves a target as `t.object ? t.object.getWorldPosition() : t.pos` — the catch sphere rides the pawl group's own y."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "6288-6298",
+        "what": "THE EXISTING WALK-OVER. `const onFarLanding = game.act === 'basement' && game.player.pos.y < B + 2.2 && game.player.pos.x < -17.28 && game.player.pos.z > -9.6 && game.player.pos.z < 1.9;` then `if (onFarLanding && route.progress > 0.9) latchRoute();`. Comment documents that mid-crossing positions (x > -17.28) are left untouched to preserve the early-release rewind/retry behaviour."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "6333-6345",
+        "what": "THE JAW DRIVE. `route.pawlDrive += dt / 0.42`, `bite = pawlDrive^2`; jawTop.position.y = 0.28 - bite*0.2; jawBottom.position.y = -0.28 + bite*0.2; pawl.position.x = -17.48 + bite*0.09. At bite complete: audio.metalDrop(pawl.position, gain 0.94, rate 0.58) + game.shake(0.12). NOTE it hard-codes -17.48 — any move must update this literal too."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "5574-5587, 6017-6018",
+        "what": "THE CONDUIT VOCABULARY + THE LAMP. Floor conduit world.box runs from winch base toward the gate; ceiling run EAST to the crawl cage (5584-5587). Two pool lights: winch at (-13.75, B+1.7, -6.8, i 1.3, r 5) and `{x:-17.55, y:B+0.75, z:-3, i:0.8, r:4}` — the second is already at the exact spot the pawl should move to."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "42, 9-15, 772-775",
+        "what": "ROOM TABLE. `['pumpGallery', -4, 2, -1, 7, 'basement', {wall:'brick', floor:'stone'}]` => world x [-20, -12], z [-10, 2]. levels.basement = { floor: -3.0, ceil: -0.55 } — gallery floor FLAT at y = -3; the 'raised walkway' read comes from the 28 cm curbs + the 0.135 deck + the rails. house.js:775 addSurface('stone', ...) already covers the works, so footsteps on a new plate are already 'stone'."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "2931-2999, 3037-3064",
+        "what": "WHAT THE FLAG GATES. Incinerator wake requires `pilotLit && pumpGalleryLatched && archiveDraftOpened` (2934); firebox refuses without it (2983) and points back with `game.pumpGallery?.nudge?.()`. Same conjunction drives the ready-glow, draft gauge goal (3051), scoreboard state (3064). No other module reads it."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "6214-6244, 3225-3528",
+        "what": "PRECONDITION CHAIN audio grammar to preserve. `pumpWinchCradle` onHit refuses while !flags.has('crawlSecretSolved'): impact('locked') + lockedRattle at winch + `game.crawlSecret?.nudge?.()`; crawlSecret.nudge (3454-3468) walks THREE knocks toward the cage. That beat belongs to the WINCH, not the pawl — unaffected by moving the pawl."
+      },
+      {
+        "file": "src/player.js",
+        "lines": "7-9, 163-187, 232-266",
+        "what": "COLLISION CONTRACT. RADIUS 0.34, STEP_UP 0.5, HEAD 1.75. `_moveAxis` skips any collider with `c.max.y <= feet + STEP_UP` (237) — anything under 0.5 m tall on the basement floor is walked over regardless. Vertical resolution is `world.groundHeightAt` only; meshes never contribute ground height."
+      },
+      {
+        "file": "src/world.js",
+        "lines": "66-112, 128-150, 300-319, 340-370",
+        "what": "BATCHING + GROUNDING. `box()` accumulates geometry per material; `finishStatic()` merges each into ONE mesh (called once at main.js:183, AFTER buildHouse) — world.box geometry is compile-time-only, never animatable. `buildGroundContact` derives shadow decals from COLLIDERS (skips sy < 0.12 or > 2.3). addCollider / addFetchTarget / registerInteract / addSurface / groundHeightAt / surfaceAt."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2671-2751, 2891-2900",
+        "what": "THE WALK-OVER PATTERN TO CITE (ossuary entry). `doDescendOssuary(viaVerb)` is a pure math box test on game.player.pos — tight band for the silent walk-over, looser band for the E-verb; refuses OUT LOUD with lockedRattle + impact('locked') on failed precondition; `registerInteract(surfacePit, 'ossuaryDescend', descend)` only ARMS a flag the district ticker executes; ticker calls `doDescendOssuary(false)` unconditionally each frame (2900). Zero colliders, zero triggers-as-geometry. The exact shape to copy for a pressure plate."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "35-90",
+        "what": "`batchStaticGroup(group, name)` — used ONLY at outside.js:3098/3280/3714/4827/5368. NOT used by house.js, so the pawl, bridge segments, cradle and gate are independent scene meshes with live transforms."
+      },
+      {
+        "file": "src/skull.js",
+        "lines": "1444-1460",
+        "what": "`_checkTargets`: swept segment prevPos->pos against `t.object ? t.object.getWorldPosition() : t.pos`, hit within `t.radius || 0.5`. Sinking the pawl group sinks its throw hitbox with it unless the target is switched to an explicit `pos`."
+      }
+    ],
+    "diagnosis": "It is the pawl: the physical, watched lock on the pump-bridge crossing, and the second of the three preconditions the furnace wants. Mechanically it is honest — two doors (walk-over, or a thrown skull) into one function, and a 0.42 s jaw drive so you SEE it seat. What is wrong is purely spatial, and it is a scar from the previous fix. A prior round discovered that at full height on the crossing centerline the player walked straight through the teeth (there is no collider on it, and never was), so instead of shortening it, it was translated 1.66 m north to clamp the north rail (comment, house.js:5609-5611). The result is the thing Alex photographed: a 0.69 m tall, 1.45 m long pale slab with ten tines, standing off to one side behind a railing, doing nothing you can perceive as connected to your feet — while the actual latch is an invisible 6.9 x 11.5 m box test over the whole west landing (6295-6297). Cause and effect are in different places. It also reads as a barrier rather than a mechanism: top at B+0.765 (~half eye height), wide, pale, blown out white by the carried skull light, and with no collider — walk at it and you pass through it, the worst possible affordance signal. Alex's fix instinct is correct on both counts: put it where the walkway ends (x ~= -17.4..-17.9, z = -3, the last bridge segment's west edge on the crossing centerline) and stop it being tall. Sinking it flush as a plate is the strictly better of his two options, because it solves the walk-through problem the northward shove was invented to dodge: a floor plate is SUPPOSED to be stood on, the existing walk-over already fires at exactly that moment, and the west-bank pool light at (-17.55, B+0.75, -3) is already sitting over the spot, so the plate lands in a warm pool at the end of the bridge with no new light census.",
+    "edit_points": [
+      "1. RELOCATE + FLATTEN THE PAWL INTO A FLOOR PLATE (option b, recommended). Anchor: src/house.js:5607-5625. Replace `pawl.position.set(-17.48, B + 0.42, -4.66)` with `pawl.position.set(-17.72, B, -3)` — centres it on the crossing lane with its east edge at the deployed deck's west edge (-17.41). Keep the same variable identifiers so 6333-6345 and 6067-6078 need only value edits: jawTop becomes the LID — Box(0.62, 0.09, 1.5) at y 0.055 (world top B+0.10, a 10 cm plate; well under STEP_UP 0.5 and under the deck's B+0.135, so it can never read as a wall). jawBottom becomes the sunken KEEPER — Box(0.62, 0.10, 1.5) at y -0.13 (world B-0.18..B-0.08, below the floor, visible only through the ~7 cm slot). Retarget the tine loop at 5620-5625: 5 cones per row, LID row pointing DOWN (`tooth.position.set(0, -0.06, i * 0.28)`, `rotation.z = Math.PI`), KEEPER row up (`(0, 0.07, i * 0.28)`, rotation 0) so the rows interlock as the lid sinks. Keep the `pale` material — under the pool light it stays the room's one bright object, now at ankle height. Do NOT add a collider: the pawl never owned one, player.js:237 would skip it below feet+0.5, and world.js:135-149 would give it a spurious ground-contact decal.",
+      "2. RE-AIM THE JAW DRIVE FOR A SINKING PLATE. Anchor: src/house.js:6333-6345. `jawTop.position.y = 0.055 - bite * 0.055;` (lid sinks dead flush, top at B+0.045). jawBottom: delete the travel or give a 1 cm settle (`-0.13 - bite * 0.01`). DELETE OR REWRITE `pawl.position.x = -17.48 + bite * 0.09;` — it hard-codes the old x and would drag the plate out of its slot; if the horizontal bite is kept use `pawl.position.z = -3 + bite * 0.05`. Leave 6341-6344 untouched: metalDrop(gain 0.94, rate 0.58) + shake(0.12) still land when the tines seat.",
+      "3. KEEP THE THROW DOOR ALIVE. Anchor: src/house.js:6067-6068. skull.js:1450 takes the object's world position, so sinking the group drops the catch sphere to ankle height and silently kills the 'I bumped it expecting that to be the lock' affordance. Change to `pos: new THREE.Vector3(-17.72, B + 0.5, -3), radius: 0.9` (drop the `object:` key). B+0.5 keeps a knee-to-waist catch volume: a flat throw down the bridge lane still finds it; it cannot intercept throws at the archive doorway or ceiling collar. Leave the onHit body (6069-6077) exactly as is.",
+      "4. WALK-OVER: KEEP THE BROAD LATCH, ADD A TIGHT PLATE BAND FOR THE DEPRESS. Anchor: src/house.js:6288-6298. Do NOT replace `onFarLanding` — it is a direct Alex fix and three tests depend on it firing at x < -17.28. Leave 6295-6298 byte-identical. Above them add a plate-footprint test used only for the visual/audio depress: `const onPlate = game.act === 'basement' && p.y < B + 2.2 && p.x < -17.32 && p.x > -18.20 && p.z > -3.95 && p.z < -2.05; route.onPlate = onPlate;` — east edge -17.32, deliberately WEST of the existing -17.28 threshold so it can never fire earlier than the current latch. Drive a pre-latch depress: `if (!route.latched) jawTop.position.y = lerp toward 0.055 - (onPlate ? 0.018 : 0)`, plus a one-shot `creak({pos: pawl.position, gain: 0.3, rate: 1.2})` on first plate contact so the plate answers your weight a beat before latchRoute()'s 0.94 metalDrop. The FLAG is unchanged: latchRoute() -> 'pumpGalleryLatched'. Pattern for the band: outside.js:2680-2702 + the unconditional per-frame call at outside.js:2900.",
+      "5. WIRE THE PLATE, THE SAME WAY THE WINCH IS WIRED. Anchor: src/house.js:5574-5580. Add a west-bank conduit stub with world.box (ZERO draws — merges into the shell): `world.box(iron, -17.72, B + 0.028, -3.9, 0.09, 0.055, 1.1);` north off the plate, then `world.box(iron, -17.9, B + 0.5, -4.45, 0.07, 1.0, 0.07);` up to meet the existing rail line at z = -4.17. Authored geometry only — a world.box mesh has no runtime handle and must never be animated.",
+      "6. NO LIGHT WORK NEEDED. Anchor: src/house.js:6018 — the pool source at (-17.55, B+0.75, -3) is 0.17 m from the proposed plate centre. The plate lands lit with no change to the light census (perf/pool tests care). Do not add a new candle.",
+      "7. ALTERNATIVE (Alex's option a) IF UPRIGHT IS PREFERRED: `pawl.position.set(-17.62, B + 0.20, -3)`; slabs Box(0.5, 0.10, 1.5) at local y +/-0.13 (world B+0.02..B+0.38 — knee-high curb); tine height 0.18 -> 0.10; jaw travel `bite * 0.2` -> `bite * 0.085`; update the `-17.48` literal. Strictly worse than (1): still clips through with no collider, and does not deliver the 'walks over it automatically' half of the note.",
+      "8. AUDIO — TOUCH NOTHING IN latchRoute() (6043-6061): creak and stoneGrind read live positions and follow the plate for free; the incinerator knock/fireRoar and pumpStands cues are position-independent. Leave the winch's refusal grammar alone (6223-6228 + crawlSecret.nudge 3454-3468) — different object entirely.",
+      "9. PIN THE NEW SHAPE IN A TEST — NOTHING CURRENTLY DOES. Anchor: tests/basement-foundations.mjs:78-144 (crawl secret only; grep 'pawl' across tests/ and tools/ = zero hits). Add: read the pawl group and assert `Math.abs(pawl.position.z - (-3)) < 0.25` (end of the walkway, on the crossing lane), `Box3().setFromObject(pawl).max.y < -2.85` (below B+0.15 — cannot read as a wall), and plate west of the deck's west edge. Without this the next refactor re-raises it and nobody notices."
+    ],
+    "risks": [
+      "TEST-BREAKING THRESHOLD (highest risk). tests/pump-release-recovery.mjs:230-234 asserts `latched.player[0] < -17.28` and tests/house-expansion.mjs:398-400 asserts `crossedAt[0] < -17.28`. Both are the CURRENT latch line. If the walk-over narrows to a plate band whose east edge is east of -17.28, the player latches earlier and both flip to fail. Mitigation: leave `onFarLanding` untouched; plate band east edge at -17.32 or further west.",
+      "FIXED-DURATION CROSSINGS. tests/house-expansion.mjs:361-365 and tests/playthrough.mjs:409-412 do NOT loop until latched — fixed stepWith durations then read `latched`. Moving the latch line WEST at all risks intermittent undershoots. Treat the plate as pure presentation; keep the -17.28 latch line.",
+      "MOVING ONTO THE CENTRELINE RE-CREATES THE WALK-THROUGH BUG (house.js:5609-5611 comment). Only ship the move together with the flatten — at full 0.69 m on the lane it looks worse than today.",
+      "MERGED-SHELL CONFUSION. Everything in buildPumpGallery authored via world.box (curbs, rails, winch mast, conduits, shelves) is unmovable at runtime with no handle. The pawl, bridge segments, cradle and gate are plain meshes — move freely; no batch rebuild needed. house.js never calls batchStaticGroup.",
+      "FETCH-TARGET REGRESSION IF EDIT 3 IS SKIPPED. `pumpFarPawl` uses `object: pawl`; the catch sphere silently drops to ankle height and the throw door stops working. No existing test covers it — it would ship silently.",
+      "OVER-RAISING THE THROW VOLUME. A `pos` much above B+0.6 with radius 0.9 starts eating throws down the bridge lane toward the archive doorway — phantom 'locked' answers. Same bug class documented at house.js:5679-5687 for the archive collar.",
+      "GROUND HEIGHT DOES NOT SEE MESHES (world.js:340-370): feet stay at y = -3 on the plate, so a lid taller than ~0.10 visibly clips ankles. Do not add a ramp/room to lift the player — it would fight the west-landing latch box.",
+      "DO NOT ADD A COLLIDER FOR THE TRIGGER: it would be skipped by player.js:237 anyway, picked up by buildGroundContact as a furniture footprint, and scanned every frame by _moveAxis. Use a math box test in the district ticker like outside.js:2685-2701.",
+      "SCENE-CHILD COUNTS. tests/district-culling-regression.mjs:293 and :463 assert on visible top-level scene children. Relocating/resizing existing meshes changes nothing; ADDING scene meshes would. Author new trim through world.box.",
+      "NO 'METAL' FOOTSTEP EXISTS (audio.js:909-919 knows wood/stone/dirt/leaves). The works are already 'stone'. A ringing plate would need a new sample set in `_steps` — optional, not required.",
+      "STATE PERSISTENCE IS FINE. `route.latched` lives in the buildPumpGallery closure, never rebuilt or reset; no checkpoint/restore path touches it. Moving geometry cannot desync the flag."
+    ],
+    "tests": [
+      "tests/pump-release-recovery.mjs — THE critical page. :209-213 asserts beforeRelease.player[0] in (-17.28, -15.2) && !latched; :230-234 asserts latched.player[0] < -17.28 && flag 'pumpGalleryLatched' && progress === 1 && gateOpen; :235-240 asserts release keeps the route open. Its crossing runs along z = -3, so a plate at (-17.72, ~B, -3) is walked over by this test as-is — provided the plate band's east edge stays at or west of -17.32.",
+      "tests/house-expansion.mjs:390-406 — :398-400 asserts latched && crossedAt[0] < -17.28 && 'pumpGalleryLatched' && archiveAt[2] > 2.2. Crossing is FIXED-DURATION (:361-362) — no slack for a westward latch shift. :401-404 asserts the sealed channel floor (groundHeightAt(-16.05,-3,-3) ~= -3) — the gallery floor must stay flat; no ramp under the plate.",
+      "tests/house-critical-path-regression.mjs:544-562 — loops `while (!latched && frames < 600)` on a pure west strafe along z ~= -3; tolerates a shifted trigger inside a 5 s budget. Also :196 flag probe — unaffected.",
+      "tests/playthrough.mjs:398-417 — beat 'pump-restores-the-furnace-draft' asserts pumpAnchored && 'pumpGalleryLatched' && gateOpen; fixed-duration crossing at 409-411 — same undershoot exposure. Upstream beat :394-396 (crawl cage / crawlSecretSolved) is NOT affected.",
+      "tests/basement-foundations.mjs — pins ONLY the cellar flight and crawl counterweight; ZERO pawl coverage. This gap is what let the pawl drift to a waist-high slab behind a railing. Add the geometry assertion from edit point 9 here.",
+      "tests/failure-state-regression.mjs:37 — sets 'pumpGalleryLatched' directly for downstream setup; unaffected.",
+      "tests/district-culling-regression.mjs:286-293, :364, :463 — visible scene-child counts; only moves if you ADD scene meshes. tests/render-perf.mjs + perf-pool-regression.mjs — re-run if any light or scene child is added; edit 6 avoids a new candle.",
+      "tools/probe-basement-fixes.mjs:37 — flags pilotLit/ateFlame/pumpGalleryLatched to jump the chain; useful manual harness for eyeballing the new plate."
+    ]
+  },
+  "gate-respawn": {
+    "summary": "Both bugs are confirmed with exact code paths in this tree, and neither is what last round's recon guessed. BUG A is a socket-index/key-number mismatch in `gateKeys.restore()` (src/outside.js:1427-1433), VERIFIED VERBATIM by the planner against the tree. `bank()` seats a key in the LOWEST EMPTY socket but flags it by KEY NUMBER (`gateKeyBanked:<n>`, outside.js:1362); `restore()` replays that flag onto socket index n-1 (outside.js:1429). The two only agree if the player banks keys in ascending order 1,2,3. Any out-of-order bank followed by ANY respawn (director.js:1138 and again via _enterGraveyard at director.js:205) double-fills sockets: one real key becomes two filled sockets, two real keys become three. At three filled sockets `restore()` sets `keys._opened = true` (outside.js:1432) WITHOUT calling `openTheGate()` and without flagging `graveyardCleared` — so the gate never opens, `openTheGate()` is permanently latched off (guard at outside.js:1416), all three latch weights hang DOWN across the gate (ticker outside.js:1230/1235 reads banked()===3 with released===false) — that is Alex's 'three locks on it again' — and every further bank attempt is refused because no socket is empty (bankAny at outside.js:1391), leaving only the locked rattle: 'the key does nothing'. Dying in the marrow is the trigger only because it is the likeliest death after an out-of-order bank (the mourner hunt at marrow.js:849 arms only after gotgateKey2); the marrow checkpoint is plain `game.checkpoint('graveyard')` (marrow.js:628/656), so marrow death takes the ORDINARY graveyard respawn path — there is no separate marrow respawn. Nothing is rebuilt, no snapshot object exists, and there is no persistence at all (no localStorage/sessionStorage anywhere in src/ or index.html): the only 'save' is the in-memory flag Set replayed by restore(). BUG B is the ossuary FOREST-SIDE ARRIVAL HATCH (outside.js:2831-2874) — a pale `M.headstone` lid 1.24 x 1.3 m lying flat at world y 0.24 with a 1.5 x 1.5 m stone curb ring, planted at (x 2, z 43.3) = dead centre of the 3.2 m gate gap, 1.3 m past the leaves — plus a body-blocking collider x 1.32..2.68, y -0.8..0.8, z 42.62..43.98 (outside.js:2870-2871). It is orphan scenery for the RETIRED climb-out route: its pose is driven by `const hatchT = 0` (outside.js:2984 -> 2995), so the lid is nailed shut forever and nobody ever emerges from it. The walkway-band regression missed it because it only reads `g.graveyardGate.weights[].position.y` (tests/regressions.mjs:1689-1692) — it never scans other meshes or any collider.",
+    "code_map": [
+      {
+        "file": "src/outside.js",
+        "lines": "13",
+        "what": "`export const FOREST_GATE = { x: 2, z: 43 }` — the anchor every gate/arrival coordinate derives from."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "243-244",
+        "what": "Fence flanks: gap is x 0.4..3.6 at z 42 — 'between two spiked-fence sections' in the screenshot."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "413",
+        "what": "`buildGraveyardGate(game)` — called exactly once from buildOutside (main.js:180). Nothing rebuilds the district, ever."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1110-1136",
+        "what": "buildGraveyardGate: state `{t, opening, open, ritualStage, ritualTarget}`; the two leaves at (0.4,0,42)/(3.6,0,42)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1159-1172",
+        "what": "The three latch WEIGHTS: Box(0.34,0.5,0.24) at x 1.38/2.00/2.62, z 41.82, homeY 2.37; HANG_TOP 2.635, gate.RETRACT_Y 2.5. userData {homeY, v, landed}."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1194-1199",
+        "what": "`gate.collider` AABB x 0.32..3.68, y -1..2.55, z 41.82..42.18. `gate.setRitualStage(stage)` — VESTIGIAL since last round: drives nothing visual; weights read banked(). Written by 4 callers."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1200-1226",
+        "what": "`gate.openGate()` — guard `if (gate.opening || gate.open) return false`, opening=true, ironGateCreak. `gate.reset()` — zeroes t/opening/open/ritualStage, un-swings leaves, restores collider, snaps weights to homeY. DOES NOT TOUCH SOCKETS — not symmetric with the new rest pose in the one way that matters."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1227-1270",
+        "what": "Gate ticker. 1230 `const banked = game.gateKeys?.banked?.() ?? 0;` 1231 `released = gate.opening || gate.open;` 1235 `targetY = released ? RETRACT_Y : homeY - (i < banked ? 1.48 : 0);` — weights derive from banked() live; fall with gravity + thud (1238-1251, `ud.landed` guards the thud); winch up silently (1252-1257). Leaves swing 1264-1269, collider flattens at t>0.32 (1268)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1273-1282",
+        "what": "`game.graveyardLookbackRoots` = [graveyardGround, fencePosts, gate.left, gate.right, gateKeys.pier, gate.chains, ...gate.weights]."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1292-1309",
+        "what": "buildGateSockets: lock-stone at x -0.35, z 41.72 — WEST of the gap, behind the fence line, NOT in the walkway (not bug B)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1321-1343",
+        "what": "`seatedKeys` InstancedMesh(3) + `reseat()` — derives purely from `keys.sockets[i].filled`. `game.gateKeys = { pier, list, sockets, banked: () => sockets.filter(s => s.filled).length }` — banked() is the ONE counter."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1350-1371",
+        "what": "The three sockets (y 0.86/1.32/1.78) and `bank()`. 1357 guard `if (socket.filled || !carry || !/^gateKey[123]$/.test(carry.id)) return false;` 1360 `socket.filled = true;` 1362 `game.flag('gateKeyBanked:' + carry.id.slice(-1));` — FLAGGED BY KEY NUMBER. 1366 `if (keys.banked() >= 3) keys.openTheGate();`"
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1390-1411",
+        "what": "`bankAny()` — `for (const s of keys.sockets) if (!s.filled && s.bank()) return true; return false;` SEATS BY LOWEST EMPTY SOCKET. Two doors into it: fetch target `gateSockets` (radius 0.62, outbound-only, 1395-1406) and the E-verb (1408-1411). BOTH fall through to impact('locked') + lockedRattle when bankAny() returns false — exactly what 'the key does nothing' sounds like."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1415-1425",
+        "what": "`keys.openTheGate()` — 1416 `if (keys._opened) return;` 1417 `_opened = true;` 1418 `game.flag('graveyardCleared');` three knocks, then after(1.05) -> gate.openGate(). The `_opened` latch is the softlock's teeth."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1427-1433",
+        "what": "THE BUG (verified verbatim): `keys.restore = () => { for (const s of keys.sockets) { if (game.flags.has('gateKeyBanked:' + (s.i + 1))) s.filled = true; } reseat(); if (keys.banked() >= 3) keys._opened = true; };` — reads key number as socket index, only ever sets true, latches _opened without opening."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1441-1447",
+        "what": "`stoneGlow` candle descriptor, `want = 0.16 + keys.banked() * 0.11` — third consumer of banked(); an inflated count also over-brightens the stone."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1795-1861",
+        "what": "`makeGateKey`. 1847 `const banked = game.flags.has('gateKeyBanked:' + n);` 1852 `key.visible = carried || (rec.revealed && !banked && !!visibleWhen());` — this consumer reads the flag by the KEY's own number and is CORRECT. The flag naming must not change; only restore()'s use of it."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2831-2874",
+        "what": "BUG B. 'ossuary arrival hatch' group at (FOREST_GATE.x, 0.08, FOREST_GATE.z + 0.3) = (2, 0.08, 43.3); four 0.18-tall curbs forming a 1.5 x 1.5 ring; black mouthVoid plane; four sunk shaft walls; `arrivalPivot` carrying `arrivalLid` Box(1.24, 0.1, 1.3) at WORLD y 0.24 (top 0.29), x 1.38..2.62, z 42.67..43.97; 2870-2871 `world.addCollider(ax-0.68, -0.8, az-0.68, ax+0.68, 0.8, az+0.68, { skullPass: true })` — a 1.36 x 1.36 x 0.8 m PLAYER blocker in the walkway; 2874 pushed into graveyardLookbackRoots. Material M.headstone.clone() scaled 0.6 — the palest kit in the yard; reads as a plain white slab. Exact match for the screenshot."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2984-2995",
+        "what": "`const hatchT = 0;` (2984) then `state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, hatchT) * 1.85;` (2995) => rotation 0 => arrival lid FLAT AND SHUT forever. The route it serves is retired: `climbOut` (2668-2669) only reachable through `exitMouthInter` (2770), pinned permanently disabled by playthrough.mjs:646-649."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "117-162",
+        "what": "`setAct(act, hard)` — 157 `if (act === 'graveyard') this._enterGraveyard();`. `g.teleport()` always passes hard=true (main.js:1154), so every respawn re-runs _enterGraveyard."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "193-239",
+        "what": "`_enterGraveyard()`: 195 checkpoint('graveyard'); 198 resolved = graveyardResolved || graveyardCleared; resolved branch: 201 setRitualStage(3), 202 openGate iff graveyardCleared, 204 ossuary.unlock, 205 `g.gateKeys?.restore?.()` — the SECOND restore call per respawn, 208-216 force ossuary solved."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "1075-1091",
+        "what": "`death(enemy)` — sets g.dead, sting/duck/fear/shake, locks movement, showDeath. Touches NO gate state; identical for marrow and surface deaths."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "1093-1178",
+        "what": "`respawn()`: 1103-1104 saved pose + cp; 1123 graveResolved test; 1124-1132 UNRESOLVED branch (gate.reset() at 1129 — unreachable after resolution); 1133-1140 RESOLVED branch — 1136 setRitualStage(3), 1137 ossuary.unlock, 1138 `g.gateKeys?.restore?.()`, 1139 openGate iff graveyardCleared; 1141 teleport(cp); 1174-1177 skull.holdNow() + setStage."
+      },
+      {
+        "file": "src/skull.js",
+        "lines": "776-790, 816-823",
+        "what": "`holdNow()` re-parents the skull into the hand and DOES NOT clear `this.carry`; `dropCarry()` called from exactly 4 places (house.js:1555, house.js:3183, main.js:1284, outside.js:1358 = bank()). A key in the jaw SURVIVES death — the carried key is not the problem."
+      },
+      {
+        "file": "src/marrow.js",
+        "lines": "309-311, 614-658, 746-758, 773, 849",
+        "what": "gateKey2 = makeGateKey(2, ...). doDescend() 617 requires graveyardResolved (so any marrow death is ALWAYS a resolved-branch respawn); 628 `game.checkpoint('graveyard')` — marrow checkpoint IS the graveyard act with an underground pose; doAscend 656 same. 746-758 the ONLY marrow-specific death handling: statues re-home on _deadSeen; nothing else; `state.inMarrow` never cleared by death, so the player stands back up underground. 773 hunting = flags.has('gotgateKey2'); 849 death only when hunting — which is why the marrow death happens after key 2 business."
+      },
+      {
+        "file": "src/main.js",
+        "lines": "180, 849-859, 1124-1155, 681-698, 815-826",
+        "what": "buildOutside once at boot. `checkpoint(act, pose)` writes lastCheckpoint + checkpointPose {act,x,y,z,yaw,pitch} — the ENTIRE save; no world snapshot. teleport() ends in setAct(act, true). Death UI 'restart-checkpoint' -> respawn() (826). No localStorage/sessionStorage/indexedDB anywhere in src/ or index.html (verified by grep); the only reload is main.js:681 after 'ended'. A page reload is a cold boot at the bedroom, not a restored save."
+      }
+    ],
+    "diagnosis": {
+      "respawn_bug": {
+        "verdict": "The true cause is a socket-index/key-number mismatch in gateKeys.restore(): it replays a KEY-NUMBER flag onto a SOCKET INDEX, adding phantom filled sockets on every respawn after an out-of-order bank, and then latches the gate permanently shut via `_opened = true` without opening it.",
+        "why_other_hypotheses_are_wrong": [
+          "(a) respawn calls gate.reset() with keys banked — NO. gate.reset() (outside.js:1209) is only reachable via director.js:1129, inside `if (cp === 'graveyard' && !graveResolved)`. Marrow entry REQUIRES graveyardResolved (marrow.js:617), so a marrow death can never take that branch. And the weights derive from banked() live (outside.js:1230), so a stray reset would self-correct next tick.",
+          "(b) a stale snapshot rebuilds visuals — NO. There is no snapshot; checkpointPose is six numbers and an act name. buildOutside runs exactly once.",
+          "(c) the interaction is gated on a consumed flag — NO. Both bank doors are unconditionally enabled from boot; the carried key survives death (holdNow never clears carry).",
+          "(d) marrow respawn re-registers lock visuals — NO. Marrow death takes the ordinary graveyard respawn; nothing is re-registered."
+        ],
+        "proven_trace_matching_alex": [
+          "Player resolves the funeral -> 'graveyardResolved'. He banks a key OUT OF ORDER (e.g. gateKey2 or gateKey3 first). bankAny -> socket 0 filled; flags {'gateKeyBanked:2'}. banked()=1.",
+          "He banks a second key out of order -> socket 1 filled. banked()=2; two weights down; gate correctly shut.",
+          "He goes underground for the last key and dies to a mourner (marrow.js:849). checkpointPose.act === 'graveyard', so respawn() runs the RESOLVED branch.",
+          "director.js:1138 restore(): socket 0 tests 'gateKeyBanked:1' (absent, stays filled from before); socket 1 tests 'gateKeyBanked:2' (present, already filled); socket 2 tests 'gateKeyBanked:3' (present) -> NEWLY filled. THREE sockets filled from TWO real keys.",
+          "outside.js:1432 latches `_opened = true`. openTheGate() never runs, so 'graveyardCleared' never flags and the gate never opens. director.js:1139's openGate is skipped for the same missing flag. The second restore at director.js:205 is a no-op on the corrupt state.",
+          "Next tick, outside.js:1230-1235: banked===3, released===false -> ALL THREE weights fall and hang chest-high across the gate. That is 'the gate had three locks on it again'.",
+          "He approaches with the real third key. Throw or E -> bankAny() finds no empty socket -> false -> impact('locked') + lockedRattle. That is 'i couldn't make the key do anything to it'. `_opened` is already true, so the gate can never open by any route for the rest of the session."
+        ],
+        "ground_truth": "After that respawn the gate is neither logically locked nor merely visually locked — it is logically OVER-unlocked and physically stuck. banked() returns 3 (restore only ever writes true), `_opened === true`, `graveyardCleared` absent, gate.opening/open false, collider solid at max.y 2.55. The refusing guard is `!s.filled` in bankAny() (outside.js:1391) — bank()'s own guard is never even reached. The three hanging weights are the honest render of a corrupt count, not a separate visual desync.",
+        "second_manifestation_same_root": "With exactly ONE out-of-order bank before a death, restore() inflates banked() 1 -> 2; the NEXT single bank reaches 3 and openTheGate() fires legitimately: the gate opens on TWO real keys with a third still in the world. This is almost certainly the real explanation for last round's 'it opened with two keys' report, which the previous recon closed as Alex miscounting — that closure should be reopened. The failure is order- and death-dependent, which is why it reproduces intermittently.",
+        "reachability": "restore() has exactly two call sites — director.js:205 and director.js:1138 — both on the respawn/hard-teleport path. A clean uninterrupted run never fires it after keys are banked. The corruption is uniquely a death/checkpoint-restart consequence — exactly what Alex reported."
+      },
+      "walkway_block": {
+        "identification": "The white slab is the OSSUARY FOREST-SIDE ARRIVAL HATCH (outside.js:2831-2874). Not a bench, not the lock-stone plinth (x -0.35, z 41.72, behind the west fence run), not a gate stone, not a latch-weight rest pose (weights retract to y 2.5 at open and the regression proves it), not a debug collider.",
+        "geometry": "Group origin (2, 0.08, 43.3). Four curbs 0.18 tall forming a 1.5 x 1.5 m ring (tops y 0.26) and `arrivalLid` Box(1.24, 0.1, 1.3) at world y 0.24 spanning x 1.38..2.62, z 42.67..43.97. Material M.headstone.clone() * 0.6 — the game's pale-landmark kit; under the lantern at night it reads as a plain white slab. Exact match for the screenshot.",
+        "why_it_blocks": "outside.js:2870-2871 adds a solid collider x 1.32..2.68, y -0.8..0.8, z 42.62..43.98 with skullPass only — the PLAYER is stopped by 0.8 m of it. The gate gap is x 0.4..3.6, leaving two ~0.9 m slots either side: 'you end up having to walk around it'. The source comment at 2869 literally says 'the player walks AROUND the open mouth'.",
+        "why_it_is_orphaned": "It exists to be the mouth you climb out of on the ossuary's far route, which is dead: hatchT is hardcoded 0 (outside.js:2984), the lid never opens, and the far-hatch interact is pinned permanently disabled (playthrough.mjs:646-649). It is present from boot regardless of gate state — which is why Alex hit it right after opening the gate.",
+        "why_the_regression_passed": "tests/regressions.mjs:1686-1692 reads ONLY `g.graveyardGate.weights[].position.y` (asserts every y >= 2.2 after open). It never enumerates other meshes or world.colliders. Two independent misses: (1) the slab is not a weight; (2) the slab's top face (y 0.29) is below the band floor (0.3) a mesh-Y scan would use anyway. The thing that stops the player is a COLLIDER, so the pin has to be a collider-volume scan plus a walk-through assertion."
+      }
+    },
+    "edit_points": [
+      "1. src/outside.js:1427-1433 — REWRITE `keys.restore()` to re-derive the socket column from the flag COUNT instead of mapping key number onto socket index, authoritative in both directions: `keys.restore = () => { const n = [1,2,3].filter((k) => game.flags.has('gateKeyBanked:' + k)).length; for (const s of keys.sockets) s.filled = s.i < n; reseat(); if (n >= 3) { if (game.flags.has('graveyardCleared')) keys._opened = true; else keys.openTheGate(); } };`. Exact because bankAny() always fills bottom-up, so true state is always 'the lowest n sockets'. Idempotent (safe for the two calls per respawn), can never inflate, clears a stale socket, and removes the silent `_opened` latch that turns desync into permanent softlock (the openTheGate() arm also self-heals a session already in the corrupt state). Do NOT rename `gateKeyBanked:<n>` — outside.js:1847 reads it by key number, correctly, to keep a banked key invisible/unfetchable.",
+      "2. OPTIONAL alternative form: add `game.flag('gateSocketFilled:' + socket.i);` after outside.js:1362 and have restore() read socket flags directly. Pick ONE form; the count form needs no new flag and is the smaller diff — recommended now; the explicit form only if seating ever stops being bottom-up.",
+      "3. src/outside.js:1415-1417 — harden openTheGate(): `if (keys._opened && game.flags.has('graveyardCleared')) return;` so the latch can never hold while the gate is still shut. Verify this does not double-fire the knocks on the legitimate first open (it cannot: _opened is false there).",
+      "4. src/outside.js:1209-1226 — gate.reset() symmetry: after 1224 either clear the sockets + flags (`for (const s of sockets) s.filled = false; for (const k of [1,2,3]) game.flags.delete('gateKeyBanked:' + k); keys._opened = false;`) or add a one-line comment that reset() is pre-resolution-only and sockets are deliberately out of scope. The comment is zero-risk (the director.js:1124 guard already makes post-resolution reset unreachable); the clearing makes it genuinely symmetric. Either is acceptable; do one.",
+      "5. src/outside.js:2831-2874 — DELETE the arrival hatch: the whole block (curbs, mouthVoid, sunk walls, arrivalPivot, arrivalLid), the collider at 2870-2871, the `state.arrival` assignment at 2872, the graveyardLookbackRoots push at 2874. Orphan scenery for a permanently sealed route; unconditional removal is automatically correct on any respawned state and frees draws.",
+      "6. src/outside.js:2995, 3002-3005, 2589, 2614, 2665 — delete every dangling reference: `state.arrival.pivot.rotation.x` (2995), the `state.arrivalKick` block (3002-3005), the arrivalKick field/reset/set. Leaving them referencing a removed object throws in the ossuary ticker every frame.",
+      "7. CONSERVATIVE ALTERNATIVE to 5+6 (only if the 'hole you came out of' read is wanted for a future route): move the group + collider outboard of the east fence flank (`ax = FOREST_GATE.x + 3.4; az = FOREST_GATE.z + 1.1;`). Do NOT 'retract it when the gate opens' — it obstructs identically before open, and a vanishing stone hatch is a worse read than none.",
+      "8. src/outside.js:1196-1199 + the four setRitualStage call sites (director.js:201, 1136, 749, 772) — ritualStage drives nothing since the weights re-key. Delete the calls and method, or leave one comment at outside.js:1196 marking it a retained no-op, so the next reader does not chase it.",
+      "9. tests/regressions.mjs:1686-1693 — replace the weights-only band check with a collider-volume scan of the gap PLUS a straight-walk assertion (see tests). This is the edit that makes bug B non-recurring.",
+      "10. NEW regression pinning bug A directly (see tests) — without it the restore() fix is unprotected: no existing test calls gateKeys.restore() at all.",
+      "11. tests/regressions.mjs:630-635 — 'ossuary-climb' asserts `g.ossuary.arrival.pivot.rotation.x > -0.02` (it PINS THE SLAB SHUT). With edit 5 this must become an assert-gone (`g.ossuary.arrival == null`) or be dropped; leaving it throws on the property read. Keep the sibling lidPivot assertion — the deck lid is separate and stays.",
+      "12. RESTORED-SAVES NOTE — nothing to do, state it in the fix's comment: there is NO persistence in this project; a reload is a cold boot. The only re-derivation path is the in-session flag replay through restore() on respawn/hard-teleport — precisely edit 1. If persistence is ever added, the count-from-flags form is already the correct restore primitive."
+    ],
+    "risks": [
+      "INVARIANT CHOICE — the checkpoint model says progress SURVIVES death and is re-derived from flags: flags never clear on respawn; skull.carry survives; ossuary force-restored solved; graveRitual/graveArena forced done; the waterfall bargain force-reconciled; only the PRE-resolution graveyard resets. So 'banked keys and gate-open state survive death' is the model-consistent invariant. Do not add a key-return mechanic.",
+      "DO NOT change bankAny() to seat key N in socket N-1 as the fix. The seated column is the game's only progress read (bottom-up tally + stoneGlow ramp); key-indexed seating would leave holes mid-tally on out-of-order arrivals, contradicting the authored intent and the no-HUD law. Fix the READ side.",
+      "DO NOT rename gateKeyBanked:<n> — outside.js:1847 depends on it; renaming resurrects banked keys as floating fetchables at their original sites.",
+      "restore() runs TWICE per respawn (director.js:1138, then 205 via teleport->setAct(hard)->_enterGraveyard). The replacement must be idempotent; the count-derivation form is.",
+      "Deleting the arrival hatch changes graveyardLookbackRoots membership; district-culling-regression builds retired sets and calls ossuary.climbOut() at :411 — confirm that path does not dereference state.arrival, and re-run the suite.",
+      "Draw budget: removal FREES draws (house-after-cave at 448/450). Bug-A fix is pure logic, zero meshes — do not spend the slack.",
+      "Weight thud on downward correction: `ud.landed` guards the per-weight thud, so a respawn that corrects an inflated count and winches a weight up is silent and safe as written.",
+      "Existing pin: tests/regressions.mjs:1683-1685 asserts opening===true && graveyardCleared after the third bank — edit 3's guard change must not block the first legitimate open (it cannot; _opened is false there).",
+      "Existing pin: tests/grave-arena-regression.mjs:364 asserts gate closed after an UNRESOLVED respawn — edit 4's optional socket clear runs on that path; banked() is 0 there anyway, safe.",
+      "Known flake (HANDOFF trap list): playthrough 'fire-refused-the-skull' fails ~1 in 3 for unrelated reasons; re-run before believing a playthrough failure.",
+      "Laws: no HUD/text; value/motion not hue; never new THREE.Light at runtime (stoneGlow is a candle DESCRIPTOR — copy that pattern); colliders AABB only; every surface answers a throw — the lock-stone's refusal path (outside.js:1400-1404) must stay; do not 'fix' the softlock by making the stone silent."
+    ],
+    "tests": [
+      "tests/regressions.mjs:1634 'gate-takes-three-keys-in-any-order' — banks out of order via `order = [1, 2, 0]` with direct socket.bank() calls, asserts empty start, per-key seating, weight drops, 'two keys are not enough', 'the third key gives the gate' (opening && graveyardCleared), and 'nothing hangs in the walkway' (weights >= 2.2). WHY IT MISSES BUG A: it never calls restore(), never respawns, never kills the player — the mismatch is invisible in one uninterrupted pass. WHY IT MISSES BUG B: it reads only the weights.",
+      "tests/playthrough.mjs graveyard section (597-822) — banks keys in strict ascending order 1,2,3, so socket index always equals key number minus one: the completability gate is structurally blind to this bug. Beats: 'the-counterweight-pays-out-the-first-key' (635), 'the-far-hatch-stays-sealed' (646-649 — pins the ossuaryClimbOut interact disabled, which is what keeps the arrival hatch orphaned), bankKey() helper at 672, 'first/second/third-key-banked' (690/775/818), 'the-iron-gate-opens-on-three' (822).",
+      "tests/grave-arena-regression.mjs:359-366 — the only respawn+gate pin; exercises ONLY the unresolved branch (director.js:1124-1132), never the resolved branch where restore() lives.",
+      "tests/failure-state-regression.mjs — respawn/retry checks for hatch, ossuary decay, grave stones; none touch gateKeys.",
+      "tests/regressions.mjs:597 'ossuary-climb' — :630-635 pins the arrival slab SHUT (`arrival.pivot.rotation.x > -0.02`): must be rewritten to assert-gone when the hatch is deleted; keep the sibling lidPivot check.",
+      "NEW PIN 1 (bug A): 'a death after an out-of-order bank cannot invent a key' — teleport graveyard, flag graveyardResolved, bank gateKey2 only, assert banked()===1; g.director.respawn(); step; assert banked()===1 (NOT 2), sockets [true,false,false], `_opened !== true`, exactly one weight below homeY. Then bank key 3 and key 1: assert the gate opens on the THIRD real bank and not before. Run all 6 bank orders — the bug appears in 5 of them; a single-order pin would be a false green.",
+      "NEW PIN 2 (bug A softlock invariant): after any respawn, assert `!(banked() >= 3 && !gate.opening && !gate.open && !flags.has('graveyardCleared'))` — catches the exact state Alex hit regardless of how the count got there.",
+      "NEW PIN 3 (bug B): replace regressions.mjs:1691-1693 with (a) a collider-volume scan: after open, no non-skullPass-exempt collider with max.y > 0.15 intersecting x 0.5..3.5, z 41.4..45.5 (x bounds chosen to exempt the two jamb colliders); AND (b) a straight-walk assertion: place player at (FOREST_GATE.x, y, FOREST_GATE.z - 2), step {moveZ:1} ~4 s, assert |x - FOREST_GATE.x| < 0.35 && z > 45 — catches ANY future object dropped in the doorway regardless of what it is made of. Keep the weight assertion alongside.",
+      "RE-RUN after the fix: regressions.mjs (gate-takes-three-keys-in-any-order, ossuary-climb, marrow-descent, forest-checkpoint, waterfall-respawn), playthrough.mjs graveyard section, grave-arena-regression, failure-state-regression, district-culling-regression, render-perf (450 ceiling)."
+    ]
+  },
+  "ossuary": {
+    "summary": "The OSSUARY is built entirely by buildOssuaryRoute() in src/outside.js:1869-3099 (one function, ~1230 lines) — marrow.js is a separate district and contains nothing of it. Geometry: a 6m x 30m dirt corridor at OX=-70, OZ=-10, FLOOR=-4.2, HEIGHT=2.85, plus a 5.4m-deep two-flight stair shaft past a sinking exit slab, plus two shallow side pockets (west = the barred 'kennel' with a cradle and a seated corpse behind a shutter; east = three lit niches). Entry is E-verb 'ossuaryDescend' on the black throat plane inside the west mausoleum PLUS a still-live silent walk-over, both funnelling into doDescendOssuary() (outside.js:2680), a pure teleport swap — no lid, no animation. EXIT at the beginning is not a hatch and not even a wall: the corridor's near end at z=OZ has NO cap mesh and NO collider, so looking back you see the raw scene background (graveyard bg/fog 0x050b16, director.js:44,62) framed by the cut ends of floor/roof/walls — exactly Alex's 'flat featureless DARK BLUE wall plane'. Walking into it (p.z < OZ+0.28, outside.js:2912) teleports you out silently. The counterweight (mechanism at OX,FLOOR,OZ+26.2) DOES already pay out gateKey1 and DOES already sink a full-corridor wall (exitSlab, outside.js:2166) — but the key spawns at OZ+25.4, BEFORE that wall, so the wall gates nothing the player wants and the stair shaft is a dead end ending in a permanently chained hatch (hatchT hard-coded 0 at outside.js:2984; exitMouthInter.enabled=false re-asserted every tick at 3083). That is why Alex reports the weight 'doesn't do much of anything' and wants the top-of-stairs hatch deleted and the key moved up there — asks C and D are the same design bug seen from two ends. There is NO bug/critter system anywhere in the codebase; donors are the silhouette spiders (house.js:1481-1540) for the LOOK, the merged walk-through Presences (outside.js:6762-6873) for instancing + walk-through-yield, and the enemy stain pool (enemies.js:909-915) for the dynamic-InstancedMesh idiom. Draw budget is roomy inside the district (occupied ossuary 222 draws vs 450 ceiling); the tight number is house-after-cave at 448, untouched as long as every new object is parented to routeRoot instead of the scene.",
+    "code_map": [
+      {
+        "file": "src/outside.js",
+        "lines": "19-22, 317-370, 416",
+        "what": "OSSUARY_THROAT mouth rectangle; both mausoleum shells (x<0 => game.ritualMausoleum at (-14.6, 34.2), 'darkness' void plane, five colliders leaving a 1.0m doorway); the 0.045-floor-vs-0.035-void entry bug is documented at 353-370; buildOssuaryRoute call site 416."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1795-1861",
+        "what": "makeGateKey(game, n, parent, visibleWhen, fetchableWhen): rec.reveal(x,y,z); rec.target fetch target (radius 0.7) onHit = skull.grab + audio.unlock(0.72/0.86) + audio.metalDrop(0.4/1.05) + flag 'got'+id; per-tick derivation of key.visible; bob/spin."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1869-1944",
+        "what": "buildOssuaryRoute head. OX=-70, OZ=-10, FLOOR=-4.2, HALF_W=3, LENGTH=30, HEIGHT=2.85. routeRoot 'required graveyard ossuary' visible=false (1880-1883). gateKey1 minted into routeRoot with noBatch (1888-1889). Local builders addMeshBox/addWall/addFloor (1908-1924). world.rooms 'ossuaryMain' (x -73..-67, z -10..20), 'ossuaryPocketWest' (x -75.9..-73, z 0.7..3.3), 'ossuaryPocketEast' (x -67..-64.1, z 7.7..10.3)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "1947-1997",
+        "what": "Side shells: west wall spans z OZ..OZ+10.7, east z OZ..OZ+18.7 — NEITHER caps the near end; no wall, no collider at z = OZ. Three alternating baffles at world z -2.5/4.5/12 with 1.75m mouths. Candle DESCRIPTORS behind each baffle (world.candles are pooled descriptors, world.js:1123-1148 — adding more costs zero light-census churn)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2002-2067",
+        "what": "Instanced bone dressing: stacked long-bones + seated skulls in five wall niches; 30-instance rib population along both walls at x = OX±2.55 — the 'scattered ribcage and bone bits' in Alex's screenshot."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2071-2112",
+        "what": "THE ENTRY THROAT. surfacePit (black plane, visible=false until unlock); surfaceSlab (the capping stone, 2085-2088 — a top-level scene Mesh); stairThroat with two proud treads; entryLamp candle descriptor (2111-2112)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2115-2171",
+        "what": "THE SIDE WEIGHT + THE WALL. mechanism group at (OX, FLOOR, OZ+26.2) = world (-70, -4.2, 16.2), noBatch: torus wheel + 6 spokes, wall axle, bearing, plinth, yoke, corbel at 2.62, hanging weight Box(0.62,0.82,0.5), chain. exitSlab = Box(5.65, 2.65, 0.34) at (OX, FLOOR+1.33, OZ+28.15) = world (-70, -2.87, 18.15), noBatch, plus exitCollider {ossuaryExit:true} spanning z 17.94..18.34 — THE WALL THAT ALREADY COMES DOWN."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2179-2267",
+        "what": "THE SHAFT + STAIRS. DECK_Y = FLOOR+5.25 = 1.05; WALL_TOP = 2.70; shaftVoid black plane so the lid never opens onto sky. Flight A: 11 treads, x -69.3..-67.15, z 19.55..23.25, rise 2.1, ramp 'ossuaryFlightA'; landing pillar; Flight B: 6 treads along -x, x -72..-69.3, z 23.9..25.4, y -2.1 -> -0.95, ramp 'ossuaryFlightB'; platform pillar + collider (2243-2245). world.rooms 'ossuaryShaft', 'ossuaryShaftLanding', 'ossuaryShaftTop' (x -73..-72, z 23.9..25.4, floorY -0.95 — THE TOP OF THE STAIRS); three parapet bands."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2272-2370",
+        "what": "THE FAKE HATCH + PERMALOCK. Three deck plates leaving a mouth over the platform; curbs + header + three bone mouth roots (2284-2299); lidPivot (noBatch) at (-72.45, DECK_Y+0.07, 25.3) with lidPanel + pale emissive lidHandle (lidHandleMat 2321-2324 — the 'activatable' material to reuse); hatchChains: 18 torus links in two crossing diagonals, soot hasp, BRASS 0xa98748 lockBody, shackle (2334-2365) — the pale-gold block + metal rings in Alex's ask-D screenshot; shaftGlow candle inside the mouth (2369-2370), the district's brightest light."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2377-2537",
+        "what": "THE WEST POCKET KENNEL (ask-B screenshot). Instanced bars at barX -73.85, z 0.92..3.1, one collider {id:'ossuaryKennelBars', skullPass:true}; alcove behind; seated witness corpse at (-76.05, -4.2, 2); shutter + jambs + light seam; cold lamp; the 'tub' cradle (ring + dish + 3 arms) at (-74.75, -3.18, 2); puzzle record + fetch target 'ossuaryKennelCradle'."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2539-2584",
+        "what": "THE EAST POCKET NICHES — three framed openings at x -64.28, z 8.2/9.0/9.8, each holding a pale quarter-scale headstone mini mirroring its surface grave — the 'three white candle stands in window openings' screenshot."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2586-2625",
+        "what": "state object (game.ossuary): origin/root/unlocked/inOssuary/solved/progress/slabT/exitT/arrivalKick + refs (surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider, mechanism, wheel, weight, lidPivot, hatchChains, resident, target). unlock() 2592-2603 (flags graveyardResolved + ossuaryOpened, hides darkness, shows pit + treads, stoneGrind). reset() 2604-2623."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2638-2669, 2679-2771",
+        "what": "doClimbOut() — UNREACHABLE in play but called directly by district-culling-regression.mjs:411. doDescendOssuary(viaVerb): band test; skull-not-held refusal (lockedRattle + impact('locked'), 1.1s cooldown); walk-over narrows the band; the swap (p.set(OX, FLOOR, OZ+0.85), yaw PI, clear grave enemies, flag 'ossuaryEntered', checkpoint, stoneGrind); tethered Standing-Kind resident spawn at (OX-1.6, OZ+20.4), res.tether=2.2, keepInOssuary=true (2726-2739). descendInter registered ON THE EXISTING MESH surfacePit precisely to avoid a scene-top hit box (2746-2751); throatTarget answers a throw with a hollow knock; exitMouth invisible Box in routeRoot with noBatch carrying 'ossuaryClimbOut' — THE PATTERN TO CLONE for any new in-district E-verb hit volume (2764-2771)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2779-2823",
+        "what": "THE OSSUARY SEAL: keepInOssuary(child) whitelist (camera, skull.root, routeRoot, impact ring/light, any light, world.lightRoot, userData.keepInOssuary===true); syncOssuaryVisibility saves/hides/restores every other scene.children bit. state.target = fetch target 'ossuaryCounterweight' on the wheel, radius 0.86; onHit anchors the skull with maxHold 4.5 + metalDrop."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2878-2924",
+        "what": "DISTRICT TICKER: slabT chases unlocked; surfaceSlab pose = A COMPLETE WORKING LID-SLIDE (y -1.06, z +0.72, rotX -0.42) currently driven by the funeral, not a verb (2880-2883); descendInter enable rule + armed-verb execution (2897) + the SILENT WALK-OVER every frame (2900); idle throat creak. THE WEIRD EXIT at 2912-2924: if inOssuary && p.z < OZ+0.28 && skull held -> bare teleport to (-14.6, 0.04, 33.0) yaw PI (facing the mausoleum's BACK WALL), checkpoint, clear resident. No mesh, no verb, no sound."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "2926-2999",
+        "what": "Counterweight hold: progress += dt/1.7 while anchored, decays 1.4x; wheel spin + chain payout + weight descent; on progress>=1 => solved, flag 'ossuaryCleared', metalDrop + duck + checkpoint, resident laid to rest. exitT chases solved at dt*1.8; exitSlab sinks 3.1m, rotation.z eases, exitCollider.max.y collapses only once the slab TOP is below FLOOR+0.05 (2965-2974) — THE REUSABLE WALL-LOWER TICKER. THE FAR END IS NAILED SHUT: const hatchT = 0 (2984); chains/lid/shaftGlow/arrival all derived from it. GATE KEY 1 SPAWN at 2999: reveal(OX, FLOOR+1.15, OZ+25.4) = world (-70, -3.05, 15.4) — 0.8m BEFORE the counterweight and 2.75m BEFORE the exit slab."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "3007-3098",
+        "what": "Kennel ticker (shutter raise, cradle sink, flag 'ossuaryKennelSolved'). exitMouthInter.enabled=false every tick (3083); armed climb-out executes 3086; routeRoot.visible = state.inOssuary + syncOssuaryVisibility (3091-3092); batchStaticGroup(routeRoot, 'ossuary shell') at 3098 — anything added to routeRoot that must stay movable needs userData.noBatch."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6762-6873",
+        "what": "The walk-through Presences past the woods: marrow silhouette merged via mergeGeometries into ONE geometry, 6-instance InstancedMesh, frustumCulled=false, instanced eye mesh; ticker: approach(9.5m) -> rise(1.45/s) -> yaw-track -> walk-into-it-at-1.35m yields -> sink(1.9/s); thud on rise, whisper on yield; stop-motion writeKin quantisation at 6820-6826. Cheapest donor for harmless enemies AND the bug swarm."
+      },
+      {
+        "file": "src/world.js",
+        "lines": "321-337, 340-370, 1123-1148, 1156-1320",
+        "what": "registerInteract: if obj is NOT a Mesh it adds an invisible hit Box at scene top (331) — the seal would hide it and the culling test would flag it; always pass a Mesh under routeRoot. groundHeightAt: below z=OZ no room matches, falls through to terrain (~0), 4.2m above the ossuary floor — the fall-through bug. attachCandlePool/updateCandles: descriptors, zero census churn. class Door — the reference animated-lid pattern (anim eased at 2.4/s, pose DERIVED from anim, collider.max.y collapsed when open, secret SLIDE variant at 1308)."
+      },
+      {
+        "file": "src/marrow.js",
+        "lines": "604-678, 94-296",
+        "what": "The marrow's SYMMETRIC hatch grammar: doDescend/doAscend each armed by a verb that only sets _pending, executed in the ticker; pitInter on marrowPit.pit, exitInter on a real bone mesh where you arrive — the model for a symmetric ossuary exit. buildPresence/tickPresence/startErupt/startFold — NOT exported (only makeRelic and buildMarrowArea are); reuse needs an export."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "963-1002, 1224-1370, 909-915",
+        "what": "Enemies.spawn(kind, x, z, state='stalk', yHint) — yHint picks the storey; 'standing'/'dormant' skip the rise. Enemies.update NOT act-gated (main.js:1207). sameLevel |dy|<1.8. The 'standing' case (1325-1370): moves only unobserved, leashed to e.home, bounded by opt-in e.tether — comment at 1348-1352 names the ossuary resident. Stain pool 909-915: the dynamic-InstancedMesh idiom (count=0, DynamicDrawUsage, frustumCulled=false)."
+      },
+      {
+        "file": "src/house.js",
+        "lines": "1481-1540, 3192-3217, 5560-5590",
+        "what": "Silhouette spiders: 'unlit near-black: a spider is a silhouette that moves, not a lit object' — MeshBasicMaterial 0x0a0806, idle tremble, dart-away at 1.7m — the LOOK + behaviour donor for bugs, colourblind-legal by construction. Basement bilco hatch: refusal-then-open verb shape (lockedRattle + shake + chain jiggle). Pump winch: the conduit idiom that WIRES a machine to what it drives, all world.box, zero draws."
+      },
+      {
+        "file": "src/main.js",
+        "lines": "985-1016, 1311-1324",
+        "what": "detachBoard: self-retiring physics ticker pattern. _crosshairTarget: raycasts world.interactables far=2.9, skips enabled===false and occluded; the raycaster does NOT test visibility — the gate is inter.enabled."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "44, 62, 198-221, 774, 1132-1140",
+        "what": "graveyard fog/background 0x050b16 — the dark blue Alex photographed. _enterGraveyard restore forces ossuary solved/progress/exitT/exitCollider (208-216). _completeGraveyard calls ossuary.unlock (774). Respawn calls ossuary.reset() or unlock() (1132-1140)."
+      },
+      {
+        "file": "tools/probe-ossuary.mjs",
+        "lines": "55-131",
+        "what": "The doorway probe: sealed-before-funeral, funeral opens, crosshair lights 'ossuaryDescend', throw enabled, skull-away refuses out loud, E descends, walk back out, walk-over works, far end sealed, key pays out."
+      },
+      {
+        "file": "tests/playthrough.mjs",
+        "lines": "595-691",
+        "what": "Ossuary leg: enter by walking (602-613), slalom baffles, throw at wheel, 'counterweight-pays-out-the-first-key' (634-637), 'exit-slab-sank-and-opened-the-way' (640-644), 'the-far-hatch-stays-sealed' (646-649), fetch key at (-70,-3.05,15.4) (651-656), 'walked-back-out-the-way-you-came' (658-667), bank (669-691)."
+      },
+      {
+        "file": "tests/regressions.mjs",
+        "lines": "597-699",
+        "what": "'ossuary-climb': throat swap, resident state, forced exitT=1 restore sinks slab AND lidPivot/arrival stay shut (630-635), monotonic grounded climb, E at the top REFUSES (667-680). 'ossuary-kennel' at 685."
+      },
+      {
+        "file": "tests/district-culling-regression.mjs",
+        "lines": "253-333, 391-483",
+        "what": "The seal budget: allowedOssuaryRoot mirrors keepInOssuary; occupied ossuary zero leaks + drawCalls < 450 (live: 222); backtrack exit restores every visibility bit; FORWARD exit block calls ossuary.climbOut() directly (411) asserting act 'forest' / ossuaryExited / zero lookback-root changes (471-483)."
+      },
+      {
+        "file": "tools/shot-lid.mjs + tools/shot-aug14.mjs:79-92",
+        "lines": "n/a",
+        "what": "Both frame the stair-top lid + handle; orphaned by the deletion — retarget or retire in the same commit."
+      }
+    ],
+    "diagnosis": {
+      "entry_today": "Two triggers, one body: the E-verb ('ossuaryDescend' on surfacePit, enabled while unlocked && !inOssuary && act graveyard) arming _pendingDescend executed in the ticker; and the original silent walk-over called unconditionally every frame with a tighter band. Both land on the same instant teleport swap. NO lid, NO animation, NO opening sound on either path — the only stone that moves is surfaceSlab, once, at the funeral, long before the player presses E. Skull-not-held refuses out loud. entryLamp breathes over the throat.",
+      "exit_today": "There is no exit object at all. The corridor's near end at z = OZ has no cap mesh and no collider. Walking to p.z < OZ+0.28 with the skull held runs a bare teleport to (-14.6, 0.04, 33.0) yaw PI — facing the mausoleum's BACK WALL. What the player sees looking back down the corridor is the cut end-faces of floor/roof/walls framing the renderer's clear colour — graveyard background 0x050b16, dark blue. 'The wall at the beginning' is a wall that does not exist. Second-order defect: the teleport is gated on skull held; with the skull thrown/anchored the player can walk past z=OZ, leave world.rooms, and groundHeightAt falls through to terrain (~y 0) — 4.2m above the floor, inside a sealed district.",
+      "side_weight_today": "The counterweight mechanism at world (-70, -4.2, 16.2) is driven by throwing the skull into its wheel target and HOLDING (progress += dt/1.7, decays 1.4x). At progress>=1 it sets solved, flags 'ossuaryCleared', reveals gateKey1, and SINKS exitSlab — a full-width 2.65m stone wall at z 18.15 — with the collider tracking the stone. So 'a simple wall that comes down when you use it' ALREADY EXISTS AND WORKS. Alex reads the weight as inert because gateKey1 spawns at z 15.4 — 2.75m IN FRONT of the wall — so the wall opens onto a stair shaft whose only destination is a hatch that can never open. The player gets the key without ever needing what the wall unblocks. His ask-D screenshot (rings on a wooden panel + pale-gold block) most precisely matches the stair-top hatchChains + brass padlock, not the counterweight — but whichever he photographed, the actionable defect is the same and lives in the key placement.",
+      "key_today": "gateKey1 minted at build into routeRoot (noBatch); invisible until solved; revealed ONCE, derived not assigned, so restored saves find it: outside.js:2999 reveal at world (-70, -3.05, 15.4). Taken by THROW at makeGateKey's target: skull.grab + unlock chord + metalDrop + flag 'gotgateKey1'.",
+      "top_of_stairs_today": "The platform ('ossuaryShaftTop', floorY -0.95) stands under a stone deck at y 1.05 with a mouth cut in it, holding: curbs + header + bone roots; lidPivot with iron panel + pale emissive handle; hatchChains (18 links, hasp, brass padlock, shackle); shaftGlow (the district's brightest candle); and exitMouth carrying 'ossuaryClimbOut'. Every pose derives from const hatchT = 0; the interact is force-disabled every tick. The handle, the padlock and the hit box all say 'this opens'; nothing can ever open it. Exactly the 'unopenable hatch and permalock' Alex wants gone.",
+      "side_rooms_today": "Two pockets, both shallow by design ('spaces to look into, not side-quest clutter'). WEST: the kennel (bars + cradle + shutter + seated witness behind). EAST: three niches with mini headstones. Plus the three baffle bays as posting positions. The Enemies system is fully alive here and NOT act-gated; one tethered Standing-Kind resident already spawns on descent (tether 2.2, keepInOssuary, cleared on both exits, laid to rest on solve) — real walkers are supported today with no new plumbing."
+    },
+    "edit_points": {
+      "A_hatches_at_both_ends": [
+        "A1. STOP THE FUNERAL FROM OPENING THE ENTRY LID: in the ticker at 2880 drive slabT from a NEW scalar `state.entryLidT` instead of state.unlocked; leave the pose maths at 2881-2883 byte-identical (it is already a good lid slide — y -1.06, z +0.72, rotX -0.42). Keep surfacePit/stairThroat visible on unlock so the seam still reads.",
+        "A2. Add `state.entryLid = { t: 0, open: false, moving: false }` beside slabT/exitT so director restores can seat it in one assignment; in director.js:208-216 add `entryLid.t = 1; entryLid.open = true;` under the ossuaryOpened condition — a player who opened the way must not find it shut on respawn.",
+        "A3. REWIRE THE ENTRY VERB to branch: if !entryLid.open — start the lid (entryLid.moving = true; stoneGrind 0.82/0.62 + after(0.55) creak + after(0.95) metalDrop + shake 0.12); if open — arm _pendingDescend as today. Keep the skull-not-held refusal IN FRONT of the lid branch. Copy the refusal-then-open shape from house.js:3200-3217.",
+        "A4. GATE BOTH ENTRY PATHS ON THE LID: drive entryLid.t toward moving?1:0 at ~dt*1.1 (~0.9s, matching Door feel); entryLid.open = t > 0.98. Guard the armed-verb execution (2897) AND the silent walk-over (2900) with entryLid.open. The walk-over survives; it just cannot fire through a closed stone.",
+        "A5. GIVE THE ENTRY LID A HANDLE: a pale bar on surfaceSlab using lidHandleMat VERBATIM from 2321-2324 (the comment there records that transposing the emissive hex into color once rendered it soot-black — do not repeat). Keep the single 'ossuaryDescend' interact on surfacePit and let its action branch — this keeps probe-ossuary's crosshair assertion passing unchanged.",
+        "A6. BUILD THE MISSING NEAR-END WALL: after the side shells (1947-1950) add `addWall(OX, OZ - 0.15, HALF_W*2 + 0.6, 0.3, 'ossuary near cap')` — one call, one collider, merged (zero draws). Kills the dark-blue plane AND closes the groundHeightAt fall-through. Dress its face with the broken-slab/bone-root grammar (addMouthRoot, 2290-2296) so it reads as a wall somebody sealed.",
+        "A7. CUT THE EXIT HATCH INTO THAT WALL: exitLidPivot Group (noBatch) in routeRoot, hinged at the top of a 1.0 x 1.9 aperture centred (OX, FLOOR+1.0, OZ-0.15), ironMat panel + one lidHandleMat bar; matching world.addCollider over the aperture, max.y collapsed when open (Door's law, world.js:1247; exitCollider's law, 2974). One candle descriptor above it ({x:OX, y:FLOOR+2.2, z:OZ+0.9, intensity 0.55, r 4.2}) so the way back is a bright VALUE at the dark end — value, not hue, and free.",
+        "A8. REGISTER THE EXIT VERB ON A MESH INSIDE routeRoot — clone 2764-2771 exactly (invisible Box mesh, noBatch, routeRoot child, registerInteract(mesh, 'ossuaryClimbBack', climbBack)). Never a Group — registerInteract on a non-Mesh spawns a scene-top hit box the seal hides and the culling test flags.",
+        "A9. SEQUENCE THE SWAP AFTER THE ANIMATION: climbBack only sets _pendingExitLid. The ticker runs the lid t to 1 (stoneGrind at start, creak ~0.5), and when t > 0.98 runs the existing exit body (2913-2924, becomes doAscendOssuary()) from the SAME ticker position — after cullers, before syncOssuaryVisibility. Verbs ARM; the ticker EXECUTES (stated twice in-file at 2631-2637 and 2742-2743). A swap called from the verb corrupts the seal's save/restore visibility maps.",
+        "A10. KEEP THE WALK-INTO-IT FALLBACK, GATED: condition at 2912 becomes `inOssuary && exitLid.open && p.z < OZ+0.28 && skull held` — once the hatch is open, walking out still works, which keeps the playthrough and probe viable after their bots learn one E press.",
+        "A11. FIX THE ARRIVAL FACING: the exit drops the player at yaw PI staring at the mausoleum's back wall (playthrough.mjs:684-687 works around it). Set yaw = 0 and land at mausoleum.z - 1.6 so the next step is OUT of the doorway, not back down the throat."
+      ],
+      "B_enemies_in_the_side_rooms": [
+        "B1. RECOMMENDED PRIMARY: a CAGED LUNGER behind the kennel bars. The cell is already player-proof (full-height bars collider, stone alcove, shutter). The volume between bars and shutter (x -75.8..-73.85, z 0.9..3.1) is unused sealed space. Build it as ONE merged geometry (mergeGeometries, like the Presence at 6768-6795) on a noBatch Group parked at x -75.4 facing +x. Ticker: while inOssuary and the player is within the pocket band, lunge t 0->1 in ~0.18s slamming to x -74.1 (0.25m short of the bars), decay ~1.4s, refractory 6-9s. Audio on commit: thud(0.75/0.5, crack) + impact('locked') + shake(0.22) — a body hitting iron. No pathing, no nav, one draw, can never reach the player. Cheapest scare per line in the whole round.",
+        "B2. Do NOT step on the kennel puzzle: keep the lunger in FRONT of the shutter and retire it when kennel solved (fold-out through the floor over ~0.4s, fold maths at marrow.js:896-905) so the seated-witness reveal stays the quiet earned beat.",
+        "B3. SECONDARY: a second tethered Standing-Kind at the EAST pocket mouth — clone 2726-2739 verbatim: spawn('walker', OX+2.1, OZ+18.6, 'standing', FLOOR+1), standing/ossuaryResident/home/tether as the existing resident, tether 1.8 (tighter) so it leans out of the niche pocket but never leaves. Same ossuaryResident marker => cleared by both exits, no new teardown. MUST set mesh.userData.keepInOssuary = true.",
+        "B4. TERTIARY (harmless popup): clone the in-file walk-through eruptor (6762-6873) — three sites in the baffle bays (world z -2.5/4.5/12, offset x ±1.9), 2 draws total. marrow.js's buildPresence is the higher-fidelity donor but is NOT exported; that route needs an export line.",
+        "B5. WHERE NOT: no untethered chaser in the 6m corridor (the tether comment at enemies.js:1348-1352 exists to prevent corridor-length pursuit); NOTHING between z 15.4 and z 18.2 — that is the counterweight hold where the player is stationary and defenceless for 1.7s.",
+        "B6. BUDGET: occupied ossuary 222/450. B1 = 1 draw, B3 = already-paid figure cost, B4 = 2 draws. All inside routeRoot / keepInOssuary; nothing lands on the 448 house-after-cave frame."
+      ],
+      "C_kill_the_fake_hatch_move_the_key": [
+        "C1. DELETE the lid kit (2305-2333: brassMat/sootMat/lidPivot/lidPanel/lidHandle/brackets) — but keep lidHandleMat's recipe; ask A reuses it for the two real hatches.",
+        "C2. DELETE the permalock (2334-2365: 18 links, hasp, brass lockBody, shackle).",
+        "C3. DELETE the mouth dressing that frames the aperture (curbs + header 2284-2289; the three addMouthRoot CALLS 2297-2299 — keep the helper, A6 reuses it).",
+        "C4. CLOSE THE CEILING: replace the three deck plates (2272-2274) with one continuous slab via addMeshBox covering the old mouth footprint — merged, a net draw SAVING. Verify headroom: platform floor -0.95, deck underside ~0.95 => 1.9m — tight; if it reads low, raise DECK_Y (2179) to FLOOR+5.6 (WALL_TOP follows, both derived). Check with a shot before shipping.",
+        "C5. DELETE the dead exit verb: exitMouth + exitMouthInter (2764-2771), the force-disable at 3083, the pending execution at 3086, doClimbOut + state.climbOut (2638-2669). NOTE district-culling-regression.mjs:411 calls ossuary.climbOut() directly — that block must be rewritten deliberately, not left to crash (see tests).",
+        "C6. SIMPLIFY the frozen far-end drive: delete hatchT (2984), the chains/lid/arrival pose lines (2987-2995), the hatchCreaked guard (2877). Keep shaftGlow but move it down to ~(-72.45, FLOOR+2.4, 24.7) intensity ~0.9 — the stair top lit by a lamp in the room, not by a hole in the roof.",
+        "C7. The forest-side arrival hatch (2831-2874): Alex's §8 walkway-block note names it — the GATE recon's edit points 5-7 own its deletion. Coordinate: if gate edit 5 deletes it, C7 is done; do not double-delete. (If for any reason it stays, delete only its animation lines and leave it a sealed stone lid — but the gate recon's deletion is the right call.)",
+        "C8. MOVE THE KEY TO THE TOP OF THE STAIRS: change 2999 to `gateKey1.reveal(OX - 2.45, FLOOR + 4.45, OZ + 34.7)` = world (-72.45, ~-0.75 + bob, 24.7) — 1.2m above the platform floor, dead centre under the new deck, on the FAR side of the exit slab, at the head of both flights. Nothing else changes: makeGateKey's ticker keeps deriving visibility; the key stays a routeRoot child; still taken by throw with the counted chord + 'gotgateKey1'. Do NOT switch to giveToJaw — the counted-take chord is the point.",
+        "C9. REACHABILITY: the new home is inside 'ossuaryShaftTop' and within the 2.9m interact/throw reach from the platform; it sits above the platform pillar collider so a missed throw bounces off stone rather than sailing into the void.",
+        "C10. RESULT: weight -> the wall ahead sinks -> corridor continues into a tall shaft -> two flights turning out of sight -> a key hanging under plain ceiling -> turn around, walk back, open a hatch to leave. Alex's flow, achieved by deleting geometry and moving one Vector3."
+      ],
+      "D_the_weight_lowers_a_wall_and_the_floor_crawls": [
+        "D1. THE WALL ALREADY EXISTS — exitSlab + exitCollider (2166-2171, sink ticker 2965-2974). Combined with C8 it becomes load-bearing for the first time: enter -> cells/enemies -> weight room -> wall lowers -> stairs -> key at top -> walk back out. Do NOT build a second wall.",
+        "D2. FRAME IT so it reads as a gate, not more corridor: two jambs + a lintel via merged addMeshBox (zero draws), plus one candle descriptor on the near face ({x:OX, y:FLOOR+2.2, z:OZ+27.4, intensity 0.5, r 4.0}) so the stone is the brightest surface in the bay when it moves.",
+        "D3. WIRE THE MACHINE TO THE STONE: floor conduit of world.box iron segments from the mechanism plinth (-70, -3.85, 16.3) along the floor to the slab base at z 18.15, then up the jamb — the house.js:5578-5590 idiom, which the file records as Alex's own blessed vocabulary ('all the stuff was attached by some wires on the floor'). All merged, zero draws.",
+        "D4. GIVE THE DROP A SOUND — nothing plays as the slab sinks today (the only cue is metalDrop at the mechanism). In the exitT block add threshold-latched beats: at 0.05 stoneGrind(0.9/0.5, verb 0.9) + shake(0.18); at 0.55 a quieter grind; at 0.97 thud(0.8/0.42, crack) for the seat. Latch each with a boolean; derive nothing from time so a forced exitT=1 restore skips them silently.",
+        "D5. Do NOT move exitSlab (its z is baked into exitCollider, the playthrough slab assertion, and the shaft header). If a distinct weight-room beat is wanted, dress the bay entry with a second SHORT stone that is already down at build time. One wall that moves is a sentence; two are unreadable.",
+        "D6. BUGS — NOTHING EXISTS TO REUSE (verified: no bug/roach/beetle/rat/critter/swarm/scuttle/vermin/insect system in src/). Donors: silhouette spiders (house.js:1481-1540) for LOOK LAW ('unlit near-black: a silhouette that moves, not a lit object', 0x0a0806) and dart-away behaviour; the Presences for merged-geometry instancing; the stain pool (enemies.js:909-915) for the dynamic-instance idiom.",
+        "D7. SPEC THE SCUTTLE PATCH: one merged geometry (0.035-radius capsule body + six splayed leg cylinders) via mergeGeometries; MeshBasicMaterial 0x0a0806 (unlit silhouette, colour-vision-proof); `const bugs = new THREE.InstancedMesh(bugGeo, bugMat, 96); bugs.name='ossuary floor vermin'; bugs.frustumCulled=false; bugs.instanceMatrix.setUsage(THREE.DynamicDrawUsage); bugs.userData.noBatch=true; routeRoot.add(bugs);` — one draw call, seal-owned.",
+        "D8. SPEC THE MOTION: per-instance {x, z, yaw, speed, pauseT, home} in a plain array; seed at y = FLOOR+0.02 biased into baffle shadows, wall bases x = OX±2.4 (where the ribs are), thickest near the bone niches. Tick guarded by `if (!state.inOssuary) return;`: pause (0.4-1.8s) or run 0.5-1.1 m/s toward a wander target, re-yawing INSTANTLY; quantise sway with Math.floor(time*14) (the writeKin stop-motion trick, 6820-6826) so they twitch rather than glide — that is the entire read. One shared Matrix4/Quaternion/Vector3 trio; instanceMatrix.needsUpdate once per tick.",
+        "D9. SPEC THE SCATTER: player within 1.4m => target directly away, speed 2.6 m/s for ~0.5s (the spiders' dart, house.js:1533-1536). Audio throttled to one per 0.35s: webTear(0.10/1.9) (audio.js:1626, the 'sticky crackle' — closest existing skitter) or low knock(0.06/2.3). Motion and sound carry it; nothing is hue.",
+        "D10. BUDGET/SAFETY: +1 draw against 228 headroom. No colliders, no targets, no interacts, no lights, no enemies-list entries — cannot affect pathing, census, seal, or the 448 frame. Belt-and-braces `bugs.visible = state.inOssuary` beside routeRoot.visible at 3091."
+      ]
+    },
+    "risks": [
+      "SEAL/CULLING: the seal iterates scene.children hiding everything not whitelisted, and district-culling-regression mirrors the list byte-for-byte asserting ZERO leaks. Any new top-level scene child — most easily an accidental registerInteract on a Group (auto-adds a scene-top hit Box, world.js:324-333) — is either invisibly hidden or fails the assertion. RULE: every new ossuary object is a routeRoot child; every new interact targets a Mesh.",
+      "BATCHING: batchStaticGroup(routeRoot) at 3098 welds every non-instanced routeRoot mesh into the shell unless it (or an ancestor) carries userData.noBatch. Forget it on the exit-lid pivot or the bug InstancedMesh and the object freezes or vanishes.",
+      "ORDERING: verbs ARM, the district ticker EXECUTES (stated at 2631-2637 and 2742-2743) — E fires before forest.update, and a teleport the cullers see before the seal snapshots poisons the save/restore visibility maps. A new exit hatch that swaps from its interact action will corrupt the restore and fail district-culling 328-333.",
+      "DIRECTOR RESTORE: director.js:208-216 / 1132-1140 seat the whole far end from single scalars (solved, progress, exitT). Every new state (entryLid.t, exitLid.t, latched audio booleans, bug seeding) must be seatable the same way. Keep every pose DERIVED from a scalar; never set poses imperatively at the event.",
+      "SOFT-LOCK AT THE NEW EXIT: the lid must be openable regardless of skull state; only the SWAP requires the held skull. Otherwise a player whose skull is anchored on the counterweight (maxHold 4.5s) is briefly trapped at a refusing door.",
+      "EXISTING FALL-THROUGH: without A6, a skull-not-held player can still walk past z=OZ onto terrain-height ground inside the sealed district.",
+      "HEADROOM AT THE STAIR TOP: C4's filled deck leaves 1.9m over the platform; eye height 1.62, no authored ceilingHeight — check a shot; raise DECK_Y if it reads low.",
+      "THE CAGED LUNGER MUST NEVER PATH: implement as a scripted mesh on a ticker, NOT an Enemies-system walker (it would grind on the bars/pocket colliders). Conversely B3's walker MUST carry ossuaryResident + keepInOssuary or it survives the exit teleports and reappears as a phantom in the yard (enemies.js:1341-1345 documents this failure).",
+      "SCREENSHOT AMBIGUITY ON ASK D: Alex's 'side weight' photo may be the stair-top padlock/chains rather than the counterweight — in which case asks C and D are the same object and are both satisfied by C8 + D1 + D4. The kennel cradle is the third candidate and is inert BY DESIGN (its payoff is the corpse reveal) — leave it alone. The build should proceed on the counterweight interpretation; it satisfies all readings.",
+      "TOOLS ORPHANED: tools/shot-lid.mjs and shot-aug14 shot 05 frame the deleted lid — retarget or retire in the same commit.",
+      "NO HUD / COLOURBLIND: lid handles use the existing pale emissive bar; bugs are unlit black silhouettes whose only signal is motion; the wall drop is carried by grind + shake + a lit face. No coloured highlights anywhere."
+    ],
+    "tests": [
+      "tools/probe-ossuary.mjs — MUST CHANGE: E now opens the lid first (assert open-not-swap on first press, swap on second or auto-chain — assert the chosen grammar explicitly); walk-back-out replaced by 'walk to the near end, E the hatch, come out'; 'far end has no way out, ever' (118-121) currently asserts the 'ossuaryClimbOut' interact EXISTS disabled — rewrite as 'the top of the stairs is plain ceiling: no interact whose id starts with ossuaryClimb, no object named ossuary hatch lid/chains'; add key1.home assertion at the stair-top coordinates.",
+      "tests/regressions.mjs 'ossuary-climb' (597-683) — MUST CHANGE: 630-635 references lidPivot/arrival which cease to exist -> replace with 'forced exitT=1 restore sinks the slab AND the stair top has no aperture'; 667-680 'E at the mouth refuses' -> 'at the top of the climb the crosshair offers NOTHING, and gateKey1 is revealed within reach'. KEEP the monotonic-rise pin verbatim.",
+      "tests/regressions.mjs 'ossuary-kennel' (685+) — re-run; if B1 lands, extend to assert the lunger retires on kennel solve.",
+      "tests/district-culling-regression.mjs — MUST CHANGE: the forward-exit block (391-483) drives ossuary.climbOut() directly; with C5 that function is gone. Rewrite the block around the real exit (the three-key gate ships the player forward now); re-verify allowedOssuaryRoot, zero leaks, < 450 draws (live 222), exact visibility restore on backtrack. Do NOT keep a no-op climbOut stub — it hides the deletion.",
+      "tests/playthrough.mjs 595-691 — MUST CHANGE in five places: entry needs the lid E-press; 'the-far-hatch-stays-sealed' deleted/inverted; key fetch retargeted to the stair top with climb waypoints (reuse regressions' six); walk-out needs the exit-hatch press; the yaw-PI arrival comment updated per A11. Beats to KEEP by name: 'mausoleum-opens-required-ossuary', 'ossuary-counterweight-catches-the-skull', 'counterweight-pays-out-the-first-key', 'exit-slab-sank-and-opened-the-way', 'first-key-rides-the-jaw', 'walked-back-out-the-way-you-came', 'first-key-banked'.",
+      "NEW ASSERTIONS: (a) near end sealed — a collider spans x OX-3..OX+3 at z ~OZ-0.15 and walking into it with the hatch shut does NOT change inOssuary; (b) the weight is REQUIRED — with solved=false the player cannot reach 'ossuaryShaftTop' (exitCollider.max.y > min.y); (c) the key is BEYOND the wall — gateKey1.home.z > exitCollider.max.z; (d) bugs cost <= 2 extra draws, routeRoot descendant, frustumCulled false.",
+      "FLAG NAMES that must keep working: 'graveyardResolved', 'ossuaryOpened', 'ossuaryEntered', 'ossuaryCleared', 'ossuaryKennelSolved', 'gotgateKey1', 'gateKeyBanked:1'. 'ossuaryExited' goes dead with C5 — grep it out of src and tests together (src/outside.js:2656; district-culling-regression.mjs:458, 476).",
+      "RUN ORDER: autotest + regressions + smoke, then playthrough, then probe-ossuary, then district-culling, then render-perf to confirm the 448 frame did not move."
+    ]
+  },
+  "falls-field": {
+    "summary": "Verified against this tree @ 4e33618. (A) The six 'marrow kin' in the clearing are ONE merged InstancedMesh + one eye InstancedMesh (src/outside.js:6762-6845) driven by a 4-state ticker (down/up/yield/gone, 6846-6875). Because they are instanced, raising the population from 6 to 22 costs ZERO extra draw calls. What they are missing is the marrow's actual eruption grammar: marrow.js:884-894 starts 1.7 m UNDER the floor with an ease-out launch (fastest at the breach), stretches scale.y 0.3->1.0, thrashes the head ±0.4 rad, ramps jaw/maw/eye emissive, folds in 0.32 s with a squash-and-splay, and lands a thud UNDER YOUR FEET + shake(0.6) 0.55 s after the yield. The clearing kin slide up linearly with none of that, a quieter thud, half the shake, no loom (marrow grows 40% taller as you close), and they are permanently one-shot ('gone' never resets). The game already owns the right dirt-birth sound the falls field never plays: audio.walkerRise (audio.js:1634-1643, 'the soil/cloth before a risen silhouette'), plus the canonical ground-emerge pose at enemies.js:1840-1857. And the six sites sit in the open field — the wheel and gong are unguarded, the opposite of Alex's ask. (B) The two far streams (outside.js:6710-6760) are flat ground-conforming ribbons at terrain+0.05 with NO collider and NO terrainHeightFn change — already 100% walkable; the water that kills is the plunge basin (CLEARING_BASIN depth 3.15, dug analytically at 97-113; director.js:397 kills below y=-1.5). Nothing distinguishes them, and the basin's stone lip deliberately skips |x|<3.0 — a clean 6 m gap that reads as a ford, at the one place crossing kills. The provably empty edges: tree bands stop at |x|=30 vs horizon masses at 33..46 (a 3-8 m dead band); the far z rows are EIGHT masses over 62 m; the south collider row has a 16 m gap at |x|<8 with every forest detail root hidden in the clearing act — looking south from the basin there is literally nothing rendered. (C) There is no 'fallsOpen' identifier; the open state is flag 'fallsThawed' + game.frozenFalls.thawed (outside.js:7175) -> director.armWaterfall -> fetch target id:'waterfall', a 3.4 m sphere at (C.x, 8, C.z+20.5) (6435-6442) — a high arc into the middle of a 19 m sheet, marked by nothing. The glow anchors already exist: an always-on never-animated PointLight at 6362-6364 (pinned at boot, safe to drive), the additive rising blue motes of makeGlowPoints kind 1 (atmosphere.js:1204-1233, 1883-1946), and the 64px corona-sprite idiom (outside.js:5205-5231). BUDGETS: clearing 210 draws / 450; house-after-cave 448/450 (falls roots hidden there); and the sharper undocumented limit — mirror act peaks at 1472/1500 GEOMETRIES: the binding budget is geometry count, not draws.",
+    "code_map": [
+      {
+        "file": "src/outside.js",
+        "lines": "23-29, 93-115",
+        "what": "CLEARING_BASIN {centerZ 15.2, innerR 5.4, outerR 8.2, waterR 8.45, depth 3.15}. terrainHeightFn: clearing analytic branch 97-113 (only |x-C.x|<30, C.z-27..C.z+30), bridge-stone tops special-cased, silent sine fallback at 114. Widened ground must move in lockstep with the rendered plane at 6304-6319."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6295-6345, 6352-6374",
+        "what": "buildClearing: C = forest end + (0, 22); zone/surface; the 60x54 bowl plane + stream + plunge pool (waterR 8.45) + opaque murk cylinder (game.clearingPool/clearingBasin exported). Cliff box + two colliders (gap |x|<3.2 at the falls); the retained invisible authored fall plane (game.waterfall); fallGlow = PointLight(0xa8c0cc, 120, 26, 1.5) at (C.x, 6, C.z+16) — created at build, NEVER animated by anything: the safe light to drive for C."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6376-6442",
+        "what": "90 pale glow-motes Points + bob ticker (the cheapest clearing mote pattern). waterfallBarrier collider; ten bridgeStones (CylinderGeometry(0.72,0.9,0.5,9), M.rock, buried at y=-1.4) — THE stepping-stone grammar to clone; rise driver main.js:1217. THE THROW TRIGGER: addFetchTarget({id:'waterfall', pos:(C.x, 8, C.z+20.5), radius:3.4, enabled:false, onHit -> director.waterfallTaken(), 'gone'}) — swept segment-vs-sphere in skull.js:1448-1461. This sphere is what the C glow must mark."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6535-6612",
+        "what": "buildFallsField(game, C, FX, FZ); everything C-relative; returns roots. Zero-draw ground: four M.dirt aprons, 34 horizon masses |x| 33..46, then the SPARSE far-z rows (EIGHT masses per side across 62 m, 6562-6570). clearOf() rejection test lists the basin, falls mouth, machines, fire lines, brazier arrays, all seven playthrough walk legs (6593-6600), arrival corridor."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6642-6708",
+        "what": "The 92-tree placement loop, three bands (band0 |x| 16.5..30 z -26..26; band1 |x| 7.5..26 z 13..27; band2 |x| 8.5..29 z -27..-11), three InstancedMeshes frustumCulled=false. RNG(0x9f21) is position-order-dependent — editing the loop moves every tree. The layer's only colliders: stepped AABB rows at |x|=27.5, north z=27.5 skipping |x|<5.4, south z=-28 skipping |x|<8 — the two skips are the only ways out."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6710-6760",
+        "what": "The far streams: waterMat 0x21424a emissive 0x0b1c20/.22 opacity .74 depthWrite:false; ribbon() builds ground-conforming strips at at(x,z)+0.05, both sides z -24..+24 at |x| 22.6..24.6, merged into ONE mesh. NO collider, NO terrain change — already fully walkable."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6762-6875",
+        "what": "THE KIN. kinParts = 12 merged primitives; kinMat 0x0d0c10 emissive 0.5; KIN=6 InstancedMesh (1 draw) + eyes InstancedMesh KIN*2 (1 draw, MeshBasic 0xa9c0b6 toneMapped:false). kinSites 6806-6815 = (±8.6,-3.2), (±15.8,3.6), (±10.4,15.4). writeKin 6817-6842 (smoothstep rise, 11 Hz stepped sway, eyes hidden while rise<=0.12). Ticker 6846-6875 (gated act==='clearing'): down->up at d<9.5 with thud{gain .62} + shake(0.14); rise += dt*1.45; yield at d<1.35 with whisper; fold rise -= dt*1.9 then 'gone' FOREVER (6868)."
+      },
+      {
+        "file": "src/outside.js",
+        "lines": "6878-6995, 6999-7095, 7102-7192",
+        "what": "buildFrozenFalls: state = game.frozenFalls {left,right,thawed,thawT,tolls,wheelHold,wheelSolved}; merged ice. makeSide(): pipe runs + 4-bowl brazier arrays; FOUR pooled candle descriptors per side (6964) — the 8 falls descriptors already saturate the ENTIRE 8-slot candlePool. West wheel ('fallsWheel' target 7031-7042, onHit MUST return 'anchor'); east gong ('fallsPlate', 3 tolls). state.roots = [ice, pipes, arrays, shed, frame, ...buildFallsField(...)] all visible=false; game.frozenFallsRoots; act-gating ticker (forest|clearing|cave|mirror) — THE attachment point for everything new (also buys the district-culling whitelist). Wheel hold/solve; the colorblind-safe fire read ('Value and motion, never hue alone', 7139-7150); THE THAW: both lit -> 4.2 s smoothstep, ice retreats up, flag('fallsThawed') at 7175, director.armWaterfall() at 7177; restore path 7188-7192."
+      },
+      {
+        "file": "src/marrow.js",
+        "lines": "94-224, 252-296, 554-563, 881-957",
+        "what": "buildPresence — 78 meshes; do NOT port as-is; malform() 58-70 is the trig-noise wrongness pass worth cloning. tickPresence — THE LOOM: scale (1+loom*0.16, 1+loom*0.40, 1+loom*0.16) over a 7 m band, 14 Hz hashed stop-motion jitter, involuntary twitches, jaw/maw/eye emissive by aggression. startErupt (thud gain 0.85 rate 0.5 crack + shake 0.22) / startFold (whisper). THE ERUPT ANIM 884-894: y = FLOOR - 1.7*(1-k)^2, scale.y 0.3+k*0.7, head thrash sin(phase*21)*0.4*(1-k), jaw 0.4->1.0, maw 0.6->1.5, eyes 1.2->2.8. FOLD 895-912: scale (0.55+kk*0.45, kk*kk, 0.55+kk*0.45) — SPLAYS as it collapses, sinks in 0.32 s. GUARD+YIELD 916-957: skull passes THROUGH (923-931, forced twitch + whisper — no fetch target); yield at d<1.15: fold, then 0.55 s later a thud UNDER THE PLAYER (FLOOR-0.5, gain 0.9) + shake(0.6), then another 1.25 s later 1.5 m away. That two-thud tail is the single scariest thing the clearing kin lack."
+      },
+      {
+        "file": "src/enemies.js + src/audio.js",
+        "lines": "enemies 985-1000, 1840-1857; audio 364-380, 1634-1643, 1667-1696",
+        "what": "Canonical ground-emerge: graveRiseDur 1.15 + audio.walkerRise; pose = squash-and-unfold (y -= remaining^2*1.35, scale.y 0.34+0.66*up), lateral shudder, jaw open until out; comment records Alex's verdict that THE REVEAL is the scare. walkerRise = filtered soil + cloth + three bone knocks over 1.08 s — authored for exactly this, unused in the falls field. thud({crack}) adds a bone snap; companions whisper/stoneGrind/splash/glassShatter/bellRing/eyeGlimpse."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "254-274, 376-397, 977-987, 1026-1041, 1156-1163",
+        "what": "_enterClearing (re-arms the waterfall if 'fallsThawed'); armWaterfall() enables the 'waterfall' target and starts the skull's gesture toward the falls; _updateGesture already turns the skull's head at the falls every 5-9 s — an existing diegetic pointer to extend. One-way act order; clearing kill floor y<-1.5 at 397 — what makes the basin lethal. waterfallTaken(): flag, checkpoint, caveZone.enabled, collapse barrier, splash, ten stones rise; 'the skull does not come back. no failsafe fires.' Respawn re-asserts at 1156-1163."
+      },
+      {
+        "file": "src/atmosphere.js",
+        "lines": "961-1000, 1006-1080, 1108-1160, 1196-1233, 1267-1345, 1883-1946",
+        "what": "sideFalls/feederPools tables; 'Basin shoulders pull the composition inward' — 42 rocks on the SOUTH rim deliberately skipping |x|<3.0 ('never counterfeit the bridge's collision language') — the 6 m ford-that-isn't. The water-curtain ShaderMaterial (uTime, uSeal) + veil PlaneGeometry(6.75, 18.9) at (C.x, 9.5, C.z+19.70); the throw sphere's centre projects to (u 0.5, v 0.42). crown() leaves the central gap 'so the authored skull aperture stays open' — the only acknowledgement an aperture exists. THE BLUE MOTES: 150 kind-0 basin foam (only r<=5.9 — stops 2.5 m short of the 8.45 water edge!), 105 kind-1 rising mist (Alex's screenshot), 84 side-cataract, 34 amber fireflies — ONE draw via makeGlowPoints (additive, depthWrite off, kind 1 rises; the exact tool for a motion+brightness glow). feederPoolMesh = InstancedMesh of CircleGeometry(1,24) scaled per pool — THE POND RECIPE (1 draw for N ponds); addFeeder per-point-width ribbons; terraceRocks — THE BANK RING RECIPE. The corona-sprite idiom at outside.js:5205-5231 (shared 64px radial CanvasTexture, additive, depthTest TRUE)."
+      },
+      {
+        "file": "src/world.js + src/main.js",
+        "lines": "world 66-120, 340-370, 1006-1147; main 180-186, 263-264, 875-881, 1217, 1408-1490",
+        "what": "world.box merges into per-material shells at finishStatic — zero draws for any material already bucketed (M.dirt, M.rock, M.woodDark, M.brick, M.metal, M.headstone, M.stone). pinLightCensus: lights are muted, never removed; a light ADDED after boot moves the census and recompiles every lit material — the repo's most expensive historical bug; build lights inside buildClearing/buildFrozenFalls or use none. The 8-slot candlePool serves the nearest 8 descriptors — the falls braziers already own all 8 at the shore. freezeMoonShadow: the moon's shadow map is baked ONCE with frozenFallsRoots invisible — castShadow on falls meshes is a latent no-op."
+      },
+      {
+        "file": "tests + tools",
+        "lines": "playthrough.mjs 902-976; district-culling-regression.mjs 187-201, 238-249, 420-435, 485-503; regressions.mjs 317-372, 1215-1238; smoke.mjs 74-80, 118-123; shot-falls-field.mjs; probe-bounds.mjs",
+        "what": "The falls playthrough beats and their walk legs (verbatim coordinates in the report body). District-culling: clearing recorded 210; house-after-cave 448 (binding); allowedWake = forest.detailRoots + frozenFallsRoots (427-428). Regressions: the basin scenario (visible pool covers the mathematical basin; running north unbridged kills or stops — do not weaken); 'waterfall-respawn' hand-sets 'fallsThawed'. Smoke: drawCalls < 700 AND geometries < 1500 per act; recorded worst = 1472 geometries (mirror) — 28 free, THE tightest budget in the project, not previously written down. shot-falls-field.mjs nine poses (06 'back-the-way-you-came' is the vacancy frame; 07 the far stream; 08/09 the kin diff pair). probe-bounds walks 12 compass rays per act but only detects escape via y < -14 — cannot catch 'walked onto an apron with nothing on it'."
+      }
+    ],
+    "diagnosis": "A. The six clearing kin were built to a draw budget and the eruption grammar was the casualty: linear elevator rise (vs marrow's under-floor ease-out breach), no stretch, no head thrash, no jaw/eye ramp, no loom, longer softer fold, no under-your-feet thud tail, no soil sound (walkerRise exists and is unused), permanently one-shot, and sited in the open field leaving the wheel and gong unguarded. The structural good news: kin and eyes are InstancedMesh, so population and animation richness are free in draws — the whole upgrade is arithmetic in writeKin plus ticker state. B. Two failures wearing one complaint: (i) EMPTINESS — provable holes: due SOUTH |x|<8 past the arrival corridor (16 m collider gap, eight masses across 62 m, all forest detail roots hidden in the clearing act — literally nothing rendered in that sightline) and the OUTBOARD strip |x| 30..33 (trees stop at 30, masses start at 33, dead band exactly where the far-stream walker looks); apron corners |x|>30 & |z|>38 have no ground at all. (ii) WATER LEGIBILITY — the streams are already crossable, the basin kills below y=-1.5, and the geometry actively lies: the foam ring stops 2.5 m short of the lethal edge and the stone lip's deliberate |x|<3.0 gap reads as a ford exactly where the bridge stones are still buried. Alex learned 'water kills' at the one place the world said 'cross here'. C. The open state is 'fallsThawed' (no 'fallsOpen' exists); the target is an unmarked 3.4 m sphere 8 m up the curtain. Everything needed to mark it exists, act-correct and census-safe: the never-animated fallGlow PointLight, makeGlowPoints, the corona sprite, and the skull's own head-turn gesture. BUDGETS: the binding limit is GEOMETRIES (1472/1500), not draws (clearing 210/450; act-gated additions have ~240 of headroom because the falls roots are hidden in the 448 house frame).",
+    "edit_points": {
+      "A_eruptors": [
+        "A1. outside.js:6806-6815 + 6794 — KIN 6 -> 22; keep the six field sites and add 16 clustered on the openers (all verified >=9.3 m from the basin centre, outside the falls mouth, >=3.2 m from brazier arrays, 2.8-9.6 m from their machine, z<19, and >=2.4 m clear of EVERY playthrough walk leg including the post-thaw locket walk): WHEEL/WEST (-16.7,12.4), (-14.3,15.5), (-10.7,14.0), (-10.2,10.5), (-15.7,8.6), (-18.9,15.5), (-11.9,18.4), (-20.3,12.4); GONG/EAST (16.7,12.4), (14.3,15.5), (10.7,10.8), (16.0,8.1), (18.9,15.5), (11.9,18.4), (20.3,12.4), (16.9,18.3). Draw cost ZERO, geometry cost ZERO.",
+        "A2. outside.js:6851-6856 + writeKin — port marrow's erupt curve: explicit clock k.t, rise = 1 - (1 - clamp(t/0.85))^2 (fastest at the breach); stretch kinS.set(1, 0.34 + 0.66*up, 1) during the rise; lateral shudder sin(up*31 + i*2.3)*0.055*(1-up). Donors marrow.js:886-887, enemies.js:1852-1854. Arithmetic only.",
+        "A3. writeKin — add the LOOM: multiply composed scale by (1 + loom*0.16, 1 + loom*0.40, 1 + loom*0.16), loom = clamp(1 - (d - 1.0)/7, 0, 1) per site (marrow.js:253-256). The single biggest fear delta; three multiplies. Scale the EYE pair and its offset by the same factor or the face detaches at close range. Eyes stay MeshBasic 0xa9c0b6 — brightness, not hue.",
+        "A4. Ticker arrival — swap the single thud for walkerRise({gain 0.55, rate 0.9, verb 0.55}) UNDER thud({gain 0.85, rate 0.5, crack:true}) and shake 0.14 -> 0.22 (marrow's numbers). CRITICAL: 22 sites at a 9.5 m trigger can breach 6-8 at once and audio._play has no voice cap — add a per-site armT stagger rng.range(0, 0.6), a shared state.lastPop gate (no two arrivals within 0.14 s), gain scaled 1/(1+concurrent); or drop the clustered sites' trigger radius to 7.0 (keep 9.5 for the field six) so the cluster rises in waves.",
+        "A5. Ticker fold — marrow's collapse: 0.32 s, kinS.set(0.55 + kk*0.45, kk*kk, 0.55 + kk*0.45) (splays as it flattens), then the tail: game.after(0.5, thud at (player.x, y-0.5, player.z) gain 0.9 rate 0.42 crack + shake(0.5), {global:true}) and a second quieter thud 0.7 s later 1.5 m off-axis. 'It folded through the floor UNDER you' — the beat Alex remembers from the marrow.",
+        "A6. outside.js:6868 — re-arm: when d > 14 and state 'gone', reset to down/rise 0/t 0, capped (e.g. 3 re-arms per site). 22 one-shots would leave half the field dead before the second machine.",
+        "A7. OPTIONAL (+1 draw, +1 geometry): a soil-burst InstancedMesh (6 dark clods per erupting site thrown outward over the rise). Clearing 210 -> 211; geometries 1472 -> 1473. If the geometry budget is contested, THIS is the cut — A2+A3+A4+A5 carry the read without it.",
+        "A8. NON-NEGOTIABLE: no collider on any kin (walk-through IS the verb), no director.death, no enemies.spawn, no fetch target (the skull must sail through — if it should answer, copy marrow's forced twitch + placed whisper, nothing else). Keep the act==='clearing' ticker guard."
+      ],
+      "B_edge_pond_water": [
+        "B1. outside.js:6664-6673 — cover the edge. EITHER widen the three bands (band0 |x| to 33, z to -30..27; band2 z to -31; target 92 -> ~130, guard 900 -> 1400) at zero draws — WARNING: re-rolls RNG(0x9f21), every existing tree moves, all nine falls-field shots change — OR (if churn is unacceptable) append a FOURTH placement pass on a NEW seed filling only |x| 26..34 and z -34..-26 / 27..34, leaving the 92 bit-identical. The second option matches last round's perimeter precedent (append, never insert).",
+        "B2. outside.js:6562-6570 — far z rows 8 -> 40 masses per side (x = -34 + i*3.5) + a second nearer row at z ±(29..33); close the apron corners with world.box(M.dirt, C.x±44, -0.16, C.z±42, 30, 0.3, 30) x4. Zero draws (M.dirt shell).",
+        "B3. outside.js:6701-6707 — the south |x|<8 gap is the arrival corridor: do NOT close it with colliders. Close the SIGHTLINE with silhouette: a staggered double row of masses at z -30 and z -34 covering |x| 3..12 so the corridor reads as a throat, not a hole in the map.",
+        "B4. THE POND: extend both stream point lists south past z=-24 to a pooled end ([s*23.6,-26.5],[s*23.9,-28.5], widening — generalise ribbon() to per-point widths the way addFeeder already does, or call it twice); the pool = one InstancedMesh CircleGeometry(1,24), 2 instances scaled rx 3.6 / rz 2.4 at groundHeightAt+0.055 sharing the existing waterMat (donor: feederPoolMesh, atmosphere.js:1284-1292). Verified centres (±23.3, -22.5): 4.7 m short of the south collider row, 15 m off the nearest walk leg, 25 m from fire lines/brazier arrays ('not in front of the things that create the two things'), 38 m from the basin. +1 draw, +1 geometry. Bank ring: 12-14 rotated world.box masses in M.rock at r 1.05x (zero draws); reeds ride the existing crown/leaf instanced batch scaled 0.25 (zero draws).",
+        "B5. THE CROSSINGS — stepping stones as pure signage (physics already allows crossing; change nothing physical). ONE InstancedMesh of the bridge-stone family (donor outside.js:6425; flatter 0.9/1.05/0.32 variant), BRIGHT material: M.rock clone lifted to >=1.6x the stream's luminance (the project's stated legibility floor) + emissive 0x1a2226 @ 0.25 so it holds when the lantern is elsewhere. Flat tops at at(x,z)+0.16 — clearly proud of the 0.05 water film. Six stones per crossing, three crossings per stream (C-relative z -12.0, +2.0, +12.0; x stepping s*21.6 -> s*25.6 in 0.8 m increments, ±0.25 jitter). Root in `roots`. +1 draw, +1 geometry. NO colliders, NO terrainHeightFn changes — a player who ignores them still crosses; one who follows them is simply told the truth. They double as the pond-outflow answer.",
+        "B6. MAKE THE BASIN READ DIFFERENT — brightness/shape/motion, no hue, no collision changes: (a) atmosphere.js:1199-1203 — the foam ring stops at r 5.9 while the lethal edge is 8.45: move ~60 of the 150 kind-0 points to a shell r = 7.9 + rand*0.75 so a continuous FOAM LINE sits exactly on the edge you must not cross (zero draws, same Points mesh). (b) the |x|<3.0 lip gap: add 5-6 RAISED BANK masses (taller than wide, sy ~1.4x sx) at r 8.6..9.1 BESIDE the bridge line via world.box in M.rock from buildFallsField (zero draws) — never IN the |x|<3.0 lane or they stand in the rising stones' path. (c) give the pool plane its own M.water.clone() with roughness 0.06 / metalness 0.85 — glassy-black centre, only the rim catches light. The learned rule: FOAM + STONE LIP = do not cross; FLAT + STEPPING STONES = cross.",
+        "B7. terrain lockstep: everything above stays inside |x-C.x| < 25.6 and z > C.z-29, so NO terrainHeightFn change is needed. If anything drifts past |x|=30 or z=C.z+30, widen the analytic branch (97-113) and the rendered plane (6304-6319) in the SAME commit."
+      ],
+      "C_the_glow": [
+        "C1. Hang it on `game.frozenFalls.thawed` / flag 'fallsThawed' (outside.js:7175) — no new flag — and cross-check the target itself (`world.fetchTargets.find(t => t.id === 'waterfall')?.enabled === true`) so the glow can never lie. armWaterfall re-fires on restored saves (director.js:267), so a reload past the thaw finds the glow on with zero extra bookkeeping.",
+        "C2. THE MOUTH: build around the throw sphere's real centre (C.x, 8, C.z+20.5) r 3.4 projected onto the curtain at C.z+19.70 — a soft disc ~4.5-5.5 m across centred (C.x, 8.0, C.z+19.55), just IN FRONT of the veil (never z-fighting, never occluded).",
+        "C3. THREE LAYERS (brightness/motion, no hue-only, no HUD): (a) CONVERGING MOTES — clone makeGlowPoints kind-1 into a new small Points mesh in buildFallsField pushed to `roots`: ~90 points in an annulus 1.2-4.0 m around the mouth, drifting INWARD-and-up in a spiral (convergence is the diegetic arrow). +1 draw, +1 geometry. (b) THE RIM — one additive corona sprite (donor outside.js:5205-5231, shared 64px texture, depthTest TRUE) scaled ~5.5 m at (C.x, 8.0, C.z+19.5), opacity 0 -> 0.55 over the 4.2 s thaw, then breathing 0.45 + 0.12*sin(t*1.1). (c) THE SHAFT — DO NOT build a new light: drive the existing dormant fallGlow (outside.js:6362-6364): lerp position to (C.x, 7.6, C.z+18.2) and intensity 120 -> ~190 with a 0.9 Hz breath as open goes true. It is pinned by pinLightCensus, so animating intensity/position cannot recompile anything; never write its colour.",
+        "C4. GATING: build the disc + motes visible=false, push into state.roots (7102-7103) so they inherit the act gate AND the district-culling whitelist; add the ice rule inverted in the roots ticker (7110-7112): hidden while !state.thawed.",
+        "C5. FADE-OUT ON USE: after 'waterfallTaken' the mouth becomes a stone seal (atmosphere sealT) — drive all three layers to zero on the same clock (read game.flags.has('waterfallTaken') in the roots ticker). A glow that outlives the bargain is a UI leftover.",
+        "C6. AUDIO-FIRST: the thaw already fires stoneGrind + glassShatters + splash; add ONE placed cue at the mouth as the glow arrives — audio.sprayReveal or a low splash at (C.x, 8, C.z+19.8) verb 0.9 — the ear pulled up the cliff before the eye. Tighten the skull's existing head-turn gesture (director.js:977-987) to gaze at (C.x, 8, C.z+20.5): the thing in your hands looks at the same spot the light is."
+      ]
+    },
+    "risks": [
+      "GEOMETRY BUDGET IS THE BINDING LIMIT: smoke.mjs caps geometries < 1500 and the mirror act records 1472 — 28 free, cumulative game-wide, previously undocumented. The full spec spends at most 5 (pond, stone, clods, glow motes, corona) -> ~1477. Run smoke FIRST after adding any BufferGeometry; if maxGeometries crosses 1490, cut A7 (soil burst) before anything else.",
+      "EVERY new object goes into state.roots (outside.js:7102-7103) — anything added to atmosphere's always-visible root can appear in the house frame's 2-draw margin (448/450) and will fail district-culling's allowedWake (427-428).",
+      "RNG CHURN: buildFallsField shares one RNG(0x9f21) for trees, masses and kin phases. Editing the tree loop moves all 92 trees and changes every shot; appending a second seeded pass preserves them (last round's perimeter precedent). Re-run tools/shot-falls-field.mjs either way.",
+      "AUDIO PILE-UP: audio._play has no voice cap; six simultaneous thud+walkerRise pairs clip the bus. The A4 stagger/cooldown is not optional. game.shake uses Math.max — camera safe.",
+      "THE CANDLE POOL IS FULL (8/8 at the shore braziers). NO candle descriptor for the C glow — it would evict a brazier and break the colorblind-safe fire read (7139-7150). Drive fallGlow instead.",
+      "NO NEW LIGHTS AFTER BOOT: pinLightCensus at main.js:263; a later-constructed light recompiles every lit material — the repo's most expensive historical bug. Build lights inside buildClearing/buildFrozenFalls or use none.",
+      "THE WHEEL CONTRACT: 'fallsWheel' onHit MUST keep returning 'anchor' (skull.js:1455 defaults to 'return') — do not refactor that block while adding kin near the wheel.",
+      "A FETCH TARGET YOU DID NOT THINK ABOUT EATS THE THROW (HANDOFF trap): kin, stones, pond, glow get NO fetch targets, or a throw at the wheel/gong/falls dies a metre short in silence.",
+      "WALK LINES: every kin site clears every playthrough leg by >=2.4 m and adds no collider; every B collider respects the same legs + clearOf's. One stray AABB on the (C.x, C.z+21) leg fails 'inside-the-cave'.",
+      "TERRAIN/SKIN LOCKSTEP: the spec keeps every walkable addition inside the existing analytic branch — if that changes, terrainHeightFn and the plane move in ONE commit.",
+      "THE BASIN LIP MUST NOT BLOCK THE BRIDGE: atmosphere.js:993 skips |x|<3.0 deliberately — B6(b)'s masses go BESIDE that lane or the ten rising stones hit a rock.",
+      "THE GLOW MUST NOT FORESHADOW THE TWIST OR BECOME A HUD (laws 3 and 8): converging motes + rim + a repositioned existing light are weather; a ring/chevron/arrow/pulsing marker, or anything that survives the throw, is not.",
+      "PRIOR RECON ('falls-area', 2026-08-16) is ~200 lines stale on anchors (names right, numbers wrong) — use this code_map."
+    ],
+    "tests": [
+      "district-culling-regression: clearing recorded 210 will move to ~211-213; asserts only < 450 so it will not fail, but record the new number in HANDOFF as 203->210 was. Verify new roots ride g.frozenFallsRoots via the allowedWake path (420-435).",
+      "smoke.mjs: run FIRST after adding any BufferGeometry; read render.maxGeometries in tests/results/smoke.json; above 1490, cut A7.",
+      "ADD tests/falls-field-regression.mjs (none exists — grep 'falls' in tests/ hits only playthrough + regressions). Checks: (1) kin erupt from below and fold when walked into (state transitions, matrix Y below site y at t=0, g.dead===false throughout); (2) no collider and no fetch target within 1.5 m of any kin site; (3) every kin site clears every playthrough leg by >= 2.0 m (recompute from the same literals); (4) eruptor population costs zero draws (snapshot drawCalls all-down vs all-up, delta === 0); (5) far streams walkable, basin lethal (walk (C.x+23.5, C.z-4) 3 s => alive and across; walk north from (C.x, C.z+6) unbridged => dead or stopped — keep regressions.mjs:362-371's meaning, do not weaken); (6) stepping stones proud of the water (top >= streamY + 0.10) and luminance ratio >= 1.6 vs waterMat; (7) pond clear of legs (>8 m) and brazier arrays (>20 m); (8) no unrendered ground inside the collider ring (grid-sample |x|<=30, C.z-30..C.z+27: every point has apron or plane under it).",
+      "ADD the C regression Alex's note implies verbatim: before thaw — glow absent, 'waterfall' target disabled; hand-set the thaw (g.flag('fallsThawed') as regressions.mjs:1220 does), step 5 s — glow visible, within 1.0 m of the target pos, target.enabled === true, fallGlow.intensity risen; fire waterfallTaken — glow decays below 0.05 opacity within 6 s; and document.body.childElementCount unchanged (law 3: no DOM).",
+      "playthrough.mjs: NO edit should be required if the clearances hold — run unchanged and confirm all nine falls beats pass. Optionally add one beat after 950: walkTo(CC.x-17, CC.z+12), assert some kin reached 'yield' and !g.dead — the bot survives walking through an eruptor at the wheel.",
+      "tools/probe-bounds.mjs: extend the clearing rows to record whether the final position escaped the collider ring (|x-C.x| > 27.5 or z outside C.z-28..C.z+27.5) — the only automated proof that B1-B3 closed the world; the current y<-14 test cannot see it.",
+      "tools/shot-falls-field.mjs: RUN AND OPEN THE PNGs (project law). Shots 04/05/06 prove the coverage; 07 re-aim to frame the pond + stones; 08/09 prove the new erupt pose. ADD two poses: (C.x+20, C.z-2) looking east at the outboard band, and the near shore (C.x, C.z+6) looking up at (C.x, 8, C.z+20.5) — taken BEFORE and AFTER the thaw as a diff pair: that is the C acceptance shot.",
+      "render-perf.mjs: clearing is sampled but the clustered-eruption moment (6-8 sites mid-rise) is the worst frame the act will ever have and is not currently sampled — consider a sub-sample standing at (C.x-15, C.z+10) with the cluster mid-rise.",
+      "The four gates unchanged before anything ships. Known pre-existing failure that is NOT yours: underfalls-expansion's mirror-room reflected-body check (HANDOFF-documented)."
+    ]
+  },
+  "underfalls-finale": {
+    "summary": "Two independent subsystems, both verified in this tree. (A) THE CHOIR. Armed by one z-line one-shot in Director._updateCaveHorror (director.js:996-1001) at choirTriggerZ = layout.chapel.z + 1 — local z 55, first crossed at local (26,55): 45.5 m along a 125.2 m route (36% by arc length; the HANDOFF's '~60%' was measured in z-span). choirSource is a FIXED point at chapel + (7.2, 0, 6.6) = local (29.2, 60.6) — 6.45 m away, 34 degrees off heading. So it is 'in front', but at conversational distance: an ambush, not a thing seen coming. Pursuit is a two-rail fairness model: chases heardPos breadcrumbs (never live coords) at lerp(drySpeed 1.55, heardSpeed 4.35, heardStrength); a walker sustains heardStrength ~0.68 => 3.45 m/s vs WALK 2.7 (closing 0.75 m/s); a runner outruns 4.35 < RUN 4.7. Interception needs dist < 1.85 AND |dy| < 0.72 AND lineClear AND wetT <= 0; the strike commits to a FIXED point for 1.05 s and lands only if the player is still within 1.18 m. THE SURVIVABILITY INVARIANT: WALK x attackCommit = 2.835 m > attackRadius 1.18 m (2.4x margin) — a walker who keeps walking always escapes the committed point. First catch nonfatal (e.warned); caveSpray RE-ARMS the grace (enemies.js:1102) — four authored curtains are effectively four extra lives. Spray cuts speed to 0.35x for up to ~2.6 s AND vetoes new commits while wetT > 0. The spec pushes the spawn far ahead ALONG THE ROUTE (new arc-length helpers; projectUnderfalls returns routeDistance NULL inside the chapel disc — do not use it), raises drySpeed only (heardSpeed untouched — the run-escape rail), shortens the commit, opens the sluice dy gate, weakens/shortens the spray slow — every number checked against the two inequalities that keep a WALKING bot alive. (B) THE HANDS. The viewmodel hand rig is skull.js (hold group on the camera, LAYER_HELD), but in the mirror room finale.js._updatePressure (921-938) REWRITES both hand rotations every frame AFTER skull.update. At k=0 (the raised beat Alex screenshotted) the rotation is the captured `lowered` pose (rx -0.06, ry ±0.34, rz ±0.05): worked through the rig's axes (+Z fingers, +Y dorsum), the fingers point AT the camera and the dorsum faces the ceiling — two flat hands, palms down, fingertips aimed at your face. 'Someone else's hands reaching at you.' The fix is a PI roll about each hand's own finger axis (local Z) applied to BOTH the k=0 base and the k=1 press target, plus lifting the base rx to ~-1.24. The mirror is provably unaffected: mirror cameras never render LAYER_HELD (MASK_DOUBLE = layers 0|3, mirrors.js:20-23/91/249); the hands in the glass are a separate authored body (finale.js:606-636 'reflection-articulated-hand') on LAYER_DOUBLE.",
+    "code_map": [
+      {
+        "file": "src/enemies.js",
+        "lines": "29-39",
+        "what": "DROWNED_CHOIR spec: h 2.75, r 0.42, warning 2.65, drySpeed 1.55, heardSpeed 4.35, attackRange 1.85, attackCommit 1.05, attackRadius 1.18, recovery 1.25. Comment names the three fairness rails."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "735-897, 1004-1067, 1069-1086",
+        "what": "makeDrownedChoir (6 owned transparent materials, curtains/mouths/ribCage, droplets Points shader, borrowed lamp via world.loanLight). beginDrownedChoir — line 1009 calls endDrownedChoir('replace') FIRST (single-instance); clamps pos/heardPos to floor; starts drownedChoirLoop; pushes ['choir','warning',...] to spawnLog. endDrownedChoir. drownedChoirHear(pos,intensity,source) — heardPos, heardStrength (0..1.25), memoryT."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "1092-1136",
+        "what": "caveSpray (player crossing): wetT = 0.9 + exposure*1.7; revealT = 1.4 + exposure*1.8; LINE 1102 `e.warned = false` RE-ARMS the first-catch grace; washV push; forces 'recoil'. drownedChoirDrench (choir's own crossing): revealT only — no slow, no wash, does NOT clear warned."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "1138-1151, 1160-1178",
+        "what": "getDrownedChoirState() — the probe surface {state, age, revealT, wetT, memoryT, warned, pos, heardPos}; add new difficulty fields here. _remove returns the loaned light, disposes ownedMaterials."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "1992-2128",
+        "what": "_choirRouteEdgeClear / _choirLineClear (underfalls.lineOfSight + _segmentBlocked); _choirRoute (nav to heardPos, ttl 0.22) and _choirPlayerRoute (acoustic distance to live player, ttl 0.14)."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "2130-2241",
+        "what": "_updateDrownedChoir: revealT decays 0.62x (2143), heardStrength 0.24/s (2146). warning->stalk stamps revealT 2.4 (2169). Pursuit speed = lerp(drySpeed, heardSpeed, heardStrength) * (wetT>0 ? 0.35 : 1) (2191-2192). SLUICE dy GATE line 2196: |player.y - e.y| < 0.72 && lineClear. Commit gate 2198-2205 (dist < attackRange, stateT > 0.22, wetT <= 0), strikePos copied once. CATCH (2209-2241): miss = |player - strikePos| > attackRadius OR |dy| > 0.72 (2213) OR blocked; first non-miss => warned + recover + wash push + fear + shake, NO death; second => 'spent' + director.death."
+      },
+      {
+        "file": "src/enemies.js",
+        "lines": "2276-2302, 2410-2424, 3009-3039",
+        "what": "Visibility ramp: reveal = clamp(max(revealT/1.35, wetT/1.15, pressure, recoil)); dry floors voidMat 0.075, skin 0.018, wet 0.012, rim 0.014, mouthVoid 0.05, droplets 0.19; lamp = reveal * (2.5 + pressure*5.6). Audio tail loop.setState(level, reveal, pressure, rear). _moveWithPush — the choir is NOT a collider; the player can walk through it (head-on spawns are survivable)."
+      },
+      {
+        "file": "src/director.js",
+        "lines": "288-336, 990-1024, 416-424, 441-469, 1045-1091",
+        "what": "_enterCave: choirSource = chapel + (7.2, 0, 6.6); choirTriggerZ = chapel.z + 1 (334); choirArmed false. _updateCaveHorror lines 996-1001: THE one-shot arm + beginDrownedChoir. onPlayerStep cave branch: drownedChoirHear(player.pos, running ? 1 : 0.68, 'step') — why a walker sustains 0.68. onVoidCall: hear 1.25. enterMirrorRoom (endDrownedChoir('hatch'), 1.6s fade then finale.begin) and death() cave branch ends the choir."
+      },
+      {
+        "file": "src/underfalls.js",
+        "lines": "11-53, 103-159, 162-200, 237-291, 337-433, 1399-1493, 1497-1551",
+        "what": "MAIN_LOCAL 13 nodes (mainLength 125.16 m; cumulative arc 0, 8.25, 16.06, 24.12, 34.32, 47.73, 58.36, 71.40, 80.00, 90.82, 103.55, 113.84, 125.16); chapel at local (22,54) r 10.5. sprayZones (4 curtains, strengths 0.70-1.08). segmentProjection carries routeDistance; chamberProjection returns routeDistance NULL (182) and projectUnderfalls picks smallest clearance — THE GOTCHA for arc-length spawn math. underfallsLineOfSight (floorTolerance 0.62, per-sample discontinuity veto 0.48 — already rejects cross-storey chords, making the 0.72 dy gate a redundant second veto). findUnderfallsRoute Dijkstra, exposed as state.route (1516). installBeats: player crossings -> caveSpray (1412); choir crossings -> drownedChoirDrench (1428); inside-curtain birth suppression (1432-1436). The passive spray displacement ('false sighting') arms at chapel distance < 15, first crossed at local (14.23, 41.17) — the ordering constraint any earlier trigger must respect. state.sprayPulse/choirPulse, groundAt/contains/project/lineOfSight/route surface; installCaveVisibility keeps live enemy meshes visible."
+      },
+      {
+        "file": "src/player.js",
+        "lines": "10-11, 106-107, 216-224",
+        "what": "WALK = 2.7, RUN = 4.7; footstep cadence 6.2/9.4, noise 0.35 walk / 0.85 run."
+      },
+      {
+        "file": "src/skull.js",
+        "lines": "51, 297-303, 314-356, 358-411, 414-496",
+        "what": "hold group added to the CAMERA (560) — everything below is camera-local (+Z out toward the viewer). _handSkin identity (318) — the playthrough pin. mkFinger: fingers extend along local +Z, NAIL at +y (dorsal). mkHand(side): palm sphere flattened so its normal is local ±Y (+Y = dorsum); 4-metacarpal fan; right thumb at local -X, left at +X — HANDEDNESS IS IN THE GEOMETRY, not a mirrored scale, so the same rotation is correct for both hands."
+      },
+      {
+        "file": "src/skull.js",
+        "lines": "521-537, 636-659, 661-686, 745-774, 1044-1052",
+        "what": "THE POSE TABLE: cradle {rx -0.58, ry 0.71, rz 0.27}; empty {rx -0.33, ry 0.50, rz 0.15}; lowered {rx -0.06, ry 0.34, rz 0.05}. _applyHandPose: hands[i].rotation.set(rx, -side*ry, -side*rz). _updateHands: raiseHands(Infinity) pins goneBlend -> 0 and t -> 1 (the `empty` position) and re-shows the hands; finger curl writes only k1/k2 rotation.x. becomeBone: copies g.mats.bone.color ONTO the existing skin/crease/nail objects (identity preserved), swaps flesh->bone meshes. Per-frame hold sway (1044-1052) is overwritten in the mirror room by finale.js the same frame."
+      },
+      {
+        "file": "src/finale.js",
+        "lines": "496-664",
+        "what": "_makeReflection — the separate reflected body; 606-636 a full 'reflection-articulated-hand' per arm; line 664 puts the whole figure on LAYER_DOUBLE. Independent of the viewmodel in every way."
+      },
+      {
+        "file": "src/finale.js",
+        "lines": "780-887",
+        "what": "Finale.begin — becomeBone at 800 (behind the fade); _captureEmptyHands() + _restoreEmptyHands(1) at 838-839. _captureEmptyHands stores hold pos/rot/scale AND left/right rotations AS THEY STAND at begin() — i.e. skull.js's `lowered` rotation becomes the k=0 base."
+      },
+      {
+        "file": "src/finale.js",
+        "lines": "889-948, 1093-1094, 1317-1327, 1381",
+        "what": "_updatePressure — THE OWNER of the raised-hand orientation: overwrites hold pos/rot/scale and BOTH hand rotations every frame (921-938), lerping from the captured lowered rotation at k=0 to (-1.28, ±0.22, ±0.05) at k=1. Contact-time reinforcement becomeBone + raiseHands(7) at 1093-1094. The 'still'->'closing' beat at t > 7 calls raiseHands(Infinity) (1326). _updatePressure called unconditionally per frame at 1381 — the hand-rotation write happens regardless of the enabled flag."
+      },
+      {
+        "file": "src/mirrors.js",
+        "lines": "19-23, 91, 249",
+        "what": "LAYER_HELD = 2, LAYER_DOUBLE = 3, MASK_DOUBLE = (1<<0)|(1<<3); every Mirror's reflectMask defaults to MASK_DOUBLE and is applied to the virtual camera — LAYER_HELD is absent: the viewmodel is NEVER reflected. The scoping proof for the hands fix."
+      },
+      {
+        "file": "src/main.js",
+        "lines": "189, 306-307, 1204-1210, 494-512",
+        "what": "skull viewmodel on LAYER_HELD, enabled only on the main camera. Update order: player (1204) -> skull (1206) -> director (1208) -> finale (1210) — finale wins the hand rotation. Shader warm-up calls beginDrownedChoir once at boot with the entrance pos — new spawn-placement code must be side-effect-free when handed a nonsense player position."
+      },
+      {
+        "file": "tests/playthrough.mjs",
+        "lines": "54-84, 983-1028, 1038-1064",
+        "what": "walkTo: continuous walk at 2.7, run=false on underfalls legs — the WALKING bot. The underfalls run samples getDrownedChoirState once per leg arrival (the for-loop at 999-1010 always breaks on iteration one). Beats: 'the-drowned-choir-comes-where-you-can-see-it' (d < 22 && !dead) and 'crossed-the-underfalls' (every leg && !dead) — THE survivability gate. Finale beats: 'the-hands-come-up-when-the-mirrors-wake' (snapshots _handRaise/_handsBone/visible/boneParts at first 'closing' frame) and 'the-hands-were-bone-all-along' (_handSkin.skin.color === g.mats.bone.color) — both rotation-agnostic."
+      },
+      {
+        "file": "tools/shot-bone-hands.mjs",
+        "lines": "28-51",
+        "what": "Four-frame visual harness. '02-bone-raised-at-the-closing' is exactly the k=0 state Alex screenshotted; '03-palms-on-the-glass' is k=1. Re-run after any pose edit; the mirror must NOT change between before/after — the scoping proof."
+      },
+      {
+        "file": "tests/horror-expansion.mjs",
+        "lines": "83-144, 146-208, 210-266, 297-327",
+        "what": "'no choir before the displacement' pins (83-95 cave entry, 106-118 standing at main[4] local z 50 => displacement.revealed && !choir; 120-144 exactly one choir after lowerSluice teleport). Warning literals 2.65 (150, 159), dry wetMat floor < 0.02 (151), the 1.12 s strike window (176), first-catch-nonfatal (196-208). Spray bounds: revealT > 1 && washV.length() > 2 at two sites. Death/respawn: `loops.length === 2` (318) — exactly two beginDrownedChoir calls across the whole file."
+      },
+      {
+        "file": "tests/choir-route-occlusion-regression.mjs",
+        "lines": "77-81, 124-230",
+        "what": "Line 81 disarms the authored spawn (choirArmed = true); every choir here is force-spawned with pinned state. Any NEW director-side gate must be suppressed here the same way."
+      },
+      {
+        "file": "tests/underfalls-expansion.mjs",
+        "lines": "184-300",
+        "what": "Its walkTo passes run:true — a RUNNER bot; 'real movement traverses every main-route leg && !dead' (252-262) is the weaker survivability pin. 286-300 is the KNOWN pre-existing failure (mirror-room reflected-body-next-frame; caused by the 1.6s fade; documented in HANDOFF — do not chase)."
+      },
+      {
+        "file": "tests/perf-pool-regression.mjs",
+        "lines": "42, 69, 88",
+        "what": "Compares !!g.enemies.choir across start — a reseat (same instance) is invisible to it."
+      }
+    ],
+    "diagnosis": {
+      "choir": {
+        "where_it_arms": "director.js:996 — one z-line one-shot at chapel.z + 1 (local z 55), first crossed at local (26,55) = 36% of the route by arc length. Exactly ONE trigger; beginDrownedChoir's endDrownedChoir('replace') means any second call silently kills and restarts the audio loop.",
+        "spawn_math": "choirSource = chapel + (7.2, 0, 6.6) = local (29.2, 60.6): 6.45 m from the trigger point, 34 degrees off heading. Genuinely lateral-and-ahead (the aug15 behind-you bug is fixed) but inside the room you are already standing in — it reads as 'suddenly there', not 'seen coming down the aisle'.",
+        "pursuit": "Chases heardPos breadcrumbs refreshed every footstep (walking intensity 0.68). Effective speed vs walker: lerp(1.55, 4.35, 0.68) = 3.45 m/s vs WALK 2.7 — closing 0.75 m/s. Vs runner: 4.35 < RUN 4.7 — running always escapes. Route-following through the authored corridor/chamber union; never cuts rock.",
+        "interception": "dist < 1.85 AND |dy| < 0.72 AND lineClear AND stateT > 0.22 AND wetT <= 0; strike commits to a FIXED point for 1.05 s, lands within 1.18 m. The dy gate switches the creature off for most of the vertical gallery (storey gaps 1.25/1.60) and is largely redundant with lineOfSight's own cross-storey rejection.",
+        "catch_model": "First non-miss: warned + recover + 3.8 wash push + fear + shake — no death. Second: 'spent' + director.death. caveSpray sets warned = false — four authored curtains are four extra lives; drownedChoirDrench deliberately does not.",
+        "survivability_invariant": "WALK * attackCommit = 2.835 m > attackRadius 1.18 m (2.40x). Any change must keep (WALK * attackCommit)/attackRadius above ~1.6, heardSpeed < RUN, drySpeed < WALK.",
+        "spray": "Slow x0.35 while wetT > 0 AND full commit veto — roughly 1.5-2.7 s of both per curtain at authored strengths, plus the wash shove and the cleared warned flag."
+      },
+      "hands": {
+        "who_owns_it": "NOT skull.js. finale.js:930-937 rewrites both hand rotations every frame, after skull.update (main.js order 1206 -> 1210). skull.js still owns position and visibility (raiseHands(Infinity) pins the hands into frame at the `empty` position); its rotation is discarded the same frame. A fix applied only to skull.js poses looks correct in a probe and changes nothing on screen.",
+        "current_code": "finale.js:921-938 lerps each hand rotation from the captured base (skull.js `lowered`: rx -0.06, ry ±0.34, rz ±0.05) at k=0 to (-1.28, ±0.22, ±0.05) at k=1. skull.js:648-649 applies poses as rotation.set(rx, -side*ry, -side*rz).",
+        "axes": "Local +Z = fingers, +Y = dorsum (nails, raised thumb, flattened palm normal), right thumb at local -X / left at +X — handedness baked into geometry, so the SAME rotation is correct for both hands.",
+        "what_the_player_sees": "At k=0 the fingers map to camera-space (-0.33, +0.06, +0.94) — pointing OUT of the screen at the viewer's face — and the dorsum to (0.05, 1.00, -0.04) — straight up: flat hands, palms down, fingertips at your face. At k=1 the fingers do come up but the dorsum faces AWAY — you see the palm side. Both states are rolled 180 degrees about the finger axis from correct.",
+        "correct_target": "Fingers -> camera +Y, dorsum -> camera +Z (toward viewer), local +X -> camera -X (thumbs lateral, anatomical). As an XYZ Euler: (rx -PI/2, ry 0, rz PI). Compared with the press pose (-1.28, ±0.22, ±0.05): x and y are already essentially right — THE ONLY MISSING TERM IS THE ROLL. Add ±PI to rz (mirrored per hand), on BOTH endpoints, and lift the k=0 base rx from -0.06 to ~-1.24 (roll alone would give 'fingers at your face, palms up'). Do NOT lerp rz from 0.05 to PI — both endpoints must carry the roll or the press blend visibly spins the hand. The roll is a rigid rotation of the whole group: anatomy, finger hierarchy, sleeve all preserved.",
+        "mirror_scoping_proof": "The mirror cameras render MASK_DOUBLE (layers 0|3); the viewmodel is on LAYER_HELD (2) and is never reflected. What Alex sees in the glass is the reflection body's own authored hands (finale.js:606-636) on LAYER_DOUBLE, driven only by fd.arms shoulder/elbow. Rotating the viewmodel hands cannot change the reflection by any path."
+      }
+    },
+    "edit_points": [
+      {
+        "group": "A — Choir: harder, and seen coming from deep ahead",
+        "items": [
+          "A1. underfalls.js — add arc-length helpers beside segmentProjection (after line 200): `mainRouteDistanceAt(layout, x, z)` (smallest-d segmentProjection -> routeDistance) and `mainRoutePointAt(layout, distance)` (walk mainSegments by cumulative distance, lerp — y from the segment lerp, not groundAt, so the sluice ramp stays continuous). Expose both on the state object next to `route` (1512-1516). Encode the gotcha in a comment: projectUnderfalls returns routeDistance NULL inside chamber discs (182) — never use it for this.",
+          "A2. director.js:299-303 — compute the spawn AT ARM TIME in _updateCaveHorror (leave only the fallback in _enterCave). RECOMMENDED (A2a): move the trigger to `choirTriggerZ = layout.chapel.z - 4` (local z 50, the chapel west aisle) and spawn at `chapel + (7.5, 0, 5.5)` = local (29.5, 59.5) — verified inside the chapel disc, 16.5 m from the trigger point at 9 degrees off the walking heading: a figure standing across the largest room in the district, dead ahead, in the chapel's own light. FALLBACK (A2b, no test churn): keep the trigger and spawn at mainRoutePointAt(routeDistance(player) + 20). A2a is the one that answers 'way in front of you'.",
+          "A3. director.js same block — validate the spawn: back it off along the route in 2 m steps while !contains(p, -0.6) or !route(player, p, {pad 0.2})?.reachable, final fallback = the current fixed chapel offset. Must be side-effect-free when handed the boot-time warm-up player position (main.js:494-512).",
+          "A4. enemies.js:29-39 — drySpeed 1.55 -> 2.60 (walker pursuit becomes lerp(2.60,4.35,0.68) = 3.79, closing 1.09 m/s, +45%; still < WALK when it has heard nothing). heardSpeed 4.35 -> LEAVE (must stay < RUN 4.7 — the escape rail). attackRange 1.85 -> 2.30. attackCommit 1.05 -> 0.92. attackRadius 1.18 -> 1.30. recovery 1.25 -> 0.95. warning 2.65 -> 2.20 (ONLY with the far A2a spawn). CHECK: WALK*0.92 = 2.48 > 1.30, margin 1.9x — a walker who keeps walking still always escapes; a standing player dies. That is the design.",
+          "A5. enemies.js:2192 — spray slow 0.35 -> 0.55; enemies.js:2199 — commit gate `wetT <= 0` -> `wetT <= 0.4` (strike immunity ~half the slow instead of all of it).",
+          "A6. enemies.js:1100, 1113-1114 — shorten the drench: wetT `0.9 + exposure*1.7` -> `0.55 + exposure*0.85`; washV `2.8 + exposure*5.2` -> `2.2 + exposure*3.6`. Do NOT touch 1101 (revealT) or 1102 (`warned = false`): horror-expansion pins revealT > 1 and washV > 2 at two sites (new numbers give 5.8 / 5.01 — pass), and the warned re-arm is the walking bot's spare life.",
+          "A7. enemies.js:2196 and 2213 — open the dy gate 0.72 -> 1.05 in BOTH places, so the vertical gallery stops being a free zone. Safe: lineOfSight already vetoes genuinely different storeys (floorTolerance 0.62 + discontinuity 0.48) and the real storey gaps are 1.25/1.60.",
+          "A8. Second beat WITHOUT a second spawn: add `choirReseatZ = layout.lowerSluice.z` + `choirReseated` to _caveEcology; when crossed with a live choir whose _choirPlayerRoute distance > 14, call a NEW `Enemies.reseatDrownedChoir(pos)` (beside beginDrownedChoir): e.pos = mainRoutePointAt(routeDistance(player) + 11), clear e.nav/acousticNav, state 'stalk', stateT 0, revealT 2.4, push ['choir','ahead',...] to spawnLog. NEVER beginDrownedChoir twice — line 1009 restarts the audio loop and horror-expansion:318 pins loops.length === 2.",
+          "A9. enemies.js:1138-1151 — extend getDrownedChoirState with `reseats`, `pursuitSpeed`, `routeDistanceToPlayer` so the playthrough can assert intent, not just proximity."
+        ]
+      },
+      {
+        "group": "B — Hands: turn the raised first-person pose the right way round",
+        "items": [
+          "B1. finale.js module scope — add authored raised rotations: `const RAISED_L = Object.freeze({ x: -1.24, y: 0.30, z: Math.PI - 0.10 });` and `const RAISED_R = Object.freeze({ x: -1.24, y: -0.30, z: -(Math.PI - 0.10) });` — the (-PI/2, 0, PI) target softened by the existing splay: fingers up, backs of the hands to the camera, thumbs lateral.",
+          "B2. finale.js:930-937 — replace the k=0 endpoints AND roll the k=1 targets: `h.left.rotation.set(lerp(RAISED_L.x, -1.28, k), lerp(RAISED_L.y, 0.22, k), lerp(RAISED_L.z, Math.PI - 0.05, k));` and `h.right.rotation.set(lerp(RAISED_R.x, -1.28, k), lerp(RAISED_R.y, -0.22, k), lerp(RAISED_R.z, -(Math.PI - 0.05), k));`. Both endpoints carry the roll, so the press blend never spins through the palm-toward-camera pose. This single edit fixes both the raised beat and the glass press.",
+          "B3. finale.js:862-887 — keep _captureEmptyHands (begin() calls _restoreEmptyHands(1)); leftRot/rightRot simply stop being the k=0 target (B2 does this). Do not delete the capture.",
+          "B4. OPTIONAL: add a `raised` row to skull.js's pose table and blend it whenever _handRaise > 0, so the raise reads identically game-wide and finale stops writing rotations at k=0 — cleaner, but touches every act's viewmodel; only if raiseHands should mean something outside the mirror room. If NOT taken, add a comment at skull.js:523 that the mirror room overrides these rotations from finale.js:930 — that is the trap that wastes the next person's afternoon.",
+          "B5. Do NOT 'fix' the flip by negating thumb/finger x offsets in mkHand — that mirrors each hand into its opposite (a left hand on the right wrist). The correct change is a rigid roll of the hand GROUP about local Z."
+        ]
+      }
+    ],
+    "risks": [
+      "HANDS: the fix MUST land in finale.js — skull.js does not own the raised orientation in the mirror room (finale.js rewrites it every frame, later in the update order). A skull-only fix passes a probe and changes nothing on screen.",
+      "HANDS: the k=0 base currently aliases skull.js's `lowered` row via _captureEmptyHands — changing `lowered` for the cave would silently move the mirror room's raised hands. RAISED_L/RAISED_R sever that coupling.",
+      "HANDS: lerping rz 0.05 -> PI would visibly spin each hand 180 degrees during a wall press — both endpoints must carry the roll.",
+      "HANDS: the sleeve child (skull.js:491-494, rotation.x 1.3 tuned for the low pose) — the roll keeps the cuff exiting frame, but check shot 02 for a wrist gap.",
+      "CHOIR: beginDrownedChoir is a REPLACE (1009) — a second call stops/restarts the audio loop and adds a spawnLog row; horror-expansion:318 pins loops.length === 2. Reseat the live instance; never re-begin.",
+      "CHOIR: heardSpeed must stay < RUN 4.7 or running stops being the escape and the encounter becomes unloseable-by-movement. Raise drySpeed — the term a walker actually experiences.",
+      "CHOIR: the survivability inequality (WALK * attackCommit > attackRadius) is being squeezed from both ends (0.92 / 1.30 => 1.9x, from 2.4x). Do not go below ~1.6x — the playthrough bot's velocity lerp dips toward zero at the hairpin.",
+      "CHOIR: caveSpray clearing e.warned is a hidden extra life x4 curtains. Removing it starves the walking bot's second-catch margin and no test name will say so.",
+      "CHOIR: do not trigger earlier than layout.main[4] (local z 50) — the false-sighting-first ordering (displacement heard at local (14.23, 41.17)) needs the margin; chapel.z - 4 is comfortably second. Re-measure before going earlier.",
+      "CHOIR: arc-length spawns from projectUnderfalls are silently null inside the chapel (chamber projections carry no routeDistance) — use mainSegments directly; validate reachability (a point behind the pump altar routes forever and never arrives).",
+      "CHOIR: choir-route-occlusion-regression.mjs:81 disarms choirArmed only — a new choirReseated gate must be suppressed there too or the authored reseat moves that file's force-spawned choirs mid-assertion.",
+      "PRE-EXISTING, not yours: underfalls-expansion.mjs:286-300 (mirror-room reflected-body-next-frame) fails because of the 1.6 s fade — documented in HANDOFF; do not chase."
+    ],
+    "tests": [
+      "MUST UPDATE (A2a only) — horror-expansion.mjs:102-118 stands the player at main[4] (local z 50), which a chapel.z - 4 trigger now arms. Re-point the stand to ~local (14.5, 42.5): past the displacement's heard threshold, short of the new trigger — the assertion keeps its meaning.",
+      "MUST UPDATE (A4) — horror-expansion.mjs:146-163: two 2.65 warning literals (150, 159) + the 1.68 s advance (156) move with DROWNED_CHOIR.warning.",
+      "MUST CHECK — horror-expansion.mjs:150-153 (`wetMat.opacity < 0.02` dry floor; current 0.012 — do not raise wetMat past the literal); 176-193 (1.12 s strike window > new commit 0.92 — passes); 210-266 (revealT > 1, washV > 2 — new numbers pass at 5.8/5.01).",
+      "MUST NOT BREAK — horror-expansion.mjs:297-327 loops.length === 2 (forbids any second beginDrownedChoir); 83-95 (no choir on cave entry); 120-144 (exactly one choir after lowerSluice teleport — true for any trigger between entrance and lower sluice).",
+      "THE WALKING-SURVIVABILITY GATE — playthrough.mjs:1017-1028 'crossed-the-underfalls': the bot WALKS every leg and must not die. If the new numbers can kill a walker, this goes red. Run the full playthrough after every constant change; nothing else exercises a real walking player against the live trigger.",
+      "SHOULD TIGHTEN — playthrough.mjs:1014-1016: today `choirSeen.d < 22 && !dead`; new intent `choirSeen.facing > 0.35 && d > 8 && d < 22 && reveal > 0.25` — seen FAR ahead and actually lit. Note the sampler only reads at leg arrivals (the for-loop always breaks on iteration one); move the probe inside walkTo to pin the approach itself.",
+      "SHOULD ADD (A8) — assert the reseat happened without a respawn: spawnLog has exactly one ['choir','warning'] row and >= 1 ['choir','ahead'] row.",
+      "MUST UPDATE IF A8 LANDS — choir-route-occlusion-regression.mjs:77-81 must also set choirReseated = true.",
+      "HANDS, KEEP PASSING — playthrough.mjs:1060-1064 (_handSkin.skin identity + bone color copy) and 1052-1054 (raise snapshot at first 'closing' frame) — rotation-agnostic; do not swap material objects while in there.",
+      "HANDS, THE CHECK TO ADD (would have caught the bug): at the first 'closing' frame, hand world quaternion relative to the camera: dorsal = (0,1,0) applied, fingers = (0,0,1) applied; require dorsal.z > 0.6 (back of hand toward viewer) and fingers.y > 0.5 (fingers up). Current values: dorsal.z = -0.04, fingers.y = +0.06 — fails today, passes after B2. Mirror for hands[0].",
+      "HANDS, VISUAL — re-run tools/shot-bone-hands.mjs: '02-bone-raised-at-the-closing' (Alex's exact frame) and '03-palms-on-the-glass' must show knuckles + metacarpal fan with fingertips leaving the TOP of the hand mass; NOTHING in the mirror may change between before/after — the scoping proof."
+    ]
+  }
+}

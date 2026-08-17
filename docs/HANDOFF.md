@@ -1,3 +1,302 @@
+# HANDOFF — 2026-08-17: ROUND FOUR (branch claude/aug17-notes)
+
+Written by Claude Fable 5 for Claude Opus 5 — same arrangement as the last two
+rounds: Fable plans, Opus builds, and it has worked twice. Work at a lean
+spend: no agent fan-outs, batch edits, targeted probes between gate runs.
+
+## Where you are
+
+- Worktree `C:\Users\Alex\Projects\fetch-aug17`, branch `claude/aug17-notes`,
+  branched off `4e33618` = the tip of `claude/aug16-notes` = game PR #29
+  (OPEN, stacked on #28 → #27) = what is LIVE at qualiacology.com/fetch via
+  site PR #68. Your PR will be #30, fourth storey of the same stack, base
+  `claude/aug16-notes`. Do not rebase anything. The shared checkout
+  `Projects\fetch-claude` is STALE — worktrees only.
+- THE SPEC is `docs/CHANGE-ORDER-2026-08-17.md` — Alex's live-play notes
+  verbatim (he HAS now played Round Three), plus his fourteen screenshots
+  decoded. His words outrank this plan.
+- THE RECON is `docs/analysis/recon-2026-08-17.json` — six subsystem reports
+  (summary / code_map / diagnosis / edit_points / risks / tests) produced by
+  parallel readers against THIS exact tree. The `code_map` entries carry the
+  file:line anchors this plan deliberately does not repeat — read the matching
+  key as you start each task. Line numbers drift as you edit; trust function
+  and flag names over numbers as the build progresses.
+- Read first: `AGENTS.md`, then the two round-three sections below this one,
+  then the spec, then the recon key per task.
+- DEPLOY AUTHORIZATION: Alex, in chat, this round: "we will update the
+  website in opus 5 instructions like at the end of last round like it said
+  there." Same law as last round: merge the site PR only once every gate and
+  the boot-check are green, then verify production boot, and tell Alex to
+  HARD-REFRESH before he plays.
+
+## What the recon overturned (read this before building anything)
+
+1. **Last round's "the gate's 3-key logic was airtight" was WRONG — reopen
+   it.** The §3 respawn bug is real, reproduced in code, and verified
+   verbatim by the planner: `gateKeys.restore()` (outside.js ~1427) replays
+   the `gateKeyBanked:<n>` flag by KEY NUMBER onto SOCKET INDEX n-1, while
+   `bankAny()` seats keys in the LOWEST EMPTY socket. Bank out of order, die
+   anywhere (marrow is just the likeliest place), respawn → phantom filled
+   sockets, `_opened` latches true WITHOUT opening, `graveyardCleared` never
+   flags, all three weights drop across the gate, and every further bank
+   refuses with the locked rattle. Permanent softlock. The same mismatch,
+   one death earlier, opens the gate on TWO real keys — which is almost
+   certainly what Alex actually saw last round when the previous recon closed
+   his report as a miscount. No test ever calls restore(); the playthrough
+   banks in ascending order, so the whole suite is structurally blind to it.
+2. **The §8 walkway block is the ossuary's forest-side ARRIVAL HATCH** — a
+   pale stone lid + curb ring + a solid 1.36 m collider planted dead centre
+   of the gate gap, serving a climb-out route that `const hatchT = 0` seals
+   forever. Orphan scenery. It gets DELETED, not retracted — it obstructs
+   identically before the gate opens, and the walkway-band regression missed
+   it because it only reads the three weight meshes, not colliders.
+3. **The ossuary's "weight that does nothing" already lowers a real wall, and
+   the "weird wall at the beginning" is a MISSING wall.** The counterweight
+   already sinks `exitSlab` (a full-corridor stone) — but gateKey1 spawns
+   2.75 m in FRONT of that wall, so the wall gates nothing the player wants;
+   §6 and §7 are the same design bug seen from two ends. Moving the key to
+   the stair top makes the existing mechanism load-bearing; no second wall is
+   built. And the corridor's near end has NO cap mesh and NO collider — the
+   flat dark-blue plane Alex photographed is the renderer's clear colour seen
+   through the open end of the model.
+4. **The §1 window scare is five compounding bugs, not a short timer.** The
+   fully-risen figure exists for 0.85 s total; staring at it makes it leave
+   FASTER (dt/3.1 watched vs dt/6 unwatched); walking toward it deletes it
+   instantly and permanently; looking away for 0.55 s deletes it (the
+   author's own guard at ~house.js:4509 is dead code — spawn sets w.t to
+   exactly the value the strict `<` compares against); and the unwatched
+   creep completes the whole beat off-camera in 3 s — recorded flag dumps
+   prove it fires unseen in unrelated tests. Audio fires the same frame as
+   the reveal, inverting the audio-first law. Zero tests pin any of it.
+5. **The §13 hands are rolled exactly 180° about their own finger axis, and
+   the fix must land in finale.js, not skull.js.** `_updatePressure`
+   (finale.js ~921-938) rewrites both hand rotations EVERY frame after
+   skull.update — a skull.js pose fix passes a probe and changes nothing on
+   screen. The mirror is provably unaffected: the viewmodel lives on
+   LAYER_HELD, which the mirror cameras' MASK_DOUBLE never renders; the
+   hands in the glass are the reflection body's own authored hands.
+6. **The binding budget is GEOMETRIES, not draws.** smoke.mjs caps
+   `geometries < 1500` and the mirror act records 1472 — 28 free, cumulative
+   game-wide, never written down until now. The falls-field spec spends ≤5.
+   Run smoke first after adding any new BufferGeometry; if maxGeometries
+   crosses 1490, cut the optional soil-burst mesh first. Draws are roomy:
+   clearing 210/450, occupied ossuary 222/450; the tight frame remains
+   house-after-cave at 448/450, which act-gated falls/ossuary work never
+   touches as long as new objects ride `state.roots` / `routeRoot`.
+
+## Decisions already taken (don't relitigate)
+
+- **Gate restore() is rewritten in the count-derivation form** [recon:
+  gate-respawn, edit 1]: derive n from the `gateKeyBanked:1..3` flags, fill
+  the lowest n sockets, and if n ≥ 3 either latch `_opened` (when
+  `graveyardCleared` already set) or call `openTheGate()` — which also
+  self-heals a session already corrupted. Idempotent (restore runs TWICE per
+  respawn). Do NOT rename the flag (makeGateKey reads it correctly by key
+  number); do NOT re-key bankAny() to seat by key number — the bottom-up
+  tally is the no-HUD progress read. Harden openTheGate()'s guard so
+  `_opened` can never hold while the gate is shut.
+- **The invariant is "progress survives death"** — flags never clear, the
+  carried key survives, the ossuary force-restores solved. Do not invent a
+  key-return mechanic.
+- **The arrival hatch is deleted wholesale** [recon: gate-respawn, edits
+  5-6; the ossuary recon's C7 defers to this]: geometry, collider,
+  `state.arrival`, the lookback-roots push, and every dangling animation
+  reference (`arrival.pivot`, `arrivalKick`) — leaving one behind throws in
+  the ossuary ticker every frame. regressions' `ossuary-climb` pins the slab
+  SHUT today (`arrival.pivot.rotation.x > -0.02`) — rewrite to assert-gone.
+- **Basement = the pawl becomes a flush pressure plate** (Alex's option b)
+  [recon: basement]: slide to the end of the bridge deck on the crossing
+  centerline (-17.72, B, -3), lid sunk to a 10 cm plate, tines interlocking
+  into a below-floor keeper, jaw drive re-aimed to sink the lid flush. THE
+  LATCH LINE DOES NOT MOVE: `onFarLanding` (x < -17.28) stays byte-identical
+  — two tests assert that threshold and two more use fixed-duration
+  crossings with no slack. The new plate band (east edge -17.32) drives only
+  a pre-latch visual/audio depress. Keep the throw door alive by switching
+  the fetch target from `object: pawl` to a fixed `pos` at B+0.5 — sinking
+  the group would silently drop the catch sphere to ankle height.
+- **Ossuary entry and exit are E-verb hatches; the swap still executes in
+  the ticker** [recon: ossuary, group A]: the entry reuses the EXISTING
+  surfaceSlab slide pose driven by a new `entryLid` scalar instead of the
+  funeral; a new near-end cap wall kills the dark-blue void AND the
+  groundHeightAt fall-through, with a matching exit hatch cut into it.
+  Verbs ARM, the district ticker EXECUTES — a swap called from an interact
+  action corrupts the seal's save/restore maps. Every new state is a scalar
+  the director restore can seat in one assignment. The lid opens regardless
+  of skull state; only the swap requires the held skull. Exit arrival faces
+  OUT (yaw 0), not the mausoleum's back wall.
+- **Ossuary enemies**: the caged LUNGER behind the kennel bars (scripted
+  mesh on a ticker, ONE merged geometry, never an Enemies-system walker — it
+  would grind on the bars) + a second tethered Standing-Kind at the east
+  pocket (tether 1.8, `ossuaryResident` + `keepInOssuary` or it survives the
+  exit teleports as a phantom). The lunger retires when the kennel solves so
+  the seated-witness reveal keeps its quiet beat. Nothing between z 15.4 and
+  18.2 (the counterweight hold), nothing untethered in the corridor.
+- **Top of stairs = plain ceiling; gateKey1 moves up there** [recon:
+  ossuary, group C]: delete lid kit, permalock chains, mouth dressing; close
+  the deck with one merged slab (check the 1.9 m headroom with a shot; raise
+  DECK_Y if it reads low); reveal the key at world (-72.45, ~-0.75, 24.7) —
+  beyond the exit slab, so the weight finally gates the thing the player
+  wants. Keep the counted-take chord; do not switch to giveToJaw.
+  tools/shot-lid.mjs and shot-aug14's pose 05 are orphaned — retire or
+  retarget in the same commit. 'ossuaryExited' goes dead — grep it out of
+  src and tests together.
+- **Bugs on the ossuary floor = a new one-draw instanced scuttle patch**
+  [recon: ossuary, D7-D10] — nothing exists to reuse (verified). Unlit
+  near-black silhouettes (the spider look-law), stop-motion quantised
+  twitch, dart-away + throttled skitter audio. No colliders, no targets, no
+  lights. `noBatch`, routeRoot child.
+- **Falls popups go full marrow** [recon: falls-field, group A]: KIN 6 → 22
+  (instanced — zero extra draws), 16 new sites CLUSTERED on the wheel and
+  gong approaches (all verified ≥2.4 m clear of every playthrough walk leg),
+  ease-out under-floor breach + vertical stretch + lateral shudder + LOOM
+  (40% taller as you close) + marrow's 0.32 s splay-fold + the two-thud
+  under-your-feet tail + walkerRise layered under the crack-thud. Stagger
+  arrivals (audio has no voice cap — 6-8 simultaneous breaches would clip
+  the bus). Re-arm 'gone' sites at d > 14, capped ~3. NO colliders, NO
+  fetch targets, NO damage, NO death — walk-through is the verb.
+- **The map edge closes by APPENDING, not editing** [recon: falls-field,
+  group B]: a fourth tree-placement pass on a NEW RNG seed (the 0x9f21
+  stream is position-order-dependent — editing the existing loop moves all
+  92 trees and invalidates every shot; same precedent as last round's
+  perimeter masses), denser far-z mass rows, corner aprons, and silhouette
+  masses closing the south sightline WITHOUT colliders (the arrival corridor
+  must stay open).
+- **The pond**: both far streams end in pooled termini at C-relative
+  (±23.3, -22.5) — one 2-instance CircleGeometry InstancedMesh sharing the
+  existing waterMat (the feederPoolMesh recipe), world.box bank rings,
+  instanced reeds. +1 draw, +1 geometry, clear of walk legs, fire lines and
+  brazier arrays ("not in front of the things that create the two things").
+- **River crossing = stepping stones as pure signage** — the streams are
+  ALREADY walkable (no collider, no terrain change); do not touch physics.
+  One instanced flat-top stone set, ≥1.6× the stream's luminance + small
+  emissive, three crossings per stream. And the basin gets the opposite
+  read: a FOAM LINE moved out to the actual lethal edge (the ring today
+  stops 2.5 m short), raised bank masses BESIDE the |x|<3.0 lip gap (never
+  in it — the bridge stones rise through that lane), glassy-black centre.
+  The learned rule: foam + stone lip = death; flat + stepping stones =
+  cross. Value and shape, never hue.
+- **The throw glow** [recon: falls-field, group C]: hang on `fallsThawed` +
+  the 'waterfall' target's own enabled bit; three layers — ~90 converging
+  kind-1 motes spiralling into the mouth, one corona sprite breathing at
+  (C.x, 8.0, C.z+19.55), and the EXISTING dormant fallGlow PointLight
+  repositioned/brightened (pinned at boot — animating intensity cannot
+  recompile; never write its colour). NO new light, NO candle descriptor
+  (the pool is 8/8 at the shore braziers — evicting one breaks the
+  colorblind fire read). Gated absent-before-thaw, faded after
+  'waterfallTaken' (a glow that outlives the bargain is a UI leftover).
+  One placed audio cue as it arrives; tighten the skull's head-turn gesture
+  to gaze at the exact target point.
+- **The Choir** [recon: underfalls-finale, group A]: take variant A2a — the
+  trigger moves to chapel.z - 4 and the spawn stands across the chapel
+  ~16.5 m dead ahead in its own light ("way in front of you"); drySpeed
+  1.55 → 2.60 (heardSpeed UNTOUCHED — it must stay under RUN or running
+  stops being the escape); attackRange 2.30, attackCommit 0.92, attackRadius
+  1.30, recovery 0.95, warning 2.20; spray slow 0.35 → 0.55 with the commit
+  veto at wetT ≤ 0.4 and a shortened drench; dy gate 0.72 → 1.05 in BOTH
+  places; and a lowerSluice RESEAT (never a second beginDrownedChoir — it
+  restarts the audio loop and horror-expansion pins loops.length === 2).
+  The survivability inequality (WALK × commit = 2.48 > radius 1.30, margin
+  1.9×) is the contract — run the full playthrough after every constant
+  change; do not let the walking bot die.
+- **The hands** [recon: underfalls-finale, group B]: authored RAISED_L /
+  RAISED_R constants in finale.js — the ±π roll about each hand's own local
+  Z (finger axis) with base rx lifted to ~-1.24 — applied to BOTH lerp
+  endpoints (rolling only one end spins the hand through palm-toward-camera
+  during a press). Do NOT mirror the geometry (that makes a left hand on
+  the right wrist). Add the relative-quaternion orientation check the recon
+  specs — it fails today and passes after the fix — and re-run
+  tools/shot-bone-hands.mjs: knuckles and metacarpal fan toward the lens,
+  and NOTHING in the mirror may change between before/after.
+
+## The plan, in build order
+
+Each task: read `docs/analysis/recon-2026-08-17.json` → that key's
+`code_map` + `edit_points` + `tests` first. They are the instructions; this
+list is the order and the intent.
+
+1. **GATE — fix restore(), delete the arrival hatch** [recon: gate-respawn]
+   §3 + §8. The bug of the round, and the smallest diff. restore() rewrite,
+   openTheGate() guard, reset() symmetry note, hatch deletion with all six
+   dangling references, ossuary-climb rewrite. New pins: the out-of-order
+   bank × respawn matrix (all 6 orders — the bug hides in 5 of them), the
+   softlock invariant (banked ≥ 3 ⇒ gate open or opening), and the
+   collider-scan + straight-walk walkway pin that replaces the weights-only
+   band check. Do this first: everything else in the graveyard builds on a
+   gate that can be trusted.
+
+2. **FINALE HANDS — the π roll** [recon: underfalls-finale, group B]
+   §13. Tiny, isolated, huge payoff. RAISED_L/RAISED_R, both endpoints,
+   orientation pin, shot pair.
+
+3. **WINDOW SCARE — let it be seen** [recon: window-scare]
+   §1. All ten edit points are one beat in house.js: audio lead-in before
+   pixels, unwatched creep capped at 0.82 (it can never complete unseen),
+   watched advance slowed and made a HOLD (press state, ~3 s at the pane,
+   view-cone proof with a real LOS test — cone widening and LOS ship
+   together), look-away FREEZES instead of deleting (the crawler's law),
+   close-approach recoils instead of vanishing, slower sash/fold/skitter,
+   landing pose out of the floorboards, arm gated on landing presence.
+   Watch the Resident-delay overlap (HOUSE_RESIDENT_DELAY = 18) and audit
+   all five `root.visible` writers before adding states. New test modelled
+   verbatim on the crawler's (house-critical-path:873) using the existing
+   `windowWatcher.force(0)` hook, plus a playthrough landing beat.
+
+4. **BASEMENT — the pawl earns its position** [recon: basement]
+   §2. Relocate + flatten to the plate, re-aim the jaw drive (kill the
+   hard-coded -17.48 slide), fetch target to fixed pos, plate band WEST of
+   the latch line, conduit stub, no collider, no new light. New
+   basement-foundations assertion pinning position + height so it can never
+   drift back into a wall.
+
+5. **OSSUARY — hatches, key, enemies, vermin** [recon: ossuary]
+   §4-§7. The biggest task; take it in the recon's A → C → D → B order:
+   entry lid first (A1-A5), near cap wall + exit hatch (A6-A11), then the
+   stair-top deletion + key move (C1-C10), then the wall framing/wiring/
+   sound (D1-D5) and the scuttle patch (D6-D10), then the lunger + the
+   east-pocket walker (B1-B6). Five test files change (probe-ossuary,
+   regressions ossuary-climb + ossuary-kennel, district-culling forward-exit
+   block, playthrough ossuary leg) — rewrite them deliberately, never stub.
+   The seal, batching, ordering and restore laws at the top of the recon's
+   risks are the four ways this task goes wrong.
+
+6. **FALLS FIELD — eruptors, edge, pond, stones, glow** [recon: falls-field]
+   §9-§11. A (kin) is free in draws and mostly arithmetic; B (edge/pond/
+   stones/basin) is world.box + two instanced meshes; C (glow) is three
+   layers on existing anchors. Respect the RNG-append rule, the geometry
+   budget, the candle pool, the wheel's 'anchor' contract, and the
+   no-fetch-target trap. New falls-field-regression suite + the before/after
+   thaw shot pair; extend probe-bounds' clearing rows to prove the world
+   actually closed.
+
+7. **CHOIR — harder, seen coming** [recon: underfalls-finale, group A]
+   §12. Arc-length helpers, A2a trigger + spawn, the constants, the reseat,
+   getDrownedChoirState extensions. horror-expansion's stand-point and
+   warning literals move; choir-route-occlusion gets the new gate
+   suppressed. Then run the playthrough TWICE — the walking-survivability
+   beat is the acceptance test, and the known 'fire-refused-the-skull'
+   flake (~1 in 3, unrelated) means one red run proves nothing. Last in the
+   order because it is the only task that can destabilise the long gate.
+
+## Gates, ship, deploy
+
+- All four gates green before merge: autotest, regressions, smoke,
+  playthrough — plus district-culling, render-perf, and the probes/tools
+  named per task. Known pre-existing failure that is NOT yours:
+  underfalls-expansion's mirror-room reflected-body check (the 1.6 s fade;
+  documented last round). Known flake: playthrough 'fire-refused-the-skull'
+  ~1 in 3 — re-run before believing it.
+- Record the new clearing draw number and the new maxGeometries in this
+  file when you close the round, the way 203→210 was recorded.
+- Commit style: repo default identity, `Co-Authored-By:` your model tag,
+  lane-scoped messages like the log below.
+- PR #30 base `claude/aug16-notes`. Then the site: shell-copy `src/` +
+  runtime assets into the qualiacology repo per ITS AGENTS.md (read it
+  first), site PR, merge on green + boot-check, verify production, and the
+  closing HANDOFF section here: what shipped, what was not what it looked
+  like, numbers, and anything still open. Tell Alex to HARD-REFRESH.
+
+---
+
 # HANDOFF — 2026-08-17: ROUND THREE IS BUILT AND LIVE (branch claude/aug16-notes)
 
 All nine of Alex's 2026-08-16 notes are built, gated and deployed.
