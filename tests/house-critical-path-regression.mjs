@@ -333,6 +333,11 @@ try {
     F.start();
     F.teleport('house');
     g.enemies.clear();
+    // The pump winch will not take the skull until the crawl-wing cage hangs
+    // its drive weight. That link has its own pages (basement-foundations and
+    // the playthrough, which solves it for real on the way past); this one is
+    // about the pilot, the draft and the firebox that follow it.
+    g.flag('crawlSecretSolved');
     const aimAt = (x, y, z) => {
       const dx = x - g.player.pos.x;
       const dy = y - (g.player.pos.y + 1.62);

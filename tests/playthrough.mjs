@@ -727,10 +727,14 @@ try {
     // grave, so there is one throw here and no second aimed one to make while
     // the mourners are already coming.
     const key2 = g.gateKeys.list[1];
+    // the relic still exists — it moved up to the yard's hero grave beside the
+    // canine — it is just not standing on top of the key any more
+    const relicMesh = g.scene.getObjectByName('the relic');
     beat('the-altar-holds-the-key-and-nothing-else',
       key2.revealed === true && key2.key.visible === true && key2.target.enabled === true
-      && !g.scene.getObjectByName('the relic'),
-      { revealed: key2.revealed, fetchable: key2.target.enabled });
+      && (!relicMesh || Math.abs(relicMesh.position.z - (M.origin.z + 23.8)) > 20),
+      { revealed: key2.revealed, fetchable: key2.target.enabled,
+        relicAt: relicMesh ? relicMesh.position.toArray().map((v) => +v.toFixed(1)) : null });
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
     const keyY = M.origin.floor + 1.24, keyZ = M.origin.z + 26 - 2.2;
     aimAt(M.origin.x, keyY, keyZ);

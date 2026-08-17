@@ -816,10 +816,16 @@ try {
     // the altar holds GATE KEY 2 and nothing else now — the relic went up to
     // the yard's hero grave beside the canine — and one throw takes it
     const key2 = g.gateKeys.list[1];
+    // the relic still EXISTS — it is up in the yard's hero grave now, beside
+    // the canine — it just is not on this altar any more
+    const relicMesh = g.scene.getObjectByName('the relic');
+    const altarZ = M.origin.z + 26 - 2.2;
     check('the altar holds only the key, and the guardian was the lock',
       key2.revealed === true && key2.target.enabled === true
-      && !g.scene.getObjectByName('the relic'),
-      { revealed: key2.revealed, fetchable: key2.target.enabled });
+      && (!relicMesh || Math.hypot(relicMesh.position.x - M.origin.x,
+        relicMesh.position.z - altarZ) > 20),
+      { revealed: key2.revealed, fetchable: key2.target.enabled,
+        relicAt: relicMesh ? relicMesh.position.toArray().map((v) => +v.toFixed(1)) : null });
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
     const keyY = M.origin.floor + 1.24;
     const dz2 = (M.origin.z + 26 - 2.2) - g.player.pos.z;
