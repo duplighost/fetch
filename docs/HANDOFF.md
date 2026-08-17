@@ -1,3 +1,96 @@
+# HANDOFF — 2026-08-17: ROUND THREE IS BUILT AND LIVE (branch claude/aug16-notes)
+
+All nine of Alex's 2026-08-16 notes are built, gated and deployed.
+Game PR **#29** (open, stacks on #28 → #27 — do not rebase).
+Site PR **#68 MERGED**; production boot-checked green.
+**HE HAS NOT PLAYED IT YET. Tell him to HARD-REFRESH before he does.**
+
+## What shipped, by his numbered note
+
+- **§1 basement contraption** — the crawl-wing cage is the pump winch's drive
+  weight now. The winch refuses the skull until it hangs, with a locked rattle
+  at the drum and three knocks walking back east to the cage; a conduit run
+  joins the two so they read as one machine. Bonus: the decorative boiler
+  answers a throw and hops two knocks toward the incinerator.
+- **§2 perimeter** — two more M.dirt aprons close z 16..44 on both fence sides
+  (the aug15 aprons stopped at 16 and its own 22 masses a side stood on
+  blackness), 34 new masses, a nearer treeline ring at 26-42 m, grass past the
+  rails. Zero draws: the gate header went into the metal batch to pay for the
+  latch chains, so house-after-cave holds at 448/450.
+- **§3 key tree** — one large limb hanging ACROSS the way in, key near its
+  shoulder, body over its middle, one hit fells it. Balls gone.
+- **§4 marrow** — altar keeps only gate key 2 (visible from the first frame,
+  takeable on the guardian's yield); the relic moved to hero grave #6 as a
+  second sequential fetch after the canine.
+- **§5 ossuary** — see "what it actually was" below.
+- **§6 gate** — weights count the sockets, hang on chains, retract at open.
+  Every gate-key take now plays the lock-stone's chord.
+- **§7 past the woods** — two tree-lined paths (92 trees, placed by a rejection
+  test that keeps them off the basin, both fire lines, both brazier arrays and
+  every playthrough walk line), the layer's first colliders, ground aprons and
+  50 masses beyond them, a stream on each far side, and six merged marrow kin
+  that rise, loom, and fold when you walk into them. No damage, no death.
+- **§8 Drowned Choir** — arms in the chapel (was the lower sluice, ~60% in),
+  stands across the room (was 3 m behind you), dry visibility floors raised
+  from 0.001-0.02 to 0.018-0.19, reveals decay at 0.62×, spray slows it to a
+  third instead of 8%.
+- **§9 finale hands** — a real skeleton: phalanx shafts and condyles inside the
+  same k1/k2 groups, four metacarpals and a carpal block, no webbing, no
+  nails. Bone at `Finale.begin()`, raised at the 'still'→'closing' beat.
+
+## The three things that were not what they looked like
+
+1. **The ossuary "can't be entered" was ONE CENTIMETRE.** Its void plane sat at
+   y 0.035 under the mausoleum's interior dirt slab (top face 0.045), so the
+   way down rendered as unbroken floor and its five stair treads were inside
+   solid geometry. The trigger had always worked. It wears the marrow mouth's
+   grammar now — void at 0.07, broken slabs around it — because that is the
+   hatch he DID find.
+2. **The gate's 3-key logic was airtight.** His count was off because gateKey2
+   rode into the jaw silently with the relic. The floating things were the
+   latch weights.
+3. **The Choir was never missing.** It was authored where he could not look.
+
+## Traps this round added to the pile
+
+- **Cutting a hole in a merged shell floor makes an AO seam.** Splitting the
+  3×3 dirt slab into strips produced two bright pale-blue quads — same
+  material, same y, different baked per-vertex occlusion. Reverted.
+- **`mergeGeometries` returns null when the list mixes indexed and non-indexed
+  geometry.** PolyhedronGeometry (Icosahedron/Dodecahedron) is non-indexed. It
+  surfaces four frames later as a null read inside three's attribute cache, in
+  a stack with none of your code in it.
+- **A fetch target you did not think about eats the throw.** The key-tree
+  payload landed 0.5 m from the destructible headstone at (7.2, 13.4) and that
+  stone's target swallowed every throw at the key, a metre short, in silence.
+  Wrap every `world.fetchTargets[].onHit` and print WHICH one fired.
+- **A long prop pointed down the approach reads as a pole.** The branch had to
+  be swung 90°.
+- **Two suites were lying.** `horror-expansion` vanished the skull BEFORE
+  teleporting (the settle-arrival path puts a gone skull back in your hands);
+  `probe-bounds` set yaw without `_sync`, so every act past the graveyard
+  reported "max walk 0m" and "no escapes" had never tested the clearing.
+
+## Numbers and what is still open
+
+Gates: smoke, autotest 26, regressions **135**, playthrough COMPLETE,
+render-perf, district-culling 14 (max 448/450). Clearing 203→210 draws,
+act-gated. New tools: `probe-gate`, `probe-key-tree`, `shot-falls-field`,
+`shot-bone-hands`; `probe-ossuary` and `probe-bounds` rewritten.
+
+**STILL FAILING, PRE-EXISTING, NOT THIS ROUND** (verified by reverting
+src/enemies.js + src/director.js to HEAD~1 and reproducing): one check in
+`tests/underfalls-expansion.mjs` — "the live hatch enters the mirror room with
+its reflected body still visible on the next frame". `enterMirrorRoom` runs
+behind a 1.6 s fade; the game itself is fine (the playthrough reaches the
+mirror room). Same class as the horror-expansion staging bug fixed here.
+
+**NOT TOUCHED, and worth knowing:** the west mausoleum interior still reads as
+a bright box (mean luminance ~0.51 in the throat band, measured; nothing
+clips). That is on Alex's aug14 list, not the aug16 one.
+
+---
+
 # HANDOFF - 2026-08-16: ROUND THREE (branch claude/aug16-notes)
 
 Written by Claude Fable 5 for Claude Opus 5 — same arrangement as last round:
