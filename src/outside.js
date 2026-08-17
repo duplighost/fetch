@@ -190,6 +190,38 @@ function buildGraveyard(game) {
     for (let i = 0; i < 26; i++) {                       // south, behind the drive
       place(-38 + i * 3.05 + wood.range(-1.4, 1.4), -26 - wood.range(0, 13));
     }
+    // ---- AND THE SAME ILLNESS ALONG THE YARD -----------------------------
+    // "The area around the fence viewable from the graveyard would do better
+    // dense with shrubbery/trees around because it still looks like empty
+    // space that drops off onto nothing. same with areas of the graveyard
+    // when looking alongside the sides of the house."
+    // He was right twice. The aug15 aprons stopped at z 16, so the whole
+    // north two thirds of the west and east fence runs had NO ground beyond
+    // the plane's two-metre margin — and the twenty-two masses a side were
+    // placed out to z 39 over that blackness, standing on nothing.
+    // A SECOND SEED, appended: the 0x51de stream above is position-order
+    // dependent, so drawing from it here would move every mass already
+    // placed. Still world.box into M.dirt, so still zero draw calls.
+    world.box(M.dirt, -30, -0.07, 30, 24, 0.1, 28);      // west, z 16..44
+    world.box(M.dirt, 30, -0.07, 30, 24, 0.1, 28);       // east, z 16..44
+    const yard = new RNG(0x7a3c);
+    const placeYard = (x, z) => {
+      const h = 6.8 + yard.range(0, 5.2);
+      const ry = yard.range(0, TAU);
+      world.box(M.dirt, x, h * 0.42, z, 0.62, h * 0.84, 0.62, ry);
+      world.box(M.dirt, x, h * 0.82, z, 3.4, h * 0.3, 3.4, ry + 0.5);
+      world.box(M.dirt, x, h * 1.02, z, 2.3, h * 0.24, 2.3, ry - 0.4);
+    };
+    for (let i = 0; i < 15; i++) {                       // outside the west rail
+      placeYard(-25 - yard.range(0, 12), 8 + i * 2.5 + yard.range(-1.1, 1.1));
+    }
+    for (let i = 0; i < 15; i++) {                       // outside the east rail
+      placeYard(29 + yard.range(0, 12), 8 + i * 2.5 + yard.range(-1.1, 1.1));
+    }
+    // and the corridor down each side of the house, which was bare flat dirt
+    // from the fence out to the first mass at |x| 26
+    for (let i = 0; i < 4; i++) placeYard(-21.5 - yard.range(0, 3), -8 + i * 4.2);
+    for (let i = 0; i < 4; i++) placeYard(25.5 + yard.range(0, 3), -8 + i * 4.2);
   }
 
   // iron fence perimeter with one gap: the forest gate
@@ -1113,15 +1145,13 @@ function buildGraveyardGate(game) {
   const latchMat = M.metal.clone();
   latchMat.color.setHex(0x8c887d);
   latchMat.roughness = 0.58;
-  const header = new THREE.Mesh(new THREE.BoxGeometry(4.05, 0.13, 0.18), M.metal);
-  header.position.set(FOREST_GATE.x, 2.7, 41.96);
-  header.castShadow = true;
-  scene.add(header);
-  gate.header = header;
-  // ...and the header itself was a bar floating over the gap: the fence posts
-  // that flank it stop at 1.5. Two jambs, merged into the shell's metal batch,
-  // so the lintel is carried and it costs nothing. Outboard of the hinges at
-  // x 0.4/3.6, so the leaves swing past them.
+  // The header never moves, so it has no business being its own draw call in
+  // a district the house looks straight into (house-after-cave lives one or
+  // two under a hard 450). Into the metal batch with it — and it was a bar
+  // FLOATING over the gap besides: the fence posts that flank it stop at 1.5.
+  // Two jambs, same batch, outboard of the hinges at x 0.4/3.6 so the leaves
+  // swing past them. The whole frame now costs nothing.
+  world.box(M.metal, FOREST_GATE.x, 2.7, 41.96, 4.05, 0.13, 0.18);
   for (const px of [FOREST_GATE.x - 1.68, FOREST_GATE.x + 1.68]) {
     world.box(M.metal, px, 1.36, 41.96, 0.15, 2.72, 0.17);
     world.addCollider(px - 0.09, -0.5, 41.87, px + 0.09, 2.7, 42.05);
@@ -1245,7 +1275,7 @@ function buildGraveyardGate(game) {
     game.graveyardFencePosts,
     gate.left,
     gate.right,
-    gate.header,
+    // (the header and jambs are shell geometry now — never culled, never a draw)
     game.gateKeys?.pier,
     gate.chains,
     ...gate.weights,

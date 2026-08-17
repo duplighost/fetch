@@ -580,10 +580,14 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     color: 0xffffff, map: bladeTex, alphaTest: 0.45, side: THREE.DoubleSide,
   }));
   const tufts = [];
-  for (let n = 0; n < 620; n++) {
-    const x = rng.range(-19.4, 23.4), z = rng.range(7.2, 41.4);
+  for (let n = 0; n < 800; n++) {
+    // past the rails now, too: the first metres beyond the fence were bald
+    // dirt, and bald ground at the edge of frame is what "drops off onto
+    // nothing" actually looks like
+    const x = rng.range(-25.5, 29.5), z = rng.range(6.6, 46.0);
     if (Math.abs(x - 2) < 1.9 && z > 33) continue;             // keep the gate lane bare
     if (Math.abs(x) < 12 && z < 6.6) continue;                 // and the house apron
+    if (z > 42.6 && Math.abs(x - 2) < 5) continue;             // and the way into the forest
     tufts.push({ x, z, sc: rng.range(0.13, 0.34), rotY: rng.float() * TAU, tint: rng.range(0.3, 0.78) });
   }
   const tuftMesh = new THREE.InstancedMesh(tuftGeo, tuftMat, tufts.length);
@@ -650,19 +654,40 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     geometry.computeVertexNormals();
     return geometry;
   })();
-  const wall = new THREE.InstancedMesh(wallGeo, wallMat, 156);
+  // The far ring at 44-70 m dissolves in 0.034 fog, and Alex looked SIDEWAYS
+  // along the fence rather than at the horizon: "it still looks like empty
+  // space that drops off onto nothing." A second, NEARER ring at 26-42 m sits
+  // inside the band that still reads (~26% transmittance at 40 m), and it is
+  // instances on the same InstancedMesh, so it costs exactly nothing.
+  const trees = [];
   for (let i = 0; i < 156; i++) {
-    const a = rng.range(-0.35, Math.PI + 0.35);
-    const r = rng.range(44, 70);
-    const h = rng.range(8, 17);
-    q.setFromEuler(e.set(0, rng.float() * TAU, 0));
-    m.compose(p.set(2 + Math.cos(a) * r, -0.4, 24 + Math.sin(a) * r * 0.85), q,
-      s.set(rng.range(2.8, 5.7), h, rng.range(2.8, 5.7)));
-    wall.setMatrixAt(i, m);
+    trees.push({ a: rng.range(-0.35, Math.PI + 0.35), r: rng.range(44, 70),
+      h: rng.range(8, 17), ry: rng.float() * TAU,
+      w: rng.range(2.8, 5.7), d: rng.range(2.8, 5.7) });
   }
+  for (let guard = 0, made = 0; guard < 400 && made < 76; guard++) {
+    const a = rng.range(-0.55, Math.PI + 0.55);
+    const r = rng.range(26, 42);
+    const x = 2 + Math.cos(a) * r, z = 24 + Math.sin(a) * r * 0.85;
+    // never in the walled yard, never in the gate's lane or the forest
+    // corridor mouth, and never close enough to hide the key tree
+    if (x > -23 && x < 27 && z > 4 && z < 43) continue;
+    if (Math.abs(x - 2) < 13 && z > 40) continue;
+    if (Math.hypot(x - 5.5, z - 13.6) < 12) continue;
+    made++;
+    trees.push({ a, r, h: rng.range(7, 14), ry: rng.float() * TAU,
+      w: rng.range(2.6, 5.0), d: rng.range(2.6, 5.0) });
+  }
+  const wall = new THREE.InstancedMesh(wallGeo, wallMat, trees.length);
+  trees.forEach((t, i) => {
+    q.setFromEuler(e.set(0, t.ry, 0));
+    m.compose(p.set(2 + Math.cos(t.a) * t.r, -0.4, 24 + Math.sin(t.a) * t.r * 0.85), q,
+      s.set(t.w, t.h, t.d));
+    wall.setMatrixAt(i, m);
+  });
   finishInstances(wall, false, false);
   wall.name = 'far treeline silhouette';
-  track(wall, 156);
+  track(wall, trees.length);
 
   // Stable inspection data for deterministic composition/clearance probes.
   // It deliberately contains no progression state and owns no collisions.

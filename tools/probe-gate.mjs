@@ -46,7 +46,7 @@ try {
     // and the header: is it carried now?
     const jambs = g.world.colliders.filter((c) => c.max.y > 2.4 && c.min.z > 41.7 && c.max.z < 42.2
       && c.max.x - c.min.x < 0.3);
-    return { log, band, jambs: jambs.length, headerY: gate.header.position.y };
+    return { log, band, jambs: jambs.length };
   });
   console.log(JSON.stringify(out, null, 1));
   if (errors.length) console.log('BROWSER ERRORS:', errors);
