@@ -1659,6 +1659,11 @@ try {
         banked === true && socket.filled === true
         && g.gateKeys.banked() === i + 1,
         { banked: g.gateKeys.banked(), filled: socket.filled });
+      // the latch weights ARE the tally: one lets go per banked key, at the
+      // gate, two metres from the stone the player is standing at
+      const letGo = g.graveyardGate.weights
+        .filter((w) => w.position.y < w.userData.homeY - 0.005).length;
+      check(`weight ${i + 1} lets go with the key`, letGo === i + 1, { letGo });
       if (i < 2) opened = g.graveyardGate.opening || g.graveyardGate.open;
     }
     check('two keys are not enough — the gate never twitched before the third',
@@ -1667,6 +1672,65 @@ try {
     check('the third key gives the gate',
       g.graveyardGate.opening === true && g.flags.has('graveyardCleared'),
       { opening: g.graveyardGate.opening });
+    // ...and nothing is left hanging in the doorway. The weights draw up flush
+    // into the header as the leaves swing: the walk band (y 0.3..2.2) across
+    // the whole 3.2 m gap has to be empty of anything without a collider.
+    F.stepWith(3.4, {}, false);
+    const weightY = g.graveyardGate.weights.map((w) => +w.position.y.toFixed(3));
+    check('the gate is open and nothing hangs in the walkway',
+      g.graveyardGate.open === true && weightY.every((y) => y >= 2.2),
+      { open: g.graveyardGate.open, weightY });
+    return { checks, diagnostics: null };
+  });
+
+  // THE KEY TREE. One limb, hung where a throw can reach it; the key visible
+  // up near the leaves and NOT takeable until the limb comes down. One hit.
+  await scenario('the-key-tree-gives-on-one-hit', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    const climb = g.keyTreeClimb;
+    const key3 = g.gateKeys.list[2];
+
+    check('nothing hangs out of the tree before the funeral',
+      climb.dropped === false && climb.arm.visible === false
+      && climb.branchTarget.enabled === false && key3.target.enabled === false);
+
+    g.director._completeGraveyard('loud');
+    for (let i = 0; i < 90; i++) F.stepWith(0.1, {}, false);   // reveal at 4.0s + payout
+    check('the tree lets one branch down, and it answers a throw',
+      climb.dropped === true && climb.arm.visible === true
+      && climb.branchTarget.enabled === true && climb.branchTarget.radius > 2,
+      { hangY: +climb.branchTarget.pos.y.toFixed(2) });
+    check('the key is up there, in sight and out of reach',
+      key3.key.visible === true && key3.target.enabled === false && key3.home.y > 3.0,
+      { visible: key3.key.visible, fetchable: key3.target.enabled, y: +key3.home.y.toFixed(2) });
+    check('the branch hangs where a level throw meets it',
+      climb.branchTarget.pos.y > 2.0 && climb.branchTarget.pos.y < 4.6,
+      { y: +climb.branchTarget.pos.y.toFixed(2) });
+
+    climb.tear();
+    check('a second hit changes nothing — one is the whole count',
+      climb.tear() === false);
+    for (let i = 0; i < 70; i++) F.stepWith(0.1, {}, false);
+    check('the key and the bones came down into the grass',
+      g.flags.has('keyTreeFelled') && key3.home.y < 1.2
+      && climb.bones.position.y < 0.9 && climb.shards.visible === true,
+      { keyY: +key3.home.y.toFixed(2), boneY: +climb.bones.position.y.toFixed(2) });
+    check('and only now can it be fetched',
+      key3.target.enabled === true, { enabled: key3.target.enabled });
+    // a felled branch still answers — it just does not eat the throw, because
+    // the key it dropped is lying in the grass behind it
+    check('the torn limb still answers, and still lets the skull through',
+      climb.branchTarget.enabled === true && climb.branchTarget.radius < 2.0,
+      { radius: climb.branchTarget.radius });
     return { checks, diagnostics: null };
   });
 

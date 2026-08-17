@@ -745,38 +745,43 @@ try {
     beat('second-key-banked', bankKey() && g.gateKeys.banked() === 2,
       { banked: g.gateKeys.banked() });
 
-    // ---- KEY THREE: up the tree that held the first key you ever fetched --
+    // ---- KEY THREE: the branch the tree let down -------------------------
+    // One large limb, hung at throwing height, with the key up near the leaves
+    // and a body draped across its middle. ONE hit brings all of it down.
     const climb = g.keyTreeClimb;
-    const climbTo = (i, maxS = 7) => {
-      const s = climb.steps[i];
-      let t = 0;
-      while (t < maxS) {
-        const dx = s.x - g.player.pos.x, dz = s.z - g.player.pos.z;
-        if (Math.hypot(dx, dz) < 0.22 && g.player.pos.y > s.y - 0.14) return true;
-        g.player.yaw = Math.atan2(-dx, -dz);
-        F.stepWith(0.08, { moveZ: 1 });
-        t += 0.08;
-      }
-      return g.player.pos.y > s.y - 0.22;
-    };
+    const key3 = g.gateKeys.list[2];
     walkTo(5.5, 22.0, 40);
-    walkTo(climb.steps[0].x, climb.steps[0].z + 1.6, 20);
-    let treadPeakY = g.player.pos.y;
-    for (let i = 0; i < climb.steps.length; i++) {
-      climbTo(i);
-      treadPeakY = Math.max(treadPeakY, g.player.pos.y);
-    }
-    const top = climb.steps[climb.steps.length - 1];
-    beat('the-lights-are-a-staircase', treadPeakY > top.y - 0.5 && !g.dead,
-      { peak: +treadPeakY.toFixed(2), top: +top.y.toFixed(2) });
-    climbTo(climb.steps.length - 3);
-    throwAt(top.x, top.y + 0.95, top.z, 0.4);
+    walkTo(6.9, 19.2, 25);
+    beat('the-tree-let-a-branch-down',
+      climb.dropped === true && climb.arm.visible === true
+      && climb.branchTarget.enabled === true,
+      { dropped: climb.dropped, hangY: +climb.branchTarget.pos.y.toFixed(2) });
+    // the key is visible up in the tree and NOT yet takeable: that is the
+    // whole invitation, and the reason the branch is worth hitting
+    beat('the-key-is-in-the-tree-and-out-of-reach',
+      key3.key.visible === true && key3.target.enabled === false && key3.home.y > 3.0,
+      { visible: key3.key.visible, enabled: key3.target.enabled, y: +key3.home.y.toFixed(2) });
+
+    const hang = climb.branchTarget.pos;
+    throwAt(hang.x, hang.y, hang.z, 0.3);
+    for (let t = 0; t < 4 && !climb.hit; t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('one-hit-tears-the-branch-down',
+      climb.hit === true && g.flags.has('keyTreeFelled'), { hit: climb.hit });
+
+    // key and bones land in the grass — the key becomes fetchable only there
+    for (let t = 0; t < 4.5; t += 0.1) F.stepWith(0.1);
+    beat('the-key-and-the-bones-came-down',
+      key3.home.y < 1.2 && climb.bones.position.y < 0.9 && key3.target.enabled === true,
+      { keyY: +key3.home.y.toFixed(2), boneY: +climb.bones.position.y.toFixed(2),
+        enabled: key3.target.enabled });
+
+    walkTo(key3.home.x + 0.4, key3.home.z + 3.0, 25);
+    throwAt(key3.home.x, key3.home.y, key3.home.z, 0.35);
     for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey3'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('third-key-rides-the-jaw', g.skull.carry?.id === 'gateKey3',
       { carry: g.skull.carry ? g.skull.carry.id : null });
-    // down: the same treads, in reverse, and then off the bottom one
-    for (let i = climb.steps.length - 4; i >= 0; i--) climbTo(i, 4);
     walkTo(5.5, 18.0, 30);
 
     // ---- THE GATE TAKES THE THIRD ---------------------------------------

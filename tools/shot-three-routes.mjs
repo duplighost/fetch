@@ -45,17 +45,20 @@ try {
 
     // the funeral resolves; the three routes reveal in order
     g.director._completeGraveyard('loud');
-    look(6.0, 24.0, 5.5, 6.0, 13.6);
+    look(6.4, 21.0, 5.8, 5.4, 13.4);
     await F.step(1 / 60, 150);
-    await shoot('02-the-tree-lets-its-lights-down');
-    look(5.5, 18.5, 5.5, 4.0, 13.6);
-    await shoot('03-the-staircase-from-below');
-    // from ON the top tread, where the player actually meets it
+    await shoot('02-the-tree-lets-a-branch-down');
+    // where the player stands to throw at it: the limb across the sky, the key
+    // up near the leaves
     {
-      const st = g.keyTreeClimb.steps;
-      const top = st[st.length - 1], stand = st[st.length - 3];
-      look(stand.x, stand.z, top.x, top.y + 0.7, top.z, stand.y);
-      await shoot('04-the-top-and-the-skeleton');
+      const climb = g.keyTreeClimb;
+      const hang = climb.branchTarget.pos;
+      look(6.9, 19.2, hang.x, hang.y, hang.z);
+      await shoot('03-the-branch-at-throwing-height');
+      climb.tear(hang.clone());
+      await F.step(1 / 60, 210);
+      look(6.6, 18.4, climb.keyRest.x, 0.6, climb.keyRest.z);
+      await shoot('04-the-key-and-the-bones-in-the-grass');
     }
 
     // the east mausoleum's seal, given by the funeral, and the way down
@@ -77,7 +80,8 @@ try {
       shots,
       state: {
         dropped: g.keyTreeClimb.dropped,
-        treads: g.world.ramps.filter((r) => String(r.id).startsWith('keyTree')).length,
+        branchFelled: g.keyTreeClimb.hit,
+        keyFetchable: g.gateKeys.list[2].target.enabled,
         sealOpen: g.sealedMausoleumSeal.open,
         banked: g.gateKeys.banked(),
         draws: g.lastRender ? g.lastRender.drawCalls : null,
