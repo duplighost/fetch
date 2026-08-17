@@ -10,6 +10,17 @@ const ROOM_H = 2.7;
 const CONTACT_HALF = 0.37;
 const CONTACT_TIME = 2.35;
 
+// THE RAISED HANDS, authored here because _updatePressure owns them (it rewrites
+// both rotations every frame, after skull.update). Roughly (-PI/2, 0, ±PI) —
+// fingers up, backs of the hands to the camera, thumbs lateral — softened by
+// the splay the hold pose already carries. The ±PI about each hand's own local
+// Z is the finger axis: it turns the hand over without mirroring it, which
+// matters because mkHand puts the handedness in the GEOMETRY (right thumb at
+// local -X, left at +X). Negating thumb offsets instead would put a left hand
+// on the right wrist.
+const RAISED_L = Object.freeze({ x: -1.24, y: 0.30, z: Math.PI - 0.10 });
+const RAISED_R = Object.freeze({ x: -1.24, y: -0.30, z: -(Math.PI - 0.10) });
+
 // Four mirror renders make every draw matter. The finale therefore uses a
 // bounded authored kit: shared materials, compact furniture groups, and an
 // exact shared-geometry clone of the live skull rather than duplicate assets.
@@ -927,14 +938,26 @@ export class Finale {
       h.hold.rotation.y = lerp(h.holdRot.y, 0, k);
       h.hold.rotation.z = lerp(h.holdRot.z, 0, k);
       h.hold.scale.copy(h.holdScale).multiplyScalar(1 + k * 0.09);
+      // The raise is authored HERE, not in skull.js. This block rewrites both
+      // hand rotations every frame after skull.update, so a pose fix over there
+      // passes its probe and changes nothing on screen.
+      //
+      // The k=0 end used to alias skull.js's `lowered` row through
+      // _captureEmptyHands, which is why the raised hands came up rolled 180°
+      // about their own finger axis — palms out, backs to the glass, reading as
+      // somebody else's hands reaching in at Alex rather than his own coming up.
+      // RAISED_L/RAISED_R sever that coupling. BOTH endpoints carry the roll:
+      // rolling only k=1 spins each hand through palm-toward-camera during a
+      // press. Handedness is in the geometry (mkHand builds the thumbs on
+      // opposite sides), so this is a rigid roll of the group, never a mirror.
       h.left.rotation.set(
-        lerp(h.leftRot.x, -1.28, k),
-        lerp(h.leftRot.y, 0.22, k),
-        lerp(h.leftRot.z, 0.05, k));
+        lerp(RAISED_L.x, -1.28, k),
+        lerp(RAISED_L.y, 0.22, k),
+        lerp(RAISED_L.z, Math.PI - 0.05, k));
       h.right.rotation.set(
-        lerp(h.rightRot.x, -1.28, k),
-        lerp(h.rightRot.y, -0.22, k),
-        lerp(h.rightRot.z, -0.05, k));
+        lerp(RAISED_R.x, -1.28, k),
+        lerp(RAISED_R.y, -0.22, k),
+        lerp(RAISED_R.z, -(Math.PI - 0.05), k));
     }
 
     this._pressSoundT = Math.max(0, this._pressSoundT - dt);

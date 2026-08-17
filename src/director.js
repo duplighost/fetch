@@ -203,15 +203,28 @@ export class Director {
       }
       g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
       g.gateKeys?.restore?.();
+      // A player who took the stone off the throat must not find it back on
+      // after a death. Both hatches are single scalars for exactly this: one
+      // assignment each, no sequence to get wrong.
+      if (g.flags.has('ossuaryEntered') && g.ossuary) {
+        g.ossuary.entryLid.moving = true;
+        g.ossuary.entryLid.t = 1;
+        g.ossuary.entryLid.open = true;
+        g.ossuary.slabT = 1;
+      }
       // the counterweight's own flag, not the gate's: the gate is three keys
       // now and the under-yard is only one of them
       if (g.flags.has('ossuaryCleared') && g.ossuary) {
         g.ossuary.solved = true;
         g.ossuary.progress = 1;
-        // exitT is the ONE number the far end derives from (slab, hatch
-        // chains, lid, arrival mouth). Forcing only the collider left the
-        // exit re-sealing itself for a second while exitT caught up.
+        // exitT is the ONE number the far end derives from. Forcing only the
+        // collider left the exit re-sealing itself for a second while exitT
+        // caught up. The threshold-latched drop sounds are booleans so a forced
+        // restore seats the pose without replaying the grind.
         g.ossuary.exitT = 1;
+        g.ossuary._slabHeard = true;
+        g.ossuary._slabHeard2 = true;
+        g.ossuary._slabSeated = true;
         g.ossuary.exitCollider.max.y = g.ossuary.exitCollider.min.y;
       }
       if (!this.graveRitual) this.graveRitual = { credits: new Set([0, 1, 2]), done: true, route: 'restored' };
@@ -296,10 +309,17 @@ export class Director {
       // not look. It stands across the chapel now, off the aisle you walk and
       // wide of the false sighting you have just been taught to read: lateral,
       // in the light, inside the cone of a player facing their own route.
+      //
+      // 2026-08-17, Alex again: "should spawn way in front of you." Lateral in
+      // the chapel was better than behind you and still not in front. It stands
+      // across the room now — sixteen and a half metres dead ahead, nine
+      // degrees off the heading you are walking, in the chapel's own light,
+      // with the trigger moved back to the west aisle so you arrive to find it
+      // already standing there.
       choirSource = new THREE.Vector3(
-        layout.chapel.x + 7.2,
+        layout.chapel.x + 7.5,
         layout.chapel.y,
-        layout.chapel.z + 6.6,
+        layout.chapel.z + 5.5,
       );
     } else {
       choirSource = new THREE.Vector3(C.x, 0, C.z + 20.68);
@@ -331,7 +351,10 @@ export class Director {
       // reach the hatch before it ever closed. Still after the passive
       // displacement has had its moment (that beat is at the west aisle, six
       // metres short of this line) — the false sighting is still first.
-      choirTriggerZ: layout ? layout.chapel.z + 1 : -Infinity,
+      // moved back from chapel.z + 1 to the west aisle, so the figure is already
+      // standing across the room when you come through the arch — not spawning
+      // next to you as you reach the middle of it
+      choirTriggerZ: layout ? layout.chapel.z - 4 : -Infinity,
       choirArmed: false,
     };
     // The passive displaced-spray figure in the pump chapel is the first visual
@@ -613,8 +636,18 @@ export class Director {
     // It now walks the house from early in the act. One named constant so
     // Alex can dial it.
     if (g.act === 'house' && !g.dead && !this._liveResident()) {
-      this._houseResidentT = (this._houseResidentT ?? HOUSE_RESIDENT_DELAY) - dt;
-      if (this._houseResidentT <= 0) this.residentHeard(0);
+      // ONE BEAT AT A TIME. The landing window scare now runs ~9 s from the
+      // first sound to the thing skittering off into the dark, which walks
+      // straight into this timer — and a Resident arriving mid-fold does not
+      // stack, it steps on the only scare in the room. Hold the clock while
+      // the window entry is live; it is the shortest sequence in the act and
+      // it fires once. The constant stays exactly as Alex dialled it.
+      const entering = g.windowWatcher?.entry?.state;
+      const busy = entering && entering !== 'idle' && entering !== 'done';
+      if (!busy) {
+        this._houseResidentT = (this._houseResidentT ?? HOUSE_RESIDENT_DELAY) - dt;
+        if (this._houseResidentT <= 0) this.residentHeard(0);
+      }
     }
     if (!this._liveResident()) return;
     if (g.act !== 'house') return;
@@ -995,8 +1028,9 @@ export class Director {
 
     if (!c.choirArmed && g.player.pos.z >= c.choirTriggerZ) {
       c.choirArmed = true;
-      // It begins behind, in the dark ambulatory beyond the false sighting, and
-      // is still audio-only for its own full warning cadence before it pursues.
+      // It stands across the chapel, dead ahead, and is still audio-only for
+      // its own full warning cadence before it pursues — so you hear it, then
+      // you SEE it, and only then does it start closing.
       g.enemies.beginDrownedChoir({ pos: c.choirSource, heardPos: g.player.pos });
     }
 

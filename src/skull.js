@@ -520,6 +520,12 @@ export class Skull {
     // the state the player is in anyway.
     const L = mkHand(-1);
     const R = mkHand(1);
+    // TRAP: these rotations do NOT reach the mirror room. finale.js's
+    // _updatePressure rewrites both hand rotations every frame, after
+    // skull.update in the loop order, from its own RAISED_L/RAISED_R — so a
+    // pose change here moves every act EXCEPT the one with the raised hands,
+    // and a pose fix aimed at the finale passes its probe and changes nothing
+    // on screen. Edit finale.js for that beat.
     this._handPose = {
       hands: [L, R],
       cradle: { x: 0.114, y: -0.168, z: 0.052, rx: -0.58, ry: 0.71, rz: 0.27 },

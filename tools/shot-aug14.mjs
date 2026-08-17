@@ -76,19 +76,23 @@ try {
     M.ascend();
     F.stepWith(0.5, {}, false);
 
-    // 5. ossuary top: lid open, handle catching light
+    // 5. ossuary stair top: plain ceiling and the key hanging under it. (Was
+    // the lid + handle; that hatch could never open and was deleted 2026-08-17
+    // — Alex asked for "just be cieling like the rest", and the counterweight's
+    // payout moved up here so the climb has a reason.)
     const O = g.ossuary;
     O.unlock('probe');
     O.inOssuary = true;
     O.solved = true;
     O.exitT = 1;
+    O.progress = 1;
     g.player.pos.set(O.origin.x, O.origin.floor, O.origin.z + 0.85);
     g.player._sync(0);
     F.stepWith(0.6, {}, false);
-    look(O.origin.x - 2.45, O.origin.floor + 3.25, O.origin.z + 33.4,
-      O.origin.x - 2.45, O.origin.floor + 5.4, O.origin.z + 34.9);
+    look(O.origin.x - 1.4, O.origin.floor + 3.25, O.origin.z + 33.4,
+      O.origin.x - 2.45, O.origin.floor + 4.45, O.origin.z + 34.7);
     F.stepWith(0.1, {}, false);
-    grab('05-ossuary-lid-handle');
+    grab('05-ossuary-key-at-the-stair-top');
     O.inOssuary = false;
     F.stepWith(0.3, {}, false);
 

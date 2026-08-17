@@ -94,32 +94,71 @@ try {
     g.skull.holdNow();
     F.stepWith(0.3, {}, false);
 
-    // ---- E TAKES YOU DOWN -------------------------------------------------
+    // ---- FIRST PRESS TAKES THE STONE OFF, SECOND TAKES YOU DOWN -----------
+    // Alex: "you shouldn't just walk into it and be teleported. a hatch should
+    // open with e." Standing on a shut throat must do nothing.
+    walkTo(MX, MZ + 0.5, 14);
+    F.stepWith(0.3, {}, false);
+    check('a shut throat does not swallow you',
+      st.inOssuary === false && st.entryLid.open === false,
+      { t: +st.entryLid.t.toFixed(2) });
+    walkTo(MX, MZ - 1.35, 14);
+    g.ossuary.descend();
+    F.stepWith(0.1, {}, false);
+    check('the first press moves the stone and nothing else',
+      st.entryLid.moving === true && st.inOssuary === false);
+    for (let i = 0; i < 80 && !st.entryLid.open; i++) F.stepWith(0.1, {}, false);
+    check('the lid finishes opening on its own clock', st.entryLid.open === true,
+      { t: +st.entryLid.t.toFixed(2) });
+    snap('02-the-stone-off-the-throat');
     g.ossuary.descend();
     F.stepWith(0.25, {}, false);
-    check('E on the mouth takes you down',
+    check('E on the open mouth takes you down',
       st.inOssuary === true && g.flags.has('ossuaryEntered') && g.act === 'graveyard',
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(2)) });
-    snap('02-arrived-under-the-yard');
+    snap('03-arrived-under-the-yard');
 
-    // ---- BACK OUT, THEN IN AGAIN BY WALKING ------------------------------
-    // straight back the way we came: yaw 0 walks -z, which is the throat wall
-    g.player.yaw = 0;
+    // ---- THE NEAR END IS A WALL WITH A HATCH IN IT ------------------------
+    // It used to be neither: the corridor simply stopped, so looking back
+    // showed the renderer's clear colour, and walking into that nothing
+    // teleported you out in silence. Alex: "the wall at the beginning feels
+    // weird. have a similar hatch to come out."
+    const OX = st.origin.x, OZ = st.origin.z, FL = st.origin.floor;
+    const capped = g.world.colliders.some((c) => c.ossuary
+      && c.min.x <= OX - 2.9 && c.max.x >= OX + 2.9
+      && c.min.z < OZ && c.max.z > OZ - 0.35);
+    check('the near end is a real wall now', capped);
+    g.player.pos.set(OX, FL, OZ + 1.0);
+    g.player.yaw = 0;   // forward is -z: straight at the cap wall
     g.player._sync(0);
-    for (let i = 0; i < 60 && st.inOssuary; i++) F.stepWith(0.08, { moveZ: 1 }, false);
-    check('the way in is two-way: you walk back out into the yard',
-      st.inOssuary === false && g.act === 'graveyard',
+    for (let i = 0; i < 40 && st.inOssuary; i++) F.stepWith(0.08, { moveZ: 1 }, false);
+    check('walking into a shut hatch does NOT teleport you out',
+      st.inOssuary === true && st.exitLid.open === false,
+      { z: +g.player.pos.z.toFixed(2) });
+    snap('04-the-way-back-shut');
+    st.climbBack();
+    for (let i = 0; i < 80 && !st.exitLid.open; i++) F.stepWith(0.1, {}, false);
+    check('E opens it', st.exitLid.open === true, { t: +st.exitLid.t.toFixed(2) });
+    snap('05-the-way-back-open');
+    st.climbBack();
+    F.stepWith(0.3, {}, false);
+    check('and E again lets you out, facing OUT of the doorway',
+      st.inOssuary === false && g.act === 'graveyard' && Math.abs(g.player.yaw) < 0.01,
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(2)) });
-    walkTo(MX, MZ + 0.5, 14);
-    F.stepWith(0.2, {}, false);
-    check('and the old walk-over still works, untouched', st.inOssuary === true);
 
-    // ---- THE FAR END IS SEALED, AND THE KEY IS THE REWARD -----------------
-    const climbOutInter = g.world.interactables
-      .map((o) => o.userData.inter).find((i) => i && i.id === 'ossuaryClimbOut');
-    check('the far end has no way out, ever',
-      climbOutInter && climbOutInter.enabled === false && !g.flags.has('ossuaryExited'));
+    // ---- THE STAIR TOP IS PLAIN CEILING NOW ------------------------------
+    const deadVerbs = g.world.interactables
+      .map((o) => o.userData.inter)
+      .filter((i) => i && /^ossuaryClimbOut$/.test(i.id));
+    const deadMeshes = [];
+    g.scene.traverse((o) => {
+      if (/ossuary hatch (lid|chains)/.test(o.name || '')) deadMeshes.push(o.name);
+    });
+    check('the unopenable hatch and its padlock are gone',
+      deadVerbs.length === 0 && deadMeshes.length === 0,
+      { verbs: deadVerbs.length, meshes: deadMeshes });
 
+    // ---- ...AND THE KEY IS UP THERE, PAST THE WALL THE WEIGHT LOWERS -----
     st.solved = true;
     st.progress = 1;
     for (let i = 0; i < 40; i++) F.stepWith(0.1, {}, false);
@@ -127,7 +166,11 @@ try {
     check('the counterweight pays out gate key one, and nothing else',
       key1.revealed === true && !g.flags.has('graveyardCleared'),
       { at: key1.home.toArray().map((v) => +v.toFixed(2)) });
-    snap('03-the-key-at-the-end');
+    check('and it hangs at the TOP of the stairs, beyond the wall it lowers',
+      key1.home.z > st.exitCollider.max.z && key1.home.y > FL + 4.0,
+      { keyZ: +key1.home.z.toFixed(2), wallZ: +st.exitCollider.max.z.toFixed(2),
+        keyY: +key1.home.y.toFixed(2) });
+    snap('06-the-key-at-the-stair-top');
 
     return { checks, shots, dead: g.dead };
   });

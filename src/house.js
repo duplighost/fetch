@@ -4282,12 +4282,17 @@ function buildWindowWatchers(game) {
   const palm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.16, 0.035), skin);
   palm.position.set(-0.34, 1.52, 0.56);
   root.add(palm);
+  // kept as a group so the hold-at-the-pane beat can lean the whole hand into
+  // the glass by a couple of centimetres — a push, not a pop
+  const handParts = [palm];
   for (let i = 0; i < 3; i++) {
     const finger = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.085, 0.026), skin);
     finger.position.set(-0.38 + i * 0.038, 1.64, 0.56);
     finger.rotation.z = (i - 1) * 0.12;
     root.add(finger);
+    handParts.push(finger);
   }
+  const handHomeZ = handParts.map((m) => m.position.z);
   const fadeMats = [skin, cloth];
 
   // THE SASH (Alex: "fix the second floor window enemy so it actually comes
@@ -4327,12 +4332,33 @@ function buildWindowWatchers(game) {
     sashRail.position.y = sashHomeY.rail + v;
   };
   // receding step-scuffs, deeper into the landing dark toward the nursery door
+  // — respaced across the longer skitter below so the retreat stays audible
+  // for as long as it stays visible
   const ENTRY_SCUFFS = [
-    { at: 0.14, x: -1.3, z: 4.5, gain: 0.4 },
-    { at: 0.4, x: -2.1, z: 3.4, gain: 0.32 },
-    { at: 0.72, x: -2.9, z: 2.4, gain: 0.25 },
-    { at: 1.1, x: -3.7, z: 1.4, gain: 0.18 },
+    { at: 0.25, x: -1.3, z: 4.5, gain: 0.4 },
+    { at: 0.8, x: -2.1, z: 3.4, gain: 0.32 },
+    { at: 1.4, x: -2.9, z: 2.4, gain: 0.25 },
+    { at: 2.05, x: -3.7, z: 1.4, gain: 0.18 },
   ];
+
+  // "the thing that is supposed to come in the window in the second room of
+  // the game only flashes for less than a second." It did — and it was five
+  // compounding bugs, not a short timer. The fully-risen figure existed for
+  // 0.85 s; STARING made it leave faster (dt/3.1 watched against dt/6 unwatched);
+  // walking toward it deleted it; looking away for half a second deleted it;
+  // and the unwatched creep completed the whole beat off-camera in three
+  // seconds, so it routinely fired at a wall while the player was elsewhere.
+  //
+  // The grammar it wears now is the scullery crawler's, which reads correctly:
+  // sound first, then pixels; watching HOLDS it rather than hurrying it;
+  // looking away FREEZES rather than deletes; walking up recoils rather than
+  // pops; and nothing advances past the pane until the thing has provably been
+  // in your view cone with an unblocked line to it.
+  const LEAD_IN = 1.4;        // s of sound before anything is visible
+  const HOLD_AT_PANE = 3.0;   // s of palm-on-the-glass before the sash moves
+  const WATCH_PROOF = 2.0;    // s of proven in-view time the press waits for
+  const CREEP_CAP = 0.82;     // unwatched climb ceiling — it can never finish alone
+  const RECOIL_AT = 1.48;     // m — walk closer and it shrinks back, crawler's number
 
   const w = {
     siteIndex: -1, active: false, t: 0, lookAwayT: 0,
@@ -4340,7 +4366,8 @@ function buildWindowWatchers(game) {
     // scary things in the window." The FIRST haunting is scripted: the
     // landing window, seconds after the house act opens — the first window
     // you pass leaving the bedroom already has something climbing into it.
-    cooldown: 6, seen: 0, nextSite: 0, fade: 1,
+    cooldown: 9, seen: 0, nextSite: 0, fade: 1,
+    leadT: 0, viewT: 0, recoil: 0, losT: 0, losClear: false,
   };
   game.windowWatcher = {
     root, state: w, sites, entry, sashRail,
@@ -4351,6 +4378,29 @@ function buildWindowWatchers(game) {
   const fwd = new THREE.Vector3();
   const toPane = new THREE.Vector3();
   const paneCenter = new THREE.Vector3();
+  // A wall between you and the pane is not watching. Same slab walk as
+  // Enemies._segmentBlocked, kept local rather than reaching into a private
+  // method across modules; the window aperture is a genuine hole in the
+  // collider set (world.js builds the wall around it), so a clear look through
+  // the glass tests clear. Throttled to 0.08 s the way _isObserved throttles.
+  const segmentBlocked = (ax, ay, az, bx, by, bz) => {
+    const dx = bx - ax, dy = by - ay, dz = bz - az;
+    for (const c of game.world.colliders) {
+      if (c.skullPass || c.max.y <= c.min.y) continue;
+      let near = 0.002, far = 0.998;
+      let ok = true;
+      for (const [a, d, lo, hi] of [[ax, dx, c.min.x, c.max.x],
+        [ay, dy, c.min.y, c.max.y], [az, dz, c.min.z, c.max.z]]) {
+        if (Math.abs(d) < 1e-8) { if (a < lo || a > hi) { ok = false; break; } continue; }
+        let t0 = (lo - a) / d, t1 = (hi - a) / d;
+        if (t0 > t1) { const s2 = t0; t0 = t1; t1 = s2; }
+        near = Math.max(near, t0); far = Math.min(far, t1);
+        if (near > far) { ok = false; break; }
+      }
+      if (ok) return true;
+    }
+    return false;
+  };
   // consume the scripted event with vanish()'s exact bookkeeping, minus the
   // outward whisper: this one did not leave. Called for completion AND for
   // act-change/death aborts — the sash stays cracked open either way, forever.
@@ -4383,8 +4433,44 @@ function buildWindowWatchers(game) {
       game.audio.whisper({ pos: root.position, gain: 0.24, rate: 0.5, verb: 0.9 });
     }
   };
+  // Is the pane provably in the player's view, with nothing between? Cone THEN
+  // ray, the pattern Enemies._isObserved proves out, with its throttle. Shared
+  // by the climb and by the hold-at-the-pane beat — the press has to keep
+  // accruing view time or its proof gate could never be satisfied.
+  const watchTick = (dt, s) => {
+    paneCenter.set(s.x, s.floor + 1.8, s.z);
+    game.camera.updateMatrixWorld(true);
+    game.camera.getWorldPosition(eye);
+    const dist = toPane.copy(paneCenter).sub(eye).length();
+    // same-floor rule: no psychic gaze through a ceiling. The cone is wider
+    // than it was (0.88 ~ 28 deg, was 0.93 ~ 21.6) so a player crossing the
+    // landing peripherally still accrues proof — which is only safe BECAUSE
+    // the line-of-sight test ships with it. Widening the cone without the ray
+    // would make looking through a wall worse, not better.
+    const inCone = dist < 8.5 && Math.abs(eye.y - paneCenter.y) < 2.2
+      && (game.camera.getWorldDirection(fwd), fwd.dot(toPane.multiplyScalar(1 / dist)) > 0.88);
+    // throttled at 0.08 s, the cadence _isObserved uses — a per-frame slab walk
+    // over every collider in the house is not worth the truth it buys
+    w.losT -= dt;
+    if (!inCone) w.losClear = false;
+    else if (w.losT <= 0) {
+      w.losT = 0.08;
+      // AIM SHORT OF THE GLASS. The aperture carries its own collider — the
+      // pane is solid until something breaks it — so a ray to the pane centre
+      // is blocked by the window you are looking through, every time, and the
+      // beat could never advance. Test the air just inside the room instead:
+      // a real wall between you and the landing still stops it.
+      w.losClear = !segmentBlocked(eye.x, eye.y, eye.z,
+        paneCenter.x - s.nx * 0.45, paneCenter.y, paneCenter.z - s.nz * 0.45);
+    }
+    const watched = inCone && w.losClear;
+    if (watched) w.viewT += dt;
+    return watched;
+  };
+
   game.tickers.push((dt) => {
-    if (entry.state === 'sash' || entry.state === 'fold' || entry.state === 'skitter') {
+    if (entry.state === 'press' || entry.state === 'sash'
+      || entry.state === 'fold' || entry.state === 'skitter') {
       // The entry owns the watcher while it runs. It is sound-carried — the
       // player may be anywhere on the floor and the scrape/thump/scuffs tell
       // it either way — and act-change or death simply hard-finishes it: the
@@ -4392,26 +4478,63 @@ function buildWindowWatchers(game) {
       if (game.act !== 'house' || game.dead) { finishEntry(); return; }
       const s = sites[0];
       entry.t += dt;
-      if (entry.state === 'sash') {
-        setSashLift(smoothstep(0, 0.7, entry.t) * SASH_LIFT);
-        if (entry.t >= 0.85) {
+      if (entry.state === 'press') {
+        // THE BEAT ALEX WAS NEVER SHOWN. It stands fully risen with its palm
+        // on the glass and STAYS there — three seconds, and it will not move on
+        // until the view-cone proof says it has genuinely been looked at. This
+        // is where the scare lives; everything after it is the exit.
+        watchTick(dt, s);   // the proof gate below can only close if this runs
+        // ...and crowding it still makes it shrink back, here as much as during
+        // the climb: this is the beat a player is MOST likely to walk up to,
+        // and the recoil has to survive into it or the answer is "nothing".
+        {
+          const planarP = Math.hypot(game.player.pos.x - s.x, game.player.pos.z - s.z);
+          const wantP = planarP < RECOIL_AT ? 1 : 0;
+          w.recoil += (wantP - w.recoil) * Math.min(1, dt * 2.1);
+          // and it will not go on with the beat while you are in its face
+          if (wantP) entry.t = Math.max(0, entry.t - dt);
+        }
+        root.position.y = s.floor - 1.6 + 2.35 - w.recoil * 0.55;
+        // the head turns to follow you, a little, the way the crawler's does
+        const want = Math.atan2(eye.x - s.x, eye.z - s.z) - Math.atan2(-s.nx, -s.nz);
+        head.rotation.y += (clamp(want, -0.5, 0.5) - head.rotation.y)
+          * Math.min(1, dt * 2.4);
+        // and it leans, so the pane reads as something being pushed against
+        const lean = smoothstep(0, 1.6, entry.t) * 0.02;
+        for (let i = 0; i < handParts.length; i++) {
+          handParts[i].position.z = handHomeZ[i] + lean;
+        }
+        if (!entry.pressTinked && entry.t >= 0.35) {
+          entry.pressTinked = true;
+          game.audio.glassTink({ pos: paneCenter, gain: 0.5, rate: 0.38 });
+        }
+        if (entry.t >= HOLD_AT_PANE && w.viewT >= WATCH_PROOF) {
+          entry.state = 'sash';
+          entry.t = 0;
+          game.audio.sashScrape({ pos: paneCenter, gain: 0.85, rate: 0.9 });
+          game.audio.glassTink({ pos: paneCenter, gain: 0.3, rate: 0.42 });
+        }
+      } else if (entry.state === 'sash') {
+        setSashLift(smoothstep(0, 1.5, entry.t) * SASH_LIFT);
+        if (entry.t >= 1.7) {
           entry.state = 'fold';
           entry.t = 0;
           entry.from.copy(root.position);
-          entry.to.set(s.x - s.nx * 0.55, s.floor - 1.05, s.z - s.nz * 0.55);
+          // NOT floor - 1.05: that buried the torso (local y 1.0) in the boards
+          // and left only the head clearing them. The crouch belongs in scale.
+          entry.to.set(s.x - s.nx * 0.55, s.floor - 0.30, s.z - s.nz * 0.55);
         }
       } else if (entry.state === 'fold') {
         // it folds through the gap: compressed, bowed, then upright inside,
         // dropping below the sill as it lands
-        const k = smoothstep(0, 0.55, entry.t);
+        const k = smoothstep(0, 1.1, entry.t);
         root.position.lerpVectors(entry.from, entry.to, k);
-        root.scale.y = 1 - Math.sin(k * Math.PI) * 0.38;
+        root.scale.y = (1 - Math.sin(k * Math.PI) * 0.38) * (1 - k * 0.28);
         root.rotation.x = Math.sin(k * Math.PI) * 0.7;
-        if (entry.t >= 0.55) {
+        if (entry.t >= 1.1) {
           entry.state = 'skitter';
           entry.t = 0;
           entry.scuffI = 0;
-          root.scale.y = 1;
           root.rotation.x = 0;
           game.audio.thud({ pos: { x: s.x, y: s.floor + 0.1, z: s.z - s.nz * 0.9 },
             gain: 0.34, rate: 0.8, verb: 0.3 });
@@ -4421,7 +4544,7 @@ function buildWindowWatchers(game) {
         // fades, and three-four receding scuffs carry it away
         root.position.x += (ENTRY_SCUFFS[0].x - root.position.x) * Math.min(1, dt * 2.2);
         root.position.z += (ENTRY_SCUFFS[0].z - root.position.z) * Math.min(1, dt * 2.2);
-        w.fade = Math.max(0, w.fade - dt * 2.4);
+        w.fade = Math.max(0, w.fade - dt * 0.6);
         for (const m of fadeMats) m.opacity = w.fade;
         root.visible = w.fade > 0;
         while (entry.scuffI < ENTRY_SCUFFS.length && entry.t >= ENTRY_SCUFFS[entry.scuffI].at) {
@@ -4431,7 +4554,7 @@ function buildWindowWatchers(game) {
             gain: sc.gain, rate: 1.55, verb: 0.4,
           });
         }
-        if (entry.t >= 1.45) finishEntry();
+        if (entry.t >= 2.6) finishEntry();
       }
       return;
     }
@@ -4439,6 +4562,18 @@ function buildWindowWatchers(game) {
     if (!w.active) {
       w.cooldown -= dt;
       if (w.cooldown > 0) return;
+      // THE SCRIPTED ONE WAITS FOR YOU TO BE IN THE ROOM. A bare six-second
+      // timer off the bedroom threshold routinely armed it while the player was
+      // already in the nursery or at the stair door, and it then ran the whole
+      // beat at an empty landing. Gate on presence, the way the crawler gates
+      // on its scullery box: the landing is world x[-4,4], z[0,6] on the first
+      // floor. Later hauntings keep the plain timer.
+      if (w.seen === 0 && w.nextSite === 0) {
+        const p = game.player.pos;
+        const inLanding = Math.abs(p.y - sites[0].floor) < 1.5
+          && p.x > -4 && p.x < 4 && p.z > 0 && p.z < 6;
+        if (!inLanding) { w.cooldown = 0.25; return; }
+      }
       // deterministic-but-varied: hop to the next site, biased by how much
       // of the house the player has touched so far
       w.siteIndex = w.nextSite != null
@@ -4453,32 +4588,64 @@ function buildWindowWatchers(game) {
       w.lookAwayT = 0;
       w.everWatched = false;
       w.fade = 1;
+      w.leadT = 0;
+      w.viewT = 0;
+      w.recoil = 0;
+      w.losT = 0;
+      w.losClear = false;
       for (const m of fadeMats) m.opacity = 1;
       root.visible = false;
       // The scripted first haunting must be witnessable at a normal walking
-      // pace: it activates already cresting the sill, visible unwatched, and
-      // announces itself from the pane so the sound turns the head. Every
-      // later haunting keeps the stare-gated below-sill start.
+      // pace: it activates already cresting the sill and announces itself from
+      // the pane so the sound turns the head. Every later haunting keeps the
+      // stare-gated below-sill start.
+      //
+      // AUDIO FIRST, and it means invisible: a scrape on the outside of the
+      // sill, then a creak, and only after LEAD_IN does anything appear. It
+      // used to tink and become visible on the SAME FRAME, which inverts the
+      // law the whole game is built on — you hear things before you see them.
       if (w.seen === 0 && w.siteIndex === 0) {
         w.t = 0.5;
         root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 2.35;
-        root.visible = true;
         paneCenter.set(s.x, s.floor + 1.8, s.z);
-        game.audio.glassTink({ pos: paneCenter, gain: 0.5, rate: 0.5 });
+        game.audio.sashScrape({ pos: paneCenter, gain: 0.45, rate: 1.25, verb: 0.6 });
+        game.after(LEAD_IN * 0.5, () => game.audio.creak({
+          pos: paneCenter, gain: 0.4, rate: 0.7, verb: 0.7,
+        }), { global: true });
       }
       return;
     }
     const s = sites[w.siteIndex];
     const scripted = w.seen === 0 && w.siteIndex === 0;
-    paneCenter.set(s.x, s.floor + 1.8, s.z);
-    game.camera.updateMatrixWorld(true);
-    game.camera.getWorldPosition(eye);
-    const dist = toPane.copy(paneCenter).sub(eye).length();
-    // same-floor rule: no psychic gaze through a ceiling
-    const watched = dist < 8.5 && Math.abs(eye.y - paneCenter.y) < 2.2
-      && (game.camera.getWorldDirection(fwd), fwd.dot(toPane.multiplyScalar(1 / dist)) > 0.93);
+    const watched = watchTick(dt, s);
+
+    // THE LEAD-IN: sound is already playing, nothing is on screen yet.
+    if (scripted && w.leadT < LEAD_IN) {
+      w.leadT += dt;
+      if (w.leadT >= LEAD_IN) {
+        root.visible = true;
+        game.audio.glassTink({ pos: paneCenter, gain: 0.5, rate: 0.5 });
+      }
+      return;
+    }
+
     const planar = Math.hypot(game.player.pos.x - s.x, game.player.pos.z - s.z);
-    if (planar < 2.1 && w.t > 0.05) { vanish('close'); return; }
+    // WALKING UP TO IT IS THE RIGHT RESPONSE AND MUST NOT CANCEL THE PAYOFF.
+    // The old rule deleted the whole beat at 2.1 m — so the player who did the
+    // one thing the scare invites got nothing. The scripted event recoils
+    // instead: it shrinks back toward the sash while you crowd it, and comes
+    // again when you give it room. Later hauntings keep the vanish grammar.
+    if (!scripted && planar < 2.1 && w.t > 0.05) { vanish('close'); return; }
+    if (scripted) {
+      const want = planar < RECOIL_AT ? 1 : 0;
+      w.recoil += (want - w.recoil) * Math.min(1, dt * 2.1);
+      if (w.recoil > 0.002 && !w.recoilWhispered && want) {
+        w.recoilWhispered = true;
+        game.audio.whisper({ pos: paneCenter, gain: 0.32, rate: 0.44, verb: 1.1 });
+      }
+      if (!want && w.recoil < 0.05) w.recoilWhispered = false;
+    }
+
     if (watched) {
       if (w.t === 0) {
         game.audio.whisper({ pos: paneCenter, gain: 0.2, rate: 0.55, verb: 1.0 });
@@ -4486,43 +4653,47 @@ function buildWindowWatchers(game) {
       w.everWatched = true;
       w.lookAwayT = 0;
       const before = w.t;
-      w.t = Math.min(1, w.t + dt / 3.1);
+      // SLOWER while watched, not faster. Staring used to hurry it away at
+      // dt/3.1 against an unwatched dt/6 — the game punished the player for
+      // doing the thing the scare is for. dt/4.5 is the crawler's cadence.
+      w.t = Math.min(1, w.t + dt / (scripted ? 4.5 : 3.1));
       root.visible = true;
       // it climbs into view from below the sill while your eyes hold it —
       // all the way up, so its torso and palm fill the pane, not just a
       // sliver of hood cresting the sill
-      root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 2.35;
       if (before < 0.78 && w.t >= 0.78) {
         game.audio.glassTink({ pos: paneCenter, gain: 0.4, rate: 0.5 });
       }
     } else if (scripted && !w.everWatched) {
-      // the scripted first event waits in the pane, creeping, so a head
-      // turned by the tink catches it mid-climb; it is never consumed unseen
-      w.t = Math.min(1, w.t + dt / 6);
-      root.position.y = s.floor - 1.6 + smoothstep(0, 1, w.t) * 2.35;
+      // the scripted first event waits in the pane, creeping — but only to
+      // CREEP_CAP. The last stretch to 1.0 is watched-time only, so the beat
+      // can never be spent at an empty landing the way it has been all along.
+      w.t = Math.min(CREEP_CAP, w.t + dt / 5);
     } else if (w.t > 0) {
       w.lookAwayT += dt;
-      if (w.lookAwayT > 0.55) {
-        // belt-and-braces: the scripted event does not count as 'seen' until
-        // something stood above the sill (close-approach and act-change
-        // vanishes still consume it, so it can never become immortal)
-        if (scripted && w.t < 0.5) w.lookAwayT = 0;
-        else vanish('away');
-      }
+      if (scripted) {
+        // LOOKING AWAY FREEZES IT. It does not leave because you blinked; it
+        // waits, visible, exactly where it got to — the crawler's law, and the
+        // behaviour house-critical-path already pins for that sibling.
+        w.lookAwayT = 0;
+      } else if (w.lookAwayT > 0.55) vanish('away');
     }
-    // THE FIRST ONE COMES IN. When the scripted climb completes — stared all
-    // the way up or crept there unwatched — it does not vanish outward: the
-    // sash starts up with a wood-on-wood scrape and the entry sequence above
-    // takes the ticker. Generic later hauntings never reach this (scripted is
-    // first-event-only) and keep the stare-gated vanish-outward grammar.
-    if (scripted && w.t >= 1 && entry.state === 'idle') {
-      entry.state = 'sash';
+    root.position.y = s.floor - 1.6
+      + smoothstep(0, 1, w.t) * 2.35 - w.recoil * 0.55;
+
+    // THE FIRST ONE COMES IN. When the scripted climb completes it does not
+    // vanish outward: it stands at the pane with its palm on the glass for a
+    // few seconds — the beat itself — and only then does the sash start up and
+    // the entry sequence above take the ticker. Generic later hauntings never
+    // reach this (scripted is first-event-only) and keep the vanish-outward
+    // grammar. The press will not begin while the player is crowding it.
+    if (scripted && w.t >= 1 && entry.state === 'idle' && w.recoil < 0.05) {
+      entry.state = 'press';
       entry.t = 0;
+      entry.pressTinked = false;
       root.visible = true;
       for (const m of fadeMats) m.opacity = 1;
       w.fade = 1;
-      game.audio.sashScrape({ pos: paneCenter, gain: 0.85, rate: 0.9 });
-      game.audio.glassTink({ pos: paneCenter, gain: 0.3, rate: 0.42 });
     }
   });
 }
@@ -5578,6 +5749,12 @@ function buildPumpGallery(game) {
   world.box(iron, -13.62, B + 0.028, -4.85, 0.09, 0.055, 3.3);
   world.box(iron, -14.21, B + 0.028, -3.2, 1.18, 0.055, 0.09);
   world.box(iron, -14.8, B + 0.62, -3.14, 0.07, 1.24, 0.07);
+  // ...and the same grammar on the WEST bank, off the pressure plate at the
+  // end of the deck: a run north to the channel rail, then up it. The plate is
+  // the third machine in the room and it has to look connected to what it does.
+  // world.box merges into the shell — zero draws, and never animatable.
+  world.box(iron, -17.72, B + 0.028, -3.9, 0.09, 0.055, 1.1);
+  world.box(iron, -17.9, B + 0.5, -4.45, 0.07, 1.0, 0.07);
   // ...and EAST, along the crawl wing's ceiling to the cage that hangs this
   // drum's counterweight. Same merged batch, zero draws — but now the two
   // machines are visibly one machine, which is the whole of Alex's note.
@@ -5606,21 +5783,34 @@ function buildPumpGallery(game) {
 
   const pawl = new THREE.Group();
   pawl.name = 'pump-gallery-far-pawl';
-  // Clamp the north bridge rail, never the player's centerline. The first pass
-  // put this dramatic jaw exactly where the camera crossed and let the player
-  // walk through its teeth.
-  pawl.position.set(-17.48, B + 0.42, -4.66);
+  // Alex: "slightly slide the spikey thing in the basement that locks the gate
+  // into place so its at the end of the walkway and either make it less
+  // veryically tall, or put it in the floor so the player walks over it
+  // automatically." Option b.
+  //
+  // It used to be shoved 1.66 m north of the crossing lane, behind the channel
+  // rail, because at 0.69 m tall on the walk line the player walked straight
+  // through its teeth. That solved the clipping and broke the read: the thing
+  // that locks the gate was not the thing you touched, and the actual latch was
+  // an invisible landing box. Flat solves both. At the end of the deck, on the
+  // centreline, it is a 10 cm plate you step on — a tenth of STEP_UP, so it
+  // cannot obstruct, and it needs no collider (it never had one; below feet+0.5
+  // player.js skips it anyway, and a collider would earn it a ground decal).
+  pawl.position.set(-17.72, B, -3);
   scene.add(pawl);
-  const jawTop = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.13, 1.45), pale);
-  jawTop.position.y = 0.28;
+  // the LID: what you tread on, and what sinks flush when the tines seat
+  const jawTop = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.09, 1.5), pale);
+  jawTop.position.y = 0.055;
   pawl.add(jawTop);
-  const jawBottom = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.13, 1.45), pale);
-  jawBottom.position.y = -0.28;
+  // the KEEPER: below the floor, read only as teeth through the slot
+  const jawBottom = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.1, 1.5), pale);
+  jawBottom.position.y = -0.13;
   pawl.add(jawBottom);
+  // tines point at each other across the slot, so the bite reads as interlock
   for (const jaw of [jawTop, jawBottom]) for (let i = -2; i <= 2; i++) {
     const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.18, 5), pale);
-    tooth.position.set(-0.31, jaw === jawTop ? -0.12 : 0.12, i * 0.25);
-    tooth.rotation.z = jaw === jawTop ? 0 : Math.PI;
+    tooth.position.set(0, jaw === jawTop ? -0.06 : 0.07, i * 0.28);
+    tooth.rotation.z = jaw === jawTop ? Math.PI : 0;
     jaw.add(tooth);
   }
 
@@ -6064,8 +6254,13 @@ function buildPumpGallery(game) {
   // function; with the bridge up it answers (jaw clank, cradle clue) and
   // grants nothing, because a latched pawl with no bridge under it would
   // bypass the crossing the skull's weight is supposed to buy.
+  // NOT `object: pawl` any more. skull.js resolves a target's centre from the
+  // object's world position, and the plate now sits at ankle height — the catch
+  // sphere would have sunk with it and silently killed the affordance Alex
+  // found by accident. A fixed knee-to-waist point keeps a flat throw down the
+  // bridge lane landing on it, without reaching the archive doorway.
   world.addFetchTarget({
-    id: 'pumpFarPawl', object: pawl, radius: 0.85,
+    id: 'pumpFarPawl', pos: new THREE.Vector3(-17.72, B + 0.5, -3), radius: 0.9,
     onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
       if (route.latched) return 'return';
@@ -6296,6 +6491,24 @@ function buildPumpGallery(game) {
         && game.player.pos.x < -17.28
         && game.player.pos.z > -9.6 && game.player.pos.z < 1.9;
       if (onFarLanding && route.progress > 0.9) latchRoute();
+      // The PLATE band is a separate, tighter box, and only ever drives the
+      // pre-latch depress and its creak — the latch line above is untouched
+      // (two tests assert that exact threshold and two more cross on fixed
+      // durations with no slack). Its east edge is deliberately WEST of -17.28,
+      // so weight on the plate can never fire before the landing does.
+      const onPlate = game.act === 'basement' && game.player.pos.y < B + 2.2
+        && game.player.pos.x < -17.32 && game.player.pos.x > -18.2
+        && game.player.pos.z > -3.95 && game.player.pos.z < -2.05;
+      route.onPlate = onPlate;
+      if (!route.latched) {
+        // your weight answers a beat before the mechanism does
+        if (onPlate && !route.plateCreaked) {
+          route.plateCreaked = true;
+          game.audio.creak({ pos: pawl.position, gain: 0.3, rate: 1.2 });
+        } else if (!onPlate) route.plateCreaked = false;
+        const want = 0.055 - (onPlate ? 0.018 : 0);
+        jawTop.position.y += (want - jawTop.position.y) * Math.min(1, dt * 7);
+      }
     } else {
       route.progress = 1;
       route.state = 'latched';
@@ -6331,13 +6544,15 @@ function buildPumpGallery(game) {
     const gateGoal = route.gateOpen ? B - 2.3 : B;
     gate.position.y += (gateGoal - gate.position.y) * Math.min(1, dt * 4.2);
     if (route.latched && route.pawlDrive < 1) {
-      // the pawl drives itself in: accelerating jaw travel, a hard stop, and
-      // the heavy clank lands exactly when the teeth seat on the rail
+      // the pawl drives itself in: accelerating travel, a hard stop, and the
+      // heavy clank lands exactly when the tines seat. The lid sinks DEAD FLUSH
+      // with the gallery floor now rather than a jaw closing sideways — the old
+      // `pawl.position.x = -17.48 + ...` hard-coded the position it no longer
+      // occupies and would have dragged the plate out of its own slot.
       route.pawlDrive = Math.min(1, route.pawlDrive + dt / 0.42);
       const bite = route.pawlDrive * route.pawlDrive;
-      jawTop.position.y = 0.28 - bite * 0.2;
-      jawBottom.position.y = -0.28 + bite * 0.2;
-      pawl.position.x = -17.48 + bite * 0.09;
+      jawTop.position.y = 0.055 - bite * 0.055;
+      jawBottom.position.y = -0.13 - bite * 0.01;
       if (route.pawlDrive >= 1) {
         game.audio.metalDrop({ pos: pawl.position, gain: 0.94, rate: 0.58 });
         game.shake(0.12);

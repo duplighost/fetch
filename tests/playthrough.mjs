@@ -604,9 +604,28 @@ try {
     walkTo(-11.5, 25.0, 18);
     walkTo(-14.6, 31.6, 35);
     walkTo(-14.6, 33.4, 12);
-    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) {
+    // THE STONE COMES OFF FIRST. Alex: "you shouldn't just walk into it and be
+    // teleported. a hatch should open with e." Look at the throat, press E once
+    // to slide the slab, wait for it, then cross. The walk-over still works —
+    // it just cannot fire through a closed lid, so the bot has to open it.
+    const throatAim = () => {
       const dx = -14.6 - g.player.pos.x, dz = 34.8 - g.player.pos.z;
       g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(0.07 - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+    };
+    throatAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.2, {});
+    beat('the-entry-hatch-answers-the-verb', g.ossuary.entryLid.moving === true,
+      { t: +g.ossuary.entryLid.t.toFixed(2) });
+    for (let t = 0; t < 6 && !g.ossuary.entryLid.open; t += 0.1) F.stepWith(0.1, {});
+    beat('the-stone-slides-off-the-throat', g.ossuary.entryLid.open === true,
+      { t: +g.ossuary.entryLid.t.toFixed(2) });
+    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) {
+      throatAim();
+      g.player.pitch = 0;
+      g.player._sync(0);
       F.stepWith(0.1, { moveZ: 1 });
     }
     beat('mausoleum-opens-required-ossuary',
@@ -642,27 +661,51 @@ try {
     }
     beat('exit-slab-sank-and-opened-the-way',
       g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
-    // the far hatch is chained shut for good — the forest has ONE door now
-    const climbOutInter = g.world.interactables
+    // The stair top is plain ceiling now — the unopenable lid and its padlock
+    // are gone, and so is the verb that could never be live.
+    const deadClimbOut = g.world.interactables
       .map((o) => o.userData.inter).find((it) => it && it.id === 'ossuaryClimbOut');
-    beat('the-far-hatch-stays-sealed', !!climbOutInter && climbOutInter.enabled === false,
-      { enabled: climbOutInter ? climbOutInter.enabled : 'missing' });
+    beat('the-dead-far-hatch-is-gone', deadClimbOut === undefined,
+      { found: deadClimbOut ? 'still registered' : 'gone' });
 
-    walkTo(-70.0, 12.4, 12);
-    throwAt(-70.0, -3.05, 15.4, 0.5);
+    // THE KEY IS AT THE TOP OF THE STAIRS. It used to hang 2.75 m in FRONT of
+    // the wall the counterweight lowers, which is why the weight read as doing
+    // nothing: walk through the gate it opened, up both flights, and take it.
+    // through the gate the weight opened, up flight A, round the turn, up
+    // flight B — the same six waypoints the ossuary-climb regression walks
+    walkTo(-68.2, 13.2, 14);
+    walkTo(-68.25, 20.2, 18);
+    walkTo(-68.25, 23.6, 14);
+    walkTo(-72.45, 24.65, 14);
+    beat('climbed-to-the-stair-top', g.player.pos.y > -1.4,
+      { y: +g.player.pos.y.toFixed(2) });
+    throwAt(-72.45, 0.25, 24.7, 0.5);
     for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey1'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('first-key-rides-the-jaw', g.skull.carry?.id === 'gateKey1',
       { carry: g.skull.carry ? g.skull.carry.id : null });
 
-    // back down the baffled corridor and up through the mausoleum you entered
-    walkTo(-68.0, 10.8, 14); walkTo(-72.0, 5.6, 16); walkTo(-72.0, 3.4, 10);
-    walkTo(-68.0, -1.2, 16); walkTo(-68.0, -3.4, 10);
-    for (let t = 0; t < 6 && g.ossuary.inOssuary; t += 0.1) {
-      const dz = -9.9 - g.player.pos.z;
-      g.player.yaw = Math.atan2(0.6, -dz);
-      F.stepWith(0.1, { moveZ: 1 });
-    }
+    // back down both flights, down the baffled corridor, and OUT THROUGH A
+    // HATCH — Alex: "have a similar hatch to come out." The near end used to be
+    // a hole in the model you walked into and got teleported out of in silence.
+    walkTo(-68.25, 23.6, 16); walkTo(-68.25, 20.2, 16); walkTo(-70.0, 15.0, 16);
+    walkTo(-68.0, 10.8, 16); walkTo(-72.0, 5.6, 16); walkTo(-72.0, 3.4, 10);
+    walkTo(-68.0, -1.2, 16); walkTo(-70.0, -8.8, 12);
+    const hatchAim = () => {
+      const dx = -70 - g.player.pos.x, dz = -9.9 - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2((-3.2) - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+    };
+    hatchAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.2, {});
+    for (let t = 0; t < 6 && !g.ossuary.exitLid.open; t += 0.1) F.stepWith(0.1, {});
+    beat('the-way-out-is-a-hatch-too', g.ossuary.exitLid.open === true,
+      { t: +g.ossuary.exitLid.t.toFixed(2) });
+    hatchAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.3, {});
     beat('walked-back-out-the-way-you-came', !g.ossuary.inOssuary && g.act === 'graveyard',
       { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
 

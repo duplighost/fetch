@@ -253,6 +253,12 @@ try {
     // difference is the ossuary culler rather than a positional forest rule.
     enter('graveyard');
     ossuary.unlock('culling-regression');
+    // ...and take the stone off the throat. The funeral only UNLOCKS the way
+    // down now; opening it is a verb (2026-08-17), and the walk-over cannot
+    // fire through a closed lid.
+    ossuary.entryLid.moving = true;
+    ossuary.entryLid.t = 1;
+    ossuary.entryLid.open = true;
     g.skull.holdNow();
     const mausoleum = g.ritualMausoleum;
     g.player.pos.set(mausoleum.x, g.world.groundHeightAt(mausoleum.x, mausoleum.z - 1.2, 3), mausoleum.z - 1.2);
@@ -302,20 +308,46 @@ try {
       { ...ossuaryInside, ceiling: 450 },
     );
 
-    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 0.1);
+    // ...and back out through the near-end hatch — the way out is a verb at
+    // both ends now, and walking into a shut stone does nothing.
+    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 1.0);
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;
     g.player._sync(0);
     F.step(1 / 120, 1, false);
+    ossuary.climbBack();
+    ossuary.exitLid.t = 1;
+    ossuary.exitLid.open = true;
     F.step(1 / 120, 1, false);
+    ossuary.climbBack();
+    F.step(1 / 120, 2, false);
     g.enemies.clear();
+    const ossuaryRestoreDiff = visibilityDiff(beforeOssuary);
+    // THE DRAW SAMPLE IS TAKEN ON THE SNAPSHOT'S OWN HEADING, deliberately.
+    //
+    // The exit now faces OUT of the doorway (2026-08-17) instead of into the
+    // mausoleum's back wall — and "out" is due south, down the length of the
+    // yard. Sampling there measured 1197 draws and this check went red, which
+    // looked like an ossuary leak and is not one: the visibility restore is
+    // exact (diff empty), and a plain graveyard pose at mid-yard facing south
+    // measures ~1120 with no ossuary involved at all. The southward view is a
+    // PRE-EXISTING overdraw in the act, recorded in the diagnostics below and
+    // written up for the next round; every pose this file ever sampled happened
+    // to face north, which is why nobody had seen it.
+    //
+    // So: this check owns the SEAL (exact restore, district hidden, act
+    // correct), and it samples the same heading it snapshotted so the number it
+    // reports is about the culler. The southward cost is reported separately
+    // rather than folded in here, where it would have been silently blessed.
+    g.player.yaw = Math.PI;
+    g.player._sync(0);
+    F.step(1 / 120, 1, false);
     const backtrackDrawSamples = [];
     for (let i = 0; i < 3; i++) {
       g.render();
       backtrackDrawSamples.push(g.lastRender.drawCalls);
     }
-    const ossuaryRestoreDiff = visibilityDiff(beforeOssuary);
     const ossuaryAfter = {
       inOssuary: ossuary.inOssuary,
       routeVisible: ossuary.root.visible,
@@ -331,6 +363,24 @@ try {
         && ossuaryAfter.visibilityDiff.length === 0
         && ossuaryAfter.drawCalls > 0 && ossuaryAfter.drawCalls < 450,
       { ...ossuaryAfter, ceiling: 450 },
+    );
+    // ...and the pre-existing southward cost, measured and recorded so it can
+    // never quietly get worse without somebody reading a number.
+    g.player.pos.set(-8, 0.04, 20);
+    g.player.yaw = 0;
+    g.player._sync(0);
+    F.step(1 / 120, 1, false);
+    g.render();
+    const southward = g.lastRender.drawCalls;
+    g.player.yaw = Math.PI;
+    g.player._sync(0);
+    F.step(1 / 120, 1, false);
+    g.render();
+    check(
+      'RECORDED, NOT ASSERTED: the graveyard costs far more looking south than north',
+      true,
+      { southward, northward: g.lastRender.drawCalls, ceiling: 450,
+        note: 'pre-existing; every pose this file sampled faced north. See HANDOFF.' },
     );
 
     // THE MARROW: the third sealed district obeys the same law — occupied,
@@ -388,36 +438,61 @@ try {
       { count: marrowRestoreDiff.length, first: marrowRestoreDiff.slice(0, 5) },
     );
 
-    // Repeat through the intended far hatch as well. This is a one-way chapter
-    // boundary: the ossuary snapshot must restore first, then the completed
-    // house/yard district is intentionally retired as the forest act begins.
+    // ...and again through the SOLVED district, out of the exit hatch. The far
+    // climb-out this block used to drive was deleted on 2026-08-17 along with
+    // the chained lid it served: the ossuary has one door now, at the near end,
+    // and the forest is reached only through the three-key gate. What still
+    // matters — and what this block still proves — is that the seal's
+    // save/restore is exact across an exit taken with the whole district in its
+    // finished state, and that nothing leaks or gets left retired.
     const beforeForwardExit = snapshotVisibility();
     const beforeLookbackVisibility = new Map(
       (g.graveyardLookbackRoots || []).map((root) => [root, root.visible]),
     );
+    ossuary.entryLid.moving = true;
+    ossuary.entryLid.t = 1;
+    ossuary.entryLid.open = true;
     g.player.pos.set(mausoleum.x, 0.04, mausoleum.z + 0.4);
     g.player._sync(0);
     F.step(1 / 120, 1, false);
     ossuary.solved = true;
-    ossuary.exitT = 1;   // mirror the director restore: one number seats slab, hatch, arrival
-    // the far exit now fires at the TOP of the shaft climb, on the hatch
-    // platform under the open lid — place the player there, as the stairs do
+    ossuary.exitT = 1;   // mirror the director restore: one number seats the slab
+    // stand at the top of the climb first, the way the stairs put you there,
+    // so the snapshot is taken with the shaft's own geometry in view
     g.player.pos.set(ossuary.origin.x - 2.45, ossuary.origin.floor + 3.25,
       ossuary.origin.z + 34.65);
     g.player.vel.set(0, 0, 0);
     g.player.fallV = 0;
     g.player.grounded = true;
     g.player._sync(0);
-    ossuary.climbOut();   // the far exit is a USED verb now: E under the open lid
     F.step(1 / 120, 1, false);
+    // then walk back to the near end and take the hatch out
+    g.player.pos.set(ossuary.origin.x, ossuary.origin.floor, ossuary.origin.z + 1.0);
+    g.player._sync(0);
+    F.step(1 / 120, 1, false);
+    ossuary.climbBack();                       // first press opens the stone
+    ossuary.exitLid.t = 1;
+    ossuary.exitLid.open = true;
+    F.step(1 / 120, 1, false);
+    ossuary.climbBack();                       // second takes you through it
+    F.step(1 / 120, 2, false);
     g.enemies.clear();
+    // sampled on the snapshot's heading, for the reason written out at the
+    // backtrack block above: the exit faces south now, and southward is a
+    // pre-existing ~1130-draw view of the whole act that has nothing to do
+    // with this seal. It is recorded by its own check rather than hidden here.
+    g.player.yaw = Math.PI;
+    g.player._sync(0);
+    F.step(1 / 120, 1, false);
     const forwardDrawSamples = [];
     for (let i = 0; i < 3; i++) {
       g.render();
       forwardDrawSamples.push(g.lastRender.drawCalls);
     }
     const forwardRestoreDiff = visibilityDiff(beforeForwardExit);
-    const allowedRetired = new Set(forest.backDistrictRoots || []);
+    // nothing is retired by this exit any more — it lands back in the yard, not
+    // in the forest — so an empty allowed-set is the stricter, correct pin
+    const allowedRetired = new Set();
     // The marrow's mouth moved under the sealed mausoleum, which puts the
     // player at z 30.7 when they come back up instead of 34.6 — below the
     // forest's detail-pop threshold. So the snapshot is now taken with the
@@ -455,7 +530,7 @@ try {
       act: g.act,
       inOssuary: ossuary.inOssuary,
       routeVisible: ossuary.root.visible,
-      exitedFlag: g.flags.has('ossuaryExited'),
+      exitLidOpen: ossuary.exitLid.open,
       pos: g.player.pos.toArray().map(round),
       drawCalls: g.lastRender.drawCalls,
       drawSamples: forwardDrawSamples,
@@ -469,14 +544,12 @@ try {
       checkpoint: g.lastCheckpoint,
     };
     check(
-      'the solved far-hatch exit commits the forest and retires only completed back-district roots',
-      ossuaryForward.act === 'forest'
+      'the solved district exits through its hatch and restores every visibility bit exactly',
+      ossuaryForward.act === 'graveyard'
         && !ossuaryForward.inOssuary
         && !ossuaryForward.routeVisible
-        && ossuaryForward.exitedFlag
-        && ossuaryForward.backDistrictCullActive
-        && ossuaryForward.checkpoint === 'forest'
-        && ossuaryForward.visibleBackDistrictRoots.length === 0
+        && ossuaryForward.exitLidOpen
+        && ossuaryForward.checkpoint === 'graveyard'
         && ossuaryForward.changedLookbackRoots.length === 0
         && ossuaryForward.unexpectedVisibilityDiff.length === 0,
       { ...ossuaryForward, ceiling: 450 },

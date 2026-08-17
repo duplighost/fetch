@@ -1206,6 +1206,12 @@ function buildGraveyardGate(game) {
     });
     return true;
   };
+  // PRE-RESOLUTION ONLY, and deliberately socket-blind: its one caller
+  // (director.respawn) is fenced behind `!graveyardResolved`, and the marrow —
+  // the likeliest place to die with keys banked — cannot even be entered until
+  // resolution. Banked keys are progress, and progress survives death: the
+  // sockets and their flags are restored by gateKeys.restore(), never cleared
+  // here. The weights derive from banked() live, so this snap self-corrects.
   gate.reset = () => {
     gate.t = 0;
     gate.opening = false;
@@ -1413,7 +1419,11 @@ function buildGateSockets(game) {
   // three clunks, then the iron gives. No counter anywhere: the sockets are
   // the counter, and the gate's own creak is the reward.
   keys.openTheGate = () => {
-    if (keys._opened) return;
+    // the latch may only hold once the gate has actually been GIVEN. A latch
+    // that holds over a shut gate is a softlock, and that is exactly what the
+    // old restore() manufactured — belt and braces, because the cost of being
+    // wrong here is a run that can never finish.
+    if (keys._opened && game.flags.has('graveyardCleared')) return;
     keys._opened = true;
     game.flag('graveyardCleared');
     for (let i = 0; i < 3; i++) {
@@ -1423,13 +1433,34 @@ function buildGateSockets(game) {
     }
     game.after(1.05, () => game.graveyardGate?.openGate?.(), { global: true });
   };
-  // restore: a reload past the third key finds the gate already given
+  // restore: a respawn past a banked key finds the column exactly as it left it.
+  //
+  // This used to read `gateKeyBanked:<socket index + 1>` — key NUMBER mapped
+  // onto SOCKET INDEX — and the two only ever agree if the player happens to
+  // bank 1, 2, 3 in that order. bankAny() seats the lowest EMPTY socket, so any
+  // out-of-order bank followed by any death invented a socket: two real keys
+  // became three filled, `_opened` latched over a gate that never opened,
+  // 'graveyardCleared' never flagged, all three weights fell across the gap and
+  // the real third key was refused with the locked rattle. Permanent softlock,
+  // and one death earlier the same mismatch opened the gate on two keys.
+  //
+  // Derive the COUNT from the flags instead and fill bottom-up, the way
+  // bankAny() seats: true state is always "the lowest n sockets". Authoritative
+  // in both directions (it can clear a stale socket, not only set), idempotent
+  // — restore runs twice per respawn — and it can never inflate. There is no
+  // persistence in this project; a page reload is a cold boot at the bedroom.
+  // The only replay path is this in-session flag re-derivation on respawn.
   keys.restore = () => {
-    for (const s of keys.sockets) {
-      if (game.flags.has('gateKeyBanked:' + (s.i + 1))) s.filled = true;
-    }
+    const n = [1, 2, 3].filter((k) => game.flags.has('gateKeyBanked:' + k)).length;
+    for (const s of keys.sockets) s.filled = s.i < n;
     reseat();
-    if (keys.banked() >= 3) keys._opened = true;
+    // The latch means one thing: THE GATE HAS BEEN GIVEN. 'graveyardCleared' is
+    // what says so, so derive it rather than only ever setting it — that is the
+    // half of the old bug that turned a desync into a permanent softlock.
+    keys._opened = game.flags.has('graveyardCleared');
+    // and if three are in and it was never given, give it now: this also heals
+    // a session that walked in here already corrupt.
+    if (n >= 3 && !keys._opened) keys.openTheGate();
   };
   reseat();
 
@@ -1943,6 +1974,51 @@ function buildOssuaryRoute(game) {
   world.addSurface('dirt', OX - 6.2, OZ - 1, OX + 6.2, OZ + LENGTH + 1,
     FLOOR - 2, FLOOR + HEIGHT + 1);
 
+  // THE NEAR END HAD NO WALL. Alex: "getting out of that area with the wall at
+  // the beginning feels weird." It was not a weird wall — it was a MISSING one.
+  // The corridor simply stopped at z = OZ with no cap mesh and no collider, so
+  // looking back showed the renderer's clear colour straight through the open
+  // end of the model: the flat, featureless dark-blue plane in his screenshot.
+  // (It also dropped groundHeightAt through to the terrain 4.2 m below.)
+  //
+  // One wall closes both — built in three pieces around a 1.0 x 1.9 doorway,
+  // because the hatch has to open onto something. Chunky panels, not the narrow
+  // strips that produced the bright AO seam when a merged floor was split.
+  const CAP_Z = OZ - 0.15;
+  addMeshBox(wallMat, OX - 1.9, FLOOR + HEIGHT / 2, CAP_Z, 2.8, HEIGHT, 0.3, 'ossuary near cap');
+  addMeshBox(wallMat, OX + 1.9, FLOOR + HEIGHT / 2, CAP_Z, 2.8, HEIGHT, 0.3, 'ossuary near cap');
+  addMeshBox(wallMat, OX, FLOOR + 2.375, CAP_Z, 1.0, 0.95, 0.3, 'ossuary near cap header');
+  world.addCollider(OX - 3.3, FLOOR - 0.5, CAP_Z - 0.15, OX - 0.5, FLOOR + HEIGHT,
+    CAP_Z + 0.15, { ossuary: true });
+  world.addCollider(OX + 0.5, FLOOR - 0.5, CAP_Z - 0.15, OX + 3.3, FLOOR + HEIGHT,
+    CAP_Z + 0.15, { ossuary: true });
+  world.addCollider(OX - 0.5, FLOOR + 1.9, CAP_Z - 0.15, OX + 0.5, FLOOR + HEIGHT,
+    CAP_Z + 0.15, { ossuary: true });
+  // and DARKNESS behind the doorway, not the renderer's clear colour: the seal
+  // hides the whole yard while you are down here, so an un-backed hole would be
+  // the exact flat plane this wall exists to kill, just smaller.
+  {
+    // generously oversized and set well back: sized to the aperture it leaked a
+    // hairline of clear colour along the sill, which is the same bug in
+    // miniature as the one this whole wall exists to kill
+    const beyond = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2.8),
+      new THREE.MeshBasicMaterial({ color: 0x010204 }));
+    beyond.position.set(OX, FLOOR + 0.9, CAP_Z - 0.32);
+    routeRoot.add(beyond);
+  }
+  // dressed with the same broken roots that ring the marrow's mouth, so it
+  // reads as a way somebody sealed rather than the end of the geometry
+  const addBoneRoot = (x, y, z, r, len, yawTilt) => {
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, len, 6), boneMat);
+    root.position.set(x, y, z);
+    root.rotation.set(0, yawTilt, Math.PI / 2);
+    root.receiveShadow = true;
+    routeRoot.add(root);
+  };
+  addBoneRoot(OX + 1.55, FLOOR + 1.9, OZ + 0.06, 0.042, 1.06, 0.07);
+  addBoneRoot(OX + 1.72, FLOOR + 1.24, OZ + 0.06, 0.036, 1.02, -0.1);
+  addBoneRoot(OX - 1.85, FLOOR + 2.1, OZ + 0.06, 0.03, 1.1, 0.16);
+
   // Side shells leave one human-width opening into each pocket.
   addWall(OX - HALF_W - 0.15, OZ + 5.35, 0.3, 10.7);
   addWall(OX - HALF_W - 0.15, OZ + 21.65, 0.3, 16.7);
@@ -2169,6 +2245,22 @@ function buildOssuaryRoute(game) {
   routeRoot.add(exitSlab);
   const exitCollider = world.addCollider(OX - HALF_W, FLOOR - 0.5, OZ + 27.94,
     OX + HALF_W, FLOOR + HEIGHT, OZ + 28.34, { ossuaryExit: true });
+  // FRAME IT SO IT READS AS A GATE, not thirty more metres of corridor. Two
+  // jambs and a lintel, merged into the shell — zero draws — plus one pooled
+  // descriptor on the near face so the stone is the brightest surface in the
+  // bay at the moment it moves. Alex watched a full-corridor wall sink and
+  // reported that the weight "doesn't do much of anything": it was doing it
+  // where nothing marked it as a door.
+  addMeshBox(wallMat, OX - HALF_W + 0.22, FLOOR + 1.4, OZ + 27.86, 0.44, 2.8, 0.3, 'exit jamb');
+  addMeshBox(wallMat, OX + HALF_W - 0.22, FLOOR + 1.4, OZ + 27.86, 0.44, 2.8, 0.3, 'exit jamb');
+  addMeshBox(wallMat, OX, FLOOR + 2.66, OZ + 27.86, HALF_W * 2, 0.34, 0.34, 'exit lintel');
+  world.candles.push({ x: OX, y: FLOOR + 2.2, z: OZ + 27.4, intensity: 0.5, r: 4.0 });
+  // and WIRE IT: a floor conduit from the mechanism plinth to the slab base,
+  // then up the jamb — the basement's blessed vocabulary ("all the stuff was
+  // attached by some wires on the floor"). world.box merges; zero draws.
+  world.box(ironMat, OX + 0.35, FLOOR + 0.03, OZ + 22.2, 0.09, 0.055, 11.9);
+  world.box(ironMat, OX + 1.4, FLOOR + 0.03, OZ + 16.3, 2.1, 0.055, 0.09);
+  world.box(ironMat, OX - 2.6, FLOOR + 1.4, OZ + 27.7, 0.07, 2.8, 0.07);
   // ------------------------------------------------------------- THE CLIMB
   // Past the slab the corridor becomes a vertical shaft: two masonry flights
   // turn 90 degrees so the top is out of sight of the bottom, and the same
@@ -2176,7 +2268,11 @@ function buildOssuaryRoute(game) {
   // stair head. The player walks up under their own power — ramp records for
   // ground height, tread colliders for feet, no new movement system. The old
   // three decorative rungs (three bars at one height, no collider) are gone.
-  const DECK_Y = FLOOR + 5.25;              // hatch deck over the stair head
+  // Raised from FLOOR+5.25 when the aperture was filled in (2026-08-17): the
+  // deck used to be a hole you looked up through, so 1.9 m of headroom over the
+  // platform never read as low. As solid ceiling with the key hanging under it,
+  // 1.9 m against a 1.75 m eye height is a crouch. WALL_TOP derives from it.
+  const DECK_Y = FLOOR + 5.6;               // ceiling over the stair head
   const WALL_TOP = DECK_Y + 1.65;           // walls reach the void ceiling: sealed
   // floor + tall walls for the chamber past the corridor's roofline
   addMeshBox(floorMat, OX, FLOOR - 0.08, OZ + 32.7, HALF_W * 2, 0.16, 5.4, 'shaft dirt floor');
@@ -2266,108 +2362,61 @@ function buildOssuaryRoute(game) {
   world.addCollider(OX - 3.0, FLOOR + 2.9, OZ + 33.79, OX - 2.0, FLOOR + 4.3, OZ + 33.9,
     { stairId: 'ossuaryShaftTop', stairPart: 'edge' });
 
-  // the deck the hatch lives in, with one mouth over the platform. Plates
-  // tuck INTO the walls — a plate ending flush at a wall face leaked a bright
-  // seam of the mouth's light along the joint.
-  addMeshBox(wallMat, OX + 0.625, DECK_Y, OZ + 34.7, 5.35, 0.2, 2.0, 'hatch deck');
+  // THE TOP OF THE STAIRS IS PLAIN CEILING NOW. Alex: "get rid of the
+  // unopenable hatch and permalock at the top of the stairs and it should just
+  // be cieling like the rest. The key in that area should spawn at the top of
+  // the stairs."
+  //
+  // There used to be a mouth here with an iron lid, a chain X, a hasp and a fat
+  // brass padlock — the game's sealed-then-open vocabulary, spent on a door
+  // that could never open: its drive was a hardcoded `const hatchT = 0` and its
+  // verb was force-disabled every tick. It promised the way out and was the one
+  // thing in the district that could never deliver. Deleting it costs the
+  // player nothing and gives the climb its real payoff: the key, hanging under
+  // ordinary stone. One continuous deck, no aperture, no dressing to frame.
+  addMeshBox(wallMat, OX - 0.05, DECK_Y, OZ + 34.7, 5.9, 0.2, 2.0, 'hatch deck');
   addMeshBox(wallMat, OX - 2.45, DECK_Y, OZ + 33.93, 0.9, 0.2, 0.46, 'hatch deck south');
-  addMeshBox(wallMat, OX - 3.075, DECK_Y, OZ + 34.7, 0.45, 0.2, 2.0, 'hatch deck west');
 
-  // The mouth wears a THROAT: looking up from the platform used to show a
-  // featureless black plane identical to night sky, with E offered on nothing.
-  // Curbs ring three open edges of the aperture (the cap wall frames the
-  // fourth — a deck curb there would intersect the open lid, which rests
-  // against that wall) and bone roots cross the mouth in the z band the lid's
-  // 1.141 m swing arc never reaches (arc tops at DECK_Y+0.88 at z+34.5, lower
-  // west of it). Ring, never roof: the exitMouth raycast stays clear. All lit
-  // by the existing shaftGlow — no new lights.
-  addMeshBox(wallMat, OX - 2.95, DECK_Y + 0.4, OZ + 34.75, 0.15, 0.6, 1.3, 'exit mouth curb');
-  addMeshBox(wallMat, OX - 1.95, DECK_Y + 0.4, OZ + 34.75, 0.15, 0.6, 1.3, 'exit mouth curb');
-  addMeshBox(wallMat, OX - 2.45, DECK_Y + 0.4, OZ + 34.05, 1.15, 0.6, 0.15, 'exit mouth curb');
-  // header proud of the cap wall face, above the open lid's resting top edge
-  // (lid tip reaches DECK_Y+1.21) and shy of the void plane at DECK_Y+1.6
-  addMeshBox(wallMat, OX - 2.45, DECK_Y + 1.42, OZ + 35.32, 1.15, 0.3, 0.16, 'exit mouth header');
-  const addMouthRoot = (y, z, r, len, yawTilt) => {
-    const root = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, len, 6), boneMat);
-    root.position.set(OX - 2.45, y, z);
-    root.rotation.set(0, yawTilt, Math.PI / 2);
-    root.receiveShadow = true;
-    routeRoot.add(root);
-  };
-  addMouthRoot(DECK_Y + 0.92, OZ + 34.32, 0.042, 1.06, 0.07);
-  addMouthRoot(DECK_Y + 1.06, OZ + 34.44, 0.036, 1.02, -0.1);
-  addMouthRoot(DECK_Y + 1.22, OZ + 34.37, 0.03, 1.1, 0.16);
-
-  // the lid: a bolted iron panel, chain X, hasp and fat padlock underneath —
-  // the game's existing sealed-then-open language (the basement bilco kit).
-  // Everything is DRIVEN parametrically off state.exitT so a forced restore
-  // (director teleport, respawn) seats the whole pose in one assignment.
-  const brassMat = new THREE.MeshStandardMaterial({ color: 0xa98748, roughness: 0.34, metalness: 0.78 });
-  const sootMat = new THREE.MeshStandardMaterial({ color: 0x17191c, roughness: 0.7, metalness: 0.5 });
-  const lidPivot = new THREE.Group();
-  lidPivot.name = 'ossuary hatch lid';
-  lidPivot.userData.noBatch = true;
-  lidPivot.position.set(OX - 2.45, DECK_Y + 0.07, OZ + 35.3);
-  routeRoot.add(lidPivot);
-  const lidPanel = new THREE.Mesh(new THREE.BoxGeometry(0.84, 0.1, 1.14), ironMat);
-  lidPanel.position.z = -0.57;
-  lidPivot.add(lidPanel);
-  // "things you can activate look distinct" — the lid wears the hatch-handle
-  // language: a bar bolted to its underside, catching light the moment the
-  // lid stands open above the climb.
-  // color/emissive pair copied from the basement bilco handle (house.js) —
-  // pale worn metal, bright by value: the emissive hex was transposed into
-  // the color slot here once and the bar rendered soot-black.
+  // Kept from the retired lid kit because both REAL hatches wear it: "things
+  // you can activate look distinct." Pale worn metal, bright by VALUE — and
+  // note that the emissive hex was transposed into the color slot here once
+  // and rendered the bar soot-black. Do not repeat that.
   const lidHandleMat = new THREE.MeshStandardMaterial({
     color: 0x8f9694, roughness: 0.4, metalness: 0.7,
     emissive: 0x22282a, emissiveIntensity: 0.85,
   });
-  const lidHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.46, 8), lidHandleMat);
-  lidHandle.rotation.z = Math.PI / 2;
-  lidHandle.position.set(0, -0.12, -0.94);
-  lidPivot.add(lidHandle);
-  for (const side of [-1, 1]) {
-    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.05), lidHandleMat);
-    bracket.position.set(side * 0.2, -0.08, -0.94);
-    lidPivot.add(bracket);
-  }
-  const hatchChains = new THREE.Group();
-  hatchChains.name = 'ossuary hatch chains';
-  hatchChains.userData.noBatch = true;
-  routeRoot.add(hatchChains);
-  {
-    const linkGeo = new THREE.TorusGeometry(0.045, 0.015, 6, 10);
-    const mouthY = DECK_Y - 0.14;
-    const corners = [
-      [[OX - 2.83, OZ + 34.22], [OX - 2.07, OZ + 35.28]],
-      [[OX - 2.07, OZ + 34.22], [OX - 2.83, OZ + 35.28]],
-    ];
-    for (const [a, b] of corners) {
-      for (let i = 0; i <= 8; i++) {
-        const t = i / 8;
-        const link = new THREE.Mesh(linkGeo, sootMat);
-        link.position.set(a[0] + (b[0] - a[0]) * t, mouthY, a[1] + (b[1] - a[1]) * t);
-        link.lookAt(b[0], mouthY, b[1]);
-        link.rotateY(Math.PI / 2);
-        if (i % 2) link.rotateX(Math.PI / 2);
-        hatchChains.add(link);
-      }
-    }
-    const hasp = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.16), sootMat);
-    hasp.position.set(OX - 2.45, mouthY - 0.02, OZ + 34.75);
-    hatchChains.add(hasp);
-    const lockBody = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.1), brassMat);
-    lockBody.position.set(OX - 2.45, mouthY - 0.24, OZ + 34.75);
-    hatchChains.add(lockBody);
-    const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.024, 8, 10, Math.PI), sootMat);
-    shackle.position.set(OX - 2.45, mouthY - 0.1, OZ + 34.75);
-    hatchChains.add(shackle);
-  }
-  // The shaft's one light sits INSIDE the mouth: the brightest thing in the
-  // district is a hole in the ceiling, seen from the corridor once the slab
-  // is gone. Pre-solve it leaks a faint seam around the slab's 17cm gaps.
-  const shaftGlow = { x: OX - 2.45, y: DECK_Y - 0.6, z: OZ + 34.75, intensity: 1.0, r: 7 };
+  // The stair top keeps its light — it just comes from a lamp in the room now
+  // rather than from a hole in the roof. The key hangs in it.
+  const shaftGlow = { x: OX - 2.45, y: FLOOR + 4.9, z: OZ + 34.6, intensity: 0.9, r: 6 };
   world.candles.push(shaftGlow);
+
+  // ------------------------------------------------- THE WAY BACK OUT, A HATCH
+  // Alex: "have a similar hatch to come out." Same grammar as the one you came
+  // in by — an E-verb on a stone that MOVES, and only then the swap. Walking
+  // into the near end used to teleport you out in total silence, which is the
+  // same illegibility as walking into the entrance and being teleported down.
+  //
+  // It SINKS. The counterweight's wall sinks, the entry slab slides — one
+  // district, one sentence for "the stone gets out of your way", and a stone
+  // that goes down can never swing through the player's head on its way open.
+  const exitLidPivot = new THREE.Group();
+  exitLidPivot.name = 'ossuary exit hatch';
+  exitLidPivot.userData.noBatch = true;
+  exitLidPivot.position.set(OX, FLOOR + 0.95, OZ - 0.15);
+  routeRoot.add(exitLidPivot);
+  const exitLidPanel = new THREE.Mesh(new THREE.BoxGeometry(0.98, 1.88, 0.22), ironMat);
+  exitLidPivot.add(exitLidPanel);
+  // the handle says "this one opens" by value, not by hue
+  const exitLidHandle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.032, 0.032, 0.46, 8), lidHandleMat);
+  exitLidHandle.rotation.z = Math.PI / 2;
+  exitLidHandle.position.set(0, 0.12, 0.14);
+  exitLidPivot.add(exitLidHandle);
+  const exitLidCollider = world.addCollider(
+    OX - 0.5, FLOOR, OZ - 0.32, OX + 0.5, FLOOR + 1.9, OZ + 0.02, { ossuary: true });
+  // one descriptor over it: at the dark end of a 30 m corridor, the way back
+  // has to be the bright thing. Pooled, so the light census never changes.
+  world.candles.push({ x: OX, y: FLOOR + 2.2, z: OZ + 0.9, intensity: 0.55, r: 4.2 });
 
   // ------------------------------------------------- THE WEST POCKET KENNEL
   // The false back DESIGN.md promises. Bars the player cannot pass but the
@@ -2536,6 +2585,97 @@ function buildOssuaryRoute(game) {
   })();
   game.ossuaryKennel = kennel.puzzle;
 
+  // ------------------------------------------------------- THE THING IN THE CELL
+  // Alex: "a few of these side rooms would be perfect places to put enemies."
+  // The kennel already is a cell — full-height bars the player cannot pass and
+  // the skull can, a stone alcove, a shutter — and the volume between the bars
+  // and the shutter is sealed dead space. Something lives in it.
+  //
+  // It is NOT an Enemies-system walker: a walker would grind itself against the
+  // bars trying to path to you. It is a scripted body on a ticker, ONE merged
+  // geometry, one draw, that throws itself at the iron and can never reach you.
+  // The bars are the whole point — the fear is free because the danger is not
+  // real, which is the cheapest honest scare in the district.
+  const lunger = (() => {
+    const parts = [];
+    const push = (geo, x, y, z, rx = 0, rz = 0) => {
+      geo.rotateX(rx); geo.rotateZ(rz); geo.translate(x, y, z); parts.push(geo);
+    };
+    push(new THREE.SphereGeometry(0.17, 8, 6), 0, 1.44, 0.1);
+    push(new THREE.CylinderGeometry(0.19, 0.28, 0.86, 7), 0, 0.92, 0);
+    push(new THREE.SphereGeometry(0.11, 6, 5), 0, 1.24, 0.02);
+    for (const side of [-1, 1]) {
+      push(new THREE.CylinderGeometry(0.045, 0.055, 0.72, 6), side * 0.22, 1.1, 0.22,
+        -0.85, side * 0.25);
+      push(new THREE.CylinderGeometry(0.055, 0.07, 0.78, 6), side * 0.13, 0.36, 0);
+      push(new THREE.SphereGeometry(0.055, 5, 4), side * 0.3, 1.36, 0.42);
+    }
+    const geo = mergeGeometries(parts);
+    // unlit near-black: a silhouette that moves, not a lit object. Value and
+    // motion carry it — nothing here is hue.
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x090a0b }));
+    mesh.name = 'ossuary kennel lunger';
+    mesh.userData.noBatch = true;
+    mesh.rotation.y = Math.PI / 2;   // facing +x, at the bars
+    routeRoot.add(mesh);
+    return {
+      mesh, homeX: OX - 5.4, lungeX: OX - 4.1,
+      t: 0, cool: 4.5, state: 'wait', retired: 0,
+    };
+  })();
+
+  // ----------------------------------------------------- THE FLOOR IS MOVING
+  // "there should be bugs crawling all over the ground." Nothing like this
+  // existed anywhere in the codebase. One InstancedMesh, one draw, no
+  // colliders, no fetch targets, no lights, no enemies-list entries — it cannot
+  // touch pathing, the light census, the seal, or the 448-draw house frame.
+  //
+  // The look law is the house's silhouette spiders, verbatim: unlit near-black,
+  // because a spider is a silhouette that moves rather than a lit object. The
+  // motion is quantised to ~14 Hz so they TWITCH instead of gliding — that
+  // stop-motion judder is the entire read, and it survives any colour vision.
+  const BUG_N = 220;
+  const bugs = (() => {
+    const body = new THREE.CapsuleGeometry(0.042, 0.062, 3, 6);
+    body.rotateX(Math.PI / 2);
+    const parts = [body];
+    for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const leg = new THREE.CylinderGeometry(0.006, 0.004, 0.075, 4);
+      leg.rotateZ(side * (0.9 + i * 0.12));
+      leg.translate(side * 0.042, -0.012, -0.03 + i * 0.032);
+      parts.push(leg);
+    }
+    const mesh = new THREE.InstancedMesh(mergeGeometries(parts),
+      new THREE.MeshBasicMaterial({ color: 0x0a0806 }), BUG_N);
+    mesh.name = 'ossuary floor vermin';
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.noBatch = true;
+    routeRoot.add(mesh);
+    return mesh;
+  })();
+  const bugState = [];
+  {
+    // seeded thickest along the wall bases where the ribs already lie, and in
+    // the shadow each baffle throws
+    const vermin = new RNG(0x05a1);
+    const rnd = () => vermin.float();
+    for (let i = 0; i < BUG_N; i++) {
+      const wall = rnd() < 0.62;
+      const x = wall ? OX + (rnd() < 0.5 ? -1 : 1) * (2.1 + rnd() * 0.45)
+        : OX + (rnd() * 2 - 1) * 2.5;
+      const z = OZ + 0.6 + rnd() * (LENGTH - 1.4);
+      bugState.push({ x, z, yaw: rnd() * TAU, tx: x, tz: z,
+        speed: 0.5 + rnd() * 0.6, pause: rnd() * 1.8, dart: 0 });
+    }
+  }
+  const bugM = new THREE.Matrix4();
+  const bugQ = new THREE.Quaternion();
+  const bugP = new THREE.Vector3();
+  const bugS = new THREE.Vector3(1, 1, 1);
+  const bugUp = new THREE.Vector3(0, 1, 0);
+  let bugAudioT = 0;
+
   // ------------------------------------------------ THE EAST POCKET NICHES
   // The payoff the route's header promises: three niches, one per resonant
   // grave, each wearing the settled, bowed silhouette its surface grave wears
@@ -2586,9 +2726,14 @@ function buildOssuaryRoute(game) {
   const state = {
     origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
     unlocked: false, route: null, inOssuary: false, solved: false,
-    pulling: false, progress: 0, slabT: 0, exitT: 0, arrivalKick: 0,
+    pulling: false, progress: 0, slabT: 0, exitT: 0,
+    // Both hatches are plain scalars on the state object, deliberately: the
+    // director's restore paths seat this district in single assignments, and
+    // anything that needs a sequence to be correct would break on a respawn.
+    entryLid: { t: 0, open: false, moving: false },
+    exitLid: { t: 0, open: false, moving: false },
     surfaceSlab, surfacePit, stairThroat, exitSlab, exitCollider,
-    mechanism, wheel, weight, lidPivot, hatchChains, resident: null, target: null,
+    mechanism, wheel, weight, exitLidPivot, resident: null, target: null,
     unlock(route = 'ritual') {
       if (this.unlocked) return false;
       this.unlocked = true;
@@ -2611,7 +2756,8 @@ function buildOssuaryRoute(game) {
       this.progress = 0;
       this.slabT = 0;
       this.exitT = 0;
-      this.arrivalKick = 0;
+      this.entryLid = { t: 0, open: false, moving: false };
+      this.exitLid = { t: 0, open: false, moving: false };
       surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
       surfaceSlab.rotation.x = 0;
       surfacePit.visible = false;
@@ -2635,38 +2781,47 @@ function buildOssuaryRoute(game) {
   // retirement and the completed yard stays visible under the forest.
   // Deferred to the ticker, cullers run on the pre-exit pose and the
   // restore-then-retire order is the same as the old walk-over swap.
-  const doClimbOut = () => {
+  // THE WAY BACK OUT. This is the near end of the corridor, not the stair top:
+  // the district has ONE door now, and it is the one you came in by. (The far
+  // climb-out that used to live here served a hatch nailed shut by a hardcoded
+  // zero — both are gone as of 2026-08-17.) Same law as every other swap in
+  // this file: the verb ARMS, the ticker EXECUTES, so the cullers run on the
+  // pre-exit pose and the seal's save/restore maps stay coherent.
+  const doAscendOssuary = () => {
     const player = game.player;
-    const skull = game.skull;
-    if (!state.inOssuary || !state.solved || state.exitT <= 0.98) return;
-    if (skull?.mode !== 'held') return;
     const p = player.pos;
-    if (p.y <= FLOOR + 3.05 || p.x >= OX - 2.0 || p.z <= OZ + 33.9) return;
+    if (!state.inOssuary || !state.exitLid.open) return false;
+    if (game.skull?.mode !== 'held') return false;
     state.inOssuary = false;
-    p.set(FOREST_GATE.x, 0.12, FOREST_GATE.z + 1.35);
+    // Out of the mausoleum's doorway, FACING OUT. It used to land you at yaw PI
+    // staring at the back wall, and the playthrough carried a work-around for it.
+    p.set(mausoleum.x, 0.04, mausoleum.z - 1.6);
     player.vel.set(0, 0, 0);
     player.fallV = 0;
     player.grounded = true;
-    // The hatch rises beyond the gate. Face into the new chapter instead of
-    // back toward the completed 1,000-draw yard, and commit the forest act
-    // in this same fixed step rather than exposing one graveyard frame.
-    player.yaw = Math.PI;
+    player.yaw = 0;
     player.pitch = 0;
     player._sync(0);
-    game.flag('ossuaryExited');
     game.enemies.clear((enemy) => enemy.ossuaryResident);
     state.resident = null;
-    game.director.setAct('forest');
-    game.forest?.recentre(player.pos);
-    game.checkpoint('forest');
-    game.audio.stoneGrind({ pos: new THREE.Vector3(FOREST_GATE.x, 0, 42.4), gain: 0.46, rate: 0.8 });
-    // kick the forest-side lid: the ticker rocks it to rest over the next
-    // couple of seconds, so turning around shows a hatch still settling
-    state.arrivalKick = 0.35;
-    state._justExited = true;
+    game.checkpoint('graveyard');
+    game.audio.stoneGrind({ pos: throatAt, gain: 0.4, rate: 0.62 });
+    return true;
   };
-  const climbOut = () => { state._pendingClimbOut = true; };
-  state.climbOut = climbOut;
+  // E on the hatch: shut stone opens it; open stone lets you through.
+  const climbBack = () => {
+    if (!state.inOssuary) return;
+    if (!state.exitLid.open && !state.exitLid.moving) {
+      state.exitLid.moving = true;
+      const here = new THREE.Vector3(OX, FLOOR + 1.0, OZ);
+      game.audio.stoneGrind({ pos: here, gain: 0.82, rate: 0.62 });
+      game.after(0.5, () => game.audio.creak({ pos: here, gain: 0.45, rate: 0.8 }));
+      game.shake(0.1);
+      return;
+    }
+    if (state.exitLid.open) state._pendingAscend = true;
+  };
+  state.climbBack = climbBack;
 
   // THE WAY IN. This was a silent walk-over trigger and nothing else: no verb,
   // no crosshair, no answer to a throw, and the black plane over the throat is
@@ -2694,6 +2849,12 @@ function buildOssuaryRoute(game) {
       }
       return false;
     }
+    // AND THE STONE HAS TO BE OFF IT. Alex: "you shouldn't just walk into it
+    // and be teleported. a hatch should open with e." The slab used to slide
+    // aside the moment the FUNERAL resolved, so the way down was simply open
+    // and crossing it swallowed you. Now the funeral only unlocks it; the lid
+    // is a verb. The walk-over survives — it just cannot fire through stone.
+    if (!state.entryLid.open) return false;
     if (!viaVerb) {
       // the walk-over keeps its tighter band: it must not fire from the
       // doorway where the player is only leaning in to look
@@ -2736,12 +2897,46 @@ function buildOssuaryRoute(game) {
       res.tether = 2.2;
       res.mesh.userData.keepInOssuary = true;
       state.resident = res;
+      // ...and a second, leaning out of the EAST niche pocket on a tighter
+      // leash. Same ossuaryResident marker, so both exits clear it and there is
+      // no new teardown path. Nothing is posted between z+15.4 and z+18.2 —
+      // that is the counterweight hold, where the player stands still for 1.7 s
+      // with no skull in hand and no way to answer anything.
+      const east = game.enemies.spawn('walker', OX + 2.1, OZ + 18.6, 'standing', FLOOR + 1);
+      east.standing = true;
+      east.ossuaryResident = true;
+      east.home = { x: OX + 2.1, z: OZ + 18.6 };
+      east.tether = 1.8;
+      east.mesh.userData.keepInOssuary = true;
     }
     return true;
   };
   // the verb only ARMS; the district ticker executes it, so the cullers run on
-  // the surface pose and the swap and the seal land in the same pass
-  const descend = () => { state._pendingDescend = true; };
+  // the surface pose and the swap and the seal land in the same pass.
+  // ONE verb, two answers: the first press takes the stone off, the second
+  // takes you down. Same shape as the basement bilco hatch.
+  const descend = () => {
+    // the refusal comes FIRST, before the lid: an empty-handed player gets the
+    // same out-loud "not like this" they always did, not a stone that opens
+    // onto a hole they cannot use
+    if (game.skull?.mode !== 'held') {
+      if (game.time > (state._refuseAt || 0)) {
+        state._refuseAt = game.time + 1.1;
+        game.audio.lockedRattle({ pos: throatAt, gain: 0.42, rate: 0.78 });
+        game.impact('locked', throatAt);
+      }
+      return;
+    }
+    if (!state.entryLid.open && !state.entryLid.moving) {
+      state.entryLid.moving = true;
+      game.audio.stoneGrind({ pos: throatAt, gain: 0.82, rate: 0.62 });
+      game.after(0.55, () => game.audio.creak({ pos: throatAt, gain: 0.45, rate: 0.78 }));
+      game.after(0.95, () => game.audio.metalDrop({ pos: throatAt, gain: 0.5, rate: 0.6 }));
+      game.shake(0.12);
+      return;
+    }
+    if (state.entryLid.open) state._pendingDescend = true;
+  };
   state.descend = descend;
   // registered on the mouth plane, which is already a Mesh — registerInteract
   // would otherwise add an invisible hit box at scene top level, and the
@@ -2761,14 +2956,31 @@ function buildOssuaryRoute(game) {
       return 'return';
     },
   });
+  // the verb rides an invisible Mesh INSIDE routeRoot — registerInteract on a
+  // Group spawns a hit box at scene top, which the seal hides and the
+  // district-culling gate flags as a leak
   const exitMouth = new THREE.Mesh(
-    new THREE.BoxGeometry(1.0, 0.55, 1.3),
+    new THREE.BoxGeometry(1.2, 1.9, 0.5),
     new THREE.MeshBasicMaterial({ visible: false }));
-  exitMouth.position.set(OX - 2.45, DECK_Y + 0.18, OZ + 34.75);
+  exitMouth.position.set(OX, FLOOR + 1.0, OZ + 0.3);
   exitMouth.userData.noBatch = true;
   routeRoot.add(exitMouth);
-  const exitMouthInter = world.registerInteract(exitMouth, 'ossuaryClimbOut', climbOut);
-  exitMouthInter.enabled = false;
+  const exitLidInter = world.registerInteract(exitMouth, 'ossuaryClimbBack', climbBack);
+  exitLidInter.enabled = false;
+  // and it answers a throw, like every other surface in this game
+  world.addFetchTarget({
+    id: 'ossuaryExitHatch', object: null,
+    pos: new THREE.Vector3(OX, FLOOR + 1.0, OZ + 0.1), radius: 1.0, enabled: true,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound' || !state.inOssuary) return 'continue';
+      const here = new THREE.Vector3(OX, FLOOR + 1.0, OZ + 0.1);
+      if (!state.exitLid.open && !state.exitLid.moving) {
+        game.audio.knock({ pos: here, gain: 0.6, rate: 0.36, verb: 0.95 });
+        game.impact('locked', at || here);
+      }
+      return 'return';
+    },
+  });
 
   // A solid wall still costs every draw behind it: WebGL performs depth
   // rejection, not whole-scene portal culling. From the east pocket the camera
@@ -2823,64 +3035,44 @@ function buildOssuaryRoute(game) {
   });
 
   // ---------------------------------------------- THE FOREST-SIDE ARRIVAL
-  // The far end is no longer a teleport onto bare grass: a stone hatch waits
-  // at the gate, flush and shut until the counterweight pays out, standing
-  // open over a black throat afterwards. The player lands in its mouth and
-  // can turn around and see the hole they came out of. Registered as a
-  // lookback root so forest back-district culling keeps it.
-  const arrival = new THREE.Group();
-  arrival.name = 'ossuary arrival hatch';
-  scene.add(arrival);
-  {
-    const stone = M.headstone.clone();
-    stone.color.multiplyScalar(0.6);
-    const ax = FOREST_GATE.x;
-    const az = FOREST_GATE.z + 0.3;
-    arrival.position.set(ax, 0.08, az);
-    const curb = (x, z, w, d) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.18, d), stone);
-      m.position.set(x, 0.09, z);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      arrival.add(m);
-    };
-    curb(0, -0.66, 1.5, 0.18);
-    curb(0, 0.66, 1.5, 0.18);
-    curb(-0.66, 0, 0.18, 1.14);
-    curb(0.66, 0, 0.18, 1.14);
-    const mouthVoid = new THREE.Mesh(new THREE.PlaneGeometry(1.14, 1.14),
-      new THREE.MeshBasicMaterial({ color: 0x010204 }));
-    mouthVoid.rotation.x = -Math.PI / 2;
-    mouthVoid.position.y = 0.02;
-    arrival.add(mouthVoid);
-    for (const [sx, sz, w, d] of [[0, -0.53, 1.1, 0.1], [0, 0.53, 1.1, 0.1],
-      [-0.53, 0, 0.1, 0.96], [0.53, 0, 0.1, 0.96]]) {
-      const wallDown = new THREE.Mesh(new THREE.BoxGeometry(w, 0.85, d), stone);
-      wallDown.position.set(sx, -0.42, sz);
-      arrival.add(wallDown);
-    }
-    const arrivalPivot = new THREE.Group();
-    arrivalPivot.position.set(0, 0.16, -0.6);
-    arrival.add(arrivalPivot);
-    const arrivalLid = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.1, 1.3), stone);
-    arrivalLid.position.z = 0.62;
-    arrivalLid.castShadow = true;
-    arrivalPivot.add(arrivalLid);
-    // the player walks AROUND the open mouth; the skull still crosses it
-    world.addCollider(ax - 0.68, -0.8, az - 0.68, ax + 0.68, 0.8, az + 0.68,
-      { skullPass: true });
-    state.arrival = { root: arrival, pivot: arrivalPivot };
-  }
-  (game.graveyardLookbackRoots ||= []).push(arrival);
+  // DELETED 2026-08-17. There was a stone hatch here — a pale lid, a curb ring,
+  // a black throat and a body-blocking collider — planted dead centre of the
+  // 3.2 m gate gap to be the hole you climbed out of on the ossuary's far
+  // route. That route is retired: hatchT is a hardcoded 0, the lid never
+  // opened, nobody ever came out of it, and the far-hatch interact is pinned
+  // permanently disabled. What was left was a white slab in the walkway that
+  // Alex had to walk around the moment he won the gate.
+  //
+  // It is GONE rather than retracted-on-open: it obstructed identically before
+  // the gate gave, and a stone hatch that vanishes reads worse than one that
+  // was never there. If the climb-out is ever revived, build it OUTBOARD of the
+  // east fence flank — never in the gap the player walks through.
 
   const kAnchor = new THREE.Vector3();
-  let hatchCreaked = false;
   game.tickers.push((dt, time) => {
-    let crossedFarExit = false;
-    state.slabT += ((state.unlocked ? 1 : 0) - state.slabT) * Math.min(1, dt * 1.6);
+    // BOTH HATCHES, driven the same way: a scalar chases its target, the pose
+    // is derived from the scalar, and `open` is a threshold on it. Door's feel
+    // (~0.9 s). Nothing here is sequenced, so a director restore that seats
+    // t = 1 lands the whole pose in one assignment.
+    const eLid = state.entryLid;
+    eLid.t += ((eLid.moving ? 1 : 0) - eLid.t) * Math.min(1, dt * 1.1);
+    eLid.open = eLid.t > 0.98;
+    // the slide itself is unchanged — it was always a good lid, it was just
+    // driven by the funeral instead of by the player's hand
+    state.slabT = eLid.t;
     surfaceSlab.position.y = 0.11 - state.slabT * 1.06;
     surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.72;
     surfaceSlab.rotation.x = -state.slabT * 0.42;
+
+    const xLid = state.exitLid;
+    xLid.t += ((xLid.moving ? 1 : 0) - xLid.t) * Math.min(1, dt * 1.1);
+    xLid.open = xLid.t > 0.98;
+    exitLidPivot.position.y = FLOOR + 0.95 - smoothstep(0, 1, xLid.t) * 1.98;
+    // the aperture stops being a wall only once the panel is genuinely clear —
+    // the exit slab's law, and Door's. Opening the collider while the stone
+    // still filled the doorway is exactly the walk-through-a-visible-wall bug
+    // the counterweight slab had, and it is the same fix.
+    exitLidCollider.max.y = xLid.t > 0.92 ? exitLidCollider.min.y : FLOOR + 1.9;
     // and it BREATHES — a slow swell nothing else in the yard does, so the eye
     // finds the one hole that is a way down among four that are not
     const entryWant = state.unlocked ? 3.2 + Math.sin(time * 1.25) * 0.62 : 0;
@@ -2908,19 +3100,15 @@ function buildOssuaryRoute(game) {
         game.audio.creak({ pos: throatAt, gain: 0.3, rate: 0.36, verb: 0.85 });
       }
     }
-    // the entrance is two-way FOREVER now — it is the only way out of here
-    if (state.inOssuary && p.z < OZ + 0.28 && skull?.mode === 'held') {
-      state.inOssuary = false;
-      p.set(mausoleum.x, 0.04, mausoleum.z - 1.2);
-      player.vel.set(0, 0, 0);
-      player.fallV = 0;
-      player.grounded = true;
-      player.yaw = Math.PI;
-      player._sync(0);
-      game.checkpoint('graveyard');
-      // the resident stays with its district; it does not follow into the yard
-      game.enemies.clear((enemy) => enemy.ossuaryResident);
-      state.resident = null;
+    // the entrance is two-way FOREVER — it is the only way out of here, and it
+    // is a HATCH at both ends now. The crosshair offers it whenever you are
+    // down here and near the cap wall.
+    exitLidInter.enabled = state.inOssuary;
+    if (state._pendingAscend) { state._pendingAscend = false; doAscendOssuary(); }
+    // and the walk-into-it fallback survives, gated on the stone actually being
+    // out of the way: once the hatch stands open, walking out still works.
+    if (state.inOssuary && xLid.open && p.z < OZ + 0.28 && skull?.mode === 'held') {
+      doAscendOssuary();
     }
 
     const anchored = skull?.mode === 'anchored'
@@ -2972,36 +3160,37 @@ function buildOssuaryRoute(game) {
     // reported. Open only once the slab's top has sunk below the floor.
     const slabTop = exitSlab.position.y + 1.325;
     exitCollider.max.y = slabTop < FLOOR + 0.05 ? exitCollider.min.y : FLOOR + HEIGHT;
-    // The same number drives every stage of the way out: the slab sinks, the
-    // chain X drops off the hatch, the lid swings, the glow in the mouth
-    // blooms. All poses derive from exitT so a forced restore (director
-    // teleport, respawn) seats the entire far end with one assignment.
-    // THE FAR END IS SEALED. It used to be the way into the forest; the forest
-    // has ONE door now and it is the gate the three keys open. Every pose at
-    // this end still derives from one number — that number is just nailed to
-    // zero, so the chains stay crossed on the lid, the lid stays down, and the
-    // shaft mouth reads as what it is: a way out that somebody shut.
-    const hatchT = 0;
-    hatchChains.position.y = -smoothstep(0.04, 0.34, hatchT) * 1.85;
-    lidPivot.rotation.x = smoothstep(0.3, 0.98, hatchT) * 1.62;
-    if (!hatchCreaked && hatchT > 0.32) {
-      hatchCreaked = true;
-      game.audio.stoneGrind({
-        pos: new THREE.Vector3(OX - 2.45, DECK_Y, OZ + 34.75), gain: 0.5, rate: 0.9,
-      });
+    // THE DROP HAS A SOUND NOW. Five and a half tonnes of stone used to sink
+    // in total silence — the only cue was a metalDrop back at the mechanism,
+    // three metres behind you, so the thing you had just DONE happened where
+    // you were not looking. Latched on thresholds, never derived from time, so
+    // a forced exitT = 1 restore seats the pose and skips the noise.
+    if (state.exitT > 0.05 && !state._slabHeard) {
+      state._slabHeard = true;
+      game.audio.stoneGrind({ pos: exitSlab.position, gain: 0.9, rate: 0.5, verb: 0.9 });
+      game.shake(0.18);
     }
-    shaftGlow.intensity += ((1.0 + hatchT * 3.4) - shaftGlow.intensity)
-      * Math.min(1, dt * 2.2);
-    state.arrival.pivot.rotation.x = -smoothstep(0.05, 0.95, hatchT) * 1.85;
+    if (state.exitT > 0.55 && !state._slabHeard2) {
+      state._slabHeard2 = true;
+      game.audio.stoneGrind({ pos: exitSlab.position, gain: 0.5, rate: 0.62, verb: 0.8 });
+    }
+    if (state.exitT > 0.97 && !state._slabSeated) {
+      state._slabSeated = true;
+      game.audio.thud({ pos: exitSlab.position, gain: 0.8, rate: 0.42, verb: 0.5 });
+    }
 
     // GATE KEY 1, derived: the counterweight's real payout. Revealed off the
     // solve rather than set by it, so a restored save finds it hanging.
-    if (state.solved && !gateKey1.revealed) gateKey1.reveal(OX, FLOOR + 1.15, OZ + 25.4);
-    // the climb-out settle: an additive rock that decays to zero, so the
-    // pose stays parametric off exitT once the kick has spent itself
-    if (state.arrivalKick > 0) {
-      state.arrivalKick = Math.max(0, state.arrivalKick - dt * 0.16);
-      state.arrival.pivot.rotation.x += Math.sin(time * 9.5) * state.arrivalKick * 0.2;
+    //
+    // It used to hang at OZ+25.4 — 0.8 m short of the counterweight and 2.75 m
+    // in FRONT of the wall the counterweight lowers. So the weight visibly
+    // worked and gated nothing anyone wanted, and the stairs behind it ended at
+    // a hatch nailed shut: "a little side weight exists that you can activate.
+    // it doesn't do much of anything." Same bug, both ends. The key hangs at
+    // the TOP OF THE STAIRS now, past the wall, under plain ceiling — so the
+    // weight is load-bearing for the first time and the climb has a payoff.
+    if (state.solved && !gateKey1.revealed) {
+      gateKey1.reveal(OX - 2.45, FLOOR + 4.45, OZ + 34.7);
     }
 
     // the kennel: a held weight raises the shutter; letting go drops it
@@ -3074,23 +3263,103 @@ function buildOssuaryRoute(game) {
       m.cap.position.set(-0.01, (2.49 - c * 0.18) * 0.25, 0);
     }
 
-    // The way out is USED at the TOP of the climb: the lid stands open, the
-    // bar on its underside catches the shaft light, and the crosshair only
-    // offers the verb once the player is up on the deck with skull in hand.
-    // ...and it never is: the hatch is chained shut for good (hatchT above).
-    // The verb stays wired so the geometry keeps its language — a handle you
-    // can see, on a lid that does not move — but it can never be live.
-    exitMouthInter.enabled = false;
-    // the armed verb executes HERE, where the old walk-over swap lived —
-    // after this frame's cullers, before the seal restore below
-    if (state._pendingClimbOut) { state._pendingClimbOut = false; doClimbOut(); }
-    if (state._justExited) {
-      state._justExited = false;
-      crossedFarExit = true;
+    // ------------------------------------------------------- THE CELL AND THE FLOOR
+    if (state.inOssuary) {
+      // THE LUNGER. It waits in the dark behind the bars, and when you come
+      // level with the pocket it throws itself at the iron: 0.18 s out, a body
+      // hitting metal, then a long slack decay and a refractory pause so the
+      // second one still lands. It stops 0.25 m short — it can never touch you,
+      // and it never needs to.
+      const near = Math.hypot(p.x - (OX - 3.85), p.z - (OZ + 12)) < 5.2;
+      if (kennel.puzzle.solved && lunger.retired < 1) {
+        // the cell's quiet reveal is the seated witness; the lunger clears out
+        // for it rather than talking over it
+        lunger.retired = Math.min(1, lunger.retired + dt * 2.5);
+        lunger.mesh.position.y = -lunger.retired * 2.4;
+        lunger.mesh.visible = lunger.retired < 1;
+      } else if (!kennel.puzzle.solved) {
+        lunger.cool -= dt;
+        if (lunger.state === 'wait' && near && lunger.cool <= 0) {
+          lunger.state = 'out';
+          lunger.t = 0;
+        } else if (lunger.state === 'out') {
+          lunger.t = Math.min(1, lunger.t + dt / 0.18);
+          if (lunger.t >= 1) {
+            lunger.state = 'back';
+            game.audio.thud({ pos: lunger.mesh.position, gain: 0.75, rate: 0.5, verb: 0.55 });
+            game.impact('locked', lunger.mesh.position);
+            game.shake(0.22);
+          }
+        } else if (lunger.state === 'back') {
+          lunger.t = Math.max(0, lunger.t - dt / 1.4);
+          if (lunger.t <= 0) {
+            lunger.state = 'wait';
+            lunger.cool = 6 + Math.random() * 3;
+          }
+        }
+        const k = smoothstep(0, 1, lunger.t);
+        lunger.mesh.position.set(
+          lunger.homeX + (lunger.lungeX - lunger.homeX) * k,
+          FLOOR + Math.sin(time * 0.9) * 0.012,
+          OZ + 12);
+        lunger.mesh.rotation.z = k * 0.16;
+      }
+
+      // THE VERMIN. Pause, then run to a wander target, re-yawing instantly;
+      // quantised so the whole population twitches on the same beat. Walk into
+      // them and they scatter — the spiders' dart, at the spiders' distance.
+      const frame = Math.floor(time * 14);
+      if (frame !== state._bugFrame) {
+        state._bugFrame = frame;
+        bugAudioT -= 1 / 14;
+        let scattered = false;
+        for (let i = 0; i < BUG_N; i++) {
+          const b = bugState[i];
+          const dx = b.x - p.x, dz = b.z - p.z;
+          const near2 = dx * dx + dz * dz;
+          if (near2 < 1.96) {
+            const d = Math.max(0.001, Math.sqrt(near2));
+            b.tx = b.x + (dx / d) * 2.2;
+            b.tz = b.z + (dz / d) * 2.2;
+            b.dart = 0.5;
+            b.pause = 0;
+            scattered = true;
+          }
+          if (b.dart > 0) b.dart = Math.max(0, b.dart - 1 / 14);
+          if (b.pause > 0) { b.pause -= 1 / 14; continue; }
+          const tx = b.tx - b.x, tz = b.tz - b.z;
+          const dist = Math.hypot(tx, tz);
+          if (dist < 0.08) {
+            // new errand, or a rest
+            if (Math.random() < 0.5) { b.pause = 0.4 + Math.random() * 1.4; continue; }
+            const a = Math.random() * TAU, r = 0.3 + Math.random() * 1.1;
+            b.tx = clamp(b.x + Math.cos(a) * r, OX - 2.7, OX + 2.7);
+            b.tz = clamp(b.z + Math.sin(a) * r, OZ + 0.5, OZ + LENGTH - 0.5);
+            continue;
+          }
+          const v = (b.dart > 0 ? 2.6 : b.speed) / 14;
+          b.x += (tx / dist) * v;
+          b.z += (tz / dist) * v;
+          b.yaw = Math.atan2(tx, tz);
+        }
+        if (scattered && bugAudioT <= 0) {
+          bugAudioT = 0.35;
+          game.audio.webTear({ pos: p, gain: 0.1, rate: 1.9 });
+        }
+        for (let i = 0; i < BUG_N; i++) {
+          const b = bugState[i];
+          bugP.set(b.x, FLOOR + 0.02, b.z);
+          bugQ.setFromAxisAngle(bugUp, b.yaw);
+          bugs.setMatrixAt(i, bugM.compose(bugP, bugQ, bugS));
+        }
+        bugs.instanceMatrix.needsUpdate = true;
+      }
     }
+
     routeRoot.visible = state.inOssuary;
+    bugs.visible = state.inOssuary;
+    lunger.mesh.visible = state.inOssuary && lunger.retired < 1;
     syncOssuaryVisibility();
-    if (crossedFarExit) game.forest?.syncBackDistrictCulling(true);
   });
 
   // Keep the room's static detail to four-ish draws (batched materials plus
@@ -6362,6 +6631,12 @@ export function buildClearing(game) {
   const fallGlow = new THREE.PointLight(0xa8c0cc, 120, 26, 1.5);
   fallGlow.position.set(C.x, 6, C.z + 16);
   scene.add(fallGlow);
+  // Handed to the frozen-falls district so the throw glow can drive it once the
+  // curtain thaws. It is pinned into the boot census, which is exactly why it
+  // is the light to reuse: intensity and position are free to animate, a NEW
+  // light would recompile every lit material in the game. Never write its
+  // colour — that is a uniform the pin does not cover.
+  game.fallGlow = fallGlow;
   const fall = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 19), fallMat);
   fall.position.set(C.x, 9.5, C.z + 19.9);
   // atmosphere.js supplies the final layered water veil. Retain this authored
@@ -6673,6 +6948,34 @@ function buildFallsField(game, C, FX, FZ) {
     made++;
     plant(x, z);
   }
+  // Alex: "area across from main waterfall you can see vacant spot and end of
+  // map - cover that end of map area in trees."
+  //
+  // A FOURTH PASS ON ITS OWN SEED, appended — never an edit to the loop above.
+  // That stream is position-order dependent: widening its bands moves all 92
+  // existing trees and invalidates every shot of this field. Same precedent as
+  // last round's perimeter masses. This one fills only the dead band the three
+  // above left: trees stop at |x| 30, the horizon masses start at 33, and the
+  // far z rows were eight masses over sixty-two metres.
+  {
+    const edge = new RNG(0x77c4);
+    // Kept inside |x| 30 and |z| 30 on purpose: past that the analytic ground
+    // branch and the rendered plane would both have to be widened in the same
+    // commit, and trees standing on nothing is a worse edge than a visible one.
+    // Also kept OUTBOARD of the far streams (|x| 22.6..24.6) — the streams are
+    // a place the player walks, and a trunk two metres off the lane blows to
+    // white under the carried lantern.
+    const bands = [
+      () => [(edge.float() < 0.5 ? -1 : 1) * edge.range(27.5, 30), edge.range(-29, 29)],
+      () => [edge.range(-30, 30), (edge.float() < 0.5 ? -1 : 1) * edge.range(27, 29.5)],
+    ];
+    for (let guard = 0, made = 0; guard < 1400 && made < 70; guard++) {
+      const [x, z] = bands[made % 2]();
+      if (!clearOf(x, z)) continue;
+      made++;
+      plant(x, z);
+    }
+  }
   const trunks = new THREE.InstancedMesh(trunkGeo, bark, trunkM.length);
   trunkM.forEach((mm, i) => trunks.setMatrixAt(i, mm));
   const branches = new THREE.InstancedMesh(branchGeo, bark, branchM.length);
@@ -6742,11 +7045,15 @@ function buildFallsField(game, C, FX, FZ) {
     }
   };
   for (const s of [-1, 1]) {
+    // "have this stream end in a pond" — it used to stop dead at z -24, which
+    // is the same read as the edge of the map: a ribbon that simply ceases.
+    // It widens south and ends in water.
     ribbon([
       [s * 23.5, -24], [s * 24.2, -18], [s * 23.0, -12], [s * 24.4, -6],
       [s * 23.2, 0], [s * 24.6, 6], [s * 23.4, 12], [s * 24.0, 18],
       [s * 22.6, 24],
     ], 2.2);
+    ribbon([[s * 23.5, -24], [s * 23.4, -25.2], [s * 23.3, -26.5]], 3.4);
   }
   const ribbonGeo = new THREE.BufferGeometry();
   ribbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(ribbonPos, 3));
@@ -6758,6 +7065,83 @@ function buildFallsField(game, C, FX, FZ) {
   streams.frustumCulled = false;
   scene.add(streams);
   roots.push(streams);
+
+  // THE TWO PONDS. One InstancedMesh, two instances, sharing the stream's own
+  // material — one draw, one geometry. Clear of both fire lines, both brazier
+  // arrays and every walk leg: "not in front of the things that create the two
+  // things" still holds.
+  {
+    const pool = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 24), waterMat, 2);
+    pool.name = 'falls field ponds';
+    pool.frustumCulled = false;
+    const pm = new THREE.Matrix4(), pq = new THREE.Quaternion(),
+      pe = new THREE.Euler(-Math.PI / 2, 0, 0), pp = new THREE.Vector3(), ps = new THREE.Vector3();
+    pq.setFromEuler(pe);
+    [-1, 1].forEach((s, i) => {
+      pp.set(C.x + s * 23.3, at(s * 23.3, -28.4) + 0.055, C.z - 28.4);
+      pool.setMatrixAt(i, pm.compose(pp, pq, ps.set(3.6, 2.4, 1)));
+    });
+    scene.add(pool);
+    roots.push(pool);
+    // banked with rock, so the water has an edge rather than a cut-off
+    for (const s of [-1, 1]) {
+      for (let a = 0; a < 13; a++) {
+        const th = (a / 13) * TAU;
+        const px = s * 23.3 + Math.cos(th) * 3.9, pz = -28.4 + Math.sin(th) * 2.7;
+        world.box(M.rock, C.x + px, at(px, pz) + 0.1, C.z + pz,
+          0.5 + (a % 3) * 0.2, 0.34, 0.44 + (a % 2) * 0.2);
+      }
+    }
+  }
+
+  // THE CROSSINGS. "also make it clear you can walk across the river somehow,
+  // because some water close to the waterfall you cant walk across."
+  //
+  // These streams are ALREADY walkable — no collider, no terrain change. The
+  // water that kills is the plunge basin. So nothing physical changes here:
+  // this is pure signage, six flat-topped stones per crossing, three crossings
+  // a stream, bright enough to read as a path when the lantern is elsewhere.
+  // The learned rule the player leaves with: foam and a stone lip = do not
+  // cross; flat water with stepping stones = cross. Value and shape, no hue.
+  {
+    const stoneMat = M.rock.clone();
+    stoneMat.color.multiplyScalar(1.75);
+    if ('emissive' in stoneMat) {
+      stoneMat.emissive = new THREE.Color(0x1a2226);
+      stoneMat.emissiveIntensity = 0.25;
+    }
+    const rows = [];
+    for (const s of [-1, 1]) for (const cz of [-12.0, 2.0, 12.0]) {
+      for (let i = 0; i < 6; i++) rows.push([s * (21.6 + i * 0.8), cz + (i % 2 ? 0.25 : -0.25)]);
+    }
+    const steps = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.9, 0.32, 1.05), stoneMat, rows.length);
+    steps.name = 'falls field stepping stones';
+    steps.frustumCulled = false;
+    steps.castShadow = true;
+    const sm = new THREE.Matrix4(), sq = new THREE.Quaternion(),
+      se = new THREE.Euler(), sp = new THREE.Vector3(), ss = new THREE.Vector3(1, 1, 1);
+    rows.forEach(([px, pz], i) => {
+      sq.setFromEuler(se.set(0, rng.range(-0.25, 0.25), 0));
+      // flat tops PROUD of the 0.05 water film, so they read as things to
+      // stand on rather than more riverbed
+      sp.set(C.x + px, at(px, pz) + 0.16, C.z + pz);
+      steps.setMatrixAt(i, sm.compose(sp, sq, ss));
+    });
+    scene.add(steps);
+    roots.push(steps);
+  }
+
+  // ...and the OPPOSITE read at the basin. Its stone lip deliberately skips
+  // |x| < 3.0 — the bridge stones rise through that lane — which leaves a clean
+  // six-metre gap that looks exactly like a ford at the one place in the field
+  // where crossing kills you. Raised bank masses BESIDE the gap (never in it)
+  // turn that hole into a mouth.
+  for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
+    const th = s * (0.30 + i * 0.115);
+    const bx = Math.sin(th) * (8.6 + i * 0.18), bz = -Math.cos(th) * (8.6 + i * 0.18);
+    world.box(M.rock, C.x + bx, at(bx, bz) + 0.42, C.z + bz, 0.66, 1.15, 0.9);
+  }
 
   // ---- 5. THE THINGS THAT POP UP ---------------------------------------
   // Marrow's Presence, in the only form that can afford to stand here: its
@@ -6787,11 +7171,24 @@ function buildFallsField(game, C, FX, FZ) {
   for (let i = 0; i < 4; i++) {
     put(new THREE.ConeGeometry(0.05, 0.36, 4), (i - 1.5) * 0.16, 1.98, -0.22, -0.5);
   }
-  const kinMat = new THREE.MeshStandardMaterial({
-    color: 0x0d0c10, roughness: 0.94, metalness: 0,
-    emissive: 0x060409, emissiveIntensity: 0.5,
-  });
-  const KIN = 6;
+  // UNLIT, as of 2026-08-17. These were a lit MeshStandard at 0x0d0c10, which
+  // is dark on paper and blows to a white column in practice: the carried
+  // lantern delivers ~19 irradiance at two metres, and these are things you
+  // walk up to and through. They were being met as pale blobs. A silhouette
+  // that moves is the whole read — the house's spiders are unlit for exactly
+  // this reason, and now the field's kin are too. Value and motion, never hue.
+  const kinMat = new THREE.MeshBasicMaterial({ color: 0x0b0a0e, toneMapped: false });
+  // Alex: "make the enemies outside the waterfall scarier. they can be the
+  // same exact ones as the ones in the marrow area under the graveyard where
+  // they pop up out of the ground but you can walk through them and they pop
+  // back in. put them everywhere around the things to open the waterfall."
+  //
+  // Six became twenty-two. Sixteen of them stand ON the openers — the wheel and
+  // the gong approaches, which were the one part of the field with nothing in
+  // it. They are INSTANCED, so the population costs zero draws and zero
+  // geometries; what it cost was the arithmetic below, which is the marrow's
+  // actual eruption rather than the linear slide these had.
+  const KIN = 22;
   const kin = new THREE.InstancedMesh(mergeGeometries(kinParts), kinMat, KIN);
   kin.frustumCulled = false;
   kin.castShadow = true;
@@ -6803,36 +7200,69 @@ function buildFallsField(game, C, FX, FZ) {
   scene.add(eyes);
   roots.push(eyes);
 
-  // three a side, standing in the field between the paths and the wood, close
-  // enough to the walk lines to be MET and never close enough to block them
+  // three a side in the open field (kept, unmoved), then eight around each
+  // machine. Every clustered site is clear of the basin, the falls mouth, both
+  // brazier arrays, both fire lines and every walk leg the playthrough drives —
+  // they are met on the way to the openers, never stood in front of them.
   const kinSites = [
     [-8.6, -3.2], [-15.8, 3.6], [-10.4, 15.4],
     [8.6, -3.2], [15.8, 3.6], [10.4, 15.4],
-  ].map(([x, z]) => ({
+    // the wheel, west
+    [-16.7, 12.4], [-14.3, 15.5], [-10.7, 14.0], [-10.2, 10.5],
+    [-15.7, 8.6], [-18.9, 15.5], [-11.9, 18.4], [-20.3, 12.4],
+    // the gong, east
+    [16.7, 12.4], [14.3, 15.5], [10.7, 10.8], [16.0, 8.1],
+    [18.9, 15.5], [11.9, 18.4], [20.3, 12.4], [16.9, 18.3],
+  ].map(([x, z], i) => ({
     x: C.x + x, z: C.z + z, y: at(x, z),
-    rise: 0, state: 'down', yaw: rng.range(0, TAU), phase: rng.range(0, TAU),
+    rise: 0, t: 0, state: 'down', yaw: rng.range(0, TAU), phase: rng.range(0, TAU),
+    // the clustered sixteen wake at a shorter radius than the field six, so
+    // walking up to a machine raises them in WAVES instead of all at once
+    trigger: i < 6 ? 9.5 : 7.0,
+    // ...and each carries its own arrival delay on top, because audio._play has
+    // no voice cap and six simultaneous breaches clip the bus
+    armT: rng.range(0, 0.6), arm: 0, rearms: 0, loom: 0,
   }));
+  let lastPop = -9;
   const kinM4 = new THREE.Matrix4(), kinQ = new THREE.Quaternion(),
     kinE = new THREE.Euler(), kinP = new THREE.Vector3(), kinS = new THREE.Vector3();
   const writeKin = (time) => {
     for (let i = 0; i < KIN; i++) {
       const k = kinSites[i];
-      const up = smoothstep(0, 1, k.rise);
+      // EASE-OUT, fastest at the breach — the marrow's curve, not a slide. A
+      // linear rise is a lift; this is something coming out of the ground.
+      const up = k.state === 'yield' ? smoothstep(0, 1, k.rise)
+        : 1 - (1 - clamp(k.rise, 0, 1)) ** 2;
       // stop-motion jitter: it never moves smoothly, which is the whole read
       const j = Math.floor(time * 11 + k.phase) * 0.61;
       const sway = Math.sin(j) * 0.05 * up;
       kinQ.setFromEuler(kinE.set(sway * 0.6, k.yaw + sway, sway));
       const y = k.y - 2.9 + up * 2.9;
-      kinM4.compose(kinP.set(k.x, y, k.z), kinQ, kinS.set(1, 1, 1));
+      // THE LOOM: it grows as you close, so the last two metres are the worst
+      // two. Value and scale — nothing here is hue.
+      const L = k.loom;
+      let sx = 1 + L * 0.16, sy = 1 + L * 0.40, sz2 = 1 + L * 0.16;
+      if (k.state === 'up' || k.state === 'down') {
+        // squeezed thin coming out, and shuddering sideways as the soil gives
+        sy *= 0.34 + 0.66 * up;
+      } else if (k.state === 'yield') {
+        // the fold: it splays as it flattens, the way the marrow's do
+        const kk = clamp(k.rise, 0, 1);
+        sx *= 0.55 + kk * 0.45; sy *= kk * kk; sz2 *= 0.55 + kk * 0.45;
+      }
+      const shudder = Math.sin(up * 31 + i * 2.3) * 0.055 * (1 - up);
+      kinM4.compose(kinP.set(k.x + shudder, y, k.z), kinQ, kinS.set(sx, sy, sz2));
       kin.setMatrixAt(i, kinM4);
       // two of them, on the front of the head: forward is (sin yaw, cos yaw),
-      // so the pair sits across the perpendicular and a hand's width proud
+      // so the pair sits across the perpendicular and a hand's width proud.
+      // They ride the loom too, or the face detaches at close range.
       const fx = Math.sin(k.yaw), fz = Math.cos(k.yaw);
       for (let e = 0; e < 2; e++) {
-        const side = e ? 0.15 : -0.15;
+        const side = (e ? 0.15 : -0.15) * sx;
         kinQ.identity();
-        kinP.set(k.x + fx * 0.33 + fz * side, y + 1.76, k.z + fz * 0.33 - fx * side);
-        const s = up > 0.12 ? 1 : 0.0001;
+        kinP.set(k.x + fx * 0.33 * sx + fz * side, y + 1.76 * sy,
+          k.z + fz * 0.33 * sx - fx * side);
+        const s = up > 0.12 ? sx : 0.0001;
         kinM4.compose(kinP, kinQ, kinS.set(s, s, s));
         eyes.setMatrixAt(i * 2 + e, kinM4);
       }
@@ -6848,11 +7278,28 @@ function buildFallsField(game, C, FX, FZ) {
     const p = game.player.pos;
     for (const k of kinSites) {
       const d = Math.hypot(p.x - k.x, p.z - k.z);
-      if (k.state === 'down' && d < 9.5) {
-        k.state = 'up';
+      // the loom is live in every state — it is what the last two metres feel
+      // like, not a state of its own
+      k.loom += (clamp(1 - (d - 1.0) / 7, 0, 1) - k.loom) * Math.min(1, dt * 3.5);
+      if (k.state === 'down' && d < k.trigger) {
+        k.state = 'arming';
+        k.arm = k.armT;
         k.yaw = Math.atan2(p.x - k.x, p.z - k.z);
-        game.audio.thud({ pos: new THREE.Vector3(k.x, k.y, k.z), gain: 0.62, rate: 0.52, crack: true });
-        game.shake(0.14);
+      } else if (k.state === 'arming') {
+        k.arm -= dt;
+        // one breach at a time, always: 22 sites can trip together and the
+        // audio bus has no voice cap
+        if (k.arm <= 0 && time - lastPop > 0.14) {
+          lastPop = time;
+          k.state = 'up';
+          k.rise = 0;
+          const here = new THREE.Vector3(k.x, k.y, k.z);
+          // the SOIL first, then the crack — the dirt-birth sound the game
+          // already owns and this field never played
+          game.audio.walkerRise({ pos: here, gain: 0.55, rate: 0.9, verb: 0.55 });
+          game.audio.thud({ pos: here, gain: 0.85, rate: 0.5, crack: true });
+          game.shake(0.22);
+        }
       } else if (k.state === 'up') {
         k.rise = Math.min(1, k.rise + dt * 1.45);
         // it tracks you while it is up, the way the loom in the crypt does
@@ -6862,10 +7309,28 @@ function buildFallsField(game, C, FX, FZ) {
         if (d < 1.35) {
           k.state = 'yield';
           game.audio.whisper({ pos: new THREE.Vector3(k.x, k.y + 1.4, k.z), gain: 0.4, rate: 0.44, verb: 1.1 });
+          // ...and it goes down UNDER YOU. Two thuds beneath your own feet
+          // after it folds: the beat everyone remembers from the marrow.
+          game.after(0.5, () => {
+            game.audio.thud({ pos: { x: game.player.pos.x, y: game.player.pos.y - 0.5,
+              z: game.player.pos.z }, gain: 0.9, rate: 0.42, crack: true });
+            game.shake(0.5);
+          }, { global: true });
+          game.after(1.2, () => {
+            game.audio.thud({ pos: { x: game.player.pos.x + 1.5, y: game.player.pos.y - 0.5,
+              z: game.player.pos.z }, gain: 0.5, rate: 0.46 });
+          }, { global: true });
         }
       } else if (k.state === 'yield') {
-        k.rise = Math.max(0, k.rise - dt * 1.9);
+        // 0.32 s to fold, not half a second to sink
+        k.rise = Math.max(0, k.rise - dt / 0.32);
         if (k.rise <= 0) k.state = 'gone';
+      } else if (k.state === 'gone' && d > 14 && k.rearms < 3) {
+        // 22 one-shots would leave half the field dead before you reached the
+        // second machine. They come back when you are well clear of them.
+        k.rearms++;
+        k.state = 'down';
+        k.rise = 0;
       }
     }
     writeKin(time);
@@ -7099,8 +7564,63 @@ function buildFrozenFalls(game) {
   // These stand two hundred metres past the forest and were still costing 21
   // draw calls in the HOUSE's view — house-after-cave lives five under a 450
   // ceiling. They exist from the act the forest begins, and not before.
+  // ---------------------------------------------------- THROW IT HERE
+  // Alex: "after you open the waterfall with both sides, make a glowing area to
+  // show the player where in it to throw the skull." The target has always been
+  // a 3.4 m sphere at (C.x, 8, C.z+20.5) — high up, in the middle of a
+  // nineteen-metre sheet, marked by absolutely nothing.
+  //
+  // Three layers, all on existing anchors, all brightness-and-motion (no hue
+  // carries meaning, and there is no HUD): motes that CONVERGE on the spot
+  // (convergence is the diegetic arrow), a corona that breathes on the veil,
+  // and the dormant PointLight this cliff has always carried. No new light —
+  // the census is pinned at boot and changing it recompiles every lit material.
+  const glowRoot = new THREE.Group();
+  glowRoot.name = 'falls throw glow';
+  glowRoot.visible = false;
+  scene.add(glowRoot);
+  const MOUTH = new THREE.Vector3(C.x, 8.0, C.z + 19.55);
+  {
+    const n = 90, pos = new Float32Array(n * 3), seed = new RNG(0x3c11);
+    const mote = [];
+    for (let i = 0; i < n; i++) {
+      mote.push({ a: seed.range(0, TAU), r: seed.range(1.2, 4.0),
+        y: seed.range(-2.2, 2.2), v: seed.range(0.22, 0.55) });
+    }
+    const motes = new THREE.Points(new THREE.BufferGeometry(),
+      new THREE.PointsMaterial({ color: 0xbcd8e2, size: 0.19, transparent: true,
+        opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false,
+        sizeAttenuation: true, toneMapped: false }));
+    motes.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    motes.frustumCulled = false;
+    glowRoot.add(motes);
+    state.glowMotes = { motes, mote, pos };
+  }
+  {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const g2 = cv.getContext('2d');
+    const grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(210,235,245,1)');
+    grad.addColorStop(0.45, 'rgba(150,195,215,0.42)');
+    grad.addColorStop(1, 'rgba(120,170,195,0)');
+    g2.fillStyle = grad;
+    g2.fillRect(0, 0, 64, 64);
+    const tex = new THREE.CanvasTexture(cv);
+    const corona = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, toneMapped: false }));
+    corona.scale.set(5.5, 5.5, 1);
+    corona.position.copy(MOUTH);
+    glowRoot.add(corona);
+    state.glowCorona = corona;
+  }
+  state.glowT = 0;
+  state.glowMouth = MOUTH;
+
   state.roots = [ice, west.pipe, west.array, east.pipe, east.array,
-    state.shed, state.frame, ...buildFallsField(game, C, FX, FZ)].filter(Boolean);
+    state.shed, state.frame, glowRoot,
+    ...buildFallsField(game, C, FX, FZ)].filter(Boolean);
   for (const r of state.roots) r.visible = false;
   game.frozenFallsRoots = state.roots;
 
@@ -7110,6 +7630,48 @@ function buildFrozenFalls(game) {
     for (const r of state.roots) {
       if (r === ice && state.thawed) { r.visible = false; continue; }
       r.visible = near;
+    }
+    // THE GLOW. It hangs on the thaw AND on the target's own enabled bit, so it
+    // can never point at a mouth that would refuse the throw; and it fades out
+    // once the bargain is struck, because a glow that outlives its errand is a
+    // UI leftover.
+    {
+      const armed = state.thawed
+        && game.world.fetchTargets.find((t) => t.id === 'waterfall')?.enabled === true
+        && !game.flags.has('waterfallTaken');
+      state.glowT += ((armed ? 1 : 0) - state.glowT) * Math.min(1, dt / 4.2);
+      const G = state.glowRoot || (state.glowRoot = state.roots.find(
+        (r) => r.name === 'falls throw glow'));
+      if (G) G.visible = near && state.glowT > 0.01;
+      if (G && G.visible) {
+        const breath = 0.45 + Math.sin(time * 1.1) * 0.12;
+        state.glowCorona.material.opacity = state.glowT * breath * 1.22;
+        const { motes, mote, pos } = state.glowMotes;
+        for (let i = 0; i < mote.length; i++) {
+          const m = mote[i];
+          // inward AND up: the spiral is the arrow. Re-seed at the rim so the
+          // convergence never runs dry.
+          m.r -= dt * m.v;
+          m.a += dt * 0.55;
+          m.y += dt * 0.42;
+          if (m.r < 0.35) { m.r = 4.0; m.y = -2.2 + Math.random() * 0.8; }
+          pos[i * 3] = MOUTH.x + Math.cos(m.a) * m.r;
+          pos[i * 3 + 1] = MOUTH.y + m.y * (m.r / 4.0);
+          pos[i * 3 + 2] = MOUTH.z - Math.abs(Math.sin(m.a)) * 0.4;
+        }
+        motes.geometry.attributes.position.needsUpdate = true;
+        motes.material.opacity = state.glowT * 0.85;
+        // the cliff's own dormant lamp, brightened and moved onto the mouth.
+        // Intensity and position only — writing its COLOUR would recompile.
+        game.fallGlow?.position.set(MOUTH.x, 7.6, MOUTH.z - 1.35);
+        if (game.fallGlow) {
+          game.fallGlow.intensity = 120 + state.glowT * (70 + Math.sin(time * 0.9) * 14);
+        }
+      }
+      if (armed && !state._glowHeard) {
+        state._glowHeard = true;
+        game.audio.splash({ pos: MOUTH, gain: 0.5, rate: 0.62, verb: 0.9 });
+      }
     }
     if (game.flags.has('fallsFireWest')) west.lit = true;
     if (game.flags.has('fallsFireEast')) east.lit = true;

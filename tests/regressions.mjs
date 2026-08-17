@@ -609,6 +609,18 @@ try {
     g.player.pos.set(m.x, 0.04, m.z + 0.4);
     g.player._sync(0);
     F.stepWith(0.3, {});
+    // THE STONE IS ON IT until a verb takes it off. Standing on the throat with
+    // the lid shut must do nothing at all — that is the whole of Alex's §4.
+    check('a shut throat does not swallow you',
+      g.ossuary.inOssuary === false && g.ossuary.entryLid.open === false,
+      { inOssuary: g.ossuary.inOssuary, t: +g.ossuary.entryLid.t.toFixed(2) });
+    g.ossuary.descend();
+    check('the verb starts the lid rather than the swap',
+      g.ossuary.entryLid.moving === true && g.ossuary.inOssuary === false);
+    for (let t = 0; t < 6 && !g.ossuary.entryLid.open; t += 0.1) F.stepWith(0.1, {});
+    check('the lid finishes opening on its own clock',
+      g.ossuary.entryLid.open === true, { t: +g.ossuary.entryLid.t.toFixed(2) });
+    F.stepWith(0.3, {});
     check('the mausoleum throat swaps into the district',
       g.ossuary.inOssuary === true, { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
     check('the resident is the real Standing Kind, spared by the district seal',
@@ -620,19 +632,20 @@ try {
       { state: g.ossuary.resident?.state });
 
     // force the solve exactly the way the director restore does: exitT is
-    // the ONE number, and it must seat slab + hatch + arrival together
+    // the ONE number, and it must seat slab + hatch together
     g.ossuary.solved = true;
     g.ossuary.exitT = 1;
     F.stepWith(0.4, {});
-    // The slab still sinks off exitT. The far end does NOT: the forest has one
-    // door now — the three-key gate — so the deck hatch is chained shut for
-    // good and its verb can never be live. Sealed scenery, and the pin says so.
-    check('a forced restore sinks the slab and leaves the far hatch chained',
+    // The slab still sinks off exitT. Both dead hatches are GONE as of
+    // 2026-08-17: the stair-top lid with its brass padlock (a door whose drive
+    // was a hardcoded zero) and the forest-side arrival hatch it served (a pale
+    // slab with a body-blocking collider standing in the gate gap). Assert
+    // both stay gone; the walkway pin proves nothing takes the second's place.
+    check('a forced restore sinks the slab, and both dead hatches stay deleted',
       g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y
-      && g.ossuary.lidPivot.rotation.x < 0.02
-      && g.ossuary.arrival.pivot.rotation.x > -0.02,
-      { lid: +g.ossuary.lidPivot.rotation.x.toFixed(2),
-        arrival: +g.ossuary.arrival.pivot.rotation.x.toFixed(2) });
+      && g.ossuary.lidPivot == null && g.ossuary.arrival == null,
+      { lid: g.ossuary.lidPivot == null ? 'gone' : 'PRESENT',
+        arrival: g.ossuary.arrival == null ? 'gone' : 'PRESENT' });
 
     // the climb is driven by INPUT only; y rises through real ground contact.
     // The corridor's three baffles alternate sides — slalom them the way the
@@ -661,23 +674,48 @@ try {
       samples.push(+y.toFixed(2));
     }
     // The shaft is still a real climb — the flights, the turn, the platform,
-    // all reached by ground contact — it just does not lead OUT any more. So
-    // the pin keeps the thing worth keeping (a monotonic rise driven by input
-    // alone) and adds the seal: at the top, the mouth refuses.
-    const mx = OX - 2.45, mz = OZ + 34.75;
-    const my = g.ossuary.origin.floor + 5.43;
-    const dxT = mx - g.player.pos.x, dzT = mz - g.player.pos.z;
-    g.player.yaw = Math.atan2(-dxT, -dzT);
-    g.player.pitch = Math.max(-1.15, Math.min(1.15,
-      Math.atan2(my - (g.player.pos.y + 1.62), Math.hypot(dxT, dzT) || 0.001)));
-    g.player._sync(0);
-    F.stepWith(1 / 120, { interactPressed: true });
-    F.stepWith(0.3, {});
+    // all reached by ground contact — and now it PAYS: the key hangs at the
+    // top, past the wall the counterweight lowers, under plain ceiling.
     const peak = Math.max(...samples);
-    check('the shaft is still a grounded climb, and the hatch at the top is shut',
+    check('the shaft is still a grounded climb, and nothing at the top is a door',
       peak > g.ossuary.origin.floor + 3.0 && regressed === 0
-      && !g.flags.has('ossuaryExited') && g.act === 'graveyard' && g.ossuary.inOssuary,
-      { peak, regressed, act: g.act, exited: g.flags.has('ossuaryExited') });
+      && g.act === 'graveyard' && g.ossuary.inOssuary,
+      { peak, regressed, act: g.act });
+    const k1 = g.gateKeys.list[0];
+    check('the counterweight pays out at the head of the stairs, not in front of its own wall',
+      k1.revealed === true && k1.home.z > OZ + 33
+      && k1.home.y > g.ossuary.origin.floor + 4.0,
+      { home: [+k1.home.x.toFixed(2), +k1.home.y.toFixed(2), +k1.home.z.toFixed(2)] });
+    // and there is real headroom up there: it used to be a hole you looked
+    // through, so 1.9 m never read as low. As ceiling it does.
+    check('you can stand up at the stair top',
+      g.player.pos.y > g.ossuary.origin.floor + 3.0
+      && !g.world.colliders.some((c) => c.ossuary
+        && c.min.y < g.player.pos.y + 1.75 && c.max.y > g.player.pos.y + 1.75
+        && c.min.x < g.player.pos.x && c.max.x > g.player.pos.x
+        && c.min.z < g.player.pos.z && c.max.z > g.player.pos.z),
+      { y: +g.player.pos.y.toFixed(2) });
+
+    // THE WAY BACK OUT IS A HATCH. Walk to the near end and prove that a shut
+    // stone stops you and an opened one lets you through.
+    g.player.pos.set(OX, g.ossuary.origin.floor, OZ + 1.2);
+    g.player.yaw = 0;
+    g.player._sync(0);
+    F.stepWith(0.4, { moveZ: 1 });
+    check('a shut exit hatch does not teleport you out',
+      g.ossuary.inOssuary === true && g.ossuary.exitLid.open === false,
+      { z: +g.player.pos.z.toFixed(2) });
+    g.ossuary.climbBack();
+    for (let t = 0; t < 6 && !g.ossuary.exitLid.open; t += 0.1) F.stepWith(0.1, {});
+    check('the verb opens it, and its collider gets out of the way',
+      g.ossuary.exitLid.open === true
+      && g.ossuary.exitLidPivot.position.y < g.ossuary.origin.floor - 0.8);
+    g.ossuary.climbBack();
+    F.stepWith(0.3, {});
+    check('and then it lets you out, facing OUT of the doorway',
+      g.ossuary.inOssuary === false && g.act === 'graveyard'
+      && Math.abs(g.player.yaw) < 0.01,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)), yaw: +g.player.yaw.toFixed(2) });
 
     return { checks, diagnostics: { climbTail: samples.slice(-10) } };
   });
@@ -1691,6 +1729,182 @@ try {
     check('the gate is open and nothing hangs in the walkway',
       g.graveyardGate.open === true && weightY.every((y) => y >= 2.2),
       { open: g.graveyardGate.open, weightY });
+
+    // THE WALKWAY, PROVEN TWO WAYS. This check used to read only the three
+    // weight meshes — which is why it sat green through an entire round while
+    // a pale stone lid with a 1.36 m collider stood dead centre of the gap and
+    // Alex had to walk around it. A mesh scan would have missed it anyway (its
+    // top face was BELOW the band floor); the thing that stops a player is a
+    // COLLIDER. So: scan the volume, then actually walk it.
+    const blockers = g.world.colliders.filter((c) => c.door || c.skullPass ? false
+      : c.max.y > 0.15 && c.max.x > 0.5 && c.min.x < 3.5
+        && c.max.z > 41.4 && c.min.z < 45.5);
+    // skullPass is exempt above ONLY because a skull-permeable body blocker is
+    // still a player blocker — so it is re-tested here explicitly rather than
+    // waved through: nothing of either kind may stand in the gap.
+    const softBlockers = g.world.colliders.filter((c) => !c.door && c.skullPass
+      && c.max.y > 0.15 && c.max.x > 0.5 && c.min.x < 3.5
+      && c.max.z > 41.4 && c.min.z < 45.5);
+    check('no collider stands in the opened gate gap',
+      blockers.length === 0 && softBlockers.length === 0,
+      { solid: blockers.length, skullPass: softBlockers.length,
+        first: (blockers[0] || softBlockers[0])
+          ? [(blockers[0] || softBlockers[0]).min.x, (blockers[0] || softBlockers[0]).min.z,
+            (blockers[0] || softBlockers[0]).max.x, (blockers[0] || softBlockers[0]).max.z]
+          : null });
+
+    // and the assertion that catches ANY future object dropped in the doorway,
+    // whatever it is made of: line up on the gate's centreline and walk.
+    // forward = (-sin yaw, -cos yaw), so PI faces +z — out through the gate.
+    const GX = 2, GZ = 43;
+    g.player.pos.set(GX, g.player.pos.y, GZ - 2);
+    g.player.yaw = Math.PI;
+    g.player._sync(0);
+    F.stepWith(0.1, {}, false);
+    F.stepWith(4.0, { moveZ: 1 }, false);
+    check('you can walk straight out through the gate without steering',
+      Math.abs(g.player.pos.x - GX) < 0.35 && g.player.pos.z > 45,
+      { x: +g.player.pos.x.toFixed(2), z: +g.player.pos.z.toFixed(2) });
+    return { checks, diagnostics: null };
+  });
+
+  // THE BUG OF ROUND FOUR. `restore()` replayed a KEY-NUMBER flag onto a
+  // SOCKET INDEX while bankAny() seats bottom-up, so any out-of-order bank plus
+  // any death invented sockets: three filled from two real keys, `_opened`
+  // latched over a gate that never opened, and the real third key answered with
+  // the locked rattle forever. Alex hit it dying in the marrow.
+  //
+  // No test had ever called restore(), and the playthrough banks 1,2,3 in
+  // ascending order — the one order where the old code was accidentally right.
+  // So run ALL SIX orders: the bug lives in five of them.
+  await scenario('a-death-after-an-out-of-order-bank-cannot-invent-a-key', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    // Six orders share one page, so each must start from a genuinely clean
+    // gate: giveToJaw() refuses forever once 'gotgateKeyN' is set. Clearing
+    // THROUGH restore() also exercises its clearing direction, which the old
+    // key-number form could never do — it only ever wrote true, which is half
+    // the reason a phantom socket could never be corrected.
+    const resetGate = () => {
+      for (const k of [1, 2, 3]) {
+        g.flags.delete('gateKeyBanked:' + k);
+        g.flags.delete('gotgateKey' + k);
+      }
+      g.flags.delete('graveyardCleared');
+      if (g.skull.carry) g.skull.dropCarry();
+      g.gateKeys.restore();
+      for (const rec of g.gateKeys.list) rec.revealed = false;
+      g.graveyardGate.reset();
+    };
+
+    const ORDERS = [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]];
+    for (const order of ORDERS) {
+      const tag = order.join('');
+      F.start();
+      F.teleport('graveyard');
+      F.stepWith(0.2, {}, false);
+      resetGate();
+      g.flag('graveyardResolved');
+      g.skull.holdNow();
+      F.stepWith(0.2, {}, false);
+
+      let bad = g.gateKeys.banked() === 0 ? null
+        : `the reset left ${g.gateKeys.banked()} banked`;
+      for (let i = 0; i < 3; i++) {
+        const rec = g.gateKeys.list[order[i] - 1];
+        rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+        rec.giveToJaw();
+        F.stepWith(0.1, {}, false);
+        const seated = g.gateKeys.sockets.find((s) => !s.filled)?.bank();
+        F.stepWith(0.1, {}, false);
+        if (seated !== true) bad ||= `key ${order[i]} refused at position ${i + 1}`;
+        if (g.gateKeys.banked() !== i + 1) {
+          bad ||= `count ${g.gateKeys.banked()} after ${i + 1} banks`;
+        }
+
+        // THE DEATH. Respawn after every single bank, not just the last —
+        // restore() runs twice per respawn and must be idempotent both times.
+        g.director.respawn();
+        F.stepWith(0.6, {}, false);
+
+        const banked = g.gateKeys.banked();
+        if (banked !== i + 1) bad ||= `respawn inflated ${i + 1} keys to ${banked}`;
+        const col = g.gateKeys.sockets.map((s) => !!s.filled);
+        // bottom-up, always: the seated column IS the no-HUD progress read
+        const want = [0, 1, 2].map((k) => k < i + 1);
+        if (col.join() !== want.join()) bad ||= `column ${col.join()} want ${want.join()}`;
+        const down = g.graveyardGate.weights
+          .filter((w) => w.position.y < w.userData.homeY - 0.005).length;
+        if (i < 2 && down !== i + 1) bad ||= `${down} weights down for ${i + 1} keys`;
+        if (i < 2 && g.gateKeys._opened) bad ||= `_opened latched at ${i + 1} keys`;
+
+        // THE SOFTLOCK INVARIANT, tested at every step regardless of how the
+        // count got here: three banked must mean a gate that is open or opening.
+        if (banked >= 3 && !g.graveyardGate.opening && !g.graveyardGate.open
+          && !g.flags.has('graveyardCleared')) bad ||= 'SOFTLOCK: 3 banked, gate shut';
+      }
+      F.stepWith(1.8, {}, false);
+      if (!(g.graveyardGate.opening || g.graveyardGate.open)) {
+        bad ||= 'the third key did not give the gate';
+      }
+      if (!g.flags.has('graveyardCleared')) bad ||= 'graveyardCleared never flagged';
+      check(`banked ${tag} with a death after each: the count survives, the gate gives`,
+        bad === null, { order: tag, problem: bad, banked: g.gateKeys.banked() });
+    }
+    return { checks, diagnostics: null };
+  });
+
+  // ...and the same corruption walked in from a session that was ALREADY broken:
+  // restore() must heal it, not preserve it. This is the state Alex was stuck in.
+  await scenario('a-session-that-walks-in-corrupt-heals-on-respawn', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.flag('graveyardResolved');
+    F.stepWith(0.2, {}, false);
+
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    // hand-build the exact corrupt state: three filled sockets, `_opened`
+    // latched, no 'graveyardCleared', gate shut — two real keys' worth of flags
+    for (const s of g.gateKeys.sockets) s.filled = true;
+    g.gateKeys._opened = true;
+    g.flag('gateKeyBanked:2');
+    g.flag('gateKeyBanked:3');
+    F.stepWith(0.4, {}, false);
+    check('the corrupt state reproduces (3 hanging weights, gate shut)',
+      g.gateKeys.banked() === 3 && !g.graveyardGate.opening && !g.graveyardGate.open,
+      { banked: g.gateKeys.banked() });
+
+    g.director.respawn();
+    F.stepWith(0.6, {}, false);
+    check('a respawn re-derives the true count from the flags',
+      g.gateKeys.banked() === 2
+      && g.gateKeys.sockets.map((s) => !!s.filled).join() === 'true,true,false',
+      { banked: g.gateKeys.banked(),
+        column: g.gateKeys.sockets.map((s) => !!s.filled).join() });
+    check('the stale latch is gone, so the last key can still give the gate',
+      !g.gateKeys._opened, { opened: !!g.gateKeys._opened });
+
+    // and the real third key still works — 'the key does nothing' is over
+    const rec = g.gateKeys.list[0];
+    rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+    rec.giveToJaw();
+    F.stepWith(0.1, {}, false);
+    const seated = g.gateKeys.sockets.find((s) => !s.filled)?.bank();
+    F.stepWith(1.8, {}, false);
+    check('the third key banks and the gate gives',
+      seated === true && (g.graveyardGate.opening || g.graveyardGate.open)
+      && g.flags.has('graveyardCleared'),
+      { seated, opening: g.graveyardGate.opening });
     return { checks, diagnostics: null };
   });
 

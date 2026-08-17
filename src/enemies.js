@@ -26,16 +26,26 @@ const KIND = {
 // the cave threat has to be escaped, misdirected, or washed back by pressure.
 // It follows the last sound it was given, commits attacks to a fixed point,
 // and runs slower than a committed sprint. Those are its three fairness rails.
+// Alex: "The enemy inside the waterfall should be more difficult and should
+// spawn way in front of you."
+//
+// THE ONE NUMBER THAT MAY NOT MOVE IS heardSpeed. It sits under RUN (4.7), and
+// that inequality is the entire escape: running away from this thing has to
+// work, or the chapter stops being a chase and becomes a coin flip. Everything
+// else got harder. The contract the walking bot proves every playthrough:
+// WALK (2.7) x attackCommit (0.92) = 2.48 m of travel inside the commit window
+// against a 1.30 m strike radius — a margin of 1.9x. A player who keeps walking
+// still always escapes; a player who stops still dies. That is the design.
 const DROWNED_CHOIR = Object.freeze({
   h: 2.75,
   r: 0.42,
-  warning: 2.65,
-  drySpeed: 1.55,
-  heardSpeed: 4.35,
-  attackRange: 1.85,
-  attackCommit: 1.05,
-  attackRadius: 1.18,
-  recovery: 1.25,
+  warning: 2.20,          // 2.65 — shorter fuse, only safe with the far spawn
+  drySpeed: 2.60,         // 1.55 — unheard pursuit +45%, still under a walk
+  heardSpeed: 4.35,       // UNTOUCHED. Under RUN. This is the escape rail.
+  attackRange: 2.30,      // 1.85 — it commits from further out
+  attackCommit: 0.92,     // 1.05 — and gets there sooner
+  attackRadius: 1.30,     // 1.18
+  recovery: 0.95,         // 1.25 — a miss costs it less
 });
 
 // Kneeler crosses the player in the forest's darkest value range. Its old
@@ -1097,7 +1107,7 @@ export class Enemies {
       const d = Math.hypot(dx, dz);
       if (d > radius) continue;
       const exposure = clamp(1 - d / Math.max(0.01, radius), 0, 1) * clamp(strength, 0.1, 2);
-      e.wetT = Math.max(e.wetT, 0.9 + exposure * 1.7);
+      e.wetT = Math.max(e.wetT, 0.55 + exposure * 0.85);
       e.revealT = Math.max(e.revealT, 1.4 + exposure * 1.8);
       e.warned = false;
       let awayX = d > 0.04 ? dx / d : e.pos.x - this.game.player.pos.x;
@@ -1110,8 +1120,8 @@ export class Enemies {
         awayZ = Math.cos(e.phase * 0.73 + 0.91);
         al = 1;
       }
-      e.washV.x += awayX / al * (2.8 + exposure * 5.2);
-      e.washV.z += awayZ / al * (2.8 + exposure * 5.2);
+      e.washV.x += awayX / al * (2.2 + exposure * 3.6);
+      e.washV.z += awayZ / al * (2.2 + exposure * 3.6);
       if (e.state !== 'warning') {
         e.state = 'recoil';
         e.stateT = 0;
@@ -2189,14 +2199,17 @@ export class Enemies {
           // design. The counterplay survives at a third; being un-catchable
           // does not, because a predator you can never meet is scenery.
           const speed = lerp(DROWNED_CHOIR.drySpeed, DROWNED_CHOIR.heardSpeed, heard)
-            * (e.wetT > 0 ? 0.35 : 1);
+            * (e.wetT > 0 ? 0.55 : 1);
           this._moveWithPush(e, hx / hd * speed * dt, hz / hd * speed * dt);
           game.underfalls?.clamp?.(e.pos, dt);
         }
-        const sameReachableSpace = Math.abs(player.pos.y - e.pos.y) < 0.72
+        // 0.72 -> 1.05: the vertical gallery was a free zone you could stand in
+        // and watch it fail to reach you. lineOfSight still vetoes genuinely
+        // different storeys (the real gaps are 1.25 and 1.60).
+        const sameReachableSpace = Math.abs(player.pos.y - e.pos.y) < 1.05
           && this._choirLineClear(e.pos, player.pos);
         if (dist < DROWNED_CHOIR.attackRange && sameReachableSpace
-          && e.stateT > 0.22 && e.wetT <= 0) {
+          && e.stateT > 0.22 && e.wetT <= 0.4) {
           e.state = 'pressure';
           e.stateT = 0;
           e.strikePos.copy(player.pos); // commitment: this point never tracks after the warning begins
@@ -2210,7 +2223,7 @@ export class Enemies {
         if (e.stateT >= DROWNED_CHOIR.attackCommit) {
           const miss = Math.hypot(player.pos.x - e.strikePos.x, player.pos.z - e.strikePos.z)
             > DROWNED_CHOIR.attackRadius
-            || Math.abs(player.pos.y - e.strikePos.y) > 0.72
+            || Math.abs(player.pos.y - e.strikePos.y) > 1.05
             || !this._choirLineClear(e.pos, player.pos);
           if (!miss && !e.warned) {
             // The first caught wave teaches the consequence without killing.
