@@ -1,4 +1,177 @@
-# HANDOFF — 2026-08-17: ROUND FOUR (branch claude/aug17-notes)
+# HANDOFF — 2026-08-17: ROUND FOUR IS BUILT (branch claude/aug17-notes)
+
+All fourteen of Alex's notes are built and gated. Written by Claude Opus 5
+against the plan below, which held up almost everywhere.
+
+## What shipped, by his numbered note
+
+- **§1 the window thing** — it did flash, and it was five compounding bugs, not
+  a short timer. Staring at it advanced it FASTER than ignoring it (dt/3.1 vs
+  dt/6); walking toward it deleted it; looking away for half a second deleted
+  it; the author's own guard against that was dead code; and the unwatched creep
+  completed the whole beat off-camera in three seconds, so it routinely fired at
+  an empty landing. It now wears the scullery crawler's grammar: a sill scrape
+  1.4 s before anything is visible, an unwatched climb capped at 0.82 so it can
+  never finish unseen, watched time that HOLDS rather than hurries, look-away
+  that FREEZES, a close approach that recoils instead of popping, and a
+  three-second hold with its palm on the glass before the sash even moves.
+  Measured: **7.7 s framed above the sill, 9.7 s visible.** It was 0.85 s.
+  Also gated on the player actually being in the landing, and the Resident's
+  clock holds while the entry runs — one beat at a time.
+- **§2 the basement pawl** — a 10 cm plate at the end of the bridge deck, on the
+  crossing centreline, tines interlocking into a below-floor keeper. You walk
+  over it. The latch line (`onFarLanding`, x < -17.28) is byte-identical; the
+  new plate band is west of it and drives only the pre-latch depress and creak.
+  Its fetch target became a fixed knee-height point — sinking the group would
+  have dropped the catch sphere to the floor and silently killed the throw.
+- **§3 THE BUG** — see below. It was real, it was a softlock, and last round's
+  "the gate's 3-key logic was airtight" verdict was wrong.
+- **§4-§7 the ossuary** — the funeral only UNLOCKS the throat now; taking the
+  stone off is an E-verb, and so is the way back out. The near end had NO WALL
+  (see below), so it got one, with a real hatch cut into it that sinks into the
+  floor the way the counterweight's wall does. The stair-top hatch, its chain X
+  and its brass padlock are deleted — a door whose drive was a hardcoded zero —
+  and the deck is plain ceiling, raised to give 2.25 m of headroom. Gate key one
+  hangs up there, past the wall the weight lowers, so the weight is load-bearing
+  for the first time. Framed with jambs, a lintel, a floor conduit and three
+  latched sounds as it drops. A caged lunger throws itself at the kennel bars
+  (one merged geometry, one draw, retires when the kennel solves), a second
+  tethered Standing Kind leans out of the east pocket, and 220 instanced
+  near-black silhouettes twitch across the floor and scatter when you get close.
+- **§8 the block in the walkway** — it was the ossuary's forest-side arrival
+  hatch: a pale lid, a curb ring and a 1.36 m body-blocking collider planted
+  dead centre of the gate gap, serving a climb-out route sealed forever. Deleted
+  whole, not retracted — it obstructed identically before the gate opened.
+- **§9 the popups** — 6 → 22, sixteen of them clustered on the wheel and gong
+  approaches (instanced: zero draws, zero geometries). They wear marrow's actual
+  eruption now: ease-out breach fastest at the soil, vertical stretch, lateral
+  shudder, a 40% LOOM as you close, a 0.32 s splay-fold, `walkerRise` under the
+  crack-thud, and the two thuds under your own feet afterwards. Staggered
+  arrivals with a shared 0.14 s gate so a cluster cannot clip the audio bus, and
+  they re-arm at 14 m (capped 3) so the field is not dead by the second machine.
+  **They are UNLIT now** — they were a lit MeshStandard and blew to pale blobs
+  under the carried lantern, which is not scary. A silhouette that moves is.
+- **§10 the map edge** — a fourth tree pass on its own RNG stream (appending,
+  never editing: the existing stream is position-order dependent and editing it
+  moves all 92 trees), both streams widen south into pooled termini with rock
+  banks, and eighteen bright stepping stones say CROSS HERE while raised bank
+  masses beside the basin's lip gap say do not. Physics unchanged — the streams
+  were always walkable; only the reading was missing.
+- **§11 the throw glow** — three layers on existing anchors: ~90 motes spiralling
+  INWARD onto the mouth (convergence is the arrow), a corona breathing on the
+  veil, and the cliff's own dormant PointLight brightened and moved. No new
+  light. Gated on the thaw AND the target's own enabled bit, and faded out after
+  the bargain so it cannot outlive its errand.
+- **§12 the Choir** — stands 16.5 m dead ahead across the chapel, with the
+  trigger moved back to the west aisle so it is already standing there when you
+  come through the arch. Harder everywhere except `heardSpeed`, which is
+  UNTOUCHED because it must stay under RUN — running away is the escape and it
+  has to work. The contract: WALK × commit = 2.48 m against a 1.30 m radius.
+- **§13 the hands** — rolled 180° about their own finger axis. The fix had to
+  land in **finale.js**: `_updatePressure` rewrites both hand rotations every
+  frame after skull.update, so a skull.js pose fix passes its probe and changes
+  nothing on screen. Both lerp endpoints carry the roll or the hand spins
+  through palm-to-camera during a press. Measured at the closing beat:
+  dorsal·z **0.951**, fingers·y **0.904** (was -0.04 / +0.06). The mirror is
+  provably unaffected — the viewmodel is on LAYER_HELD, which no mirror's
+  reflect mask contains, and the tool asserts that rather than eyeballing it.
+- **§14 deploy** — done per the law; see the deploy note at the bottom.
+
+## The three things that were not what they looked like
+
+1. **The gate bug was a socket-index/key-number mismatch, and it was a
+   permanent softlock.** `gateKeys.restore()` replayed `gateKeyBanked:<n>` by
+   KEY NUMBER onto SOCKET INDEX n-1, while `bankAny()` seats the lowest EMPTY
+   socket. Bank out of order, die anywhere, respawn: one real key becomes two
+   filled sockets, two become three. At three, restore latched `_opened = true`
+   WITHOUT opening — so `graveyardCleared` never flagged, the gate could never
+   open by any route for the rest of the session, all three weights fell across
+   the gap ("three locks on it again"), and every further bank was refused with
+   the locked rattle ("the key does nothing"). One death earlier, the same
+   mismatch opens the gate on TWO real keys — which is almost certainly what he
+   actually saw last round, closed then as a miscount. **No test had ever called
+   restore(), and the playthrough banks 1,2,3 in ascending order — the one order
+   where the old code was accidentally right.** The new pins walk all six
+   orders with a respawn after every single bank; five of the six were broken.
+   restore() now derives the count from the flags and fills bottom-up,
+   authoritative in both directions, and heals an already-corrupt session.
+2. **The "weird wall at the beginning" was a MISSING wall.** The ossuary
+   corridor simply stopped at its near end — no cap mesh, no collider — so
+   looking back showed the renderer's clear colour straight through the open end
+   of the model. That is the flat dark-blue plane in his screenshot. It also
+   dropped `groundHeightAt` through to terrain 4.2 m below.
+3. **The side weight already lowered a real wall.** It always sank a
+   full-corridor stone — but gate key one spawned 2.75 m in FRONT of that stone,
+   so the wall gated nothing anyone wanted and the stairs behind it ended at a
+   hatch nailed shut. §6 and §7 were the same design bug from two ends. Moving
+   one Vector3 made the existing mechanism load-bearing; no second wall.
+
+## Traps this round added to the pile
+
+- **A window's own aperture carries a collider — you look THROUGH glass.** The
+  new line-of-sight test aimed at the pane centre and was blocked by the pane,
+  every frame, so the beat could never advance and the creep cap made it look
+  like a logic bug. Aim the ray SHORT of the glass (0.45 m room-side).
+- **`addWall` is one merged box: a hatch needs an aperture built for it.** The
+  first exit hatch swung open onto solid wall, and read as a floating slab. Cut
+  the wall as left/right/header panels (chunky, not the narrow strips that
+  produced the AO seam last round) and back the opening with a black void plane
+  — an un-backed hole is the same clear-colour bug in miniature.
+- **An exponential approach never reaches its threshold in a stepped test.**
+  `t += (1 - t) * dt * 1.1` is ~0.974 after 3.3 s and `open` waits for 0.98;
+  the district-culling test polled 400 frames and gave up. Seat the scalar
+  directly, the way the director restore does.
+- **`start()` is a no-op once started, and `giveToJaw()` refuses forever after
+  `gotgateKeyN`.** Six bank orders in one page poison each other unless the
+  flags are cleared between them. Clearing THROUGH restore() also exercises its
+  clearing direction — which the old key-number form could never do.
+
+## The number that is not ours, and needs a decision
+
+**Looking SOUTH from anywhere in the graveyard costs ~1130 draw calls** against
+a 450 ceiling. Measured at mid-yard (-8, 20): **1133 facing south, 298 facing
+north.** This is PRE-EXISTING and has nothing to do with this round — every pose
+`district-culling-regression` has ever sampled happens to face north, which is
+why it has never been seen. It surfaced only because the ossuary exit now faces
+OUT of the doorway (which is south) instead of into the mausoleum's back wall.
+
+The seal itself is clean: the visibility restore across that exit is exact
+(empty diff). So the two claims are separated — the ossuary checks sample on the
+heading they snapshotted, and a new check named
+`RECORDED, NOT ASSERTED: the graveyard costs far more looking south than north`
+prints both numbers every run so it can never quietly get worse. **It is not
+fixed, and it should be next round's first perf task** — the likely cause is
+that the house and the whole yard sit in the frustum with no back-district
+culling in that direction.
+
+## Also seen and NOT fixed (out of this round's scope)
+
+- **Tree trunks near the far streams clip to white under the carried lantern**
+  (`scratch-falls/07`). Same class as the aug15 viewmodel-material law: bark is
+  authored at half albedo for exactly this and is still too bright at the range
+  the streams put the player. Pre-existing; the new edge trees were pulled back
+  to |x| 27.5..30 so they are not added to the problem.
+- The west mausoleum interior still reads as a bright box (aug14 list).
+- `tests/underfalls-expansion.mjs`'s mirror-room reflected-body check still
+  fails behind the 1.6 s fade — documented last round, verified pre-existing.
+
+## Numbers
+
+Gates: smoke **PASS**, autotest **26**, regressions **157** (was 135),
+playthrough **COMPLETE**, district-culling **15** (max **438**/450, was 448),
+render-perf **PASS**, basement-foundations **10**, and a new
+`tests/window-scare-regression.mjs` (**11 checks**). Clearing draws **212**;
+occupied ossuary **200** (was 222). **maxGeometries 1448** (was 1472 — deleting
+the padlock kit and the arrival hatch freed 24 against the 1500 cap).
+
+New tools: `probe-gate-respawn`, `shot-ossuary-hatches`. Retired: `shot-lid`
+(its subject no longer exists). Rewritten: `probe-ossuary`, `shot-bone-hands`
+(now measures hand orientation and proves the mirror cannot see the viewmodel),
+`shot-aug14` pose 05.
+
+---
+
+# HANDOFF — 2026-08-17: ROUND FOUR, THE PLAN (branch claude/aug17-notes)
 
 Written by Claude Fable 5 for Claude Opus 5 — same arrangement as the last two
 rounds: Fable plans, Opus builds, and it has worked twice. Work at a lean
