@@ -138,6 +138,26 @@
   #title .go:hover { color: #0b0b0a; background: var(--paper); border-color: var(--paper); transform: translateX(3px); text-shadow: none; }
   .button-return { color: var(--old-gold); font: 400 1.35rem/1 Georgia, serif; }
   #title .go:hover .button-return { color: #29251e; }
+
+  /* THE PRESS IS ANSWERED BEFORE THE GAME IS READY TO TAKE IT. The click
+     starts a warm pass (shader programs + texture uploads) that used to be
+     cancelled and paid for later as mid-play freezes. Now it runs here, and
+     this is the whole acknowledgment: the art falls back, the pressed control
+     holds its lit state and stops answering, and the return mark keeps moving
+     so the tab cannot read as hung. No new words (his law), no hue (he is
+     colourblind) — value and motion only. */
+  #title.waking::before { filter: saturate(0.4) contrast(1.02) brightness(0.42); transition: filter .55s ease; }
+  #title.waking .title-shell { opacity: .82; transition: opacity .55s ease; }
+  #title.waking .go {
+    color: #0b0b0a; background: var(--paper); border-color: var(--paper);
+    transform: translateX(3px); text-shadow: none; cursor: default; pointer-events: none;
+  }
+  #title.waking .go .button-return { color: #29251e; }
+  #title.waking .return-mark { animation: waking-turn 1.9s ease-in-out infinite; }
+  @keyframes waking-turn {
+    0%, 100% { transform: rotate(-18deg); opacity: .55; }
+    50%      { transform: rotate(-2deg);  opacity: 1; }
+  }
   #title .keys {
     margin: 1.35rem 0 0; max-width: 31rem; display: flex; flex-wrap: wrap; gap: .45rem 1.1rem;
     color: #aaa79f; font: 500 .68rem/1.55 'Segoe UI', system-ui, sans-serif;
@@ -233,6 +253,9 @@
   @media (prefers-reduced-motion: reduce) {
     #title::before { transform: none; }
     .go, .menu-button, #crosshair, #vignette, #fade { transition-duration: .01ms !important; }
+    /* The waking state still has to READ. Motion is off, so the value drop
+       carries it alone, and the mark holds its brightest pose. */
+    #title.waking .return-mark { animation: none; opacity: 1; }
   }
 </style>
 </head>

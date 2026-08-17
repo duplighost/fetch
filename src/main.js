@@ -14,11 +14,12 @@ import { Finale } from './finale.js';
 import { buildHouse } from './house.js';
 import { buildOutside } from './outside.js';
 import { buildAtmosphere } from './atmosphere.js';
-import { LAYER_HELD, LAYER_DOUBLE } from './mirrors.js';
+import { LAYER_HELD, LAYER_DOUBLE, MASK_DOUBLE } from './mirrors.js';
 
 const FIXED_DT = 1 / 120;
 const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
+const HITCH_LOG = Q.has('hitch');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const _impV = new THREE.Vector3();
 const OCC_AXES = ['x', 'y', 'z'];   // slab-test order for the E-pick occlusion
@@ -153,6 +154,10 @@ class Game {
     this._basementExit = null;
     this.endingTail = false;
     this.terminal = false;
+    this._entering = false;          // title pressed, warm gate still running
+    this._lockPending = false;       // a pointer-lock request is in flight
+    this._lockEverHeld = false;
+    this.longFrames = [];            // ?hitch=1 — every frame over 150 ms
     this.goreGeo = new THREE.IcosahedronGeometry(0.08, 0);
     this.goreMat = new THREE.MeshStandardMaterial({ color: 0x3a3236, roughness: 0.75 });   // must read in the dark
 
@@ -255,12 +260,23 @@ class Game {
     // own lamp. Reserved BEFORE the census is pinned so it is counted with
     // everything else and never has to be created mid-run.
     this.world.reserveLoanLights(1);
+    // The thing in the glass wears a CLONE of the skull, lamps and all, and it
+    // used to be cloned at the door of the finale — two point lights joining
+    // the mirror pass's light census in the last act of the game. Every lit
+    // material reflected in that room then needed a fresh program at 31 lights
+    // instead of 29, and the driver charged 9.5 seconds for it, once, at the
+    // climax. Mounting it here puts those two lights in the pinned census with
+    // everything else. They sit on LAYER_DOUBLE, so only the mirror cameras
+    // ever see them: the world pass census does not move at all.
+    this.finale.mountReflectionSkull();
     // Pin the shader light census before anything renders. Everything that
     // owns a light is built by now: house, outside, underfalls, atmosphere,
     // the finale's dresser and lamp, and the skull's own ember. The carriers
     // are the three things that MOVE a light, and district culling never
     // touches them.
-    this.world.pinLightCensus(this.scene, [this.camera, this.skull.root]);
+    // The reflection is a carrier too: its lamps must ride the double's head,
+    // not be lifted into the static pin root like a candle on a shelf.
+    this.world.pinLightCensus(this.scene, [this.camera, this.skull.root, this.finale.figure]);
     this.world.freezeMoonShadow(this.renderer, this.scene, this.camera);
 
     // THE NEW OPENING: a fresh run wakes empty-handed — the skull arrives
@@ -393,11 +409,19 @@ class Game {
     this._goreScale = new THREE.Vector3();
   }
 
+  // THE WARM PASS IS SYNCHRONOUS ON PURPOSE. compileAsync() links exactly the
+  // same programs and then polls every material's isReady() every 10 ms until
+  // the driver reports done — and on ANGLE/D3D11 that poll does not return
+  // early. Measured side by side on this machine, same coverage both ways:
+  //
+  //   compileAsync : worst frame 10052 ms, texture pass 10289 ms, entry 11.4 s
+  //   compile      : worst frame   599 ms, texture pass   215 ms, entry 0.7 s
+  //
+  // So the "async" warm path was itself a ten-second freeze. It only ever hit
+  // players patient enough to let it run — Alex's fast clicks cancelled it, and
+  // he got the mid-play freezes instead. Neither is the deal. Hand the programs
+  // to the driver and let it finish them on its own threads while he plays.
   _compileWarmVariant(scene, camera) {
-    if (typeof this.renderer.compileAsync === 'function') {
-      return this.renderer.compileAsync(scene, camera);
-    }
-    // Older WebGLRenderer builds still get the same boot-time program pass.
     this.renderer.compile(scene, camera);
     return null;
   }
@@ -405,7 +429,7 @@ class Game {
   _scheduleShaderWarmup() {
     const state = this.shaderWarmup = {
       status: 'scheduled',
-      mode: typeof this.renderer.compileAsync === 'function' ? 'async' : 'sync',
+      mode: 'sync',                  // see _compileWarmVariant for why, in numbers
       variants: ['ordinary', 'hidden-threat', 'cave-lights', 'cave-threat', 'grain'],
       errors: [],
     };
@@ -418,30 +442,42 @@ class Game {
     }
     const run = () => {
       this._shaderWarmupCancel = null;
-      if (this.started || this.terminal) {
+      if (this.terminal) {
         state.status = 'skipped';
-        state.reason = 'game-started';
+        state.reason = 'terminal';
         return;
       }
       this._beginShaderWarmup(state);
     };
+    // 400 ms, not 1200. The old idle timeout was longer than the gap between
+    // the page becoming interactive and a player who is already clicking, so
+    // the warmup lost the race on exactly the machines that needed it. Starting
+    // it sooner means most sessions never see the start gate at all.
     if (typeof requestIdleCallback === 'function') {
-      const handle = requestIdleCallback(run, { timeout: 1200 });
+      const handle = requestIdleCallback(run, { timeout: 400 });
       this._shaderWarmupCancel = () => {
         if (typeof cancelIdleCallback === 'function') cancelIdleCallback(handle);
       };
     } else {
-      const handle = setTimeout(run, 350);
+      const handle = setTimeout(run, 250);
       this._shaderWarmupCancel = () => clearTimeout(handle);
     }
   }
 
-  _cancelScheduledShaderWarmup() {
-    if (!this._shaderWarmupCancel) return;
-    this._shaderWarmupCancel();
-    this._shaderWarmupCancel = null;
-    this.shaderWarmup.status = 'skipped';
-    this.shaderWarmup.reason = 'game-started';
+  // Pull the scheduled pass forward instead of cancelling it. THE ROUND-FIVE
+  // BUG: startGame() used to call a _cancelScheduledShaderWarmup() that marked
+  // the state 'skipped / game-started' — so a player who clicks faster than the
+  // idle callback paid for all ~230 programs mid-play, act by act, at first
+  // sight. Measured on the spam-click path: 2149 ms in the bedroom, 816 house,
+  // 716 basement, 566 forest, 1350 cave, 2399 entering the mirror room. That is
+  // Alex's "many many areas of the game freeze for a few seconds", and he is
+  // the fast clicker this cost was written for.
+  _forceShaderWarmupNow() {
+    if (this._shaderWarmupCancel) {
+      this._shaderWarmupCancel();
+      this._shaderWarmupCancel = null;
+    }
+    if (this.shaderWarmup.status === 'scheduled') this._beginShaderWarmup(this.shaderWarmup);
   }
 
   _beginShaderWarmup(state) {
@@ -463,8 +499,23 @@ class Game {
     // pass and removed immediately afterwards, exactly as before.
     state.status = 'pending';
     state.startedAt = performance.now();
+    // TWO clocks, because the driver has two. `created` is the synchronous
+    // pass: every program the game will use is built and handed to the driver
+    // (~1.5 s here). `done` is KHR_parallel_shader_compile reporting all of
+    // them finished on its own background threads (~12 s here, and it is
+    // BACKGROUND work — the main thread is free the whole time).
+    //
+    // The start gate waits for `created`, not `done`. Waiting for `done` is
+    // what a 9-second title hold looks like, and it buys nothing: the freezes
+    // were never the driver compiling, they were the game not having ASKED it
+    // to. Once asked, it keeps working through the fade-in and the first
+    // minutes of the bedroom, which is exactly the time it needs.
+    this._shaderWarmupCreated = new Promise((resolve) => { this._resolveShaderCreated = resolve; });
+    this._shaderWarmupDone = new Promise((resolve) => { this._resolveShaderWarmup = resolve; });
     const jobs = [];
+    state.timings = {};
     const compile = (scene, camera, label) => {
+      const t0 = performance.now();
       try {
         const job = this._compileWarmVariant(scene, camera);
         if (job && typeof job.then === 'function') {
@@ -475,6 +526,7 @@ class Game {
       } catch (error) {
         state.errors.push(`${label}: ${error?.message || error}`);
       }
+      state.timings[label] = +(performance.now() - t0).toFixed(0);
     };
 
     const warmEntities = [];
@@ -511,15 +563,33 @@ class Game {
       state.errors.push(`threat-setup: ${error?.message || error}`);
     }
 
+    const restingMask = this.camera.layers.mask;
+    // TEXTURES FIRST, and while the stand-ins are still parented — their maps
+    // are otherwise unreachable from the scene graph. Order matters more than
+    // it looks: run after the compile instead and every upload queues behind
+    // the driver's background shader work, which stretched a 200 ms pass to
+    // 9954 ms on this machine. compile() links programs and uploads nothing,
+    // so a texture that was never uploaded is a first-draw hitch of its own.
+    this._warmTexturesNow();
     try {
-      // The world pass. Everything the player will ever walk through.
+      // COMPILE WITH THE MASK THE PASS ACTUALLY RENDERS WITH. three gathers the
+      // light list through `light.layers.test(camera.layers)`, and the light
+      // COUNT is the first thing in every program's cache key. render() drops
+      // the camera to layer 0 for the world pass and to LAYER_HELD for the held
+      // pass, restoring the resting mask (world + held) afterwards — so warming
+      // with the camera at rest compiled every lit material for a 32-point-light
+      // world that no frame ever draws. The real 29-light programs were then
+      // linked one district at a time, at first sight, at ~600 ms each: house
+      // 653, basement 628, forest 299, cave 649, mirror 658. The entire warm
+      // pass was being spent on keys the game cannot use.
+      this.camera.layers.set(0);
       compile(this.scene, this.camera, 'world');
 
       // The held layer is a second camera pass with its own light set (the
       // viewmodel lamps live on LAYER_HELD), so it owns a distinct program key.
-      const heldCamera = this.camera.clone();
-      heldCamera.layers.set(LAYER_HELD);
-      compile(this.scene, heldCamera, 'held');
+      this.camera.layers.set(LAYER_HELD);
+      compile(this.scene, this.camera, 'held');
+      this.camera.layers.mask = restingMask;
 
       // The mirror room renders the scene into a linear-space render target,
       // and the colour space is part of the program key -- so every material
@@ -527,11 +597,25 @@ class Game {
       // real target here is what keeps the last act from stalling.
       // Both mirror pools build identical UnsignedByteType targets, so warming
       // against either one produces the linear-space key the other needs.
+      // The mirror cameras render at MASK_DOUBLE (world + the skull-headed
+      // double), which is a third light census — same reason as above.
       const reflectionTarget = this.finale?.mirrors?.pool?.[0] || null;
       if (reflectionTarget) {
         const previousTarget = this.renderer.getRenderTarget();
         this.renderer.setRenderTarget(reflectionTarget);
+        this.camera.layers.mask = MASK_DOUBLE;
+        // compile() gathers its light list with traverseVisible, and the
+        // double stands hidden until its act — so warming through a hidden
+        // reflection compiled the mirror pass at the WRONG light count and
+        // every reflected material relinked at the climax anyway. Stand it up
+        // for the compile exactly as the enemy stand-ins do; nothing renders
+        // during a compile, so it is never on screen.
+        const figure = this.finale.figure;
+        const figureWasVisible = figure ? figure.visible : null;
+        if (figure) figure.visible = true;
         compile(this.scene, this.camera, 'reflection');
+        if (figure) figure.visible = figureWasVisible;
+        this.camera.layers.mask = restingMask;
         this.renderer.setRenderTarget(previousTarget);
       }
 
@@ -539,6 +623,9 @@ class Game {
     } catch (error) {
       state.errors.push(`setup: ${error?.message || error}`);
     } finally {
+      // The camera is the live one, not a clone: its mask goes back even if a
+      // compile threw, or the next rendered frame draws the wrong layer set.
+      this.camera.layers.mask = restingMask;
       // Remove the stand-ins the instant the synchronous compile is done. The
       // driver's remaining link work needs no scene objects.
       if (skullStandIn && this.skull.root.parent === this.scene) {
@@ -564,6 +651,11 @@ class Game {
       else delete this.spawnLog;
     }
 
+    state.createdMs = performance.now() - state.startedAt;
+    state.status = 'created';
+    this._resolveShaderCreated?.();
+    this._resolveShaderCreated = null;
+
     const finish = () => {
       const retainedMaterials = warmEntities.flatMap((entity) =>
         entity.kind === 'choir'
@@ -577,9 +669,84 @@ class Game {
       state.status = state.errors.length ? 'degraded' : 'ready';
       state.completedAt = performance.now();
       state.durationMs = state.completedAt - state.startedAt;
+      this._resolveShaderWarmup?.();
+      this._resolveShaderWarmup = null;
     };
     if (jobs.length) Promise.all(jobs).then(finish);
     else finish();
+  }
+
+  // ------------------------------------------------------- texture warm-up
+  // renderer.compile() links programs. It does NOT upload textures: every
+  // texture in this game is a canvas painted at boot, and each one goes to the
+  // GPU on the frame it is first drawn. That is a second hitch class, invisible
+  // to the program census, and it lands in the same places (a district's first
+  // frame). initTexture() does the upload on demand, so the title screen can
+  // pay for it a few at a time while the player is still reading.
+  _gatherWarmTextures() {
+    const set = this._warmTextureSet || (this._warmTextureSet = new Set());
+    const MAPS = [
+      'map', 'normalMap', 'roughnessMap', 'metalnessMap', 'alphaMap', 'aoMap',
+      'emissiveMap', 'bumpMap', 'displacementMap', 'lightMap', 'specularMap',
+      'envMap', 'matcap', 'gradientMap', 'clearcoatMap', 'clearcoatNormalMap',
+    ];
+    const take = (material) => {
+      if (!material) return;
+      for (const key of MAPS) {
+        const texture = material[key];
+        if (texture && texture.isTexture && !texture.isRenderTargetTexture) set.add(texture);
+      }
+    };
+    const walk = (root) => {
+      root?.traverse?.((object) => {
+        const material = object.material;
+        if (Array.isArray(material)) for (const m of material) take(m);
+        else take(material);
+      });
+    };
+    walk(this.scene);
+    walk(this.grainScene);
+    walk(this.skull.root);
+    for (const material of Object.values(this.mats || {})) take(material);
+    return set;
+  }
+
+  _warmTexturesNow() {
+    const queue = [...this._gatherWarmTextures()];
+    const state = this.textureWarmup = {
+      status: 'pending', total: queue.length, uploaded: 0, errors: 0,
+      startedAt: performance.now(),
+    };
+    for (const texture of queue) {
+      try { this.renderer.initTexture(texture); state.uploaded++; } catch { state.errors++; }
+    }
+    state.status = state.errors ? 'degraded' : 'ready';
+    state.durationMs = performance.now() - state.startedAt;
+    this._textureWarmupDone = Promise.resolve();
+    return state;
+  }
+
+  // The gate itself: every program asked for, every texture uploaded. What it
+  // deliberately does NOT wait for is the driver finishing in the background.
+  async _warmGate() {
+    // LET THE ACKNOWLEDGMENT PAINT FIRST. The warm pass is synchronous, so
+    // starting it in the click's own task means the pressed state is set on an
+    // element the browser never gets to draw — the player presses and the tab
+    // simply stops for a second and a half, which is the thing this whole
+    // section exists to stop. Two frames: one to commit the class, one to be
+    // sure it reached the screen.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    this._forceShaderWarmupNow();
+    if (this._shaderWarmupCreated) await this._shaderWarmupCreated;
+    if (!this.textureWarmup) this._warmTexturesNow();
+  }
+
+  _warmGateSettled() {
+    const shader = this.shaderWarmup?.status;
+    if (shader === 'skipped') return true;             // test mode: nothing was warmed
+    if (shader !== 'created' && shader !== 'ready' && shader !== 'degraded') return false;
+    const texture = this.textureWarmup?.status;
+    return texture === 'ready' || texture === 'degraded' || texture === 'skipped';
   }
 
   _dropQuality() {
@@ -647,6 +814,8 @@ class Game {
     });
     document.addEventListener('pointerlockchange', () => {
       if (document.pointerLockElement === canvas) {
+        this._lockPending = false;
+        this._lockEverHeld = true;
         // A DOM button cannot honestly be mouse-clicked while Pointer Lock
         // retargets every pointer event to the canvas. Hide that false
         // affordance; Escape/P remain the immediate desktop pause controls.
@@ -655,9 +824,16 @@ class Game {
       }
       // Pointer lock is a gameplay contract. Losing it is a pause, not a silent
       // return-to-play state with dead mouse-look and manufactured releases.
-      if (this._canPause()) this.pauseGame('pointer-lock');
+      //
+      // A lock we never held cannot be lost by a player decision — that edge is
+      // the browser refusing or retracting a request during arrival, and it is
+      // not a reason to stop his game. (The request itself no longer stacks;
+      // see _requestPointerLock.)
+      this._lockPending = false;
+      if (this._canPause() && this._lockEverHeld) this.pauseGame('pointer-lock');
       else if (!this.paused) this.input.clearKeys();
     });
+    document.addEventListener('pointerlockerror', () => { this._lockPending = false; });
     addEventListener('resize', () => {
       this.camera.aspect = innerWidth / innerHeight;
       this.camera.updateProjectionMatrix();
@@ -706,12 +882,26 @@ class Game {
   }
 
   _requestPointerLock() {
-    try { this.renderer.domElement.focus({ preventScroll: true }); } catch { /* detached canvas */ }
+    const canvas = this.renderer.domElement;
+    try { canvas.focus({ preventScroll: true }); } catch { /* detached canvas */ }
     if (TEST_MODE || this.paused || this.dead || this.terminal) return;
+    // Never stack requests. Spam-clicking the title puts a queued canvas click
+    // straight through mousedown's retry path while the entry request is still
+    // in flight, and a second requestPointerLock() against an in-flight first
+    // one is how a lock gets granted and revoked in the same breath — which
+    // arrived, to the player, as a game that paused itself on the way in.
+    if (this._lockPending || document.pointerLockElement === canvas) return;
+    this._lockPending = true;
     try {
-      const pending = this.renderer.domElement.requestPointerLock?.();
-      pending?.catch?.(() => {});
-    } catch { /* unsupported or denied: the next canvas click can retry */ }
+      const pending = canvas.requestPointerLock?.();
+      // A promise-returning implementation reports refusal here; the older
+      // event-only one reports it as pointerlockerror. Both must clear the flag
+      // or the retry path is dead for the rest of the session.
+      if (pending?.catch) pending.catch(() => { this._lockPending = false; });
+      else this._lockPending = false;
+    } catch {
+      this._lockPending = false;   // unsupported or denied: the next click retries
+    }
   }
 
   _pauseDocumentAnimations() {
@@ -831,12 +1021,47 @@ class Game {
     return true;
   }
 
+  // THE PRESS IS ANSWERED IMMEDIATELY; THE WARM WORK IS PAID ON THE TITLE.
+  // The old start cancelled the warmup and dropped you into the bedroom with
+  // ~230 unlinked programs and a few hundred un-uploaded textures — the cost
+  // then arrived one district at a time, as freezes, forever. Now the button
+  // takes the press (visual acknowledgment, no new words — his law), the warm
+  // pass runs to completion behind it, and the game enters warm. If the warmup
+  // already finished while he read the title, entry is synchronous as before.
   startGame() {
+    if (this.started || this._entering) return;
+    this._entering = true;
+    this._pressedAt = performance.now();
+    this._acknowledgeStart();
+    if (this._warmGateSettled()) { this._enterGame(); return; }
+    this.entryPromise = this._warmGate()
+      .catch(() => {})                  // a degraded warm pass still enters
+      .then(() => { if (!this.terminal) this._enterGame(); });
+  }
+
+  // Instant, wordless, hue-free: the keyart falls back, the pressed control
+  // holds its lit state and stops answering, and the return mark keeps moving
+  // so the tab never reads as hung. All of it is CSS on one class.
+  _acknowledgeStart() {
+    const title = this.el?.title;
+    if (!title) return;
+    title.classList.add('waking');
+    const button = title.querySelector('[data-action="start"]');
+    if (button) button.disabled = true;
+  }
+
+  _enterGame() {
     if (this.started) return;
-    this._cancelScheduledShaderWarmup();
+    this._entering = false;
     this.started = true;
+    this._programsAtEntry = this.renderer.info.programs.length;
+    // How long the press was held on the title. This is the number that moved
+    // out of mid-play and onto the title screen; keep it visible so it can
+    // never quietly grow.
+    this.entryLatencyMs = this._pressedAt ? performance.now() - this._pressedAt : 0;
     this.audio.init();
     this.el.title.classList.add('hidden');
+    this.el.title.classList.remove('waking');
     this.fadeIn(2.4);
     this.director.start();
     this._syncPauseUi();
@@ -1506,6 +1731,7 @@ class Game {
     let acc = 0;
     const tick = (now) => {
       if (this.terminal) return;
+      if (HITCH_LOG) this._recordLongFrame(now - last);
       const rawDt = clamp((now - last) / 1000, 0, 0.05);
       last = now;
       this._lastShakeDt = rawDt;
@@ -1546,6 +1772,34 @@ class Game {
     requestAnimationFrame(tick);
   }
 
+  // Believe the log, not the theory. ?hitch=1 records every frame over 150 ms
+  // with what changed across it: programs linked (a compile stall), geometries
+  // and textures uploaded (an allocation stall), plus where the player was
+  // standing. Round five's whole §5 was found this way — the freezes are not
+  // one bug, they are a class, and the class is "work paid at first sight".
+  _recordLongFrame(ms) {
+    const info = this.renderer.info;
+    const programs = info.programs?.length || 0;
+    const { geometries, textures } = info.memory;
+    if (ms > 150) {
+      this.longFrames.push({
+        ms: +ms.toFixed(0),
+        at: +(performance.now() / 1000).toFixed(2),
+        act: this.act,
+        started: this.started,
+        pos: [+this.player.pos.x.toFixed(1), +this.player.pos.y.toFixed(1), +this.player.pos.z.toFixed(1)],
+        programs: programs - (this._hitchPrograms ?? programs),
+        geometries: geometries - (this._hitchGeometries ?? geometries),
+        textures: textures - (this._hitchTextures ?? textures),
+        totals: { programs, geometries, textures },
+      });
+      if (this.longFrames.length > 400) this.longFrames.shift();
+    }
+    this._hitchPrograms = programs;
+    this._hitchGeometries = geometries;
+    this._hitchTextures = textures;
+  }
+
   // ---------------------------------------------------------------- debug
   _exposeDebug() {
     const g = this;
@@ -1554,6 +1808,20 @@ class Game {
       feelProfile: FEEL_PROFILE,
       ready: true,
       start() { g.startGame(); return true; },
+      // The warm gate makes start asynchronous for a fast clicker: await this
+      // (it is null in test mode, where nothing is warmed) to land in play.
+      started() { return g.entryPromise || Promise.resolve(g.started); },
+      warm() {
+        return {
+          shader: { ...g.shaderWarmup },
+          textures: g.textureWarmup ? { ...g.textureWarmup } : null,
+          settled: g._warmGateSettled(),
+          entryLatencyMs: g.entryLatencyMs ?? null,
+          programsAtEntry: g._programsAtEntry ?? null,
+          programsNow: g.renderer.info.programs.length,
+        };
+      },
+      hitches() { return g.longFrames.slice(); },
       pause(reason = 'debug') { return g.pauseGame(reason); },
       resume() { return g.resumeGame(); },
       restartCheckpoint() { return g.restartFromCheckpoint(); },

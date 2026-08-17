@@ -707,6 +707,13 @@ export class Finale {
     return skull;
   }
 
+  // Called once at boot, before World.pinLightCensus, so the double's two
+  // cloned lamps are counted with every other light in the game instead of
+  // joining the mirror pass's census in the last act (which recompiled every
+  // reflected material at the climax). Idempotent — reset() still calls it for
+  // any path that reaches the room without a head.
+  mountReflectionSkull() { this._mountExactSkull(); }
+
   _mountExactSkull() {
     const data = this.figure.userData;
     if (data.exactHead) return;

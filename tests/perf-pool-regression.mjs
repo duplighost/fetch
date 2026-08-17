@@ -77,13 +77,36 @@ try {
       preStartTrace,
       elapsedMs: performance.now() - before,
       started: g.started,
+      acknowledged: g.el.title.classList.contains('waking'),
+      buttonDisabled: !!g.el.title.querySelector('[data-action="start"]')?.disabled,
       titleHidden: g.el.title.classList.contains('hidden'),
       caveLights: g.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
     };
   });
-  check(start.started && start.titleHidden,
-    'start remains synchronous while scheduled shader work settles',
-    `${start.warmupStatus}; ${start.elapsedMs.toFixed(3)}ms`);
+  // ROUND FIVE INVERTED THIS CONTRACT ON PURPOSE. Start used to return
+  // instantly by CANCELLING the warm work, which is how ~230 programs ended up
+  // being paid for mid-play, one district at a time. Now the press is answered
+  // instantly (the title takes its pressed state and stops accepting clicks)
+  // and the game enters when the world is warm. What must stay true is that the
+  // press is never SILENT: no frame may pass with an unanswered click.
+  check((start.acknowledged || start.started) && start.buttonDisabled && start.elapsedMs < 60,
+    'the title answers the press in the same frame: it enters, or it holds the press',
+    `${start.warmupStatus}; ${start.elapsedMs.toFixed(3)}ms; acknowledged=${start.acknowledged}; started=${start.started}`);
+  await page.waitForFunction(() => window.__game.started === true, null, { timeout: 90000, polling: 50 });
+  const entered = await page.evaluate(() => ({
+    started: window.__game.started,
+    titleHidden: window.__game.el.title.classList.contains('hidden'),
+    waking: window.__game.el.title.classList.contains('waking'),
+    warmSettled: window.__FETCH.warm().settled,
+    programsAtEntry: window.__FETCH.warm().programsAtEntry,
+    programsNow: window.__FETCH.warm().programsNow,
+  }));
+  check(entered.started && entered.titleHidden && !entered.waking && entered.warmSettled,
+    'the game enters warm, and the title lets go of its pressed state',
+    JSON.stringify(entered));
+  check(entered.programsAtEntry === entered.programsNow,
+    'entry happens after the last program links, not before',
+    `${entered.programsAtEntry} -> ${entered.programsNow}`);
   check(start.preStartTrace.enemies === initial.enemyTrace.enemies
       && start.preStartTrace.choir === initial.enemyTrace.choir
       && start.preStartTrace.spawnSerial === initial.enemyTrace.spawnSerial
@@ -93,10 +116,14 @@ try {
   check(start.caveLights.every((emitting) => emitting === false),
     'starting from the title does not activate cave lights');
 
+  // 'created' (every program handed to the driver) is not the end of the
+  // warm-up: 'ready' is the driver reporting its background compile finished.
+  // The game enters at 'created' on purpose; this suite waits for the whole
+  // thing before it audits what the pass left behind.
   await page.waitForFunction(
-    () => window.__game.shaderWarmup.status !== 'pending',
+    () => ['ready', 'degraded', 'skipped'].includes(window.__game.shaderWarmup.status),
     null,
-    { timeout: 90000, polling: 100 },
+    { timeout: 120000, polling: 100 },
   );
   await page.evaluate(() => {
     // Settle ordinary lazy WebGL uploads before attributing memory movement to
@@ -261,17 +288,16 @@ try {
   check(warmup.retainedMaterials === 9,
     'warm-up retains only the nine on-demand threat materials',
     `${warmup.retainedMaterials}`);
+  // The warm pass never awaits the driver. compileAsync() polls isReady() every
+  // 10 ms and, on ANGLE/D3D11, that poll blocks: it turned the warm pass into a
+  // single ten-second frame (10052 ms measured, against 599 ms for the same
+  // work compiled synchronously). Nothing here may quietly go back to awaiting.
   const fallback = await page.evaluate(() => {
     const g = window.__game;
-    const compileAsync = g.renderer.compileAsync;
-    g.renderer.compileAsync = undefined;
-    try {
-      return g._compileWarmVariant(g.grainScene, g.grainCam) === null;
-    } finally {
-      g.renderer.compileAsync = compileAsync;
-    }
+    return g._compileWarmVariant(g.grainScene, g.grainCam) === null
+      && g.shaderWarmup.mode === 'sync';
   });
-  check(fallback, 'sync renderer.compile fallback completes without a promise');
+  check(fallback, 'the warm pass compiles synchronously and returns nothing to await');
   check(errors.length === 0, 'browser emitted no page or console errors', errors.join(' | '));
 } finally {
   await browser.close();
