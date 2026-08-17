@@ -20,7 +20,7 @@ try {
     g.player._sync(0);
     M.descend();
     F.stepWith(0.3, {}, false);
-    M.relicKept = true;              // arm the hunt directly
+    g.flag('gotgateKey2');           // arm the hunt directly
     const st0 = M.statues[0];
     st0.position.set(69.03, -5, 0.79);   // the post-dash spot from the regressions flow
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 13);
@@ -55,7 +55,7 @@ try {
       if (g.skull.mode === 'held' && i > 30) break;
     }
     return { before, after: st0.position.toArray(), floor: M.origin.floor,
-      relicKept: M.relicKept, inMarrow: M.inMarrow,
+      hunting: g.flags.has('gotgateKey2'), inMarrow: M.inMarrow,
       colliderTop: st0.userData.collider ? st0.userData.collider.max.y : null,
       colliderBottom: st0.userData.collider ? st0.userData.collider.min.y : null,
       hitCd: st0.userData.hitCd, act: g.act,

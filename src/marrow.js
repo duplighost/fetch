@@ -22,6 +22,30 @@
 import * as THREE from 'three';
 import { RNG, clamp, lerp, smoothstep, TAU } from './util.js';
 
+// THE RELIC, as a recipe rather than a fixture. It grants nothing — danger
+// sense moved to the iron canine and skullPower has no third level — so Alex
+// pulled it out of the crypt ("might as well remove that powerup and put both
+// powerups in the same spot as the first powerup is in") and it now waits in
+// the yard's toppled hero grave. Exported so outside.js builds both the world
+// object and the jaw keepsake from one description, and so a reload re-derives
+// the dangle instead of remembering it.
+export function makeRelic() {
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x4a0a0e, roughness: 0.32, emissive: 0x5a0008, emissiveIntensity: 0.8,
+  });
+  const geo = new THREE.IcosahedronGeometry(0.13, 2);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + Math.sin(x * 30) * 0.06 + Math.cos(y * 24) * 0.05;
+    p.setXYZ(i, x * k, y * k, z * k);
+  }
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'the relic';
+  return { mesh, geo, mat };
+}
+
 const MX = 70;                 // mirror of the ossuary's offset, east
 const MZ = -10;
 const FLOOR = -5.0;
@@ -277,9 +301,14 @@ export function buildMarrowArea(game) {
   marrowRoot.name = 'the marrow';
   marrowRoot.visible = false;
   scene.add(marrowRoot);
-  // GATE KEY 2 — the crypt's share of the gate. A marrowRoot child, so the
-  // district's own seal owns its visibility until skull.grab lifts it out.
-  const gateKey2 = game.makeGateKey ? game.makeGateKey(2, marrowRoot, () => true) : null;
+  // GATE KEY 2 — the crypt's share of the gate, and now the ONLY thing on the
+  // altar. A marrowRoot child, so the district's own seal owns its visibility
+  // until skull.grab lifts it out. It is visible on the altar from the moment
+  // you walk in — that is what the Presence is standing over — and it is not
+  // takeable until the guardian yields. Same sentence the key tree speaks.
+  const gateKey2 = game.makeGateKey
+    ? game.makeGateKey(2, marrowRoot, () => true, () => state.yielded)
+    : null;
 
   // ---- the hall: MARROW's crypt vocabulary -------------------------------
   const fleshWall = new THREE.MeshLambertMaterial({ color: 0x35272a });
@@ -386,30 +415,20 @@ export function buildMarrowArea(game) {
     void side;
   }
 
-  // ---- THE ALTAR + THE RELIC ---------------------------------------------
+  // ---- THE ALTAR ---------------------------------------------------------
+  // "definitely take it out of the underground marrow/special enemy area so
+  // just the key is there." The relic granted nothing — danger sense moved to
+  // the iron canine in the yard in the aug15 build and skullPower has no third
+  // level — so it was a keepsake sitting on top of the real prize, and it went
+  // up to the toppled hero grave to stand beside the canine. What the guardian
+  // is standing over down here is GATE KEY 2, alone, and it takes ONE throw.
   const altar = addBox(darkStone, MX, FLOOR + 0.55, MZ + LENGTH - 2.2, 1.5, 1.1, 0.9, 'marrow altar');
   altar.castShadow = true;
-  const relicMat = new THREE.MeshStandardMaterial({
-    color: 0x4a0a0e, roughness: 0.32, emissive: 0x5a0008, emissiveIntensity: 0.8,
-  });
-  const relicGeo = new THREE.IcosahedronGeometry(0.13, 2);
-  {
-    const p = relicGeo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      const k = 1 + Math.sin(x * 30) * 0.06 + Math.cos(y * 24) * 0.05;
-      p.setXYZ(i, x * k, y * k, z * k);
-    }
-    relicGeo.computeVertexNormals();
-  }
-  const relic = new THREE.Mesh(relicGeo, relicMat);
-  relic.name = 'the relic';
-  relic.position.set(MX, FLOOR + 1.24, MZ + LENGTH - 2.2);
-  marrowRoot.add(relic);
+  const ALTAR_TOP = new THREE.Vector3(MX, FLOOR + 1.24, MZ + LENGTH - 2.2);
   const relicGlow = { x: MX, y: FLOOR + 1.5, z: MZ + LENGTH - 2.2, intensity: 0.9, r: 5 };
   world.candles.push(relicGlow);
   // the altar is stone, not a suggestion: no walking through the pedestal.
-  // The SKULL still passes — a low throw at the relic must never clank off
+  // The SKULL still passes — a low throw at the key must never clank off
   // an invisible box under it.
   world.addCollider(MX - 0.78, FLOOR - 0.5, MZ + LENGTH - 2.68,
     MX + 0.78, FLOOR + 1.12, MZ + LENGTH - 1.72, { marrow: true, skullPass: true });
@@ -472,7 +491,6 @@ export function buildMarrowArea(game) {
     inMarrow: false,
     witnessed: false,
     yielded: false,
-    relicKept: false,
     escorted: false,
     presence, statues,
     guardianDist: 99,
@@ -543,6 +561,44 @@ export function buildMarrowArea(game) {
   const startFold = (dur = 0.32) => {
     anim = { kind: 'fold', t: 0, dur, x: presence.group.position.x, z: presence.group.position.z };
     game.audio.whisper({ pos: presence.group.position, gain: 0.34, rate: 0.42, verb: 1.1 });
+  };
+
+  // THE WAY OUT. The walls answer once the key leaves the altar: knocks circle
+  // nearer, and then the guardian rises one last time between you and the door
+  // — and lets you pass. It used to hang off the relic take; it hangs off the
+  // KEY take now, which is the same frame the mourners start hunting.
+  const runEscort = () => {
+    if (state.escorted) return;
+    state.escorted = true;
+    game.flag('marrow:escorted');
+    game.after(2.2, () => {
+      if (!state.inMarrow) return;
+      const p = game.player.pos, gp = presence.group.position;
+      const ang = Math.atan2(gp.x - p.x, gp.z - p.z);
+      const knocks = 5;
+      let gap = 0.62;
+      let acc = 0.9;
+      for (let i = 0; i <= knocks; i++) {
+        const d = 5.5 - (i / knocks) * 3.2;
+        const a = ang + (i % 2 ? 1 : -1) * (0.9 + i * 0.5);
+        game.after(acc, () => {
+          if (!state.inMarrow) return;
+          const kp = game.player.pos;
+          game.audio.knock({
+            pos: new THREE.Vector3(kp.x + Math.sin(a) * d, FLOOR + 1.2, kp.z + Math.cos(a) * d),
+            gain: 0.35 + i * 0.06, rate: 0.6 - i * 0.03,
+          });
+        }, { global: true });
+        acc += gap;
+        gap *= 0.86;
+      }
+      game.after(acc + 0.7, () => {
+        if (!state.inMarrow) return;
+        const kp = game.player.pos;
+        startErupt(kp.x, clamp(kp.z - 4.5, MZ + 2, MZ + LENGTH - 2), 0.85);
+        game.after(2.4, () => { if (presence.group.visible) startFold(); }, { global: true });
+      }, { global: true });
+    }, { global: true });
   };
 
   // "it feels like you touch it and teleport" — descending and leaving are
@@ -669,18 +725,14 @@ export function buildMarrowArea(game) {
     marrowRoot.visible = state.inMarrow;
     syncMarrowVisibility();
 
-    // The relic is a keepsake now and nothing more — danger-sense moved to the
-    // iron canine in the yard, so ONE optional pickup carries both senses
-    // instead of the crypt quietly owning half of them.
-    //
-    // GATE KEY 2: what the altar was actually holding down. Derived off
-    // relicKept, never set by the take, so a restored save finds it — and it
-    // goes straight into the jaw beside the relic, because the mourners begin
-    // hunting on the same frame and this is not a moment to stand still in.
-    if (state.relicKept && gateKey2 && !gateKey2.revealed) {
-      gateKey2.reveal(relic.position.x, relic.position.y, relic.position.z);
-      if (!game.skull.carry) gateKey2.giveToJaw();
-    }
+    // GATE KEY 2 stands on the altar from the first frame of the room and is
+    // takeable the moment the guardian yields — ONE throw, and the room turns
+    // on that same frame. The aug15 auto-jaw existed to spare the player a
+    // second aimed throw with the mourners already hunting; a single fetch has
+    // the same safety, and the take is finally a counted event he can hear.
+    if (gateKey2 && !gateKey2.revealed) gateKey2.reveal(ALTAR_TOP.x, ALTAR_TOP.y, ALTAR_TOP.z);
+    // the theft breaks the truce — derived off the flag, so a restore finds it
+    if (!state.escorted && game.flags.has('gotgateKey2') && state.inMarrow) runEscort();
 
     if (!state.inMarrow) return;
 
@@ -713,12 +765,12 @@ export function buildMarrowArea(game) {
     }
 
     // THE MOURNING STATUES: they turn to face you only while unseen — until
-    // the relic leaves the altar. Then the mourning is over: while your eyes
+    // the key leaves the altar. Then the mourning is over: while your eyes
     // are elsewhere they DASH, the skull's hit shoves them back like any
     // other creature, and their touch is the end. Weeping-angel grammar the
     // player already learned on the way in; the theft breaks the truce.
     game.camera.getWorldDirection(pv);
-    const hunting = state.relicKept;
+    const hunting = game.flags.has('gotgateKey2');
     for (const st of statues) {
       const H = st.userData;
       if (H.collider) {
@@ -903,99 +955,42 @@ export function buildMarrowArea(game) {
       }
     }
 
-    // THE RELIC: takeable once the guardian yields. It rides home in the
-    // skull's jaw, a small wet piece of another game.
-    relic.visible = !state.relicKept;
-    if (!state.relicKept) {
-      // its state lives on the object the player is aiming at: guarded is
-      // still and dim; yielded beats with the dangle's own heartbeat
-      // grammar and lifts off the altar — brightness/shape/motion only
+    // THE ALTAR: guarded is still and dim; yielded beats and lifts. The state
+    // lives on the object the player is aiming at, in brightness and motion.
+    // (makeGateKey's own hover already turns and bobs the key; the altar's
+    // candle and the lift are what say GUARDED vs GIVEN.)
+    const taken = game.flags.has('gotgateKey2');
+    if (!taken) {
       const takeable = state.yielded;
-      relic.rotation.y += dt * (takeable ? 1.1 : 0.4);
       let throb = 0;
       if (takeable) {
         state._altarPulseT = (state._altarPulseT || 0) + dt * 1.6;
         const beat = Math.max(0, Math.sin(state._altarPulseT * TAU));
         throb = beat * beat;
         state._altarRiseT = Math.min(1, (state._altarRiseT || 0) + dt);
-        relic.position.y = FLOOR + 1.24 + smoothstep(0, 1, state._altarRiseT) * 0.15;
+        if (gateKey2) {
+          gateKey2.home.y = ALTAR_TOP.y + smoothstep(0, 1, state._altarRiseT) * 0.16;
+        }
       }
-      if (state._relicFlinchT > 0) {
-        // refused: a dip and a brief overshoot, then back to rest
-        state._relicFlinchT = Math.max(0, state._relicFlinchT - dt);
-        const ph = 1 - state._relicFlinchT / 0.25;
-        relic.scale.setScalar(1 - Math.sin(ph * Math.PI) * 0.2);
-        relicMat.emissiveIntensity = ph < 0.4 ? lerp(0.8, 0.2, ph / 0.4)
-          : ph < 0.75 ? lerp(0.2, 1.9, (ph - 0.4) / 0.35)
-            : lerp(1.9, 0.8, (ph - 0.75) / 0.25);
-      } else {
-        relic.scale.setScalar(1 + throb * 0.22);
-        relicMat.emissiveIntensity = 0.8 + throb * 1.8;
-      }
-      relicGlow.intensity = takeable ? 1.4 + throb * 0.6 : 0.9;
+      relicGlow.intensity = takeable ? 1.4 + throb * 0.6 : 0.62;
     } else {
       relicGlow.intensity = 0.2;
     }
-    if (!state.relicKept && skull && (skull.mode === 'outbound' || skull.mode === 'returning')) {
-      const rd = Math.hypot(skull.pos.x - relic.position.x, skull.pos.z - relic.position.z);
-      const inWindow = rd < 0.72 && Math.abs(skull.pos.y - relic.position.y) < 0.9;
-      if (inWindow && state.yielded && skull.mode === 'outbound') {
-        state.relicKept = true;
-        game.flag('marrow:relicKept');
-        // the dangle's captured base must be the resting emissive, not a
-        // mid-throb frame — snap before the clone
-        relicMat.emissiveIntensity = 0.8;
-        const dangle = new THREE.Mesh(relicGeo.clone(), relicMat.clone());
-        dangle.scale.setScalar(0.45);
-        dangle.position.set(-0.048, -0.035, 0.05);
-        game.skull.jaw.add(dangle);
-        state.dangle = dangle;
-        game.audio.catchThud?.({ pos: relic.position, gain: 0.6, rate: 0.8 });
-        game.audio.unlock({ pos: relic.position, gain: 0.5, rate: 0.55 });
-        // the walls answer on the way out: knocks circle nearer, then it
-        // rises one last time between you and the door — and lets you pass
-        game.after(2.2, () => {
-          if (!state.inMarrow || state.escorted) return;
-          state.escorted = true;
-          game.flag('marrow:escorted');
-          let ang = Math.atan2(gp.x - p.x, gp.z - p.z);
-          const knocks = 5;
-          let gap = 0.62;
-          let acc = 0.9;
-          for (let i = 0; i <= knocks; i++) {
-            const d = 5.5 - (i / knocks) * 3.2;
-            const a = ang + (i % 2 ? 1 : -1) * (0.9 + i * 0.5);
-            game.after(acc, () => {
-              if (!state.inMarrow) return;
-              const kp = game.player.pos;
-              game.audio.knock({
-                pos: new THREE.Vector3(kp.x + Math.sin(a) * d, FLOOR + 1.2, kp.z + Math.cos(a) * d),
-                gain: 0.35 + i * 0.06, rate: 0.6 - i * 0.03,
-              });
-            }, { global: true });
-            acc += gap;
-            gap *= 0.86;
-          }
-          game.after(acc + 0.7, () => {
-            if (!state.inMarrow) return;
-            const kp = game.player.pos;
-            startErupt(kp.x, clamp(kp.z - 4.5, MZ + 2, MZ + LENGTH - 2), 0.85);
-            game.after(2.4, () => { if (presence.group.visible) startFold(); }, { global: true });
-          }, { global: true });
-        }, { global: true });
-      } else if (inWindow && time > (state._refuseAt || 0)) {
+    // A THROW AT A GUARDED KEY STILL GETS AN ANSWER. Without this the key's
+    // own fetch target is simply disabled before the yield and the skull sails
+    // through in silence — the exact failure this project keeps shipping.
+    if (!taken && skull && (skull.mode === 'outbound' || skull.mode === 'returning')) {
+      const rd = Math.hypot(skull.pos.x - ALTAR_TOP.x, skull.pos.z - ALTAR_TOP.z);
+      const inWindow = rd < 0.8 && Math.abs(skull.pos.y - ALTAR_TOP.y) < 0.95;
+      if (inWindow && !state.yielded && time > (state._refuseAt || 0)) {
         // the refusal: the gate is a rule, not a bug — a dry dead knock
-        // (nothing like the take's unlock chord) and a flinch on the relic
+        // (nothing like the take's unlock chord), and it points at WHO is
+        // refusing: a hard twitch, an eye-flare, a placed whisper
         state._refuseAt = time + 0.7;
-        state._relicFlinchT = 0.25;
-        game.audio.knock({ pos: relic.position, gain: 0.42, rate: 1.35 });
-        if (!state.yielded) {
-          // the disqualifier is the guardian: the refusal points at WHO
-          // is refusing — a hard twitch, an eye-flare, a placed whisper
-          presence._twitchUntil = 0;
-          state._eyeFlareT = 0.3;
-          game.audio.whisper({ pos: gp, gain: 0.45, rate: 0.5 });
-        }
+        game.audio.knock({ pos: ALTAR_TOP, gain: 0.42, rate: 1.35 });
+        presence._twitchUntil = 0;
+        state._eyeFlareT = 0.3;
+        game.audio.whisper({ pos: gp, gain: 0.45, rate: 0.5 });
       }
     }
     // the refusal eye-flare rides ON TOP of tickPresence's per-tick write,

@@ -813,24 +813,29 @@ try {
       M.yielded === true && g.flags.has('marrow:guardianYielded'),
       { dist: +M.guardianDist.toFixed(2) });
 
-    // the relic rides home in the jaw
-    const jawBefore = g.skull.jaw.children.length;
+    // the altar holds GATE KEY 2 and nothing else now — the relic went up to
+    // the yard's hero grave beside the canine — and one throw takes it
+    const key2 = g.gateKeys.list[1];
+    check('the altar holds only the key, and the guardian was the lock',
+      key2.revealed === true && key2.target.enabled === true
+      && !g.scene.getObjectByName('the relic'),
+      { revealed: key2.revealed, fetchable: key2.target.enabled });
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
-    const relicY = M.origin.floor + 1.24;
+    const keyY = M.origin.floor + 1.24;
     const dz2 = (M.origin.z + 26 - 2.2) - g.player.pos.z;
     g.player.yaw = Math.atan2(0, -dz2);
-    g.player.pitch = Math.atan2(relicY - (g.player.pos.y + 1.62), Math.abs(dz2));
+    g.player.pitch = Math.atan2(keyY - (g.player.pos.y + 1.62), Math.abs(dz2));
     g.player._sync(0);
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
     F.stepWith(0.8, { throwHeld: true });
     F.stepWith(1 / 120, { throwReleased: true });
     for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
-    check('the relic is taken and rides in the skull jaw',
-      g.flags.has('marrow:relicKept') && g.skull.jaw.children.length > jawBefore,
-      { jawBefore, jawAfter: g.skull.jaw.children.length });
+    check('the key is taken and rides in the skull jaw',
+      g.flags.has('gotgateKey2') && g.skull.carry?.id === 'gateKey2',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
 
     // the theft breaks the truce: while unobserved the mourners DASH.
-    // Hunting began the moment the relic left the altar, so first re-seat
+    // Hunting began the moment the key left the altar, so first re-seat
     // every statue at its post for a known board. st0 is the subject of
     // every check; the other three park at the far end (the player faces
     // them while st0 works from behind) or four simultaneous hunters end
@@ -1731,6 +1736,49 @@ try {
     check('the torn limb still answers, and still lets the skull through',
       climb.branchTarget.enabled === true && climb.branchTarget.radius < 2.0,
       { radius: climb.branchTarget.radius });
+    return { checks, diagnostics: null };
+  });
+
+  // ONE BROKEN STONE, TWO PRIZES, IN ORDER. "might as well remove that powerup
+  // and put both powerups in the same spot as the first powerup is in now that
+  // comes out of that destroyed gravestone."
+  await scenario('the-hero-grave-yields-two-in-order', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    const canine = g.world.fetchTargets.find((t) => t.id === 'ironCanine');
+    const relic = g.world.fetchTargets.find((t) => t.id === 'marrowRelic');
+    check('nothing is in the rubble until the stone comes down',
+      !!canine && !!relic && canine.object.visible === false && relic.object.visible === false);
+
+    g.destructibleGraves[5].hits = 2;
+    F.stepWith(2.0, {}, false);
+    check('the stone gives up the canine first, and only the canine',
+      canine.object.visible === true && canine.enabled === true
+      && relic.object.visible === false && relic.enabled === false);
+
+    g.flag('skullSharpened');
+    F.stepWith(2.0, {}, false);
+    check('the sharpened bite applies, and the second thing lights up behind it',
+      g.skullPower === 2 && canine.object.visible === false
+      && relic.object.visible === true && relic.enabled === true);
+    check('and it stands clear of the first, not on top of it',
+      Math.hypot(relic.object.position.x - 18.52, relic.object.position.z - 37.5) > 0.4,
+      { at: relic.object.position.toArray().map((v) => +v.toFixed(2)) });
+
+    g.flag('relicKept');
+    F.stepWith(0.6, {}, false);
+    check('the keepsake rides the jaw, derived from the flag so a reload rebuilds it',
+      !!g.relicDangle && g.relicDangle.parent === g.skull.jaw
+      && relic.object.visible === false,
+      { applied: g._relicApplied });
     return { checks, diagnostics: null };
   });
 

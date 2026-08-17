@@ -65,14 +65,14 @@ try {
 
     // 4. the hunting statues: arm and let them close while looking away,
     // then TURN to face what crossed the hall
-    M.relicKept = true;
+    g.flag('gotgateKey2');
     look(M.origin.x, M.origin.floor, M.origin.z + 13, M.origin.x, M.origin.floor + 1.5, M.origin.z + 24);
     F.stepWith(1.4, {}, false);
     look(g.player.pos.x, g.player.pos.y, g.player.pos.z,
       M.statues[0].position.x, M.origin.floor + 1.6, M.statues[0].position.z);
     F.stepWith(0.05, {}, false);
     grab('04-statues-hunting');
-    M.relicKept = false;
+    g.flags.delete('gotgateKey2');
     M.ascend();
     F.stepWith(0.5, {}, false);
 

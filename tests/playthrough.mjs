@@ -704,11 +704,17 @@ try {
     F.stepWith(2.0, {});
     beat('the-guardian-yields-to-a-body-not-a-throw', M.yielded === true);
 
-    // the relic, then the key the altar was holding down — from the same pose,
-    // because the mourners begin hunting the instant the relic leaves
+    // THE KEY, alone on the altar now — the relic went up to the yard's hero
+    // grave, so there is one throw here and no second aimed one to make while
+    // the mourners are already coming.
+    const key2 = g.gateKeys.list[1];
+    beat('the-altar-holds-the-key-and-nothing-else',
+      key2.revealed === true && key2.key.visible === true && key2.target.enabled === true
+      && !g.scene.getObjectByName('the relic'),
+      { revealed: key2.revealed, fetchable: key2.target.enabled });
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
-    const relicY = M.origin.floor + 1.24, relicZ = M.origin.z + 26 - 2.2;
-    aimAt(M.origin.x, relicY, relicZ);
+    const keyY = M.origin.floor + 1.24, keyZ = M.origin.z + 26 - 2.2;
+    aimAt(M.origin.x, keyY, keyZ);
     F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
     F.stepWith(0.3, { throwHeld: true });          // 2.4 m at launch speed: it is already there
     F.stepWith(1 / 120, { throwReleased: true });
@@ -719,11 +725,12 @@ try {
     g.player.pitch = 0;
     g.player._sync(0);
     F.stepWith(0.2, {});
-    beat('the-relic-is-kept', g.flags.has('marrow:relicKept'));
-    beat('second-key-comes-with-the-relic', g.skull.carry?.id === 'gateKey2',
+    beat('second-key-rides-the-jaw', g.skull.carry?.id === 'gateKey2',
       { carry: g.skull.carry ? g.skull.carry.id : null, dead: g.dead });
+    beat('taking-it-breaks-the-truce', g.flags.has('gotgateKey2') && M.escorted === true,
+      { escorted: M.escorted });
     // and OUT, at a run, WITHOUT waiting for the skull — the mourners begin
-    // hunting on the frame the relic leaves the altar, and standing still to
+    // hunting on the frame the key leaves the altar, and standing still to
     // watch your own throw come home is how you die here. The skull catches up
     // on its own; that is the whole point of it.
     for (let t = 0; t < 12 && M.inMarrow; t += 0.1) {

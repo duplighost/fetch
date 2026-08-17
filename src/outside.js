@@ -8,7 +8,7 @@ import { RNG, clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
 import { buildUnderfalls } from './underfalls.js';
 import { makeKey } from './house.js';
-import { buildMarrowArea } from './marrow.js';
+import { buildMarrowArea, makeRelic } from './marrow.js';
 
 export const FOREST_GATE = { x: 2, z: 43 };
 // The ossuary's stair throat, as ONE shape: the mausoleum floor that has to
@@ -550,6 +550,36 @@ function buildGraveyardUpgrade(game) {
   const relicGlow = { x: TOOTH_HOME.x, y: TOOTH_HOME.y + 0.2, z: TOOTH_HOME.z, intensity: 0, r: 4.5 };
   world.candles.push(relicGlow);
 
+  // ...and BEHIND it in the same rubble, THE RELIC. "might as well remove that
+  // powerup and put both powerups in the same spot as the first powerup is in
+  // now that comes out of that destroyed gravestone." Two sequential fetches
+  // from one broken stone: the canine first, and only once it is in the jaw
+  // does the second thing in the hole light up. It is a keepsake and nothing
+  // more — it grants no mechanic, which is exactly why it stopped being worth
+  // a guarded altar in another district.
+  const RELIC_HOME = new THREE.Vector3(TOOTH_HOME.x + 0.66, TOOTH_HOME.y - 0.08, TOOTH_HOME.z + 0.2);
+  const relicKit = makeRelic();
+  const relic = relicKit.mesh;
+  relic.position.copy(RELIC_HOME);
+  relic.visible = false;
+  scene.add(relic);
+  let relicRevealedAt = -1;
+  const relicTarget = world.addFetchTarget({
+    id: 'marrowRelic', object: relic, radius: 0.5, enabled: false,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (game.flags.has('relicKept')) return 'continue';
+      this.enabled = false;
+      relic.visible = false;
+      game.flag('relicKept');
+      game.impact('pop', at || relic.position);
+      game.audio.catchThud?.({ pos: relic.position, gain: 0.62, rate: 0.82 });
+      game.audio.unlock({ pos: relic.position, gain: 0.52, rate: 0.55 });
+      skull._flourishT = 0.8;
+      return 'return';
+    },
+  });
+
   // The sixth hero grave is the stone that keeps it: two skull hits bring the
   // stone down. Visibility derives from the grave's own state every tick, so a
   // death reset can never desync the reveal — and the settle delay is Alex's
@@ -598,7 +628,24 @@ function buildGraveyardUpgrade(game) {
         tooth.userData.halo.scale.set(hb, hb, 1);
       }
     }
-    relicGlow.intensity += ((tooth.visible ? 1.5 + Math.sin(time * 2.6) * 0.25 : 0)
+    // THE SECOND FETCH from the same rubble: it only wakes once the canine is
+    // in the jaw, so the two are a sequence and not a pile. Same derived
+    // visibility, same anti-scoop settle — the toppling throw's return leg
+    // must never scoop a reward the player has not seen.
+    const relicTaken = game.flags.has('relicKept');
+    relic.visible = toppled && taken && !relicTaken && surfaceVisible;
+    if (relic.visible && relicRevealedAt < 0) relicRevealedAt = time;
+    if (!relic.visible && !relicTaken) relicRevealedAt = -1;
+    relicTarget.enabled = relic.visible && relicRevealedAt >= 0 && (time - relicRevealedAt) > 0.9;
+    if (relic.visible) {
+      relicKit.mat.emissiveIntensity = 0.8 + Math.max(0, Math.sin(time * 2.4)) ** 2 * 1.5;
+      relic.rotation.y += dt * 1.05;
+      relic.position.y = RELIC_HOME.y + Math.sin(time * 1.5 + 1.1) * 0.045;
+    }
+    // one descriptor for the hole, wherever the live prize is standing in it
+    const lit = relic.visible ? relic : (tooth.visible ? tooth : null);
+    if (lit) { relicGlow.x = lit.position.x; relicGlow.z = lit.position.z; relicGlow.y = lit.position.y + 0.2; }
+    relicGlow.intensity += ((lit ? 1.5 + Math.sin(time * 2.6) * 0.25 : 0)
       - relicGlow.intensity) * Math.min(1, dt * 2.4);
 
     // THE SEAL, derived: the funeral opens it, and a reload restores it.
@@ -670,6 +717,20 @@ function buildGraveyardUpgrade(game) {
       charm.scale.setScalar(0.4);
       charm.position.set(-0.048, -0.035, 0.05);
       game.skull.jaw.add(charm);
+    }
+
+    // and the keepsake beside it, on the other side of the jaw. Same rules:
+    // derived from the flag, so respawn and reload rebuild it rather than
+    // remembering it, and a direct jaw child so dropCarry cannot take it.
+    if (relicTaken && !game._relicApplied && game.skull?.jaw) {
+      game._relicApplied = true;
+      const dangleMat = relicKit.mat.clone();
+      dangleMat.emissiveIntensity = 0.8;
+      const dangle = new THREE.Mesh(relicKit.geo.clone(), dangleMat);
+      dangle.scale.setScalar(0.45);
+      dangle.position.set(0.052, -0.035, 0.05);
+      game.skull.jaw.add(dangle);
+      game.relicDangle = dangle;
     }
   });
 }
@@ -1252,7 +1313,8 @@ function buildGateSockets(game) {
   };
   // marrow.js lives in its own module and mints key 2 from inside its own
   // district; handing the factory over on `game` keeps the import graph acyclic
-  game.makeGateKey = (n, parent, visibleWhen) => makeGateKey(game, n, parent, visibleWhen);
+  game.makeGateKey = (n, parent, visibleWhen, fetchableWhen) =>
+    makeGateKey(game, n, parent, visibleWhen, fetchableWhen);
 
   // three sockets, stacked — bottom to top, the way a tally reads
   for (let i = 0; i < 3; i++) {
@@ -1720,11 +1782,24 @@ function makeGateKey(game, n, parent, visibleWhen, fetchableWhen) {
   const id = 'gateKey' + n;
   rec.target = game.world.addFetchTarget({
     id, object: key, radius: 0.7, enabled: false,
-    onHit(skull) {
+    onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
-      if (skull.carry) return 'continue';        // one errand at a time
+      if (skull.carry) {
+        // one errand at a time — but SAY so. This returned 'continue' in
+        // silence, and a player still holding key one who throws at key two
+        // got a skull sailing through it and no explanation at all.
+        game.impact('locked', at || rec.home);
+        game.audio.lockedRattle({ pos: rec.home, gain: 0.5, rate: 1.05 });
+        return 'continue';
+      }
       this.enabled = false;
       skull.grab(id, key);
+      // taking a key is a COUNTED event: the same chord the lock-stone plays
+      // when one goes in, so three takes and three banks tally by ear. (Key 2
+      // used to ride into the jaw silently with the marrow relic, which is
+      // exactly why Alex's count came out at two.)
+      game.audio.unlock({ pos: rec.home, gain: 0.72, rate: 0.86 });
+      game.audio.metalDrop({ pos: rec.home, gain: 0.4, rate: 1.05 });
       game.flag('got' + id);
       return 'return';
     },
