@@ -23,14 +23,29 @@ try {
         F.teleport(act);
         F.stepWith(0.4);
         const start = g.player.pos.clone();
+        // yaw without a _sync is a yaw the movement basis has not seen yet —
+        // this is why every act past the graveyard reported "max walk 0m" and
+        // the probe's "no escapes" verdict never actually tested them.
         g.player.yaw = (d / 12) * Math.PI * 2;
+        g.player.pitch = 0;
+        g.player.vel.set(0, 0, 0);
+        g.player._sync(0);
         let minY = g.player.pos.y, escaped = false, maxDist = 0, deaths = 0, wasDead = false;
         for (let n = 0; n < secs * 4; n++) {
           F.stepWith(0.25, { moveZ: 1, run: true });
           minY = Math.min(minY, g.player.pos.y);
           maxDist = Math.max(maxDist, start.distanceTo(g.player.pos));
-          if (g.player.dead && !wasDead) deaths++;
-          wasDead = !!g.player.dead;
+          const dead = !!(g.dead || g.player.dead);
+          if (dead && !wasDead) deaths++;
+          wasDead = dead;
+          // a dead walker proves nothing about the edge of the world; put it
+          // back on its feet and keep going in the same direction
+          if (dead) {
+            g.director?.respawn?.();
+            F.stepWith(0.3, {});
+            g.player.yaw = (d / 12) * Math.PI * 2;
+            g.player._sync(0);
+          }
           if (g.player.pos.y < -14) { escaped = true; break; }
         }
         const p = g.player.pos;

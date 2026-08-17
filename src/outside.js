@@ -6510,6 +6510,363 @@ export function buildClearing(game) {
 // one lights a fire line — a visible run of pipe along the shore to a brazier
 // array under the ice — and both lit is the thaw. No new input, no new verb,
 // nothing the player has not already been taught.
+// --------------------------------------------------- past the woods
+// "walking too far past it brings you to nothingness. Maybe we could add more
+// trees and a little path to the gong on one side and more trees and a little
+// path to the turn wheel thing on the other... we could just put some of those
+// odd bug type enemies we used from marrow there that don't hurt you but pop
+// up and you have to walk through... we don't want them seeing the end of the
+// world either. we could have a little stream past there if the trees don't
+// completely block it on the far sides of both paths - not in front of the
+// things that create the two things on each side."
+//
+// Everything here is C-RELATIVE (the clearing centre is computed at runtime
+// from the forest spline), is rooted in game.frozenFallsRoots so it inherits
+// the act gating and the district-culling whitelist, and is instanced or
+// merged: six draw calls for the whole field, and none of them in the house.
+function buildFallsField(game, C, FX, FZ) {
+  const { world, scene, mats: M } = game;
+  const rng = new RNG(0x9f21);
+  const roots = [];
+  const at = (x, z) => world.groundHeightAt(C.x + x, C.z + z, 3);
+
+  // ---- 1. THE GROUND DOES NOT END --------------------------------------
+  // The rendered clearing plane is 60 x 54 and terrainHeightFn's clearing
+  // branch dies at the same bounds; past that the player walked onto an
+  // invisible sine floor with nothing drawn under it. Aprons in M.dirt, which
+  // the shell already batches: zero draws, and they read as the same night
+  // ground because at that distance nothing reads but value.
+  world.box(M.dirt, C.x - 44, -0.16, C.z, 30, 0.3, 76);
+  world.box(M.dirt, C.x + 44, -0.16, C.z, 30, 0.3, 76);
+  world.box(M.dirt, C.x, -0.16, C.z + 40, 60, 0.3, 26);
+  world.box(M.dirt, C.x, -0.16, C.z - 40, 60, 0.3, 26);
+  // and a standing wood behind the treeline, the house's own horizon trick
+  for (let i = 0; i < 34; i++) {
+    const side = i % 2 ? 1 : -1;
+    const x = side * (33 + rng.range(0, 13));
+    const z = -30 + (i >> 1) * 3.9 + rng.range(-1.4, 1.4);
+    const h = 8 + rng.range(0, 6);
+    const ry = rng.range(0, TAU);
+    world.box(M.dirt, C.x + x, h * 0.42, C.z + z, 0.62, h * 0.84, 0.62, ry);
+    world.box(M.dirt, C.x + x, h * 0.82, C.z + z, 3.4, h * 0.3, 3.4, ry + 0.5);
+    world.box(M.dirt, C.x + x, h * 1.02, C.z + z, 2.3, h * 0.24, 2.3, ry - 0.4);
+  }
+  for (let i = 0; i < 16; i++) {
+    const x = -30 + i * 4.1 + rng.range(-1.4, 1.4);
+    const h = 8 + rng.range(0, 6);
+    const ry = rng.range(0, TAU);
+    const z = (i % 2 ? 1 : -1) * (33 + rng.range(0, 10));
+    world.box(M.dirt, C.x + x, h * 0.42, C.z + z, 0.62, h * 0.84, 0.62, ry);
+    world.box(M.dirt, C.x + x, h * 0.82, C.z + z, 3.4, h * 0.3, 3.4, ry + 0.5);
+    world.box(M.dirt, C.x + x, h * 1.02, C.z + z, 2.3, h * 0.24, 2.3, ry - 0.4);
+  }
+
+  // ---- 2. TWO PATHS, LINED --------------------------------------------
+  // The trees are the walls of the field: they say "the way is that way" and
+  // they eat the horizon. Kept off every line the player actually walks, off
+  // the basin, and — his own constraint — off the fire lines and the brazier
+  // arrays that are "the things that create the two things".
+  const clearOf = (x, z) => {
+    // the basin (its outer radius reaches z+7.0 and a straight crossing drowns)
+    if (Math.hypot(x, z - 15.2) < 9.4) return false;
+    // the way under the falls, and the falls mouth itself
+    if (Math.abs(x) < 5.6 && z > 14) return false;
+    // the machines and the ground you stand on to work them
+    if (Math.hypot(Math.abs(x) - 13.5, z - 12.4) < 4.6) return false;
+    // the fire lines: machine -> brazier array, and the arrays themselves
+    for (const s of [-1, 1]) {
+      const ax = s * 13.5, az = 12.4, bx = s * 3.7, bz = (FZ - C.z) - 0.8;
+      const dx = bx - ax, dz = bz - az;
+      const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+      if (Math.hypot(x - (ax + dx * t), z - (az + dz * t)) < 3.0) return false;
+      if (Math.hypot(x - s * 3.1, z - ((FZ - C.z) - 0.75)) < 4.2) return false;
+    }
+    // and every line the playthrough (and therefore a player) walks
+    const legs = [
+      [0, -12, 0, 2], [0, 2, -11, 4], [-11, 4, -13.5, 9.6],
+      [0, 2, 11, 4], [11, 4, 13.5, 9.4], [-11, 4, 11, 4],
+      [0, 4, 0, 14],
+    ];
+    for (const [x0, z0, x1, z1] of legs) {
+      const dx = x1 - x0, dz = z1 - z0;
+      const t = clamp(((x - x0) * dx + (z - z0) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+      if (Math.hypot(x - (x0 + dx * t), z - (z0 + dz * t)) < 4.6) return false;
+    }
+    // the corridor you arrive through
+    if (Math.abs(x) < 8 && z < -14) return false;
+    return true;
+  };
+
+  // The oasis grove's own bark is 0x71807a, and at the range IT stands from
+  // the player that is fine. These stand where you walk, and the carried
+  // lantern is 91% of what any near prop is lit by: at 0x6b7873 the first
+  // trunk you pass fills a third of the frame as a white column. The law is
+  // <=0.03 linear for anything you walk up to.
+  // The oasis grove's own bark is 0x71807a, and at the range IT stands from
+  // the player that is fine. These stand where you WALK, and the carried
+  // lantern is 91% of what any near prop is lit by — at the grove's value the
+  // first trunk you pass fills a third of the frame as a white column. Same
+  // species, half the albedo: they read as the same wood standing further
+  // back, and nothing near the path clips.
+  const bark = new THREE.MeshStandardMaterial({
+    color: 0x3c4442, roughness: 0.96, metalness: 0, emissive: 0x0d1613, emissiveIntensity: 0.15,
+  });
+  const leaf = new THREE.MeshLambertMaterial({
+    color: 0x27392f, emissive: 0x09130d, emissiveIntensity: 0.15,
+  });
+  const trunkGeo = new THREE.CylinderGeometry(0.13, 0.26, 1, 7);
+  const branchGeo = new THREE.CylinderGeometry(0.05, 0.1, 1, 6);
+  const crownGeo = new THREE.SphereGeometry(1, 9, 7);
+  const trunkM = [], branchM = [], crownM = [];
+  const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(),
+    e4 = new THREE.Euler(), p4 = new THREE.Vector3(), s4 = new THREE.Vector3();
+  const compose = (x, y, z, rx, ry, rz, sx, sy, sz) => {
+    q4.setFromEuler(e4.set(rx, ry, rz));
+    return m4.clone().compose(p4.set(x, y, z), q4, s4.set(sx, sy, sz));
+  };
+  const seg = (a, b, w) => {
+    const dir = b.clone().sub(a);
+    const len = dir.length() || 0.001;
+    const mid = a.clone().addScaledVector(dir, 0.5);
+    q4.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+    return m4.clone().compose(mid, q4, s4.set(w, len, w));
+  };
+  const plant = (x, z) => {
+    const y = at(x, z);
+    const h = rng.range(5.0, 8.6);
+    const lean = rng.range(-0.07, 0.07);
+    trunkM.push(compose(C.x + x, y + h * 0.5, C.z + z, lean, rng.range(0, TAU),
+      rng.range(-0.06, 0.06), 1, h, 1));
+    const top = new THREE.Vector3(C.x + x + lean * h * 0.7, y + h * 0.78, C.z + z);
+    for (let f = 0; f < 2; f++) {
+      const fork = top.clone().add(new THREE.Vector3(rng.range(-1.2, 1.2),
+        rng.range(0.7, 1.45), rng.range(-1.1, 1.1)));
+      branchM.push(seg(top, fork, rng.range(0.62, 1.0)));
+      const cs = rng.range(0.9, 1.5);
+      crownM.push(compose(fork.x, fork.y + rng.range(0.25, 0.65), fork.z,
+        rng.range(-0.26, 0.26), rng.range(0, TAU), rng.range(-0.26, 0.26),
+        cs * rng.range(1.1, 1.5), cs * rng.range(0.6, 0.86), cs * rng.range(0.9, 1.2)));
+    }
+    const cs = rng.range(1.0, 1.6);
+    crownM.push(compose(top.x, top.y + rng.range(1.2, 1.8), top.z,
+      rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
+      cs * 1.3, cs * 0.8, cs * 1.1));
+  };
+  // the walls of the field, the ground behind the machines, and the way in
+  for (let guard = 0, made = 0; guard < 900 && made < 92; guard++) {
+    const band = made % 3;
+    const x = band === 0 ? (rng.float() < 0.5 ? -1 : 1) * rng.range(16.5, 30)
+      : band === 1 ? (rng.float() < 0.5 ? -1 : 1) * rng.range(7.5, 26)
+        : (rng.float() < 0.5 ? -1 : 1) * rng.range(8.5, 29);
+    const z = band === 0 ? rng.range(-26, 26)
+      : band === 1 ? rng.range(13, 27)
+        : rng.range(-27, -11);
+    if (!clearOf(x, z)) continue;
+    made++;
+    plant(x, z);
+  }
+  const trunks = new THREE.InstancedMesh(trunkGeo, bark, trunkM.length);
+  trunkM.forEach((mm, i) => trunks.setMatrixAt(i, mm));
+  const branches = new THREE.InstancedMesh(branchGeo, bark, branchM.length);
+  branchM.forEach((mm, i) => branches.setMatrixAt(i, mm));
+  const crowns = new THREE.InstancedMesh(crownGeo, leaf, crownM.length);
+  crownM.forEach((mm, i) => crowns.setMatrixAt(i, mm));
+  for (const mesh of [trunks, branches, crowns]) {
+    mesh.frustumCulled = false;        // instance matrices live outside the unit bounds
+    mesh.castShadow = true;
+    scene.add(mesh);
+    roots.push(mesh);
+  }
+  trunks.name = 'falls field wood';
+
+  // ---- 3. AND NO WAY OFF THE EDGE OF IT --------------------------------
+  // The first colliders this layer has ever had. Stepped boxes, because the
+  // law is AABB-only and a curved treeline is a row of short walls.
+  const WALL = 27.5, NORTH = 27.5, SOUTH = -28;
+  for (let z = -28; z <= 28; z += 3.4) {
+    for (const s of [-1, 1]) {
+      world.addCollider(C.x + s * WALL - 1.6, -4, C.z + z - 1.8,
+        C.x + s * WALL + 1.6, 9, C.z + z + 1.8);
+    }
+  }
+  for (let x = -28; x <= 28; x += 3.4) {
+    // the falls mouth stays open; so does the corridor you arrived through
+    if (Math.abs(x) < 5.4) continue;
+    world.addCollider(C.x + x - 1.8, -4, C.z + NORTH - 1.6,
+      C.x + x + 1.8, 9, C.z + NORTH + 1.6);
+    if (Math.abs(x) < 8) continue;
+    world.addCollider(C.x + x - 1.8, -4, C.z + SOUTH - 1.6,
+      C.x + x + 1.8, 9, C.z + SOUTH + 1.6);
+  }
+
+  // ---- 4. THE STREAM, ON THE FAR SIDES ---------------------------------
+  // "we could have a little stream past there if the trees don't completely
+  // block it on the far sides of both paths - not in front of the things that
+  // create the two things." So: outboard of the machines, running north-south
+  // where a player walking a path sees it THROUGH the trunks. Ground-conforming
+  // ribbon, never the vertical falls shader laid flat (that reads as a ruler).
+  const waterMat = new THREE.MeshStandardMaterial({
+    color: 0x21424a, roughness: 0.24, metalness: 0.1,
+    emissive: 0x0b1c20, emissiveIntensity: 0.22,
+    transparent: true, opacity: 0.74, depthWrite: false,
+  });
+  const ribbonPos = [], ribbonIdx = [], ribbonUv = [];
+  const ribbon = (pts, w) => {
+    const base = ribbonPos.length / 3;
+    let travelled = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [px, pz] = pts[i];
+      const [nx, nz] = pts[Math.min(i + 1, pts.length - 1)];
+      const [bx, bz] = pts[Math.max(i - 1, 0)];
+      const tx = nx - bx, tz = nz - bz;
+      const tl = Math.hypot(tx, tz) || 1;
+      const ox = (-tz / tl) * w * 0.5, oz = (tx / tl) * w * 0.5;
+      if (i > 0) travelled += Math.hypot(px - bx, pz - bz) * 0.5;
+      const y = at(px - ox, pz - oz);
+      const y2 = at(px + ox, pz + oz);
+      ribbonPos.push(C.x + px - ox, y + 0.05, C.z + pz - oz);
+      ribbonPos.push(C.x + px + ox, y2 + 0.05, C.z + pz + oz);
+      ribbonUv.push(0, travelled * 0.18, 1, travelled * 0.18);
+      if (i > 0) {
+        const a = base + (i - 1) * 2;
+        ribbonIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      }
+    }
+  };
+  for (const s of [-1, 1]) {
+    ribbon([
+      [s * 23.5, -24], [s * 24.2, -18], [s * 23.0, -12], [s * 24.4, -6],
+      [s * 23.2, 0], [s * 24.6, 6], [s * 23.4, 12], [s * 24.0, 18],
+      [s * 22.6, 24],
+    ], 2.2);
+  }
+  const ribbonGeo = new THREE.BufferGeometry();
+  ribbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(ribbonPos, 3));
+  ribbonGeo.setAttribute('uv', new THREE.Float32BufferAttribute(ribbonUv, 2));
+  ribbonGeo.setIndex(ribbonIdx);
+  ribbonGeo.computeVertexNormals();
+  const streams = new THREE.Mesh(ribbonGeo, waterMat);
+  streams.name = 'falls field far streams';
+  streams.frustumCulled = false;
+  scene.add(streams);
+  roots.push(streams);
+
+  // ---- 5. THE THINGS THAT POP UP ---------------------------------------
+  // Marrow's Presence, in the only form that can afford to stand here: its
+  // whole silhouette merged into ONE geometry and instanced, so six of them
+  // cost one draw instead of the 78 apiece a raw port costs. They do not hurt
+  // you. They rise in front of you, they loom, and walking into one folds it
+  // back through the floor — the marrow's own way past a guardian, kept.
+  const kinParts = [];
+  const put = (geo, x, y, z, rx, rz) => {
+    if (rx) geo.rotateX(rx);
+    if (rz) geo.rotateZ(rz);
+    geo.translate(x, y, z);
+    kinParts.push(geo);
+  };
+  put(new THREE.CylinderGeometry(0.16, 0.42, 1.5, 6), 0, 0.75, 0);
+  // a SPHERE, not an icosahedron: PolyhedronGeometry is non-indexed, and
+  // mergeGeometries silently returns null when the list mixes indexed and
+  // non-indexed — which surfaces four frames later as a null read inside the
+  // renderer's attribute cache, in a stack with none of your code in it
+  put(new THREE.SphereGeometry(0.46, 7, 6), 0, 1.72, 0.02);
+  put(new THREE.ConeGeometry(0.2, 0.62, 5), 0, 2.24, 0.06, 0.2);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU + 0.5;
+    put(new THREE.CapsuleGeometry(0.045, 0.72, 3, 5),
+      Math.sin(a) * 0.34, 1.28 + (i % 2) * 0.24, Math.cos(a) * 0.3, 0.5, Math.sin(a) * 0.9);
+  }
+  for (let i = 0; i < 4; i++) {
+    put(new THREE.ConeGeometry(0.05, 0.36, 4), (i - 1.5) * 0.16, 1.98, -0.22, -0.5);
+  }
+  const kinMat = new THREE.MeshStandardMaterial({
+    color: 0x0d0c10, roughness: 0.94, metalness: 0,
+    emissive: 0x060409, emissiveIntensity: 0.5,
+  });
+  const KIN = 6;
+  const kin = new THREE.InstancedMesh(mergeGeometries(kinParts), kinMat, KIN);
+  kin.frustumCulled = false;
+  kin.castShadow = true;
+  scene.add(kin);
+  roots.push(kin);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xa9c0b6, toneMapped: false });
+  const eyes = new THREE.InstancedMesh(new THREE.SphereGeometry(0.055, 6, 5), eyeMat, KIN * 2);
+  eyes.frustumCulled = false;
+  scene.add(eyes);
+  roots.push(eyes);
+
+  // three a side, standing in the field between the paths and the wood, close
+  // enough to the walk lines to be MET and never close enough to block them
+  const kinSites = [
+    [-8.6, -3.2], [-15.8, 3.6], [-10.4, 15.4],
+    [8.6, -3.2], [15.8, 3.6], [10.4, 15.4],
+  ].map(([x, z]) => ({
+    x: C.x + x, z: C.z + z, y: at(x, z),
+    rise: 0, state: 'down', yaw: rng.range(0, TAU), phase: rng.range(0, TAU),
+  }));
+  const kinM4 = new THREE.Matrix4(), kinQ = new THREE.Quaternion(),
+    kinE = new THREE.Euler(), kinP = new THREE.Vector3(), kinS = new THREE.Vector3();
+  const writeKin = (time) => {
+    for (let i = 0; i < KIN; i++) {
+      const k = kinSites[i];
+      const up = smoothstep(0, 1, k.rise);
+      // stop-motion jitter: it never moves smoothly, which is the whole read
+      const j = Math.floor(time * 11 + k.phase) * 0.61;
+      const sway = Math.sin(j) * 0.05 * up;
+      kinQ.setFromEuler(kinE.set(sway * 0.6, k.yaw + sway, sway));
+      const y = k.y - 2.9 + up * 2.9;
+      kinM4.compose(kinP.set(k.x, y, k.z), kinQ, kinS.set(1, 1, 1));
+      kin.setMatrixAt(i, kinM4);
+      // two of them, on the front of the head: forward is (sin yaw, cos yaw),
+      // so the pair sits across the perpendicular and a hand's width proud
+      const fx = Math.sin(k.yaw), fz = Math.cos(k.yaw);
+      for (let e = 0; e < 2; e++) {
+        const side = e ? 0.15 : -0.15;
+        kinQ.identity();
+        kinP.set(k.x + fx * 0.33 + fz * side, y + 1.76, k.z + fz * 0.33 - fx * side);
+        const s = up > 0.12 ? 1 : 0.0001;
+        kinM4.compose(kinP, kinQ, kinS.set(s, s, s));
+        eyes.setMatrixAt(i * 2 + e, kinM4);
+      }
+    }
+    kin.instanceMatrix.needsUpdate = true;
+    eyes.instanceMatrix.needsUpdate = true;
+  };
+  writeKin(0);
+
+  game.fallsField = { kinSites, kin, eyes, streams, trunks };
+  game.tickers.push((dt, time) => {
+    if (game.act !== 'clearing') return;
+    const p = game.player.pos;
+    for (const k of kinSites) {
+      const d = Math.hypot(p.x - k.x, p.z - k.z);
+      if (k.state === 'down' && d < 9.5) {
+        k.state = 'up';
+        k.yaw = Math.atan2(p.x - k.x, p.z - k.z);
+        game.audio.thud({ pos: new THREE.Vector3(k.x, k.y, k.z), gain: 0.62, rate: 0.52, crack: true });
+        game.shake(0.14);
+      } else if (k.state === 'up') {
+        k.rise = Math.min(1, k.rise + dt * 1.45);
+        // it tracks you while it is up, the way the loom in the crypt does
+        k.yaw += ((Math.atan2(p.x - k.x, p.z - k.z) - k.yaw + Math.PI * 3) % (Math.PI * 2)
+          - Math.PI) * Math.min(1, dt * 1.2);
+        // walk INTO it and it gives, exactly like the guardian below the yard
+        if (d < 1.35) {
+          k.state = 'yield';
+          game.audio.whisper({ pos: new THREE.Vector3(k.x, k.y + 1.4, k.z), gain: 0.4, rate: 0.44, verb: 1.1 });
+        }
+      } else if (k.state === 'yield') {
+        k.rise = Math.max(0, k.rise - dt * 1.9);
+        if (k.rise <= 0) k.state = 'gone';
+      }
+    }
+    writeKin(time);
+    waterMat.emissiveIntensity = 0.2 + Math.sin(time * 0.9) * 0.05;
+  });
+
+  return roots;
+}
+
 function buildFrozenFalls(game) {
   const { world, scene, mats: M } = game;
   const C = game.clearingCenter;
@@ -6735,7 +7092,7 @@ function buildFrozenFalls(game) {
   // draw calls in the HOUSE's view — house-after-cave lives five under a 450
   // ceiling. They exist from the act the forest begins, and not before.
   state.roots = [ice, west.pipe, west.array, east.pipe, east.array,
-    state.shed, state.frame].filter(Boolean);
+    state.shed, state.frame, ...buildFallsField(game, C, FX, FZ)].filter(Boolean);
   for (const r of state.roots) r.visible = false;
   game.frozenFallsRoots = state.roots;
 
