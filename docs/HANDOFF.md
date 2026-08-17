@@ -1,3 +1,292 @@
+# HANDOFF — 2026-08-17: ROUND FIVE PLAN (for Claude Opus 5 — read this section first)
+
+Alex has now PLAYED round four. It works — his words: "This game works! just a
+few edits and then polish." This section is the plan for those edits, written
+by Claude Fable against his notes, with the recon already done and cited by
+file:line at commit 7ca31a0. His WRITTEN notes are the spec; he also sent three
+screenshots whose embedded titles he later rewrote — where a picture caption
+and his notes disagree, the notes win.
+
+## Zeroth: where you work, and the laws
+
+- **NEW WORKTREE. Do not build in fetch-aug17, do not commit to
+  `claude/aug17-notes`** (it is PR #30, open). From this repo:
+  `git worktree add C:\Users\Alex\Projects\fetch-<date> -b claude/<date>-notes claude/aug17-notes`
+  (name by the day you start, e.g. `aug18`; if starting today use
+  `aug17-round5`). PR when done: base `claude/aug17-notes` — a fifth storey on
+  the stack #30→#29→#28→#27. NEVER rebase any storey. Never touch
+  `Projects\fetch-claude` (stale, shared with Codex).
+- First commit on the new branch: this HANDOFF section (docs commit), so the
+  plan travels with the work. Round four did the same (commit 968ca8d).
+- **Gates, all four, always:** `node tests/smoke.mjs`, `tests/autotest.mjs`,
+  `tests/regressions.mjs` (157), `tests/playthrough.mjs` (COMPLETE, the most
+  valuable thing in the repo). After any clearing/dressing work also
+  `tests/district-culling-regression.mjs` (max 438/450) and
+  `tests/render-perf.mjs`. maxGeometries 1448/1500. **Never pipe a test
+  through `tail`/`grep`** — redirect to a file.
+- **Sacred:** throw grammar (press/HOLD/RELEASE) untouchable; `FEEL_PROFILE`
+  in skull.js frozen; reach/LOS guards on the fetch TARGET, never in
+  `_checkTargets`; no HUD, no on-screen words, no control theft; **Alex is
+  colourblind — no read may depend on hue** (violated and shipped three times;
+  not a fourth); all copy is his voice — reuse his lines, never invent; the
+  Choir's `heardSpeed` stays under RUN (4.7).
+- **Budgets:** hard 450 draws per district; a new material through `world.box`
+  or any new Mesh is +1 draw forever unless act-gated into a district root
+  array (`game.frozenFallsRoots` for everything below). **Never add/remove/
+  visibility-flip a light at runtime** — the census is pinned
+  (`World.pinLightCensus`); use pooled `world.candles` descriptors or loan
+  lights. `game.fallGlow` is the falls' pinned PointLight — animate intensity/
+  position, never colour.
+- **Reproduce first, then fix.** Every note below gets a headless probe
+  (Playwright + system Chrome D3D11, `window.__FETCH` / debug teleports,
+  canvas.toDataURL — never page.screenshot) and you LOOK at the PNG. Every
+  wrong conclusion this project has ever shipped came from reasoning instead
+  of opening the image.
+
+## His notes, the recon, and the plan
+
+### 1. The stream out of the primary waterfall should end in a pond
+
+The stream he stood in: [outside.js:6591](../src/outside.js) — a 3×26 plane at
+`C.x−4, C.z+2`, rotated 0.2, reading as the plunge pool's outflow running
+south. Its south end stops dead around `C.z−11` — the exact "ribbon that
+simply ceases" read that round four fixed for the FAR streams at
+outside.js:7047-7095 ("have this stream end in a pond"). Give this stream the
+same treatment: widen toward the terminus and end it in a pooled pond with a
+rock-bank ring, the way the far termini were built (CircleGeometry instance +
+`world.box(M.rock, …)` banks).
+
+- Reuse the clearing's existing water material or the far streams' `waterMat`;
+  root any NEW mesh in `game.frozenFallsRoots` or it is +1 draw in the house
+  forever.
+- Placement constraints: clear of the arrival-corridor walk legs
+  (`clearOf` legs list, outside.js:6868-6877), clear of kinSites
+  (outside.js:7207), and NO terrain/collider change — this pond is scenery,
+  shin-deep, like the far ponds. It must never dip ground below the −1.5
+  death line (§3).
+- **Do not edit the tree-pass RNG loops** — both streams' passes are
+  position-order dependent; appending a new pass on its own seed is the only
+  legal way to move vegetation (the law is written at outside.js:6954).
+- Verify: screenshot standing in the stream looking south — the water must
+  END somewhere instead of ceasing.
+
+### 2. The six walk-through "concrete/brick" blocks with lights
+
+Found them. [outside.js:7140-7144](../src/outside.js) — the "raised bank
+masses" from round four's §10: `for (const s of [-1,1]) for (let i=0;i<3;i++)`
+— two groups of three `world.box(M.rock, …)` blocks. The comment says they
+belong BESIDE the basin's lip gap ("turn that hole into a mouth"), but the
+math forgot `CLEARING_BASIN.centerZ`: `bz = −cos(th)*8.6` puts them at
+`C.z≈−8` — out in the open field beside the centre stream — instead of
+`z≈+7` at the basin's water edge. Compare the talus rim that does it right:
+[atmosphere.js:989-999](../src/atmosphere.js) uses
+`z = CLEARING_BASIN.centerZ − sin(a)*r`. And `world.box` bakes shell geometry
+only — no collider — so they are six untextured-reading boxes you walk
+through. Alex's screenshot (stream vantage, looking left) confirms: pale grey
+boxes in two clusters. The nearby glows he liked are separate (probe what they
+actually are — pooled candles/motes — before touching them).
+
+The fix, in order of his priorities ("just not walking through ugly
+concrete/bricks"):
+- Reposition them basin-relative (add `CLEARING_BASIN.centerZ` to bz), placed
+  by PROBE not just formula: flanking the crossing entry at the water edge,
+  every box clear of the `|x|<3.0` bridge lane and of the tenth stone's
+  stride (dz 7.35). Note i=0 lands at bx≈±2.5 — inside the lane the comment
+  says to avoid; spread th so all six sit clear.
+- Make them SOLID: one `world.addCollider` per box. They become part of §3's
+  physical ring — build §2 and §3 as one shore-reading pass.
+- Make them READ as bank rock, not bricks: match the talus rocks' scale/
+  irregularity (jittered sizes/rotations), and check them under the lantern —
+  a lit near-white box two metres from the carried light blows out (the law
+  from the kin fix).
+- If the light-up he liked turns out to be the boxes catching light and it
+  reads well AT THE BASIN, keep it; his note: nice as a light source, not as
+  walk-through bricks.
+- Verify: screenshot from his stream vantage (boxes gone from there),
+  screenshot at the basin lip (they read as banks), collision probe (cannot
+  walk through).
+
+### 3. The plunge pool is the game's only walk-in death water — block the
+### wade-in, keep the stone crossing (HIS FLAGGED "CAREFUL" ITEM)
+
+Current truth: [director.js:421](../src/director.js) kills at `y < −1.5` in
+act `clearing`; the basin (`CLEARING_BASIN`, outside.js:23) is the only place
+walkable water gets that deep. Ten bridge stones rise on `waterfallTaken`
+(director.js:1070-1075) and re-rise on respawn (director.js:1190-1196). The
+collapse idiom for a barrier already exists: `max.y = min.y`
+(`waterfallBarrier`, director.js:1066/1195).
+
+Alex's own suggestion is the right one, done physically, not invisibly:
+
+- Ring the basin's water line with SOLID bank — extend the existing talus rim
+  (atmosphere.js:989, which already skips `|x|<3.0` for the bridge lane) with
+  colliders, folding in §2's six relocated masses. The read: a stone lip all
+  the way around = you do not wade here. Value and shape, never hue.
+- In the `|x|<3.0` crossing lane, add a low `basinBarrier` collider at the
+  water edge that collapses (`max.y = min.y`) exactly when the stones rise:
+  set it in `waterfallTaken()` AND in the respawn restore branch at
+  director.js:1190-1196 — the same two places the stones and `caveZone` are
+  handled, so death/respawn cannot desync it (that class of bug is this
+  repo's gate-softlock story).
+- KEEP the y<−1.5 death as backstop. Do not delete a working failsafe.
+- Protect, and probe each one after: the shore locket pickup at
+  `C.x+9.3, z+17.5` (outside.js:6740) still reachable; the pre-thaw walk to
+  both machines; the skull's flight to the `waterfall` fetch target (guards
+  live on the target); the playthrough's exact walk legs; the Gesture beat.
+- Regression to pin (new file or extend regressions): pre-thaw, a player
+  driven at the water from several bearings can never reach y<−1.5 (blocked
+  at the lip); post-thaw, the playthrough still crosses and completes. Run
+  the FULL playthrough gate both ways.
+- He wrote: "I want to make whatever we do, something we do careful. because
+  the game does work." Smallest change that reads; no physics rewrites, no
+  swimming, no new verbs.
+
+### 4. The cave door: he died entering, walked behind the first wall, and the
+### entry "loads 2 distinct things, one before the other"
+
+Recon, all unverified-by-play — REPRODUCE FIRST on foot (post-thaw, walk the
+stones through the veil; do not teleport past the seam you are debugging):
+
+- **The death.** The clearing zone ends at `z+20.4` (outside.js:6570); the
+  cave's first route node ('stone veil') is at `z+22` (underfalls.js:12);
+  the basin's depression mathematically reaches `z+23.4` (outerR 8.2 around
+  centerZ 15.2). The clearing death check fires whenever act is still
+  `clearing` and y dips below −1.5 — so the strip between the last stone
+  (dz 20.42) and the cave floor, or a sideways step off a stone under the
+  veil, can kill a player who believes they are already inside. Log
+  act/zone/y walking the whole crossing; find the exact death he hit. Likely
+  fixes (choose by evidence): floor/collider continuity from last stone to
+  cave floor so y never dips; and/or extend `caveZone` (underfalls.js:1521)
+  to meet the falls line so the act flips before the dip is reachable.
+- **Behind the first wall.** Strafe-probe both sides of the stone-veil
+  corridor mouth; find the collider gap and seal it. Remember the round-four
+  law: an aperture needs chunky panels AND a black void backing — an
+  un-backed gap shows the clear colour (his third screenshot, a giant
+  untextured orange surface filling the frame, is almost certainly the
+  backside/inside of un-backed geometry there — find which mesh that is and
+  back it).
+- **The two-stage load.** On the act line, TWO tickers flip the district:
+  `installCaveVisibility` hides the outside (underfalls.js:1316-1341) and
+  `installBeats` shows cave roots + flips `state.lights` visibility
+  (underfalls.js:1355-1371). Watch a frame-by-frame entry capture to see
+  what pops when. Two candidate causes, fix what the capture shows:
+  (a) approaching pre-flip you see the bare structural rock batch (always
+  visible) and the dressing pops in only at the act line — if so, pre-arm
+  the cave dressing when `waterfallTaken` and the player is within a few
+  metres of the mouth, so the dark interior is already dressed before you
+  can see in; (b) `light.visible = inCave` moves the VISIBLE-light census —
+  the warmup names 'cave-lights'/'cave-threat' variants, but verify with
+  `renderer.info.programs.length` before/after entry that no program set
+  compiles on the act line. If the census moves there, that single line is
+  a multi-second freeze on his machine and must become intensity-zeroing or
+  pinned-census lights instead.
+- Round four already fixed a two-stage look ONCE for fog (director.js:130
+  comment). Read that before touching transition feel; keep fog/colour
+  easing as-is.
+
+### 5. The freezes, and the slow unresponsive title start (THE BIG ONE)
+
+**The find: [main.js:836](../src/main.js) — `startGame()` first line calls
+`_cancelScheduledShaderWarmup()`.** The warmup (main.js:405-437) is scheduled
+on `requestIdleCallback` (timeout 1200 ms) while the title sits there, and
+its `run()` no-ops if `this.started`. Alex clicks fast — he TOLD us he spams
+the title button — so on his runs the warmup is SKIPPED (`reason:
+'game-started'`) and every one of the ~230 programs the game uses compiles
+mid-play, at first sight, act by act. That is "many many areas of the game
+freeze for a few seconds," including bottom-of-the-stairs-first-time (enemy
+programs are only pre-compiled by the warmup's stand-in spawns —
+main.js:499-509 — which never ran). The warmup comment at main.js:447-459
+even names this exact failure: programs "paid for mid-play, which is what
+Alex felt as the freezes." The machinery exists; the start path defeats it.
+
+The fix architecture:
+
+1. **Start never skips the warm work — it waits for it, visibly.** Click →
+   INSTANT acknowledgment on the title (dim/hold the existing title, disable
+   further starts; no new words without his copy — a visual state change is
+   enough) → ensure the warmup runs to completion (`compileAsync` path keeps
+   the main thread live) → then enter: `audio.init`, hide title, fadeIn,
+   pointer lock. He must not be able to out-click the warmup. If the warmup
+   already finished (slow reader), start is instant — most players wait out
+   the 1.2 s idle delay anyway; consider kicking it sooner than
+   requestIdleCallback's timeout.
+2. **Warm textures too.** `renderer.compile()` links programs; it does NOT
+   upload textures. Every texture is a boot-painted canvas and uploads at
+   first draw — another hitch class the program warmup cannot fix. During
+   the same gated window, run `renderer.initTexture(tex)` over every
+   material map, batched a few per frame so the title never janks.
+3. **Fix the spam-click → paused-on-arrival path.** Reproduce it: spam the
+   title and canvas during entry in real Chrome. Prime suspect:
+   `pointerlockchange` → `pauseGame('pointer-lock')` (main.js:648-660)
+   firing before the FIRST lock is acquired, or a queued click landing
+   somewhere unfortunate. The pause-on-lock-loss contract should only arm
+   after lock has been acquired once this session; stray clicks during the
+   entry window should be swallowed.
+4. **Instrument, then believe the log, not the theory.** Debug-mode
+   long-frame logger: any frame > 150 ms records act, player pos,
+   `renderer.info.programs.length` delta, `renderer.info.memory` deltas.
+   Drive the full playthrough; every remaining hitch in the log gets the
+   impact-light treatment (built at boot, never lazily — the precedent and
+   its story are at main.js:875-886). Bottom-of-the-stairs must be CONFIRMED
+   fixed by this log, not assumed fixed by the warmup change.
+5. **Pin it as a regression.** After a warmed boot, a full playthrough must
+   add ZERO new shader programs (assert `renderer.info.programs.length`
+   stable) and ~zero texture uploads. Keep `?test=1` skipping the warmup for
+   suite speed (the existing opt-in is `?warmup=1`), but the pinned check
+   runs warmed. The site's `build/qa/fetch-boot-check.mjs` boots via a real
+   title click — it is the shipping gate for exactly this path.
+
+His machine is slow; that is the design target. Cost belongs on the title
+screen behind an acknowledged press, chunked so the tab never looks hung.
+
+### 6. Carry-over from round four (only if 1–5 are done and gated)
+
+Looking SOUTH from the graveyard costs ~1130 draws against the 450 ceiling
+(mid-yard 1133 S / 298 N; every historical culling sample faced north). The
+`RECORDED, NOT ASSERTED` check in district-culling prints both numbers every
+run. Likely no back-district culling southward (house + whole yard in
+frustum). This is sustained frame cost, not a freeze — it is NOT the fix for
+his §5 note. If you take it: south-facing poses become asserted samples once
+green. If not: leave it top of the round-six list.
+
+### 7. Ship it, then put FETCH first on the homepage
+
+Game deploy per the standing law (and the site's AGENTS.md, which is
+canonical — read it fully first):
+- Land the game branch with all gates green → copy changed `src/` files into
+  `C:\Users\Alex\Projects\qualiacology\fetch\` with LF endings → verify all
+  22 files byte-identical → feature branch + PR on the site repo.
+- Local proof: `node build/scripts/static-server.mjs --root=. --port=4173`
+  then `node build/qa/fetch-boot-check.mjs http://localhost:4173/fetch/`;
+  `cd build && node scripts/validate-site.mjs --root=..`; then boot-check
+  the Netlify deploy preview. **Merge only with Alex's explicit approval**,
+  then boot-check production. Never deploy from the game repo.
+
+Homepage promotion (his instruction: FETCH takes the FIRST game spot; THE
+EATEN PATH comes off the homepage and stays on /games/ with the rest):
+- `build/src/content/site-data.json` is the single source of truth. Set
+  `fetch` `featured: true` and make it FIRST in whatever order the homepage
+  featured row derives from (check `build/scripts/build-site.mjs` — array
+  order vs. explicit rank — and mind its featured-count asserts; the swap
+  keeps the count at six: eaten-path → `featured: false`).
+- Regenerate the hub pages via the build — never hand-edit `index.html` or
+  `games/`. Check what a featured card needs (art/blurb fields) and reuse
+  Alex's existing FETCH copy; invent nothing.
+- Full site validation + browser QA per AGENTS.md, PR, preview, his
+  approval, prod check. Tell him to HARD-REFRESH before he plays.
+
+### After
+
+Do NOT start the visual/beauty pass — that is his NEXT instruction set
+("make stuff look good"), a separate round. When 1–5 (+7) are done, rewrite
+the top of this file for round six: what shipped, what was not what it
+looked like, the new numbers, and the ALSO-SEEN list (carry forward: falls
+far-stream trunks clipping to white under the lantern; west mausoleum
+interior reads as a bright box; underfalls mirror-room reflected-body check
+failing behind the 1.6 s fade; §6 above if untaken).
+
+---
+
 # HANDOFF — 2026-08-17: ROUND FOUR IS BUILT (branch claude/aug17-notes)
 
 All fourteen of Alex's notes are built and gated. Written by Claude Opus 5
