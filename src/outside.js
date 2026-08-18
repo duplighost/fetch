@@ -117,7 +117,34 @@ export function terrainHeightFn(game) {
       const poolR = Math.hypot(lx, lz - CLEARING_BASIN.centerZ);
       const basin = -CLEARING_BASIN.depth *
         (1 - smoothstep(CLEARING_BASIN.innerR, CLEARING_BASIN.outerR, poolR));
-      return -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(lx * 0.4) * 0.08 + basin + 0.02;
+      const natural = -0.4 * Math.exp(-((r / 22) ** 2)) + Math.sin(lx * 0.4) * 0.08 + basin + 0.02;
+      // THE CAUSEWAY. "you can still fall off the sides of the rocks into the
+      // water when crossing them into the waterfall." Round five made the
+      // SHORE safe and deliberately left the water BESIDE the stones alone;
+      // this is him saying that was the wrong call. So when the crossing
+      // becomes real, the riverbed comes up with it: the bargain drains the
+      // lane to a bar of rubble, and a missed step is a wet walk back instead
+      // of the death line at -1.5.
+      //
+      // Three conditions on it, each load-bearing:
+      //  - Post-bargain ONLY. Before the stones rise the deep water IS the
+      //    lock; the weir bars the lane and basin-shore-regression drives 24
+      //    bearings at it expecting to be stopped.
+      //  - UPWARD only (the Math.max). The shallow shelf south of the first
+      //    stone already sits above the bar; a straight lerp would dig it out
+      //    from under itself.
+      //  - Eased at every edge, never a cliff. Wading sideways off the
+      //    crossing still finds deep water and still drowns you - it just
+      //    takes deliberately walking away from the stones to find it, and the
+      //    bottom drops away under you on the way.
+      // It stays a full 1.2 m below the risen stone tops (0.37), so the stones
+      // remain stepping stones and the lane still reads as water.
+      if (!game.flags.has('waterfallTaken')) return natural;
+      const lane = (1 - smoothstep(4.6, 6.4, Math.abs(lx)))
+        * smoothstep(5.8, 7.4, lz) * (1 - smoothstep(20.3, 21.8, lz));
+      if (lane <= 0) return natural;
+      const causeway = -0.88 + Math.sin(lz * 1.7) * 0.06 + Math.sin(lx * 2.3 + 1.1) * 0.05;
+      return natural + Math.max(0, causeway - natural) * lane;
     }
     if (game.forest && game.forest.contains(x, z)) return game.forest.heightAt(x, z);
     if (z < 6) return 0;                          // around the house
@@ -6764,6 +6791,24 @@ export function buildClearing(game) {
     st.receiveShadow = true;
     scene.add(st);
     game.bridgeStones.push(st);
+  });
+
+  // AND IT ANSWERS. Falling off the crossing used to be a death, so going in
+  // never needed a sound of its own. Now it is survivable — and a survivable
+  // mistake that answers with silence is the failure mode this project keeps
+  // shipping: the player reads nothing at all and assumes the game broke.
+  // One splash, at the moment you go in, from the bank the falls already use.
+  // It is also the only signal available: the pool has an opaque murk body, so
+  // no shot of the bar under your feet can ever be drawn.
+  let wasWet = false;
+  game.tickers.push(() => {
+    if (game.act !== 'clearing' || !game.flags.has('waterfallTaken')) return;
+    const p = game.player.pos;
+    const wet = p.y < -0.45 && Math.abs(p.x - C.x) < 7.5
+      && p.z - C.z > 6.4 && p.z - C.z < 20.6;
+    if (wet === wasWet) return;
+    wasWet = wet;
+    if (wet) game.audio.splash({ pos: p.clone(), gain: 0.6, rate: 1.15 });
   });
 
   // THE THRESHOLD. "I died entering the cave." The crossing's last stone is at

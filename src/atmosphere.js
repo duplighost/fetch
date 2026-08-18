@@ -1249,11 +1249,63 @@ function buildClearingDress(game, track, own, tickers) {
     color: 0xc5d9dc, transparent: true, opacity: 0.28,
     depthWrite: false, blending: THREE.AdditiveBlending,
   }));
+  // THE BAR BREAKS THE WATER. Round six, his note: "you can still fall off the
+  // sides of the rocks into the water when crossing them into the waterfall."
+  // outside.js answers it in the terrain — the bargain raises a rubble bar
+  // under the lane, so a missed step is a wet walk back instead of the death
+  // line — but a shallow you cannot SEE is still luck, and nothing below this
+  // water is ever visible: the pool has an opaque murk body filling the basin
+  // (that was the fix for "you can see under the water which is odd"). The
+  // surface is the only place a signal can live.
+  //
+  // So the bar announces itself the way a real one does: the water breaks over
+  // it. Broken water is pure value, pale on black, which is the only channel
+  // he reads. Two ragged runs mark where the shallow ends and a scatter marks
+  // the middle, so the crossing reads as a channel with sides. They are more
+  // instances on the cataract's own foam mesh: no draw call, no geometry, no
+  // new material and therefore no new shader program to go unwarmed.
+  //
+  // Parked nine metres down until the bargain lands — before it the lane is
+  // deep, the sill bars it, and a riffle there would be a lie.
+  const barRng = new RNG(0xba15ee11);
+  const barSites = [];
+  // Small and many, not big and few. The first pass used metre-wide beads and
+  // the shot came back with pale plates floating on the pool like ice — and
+  // worse, they took the eye off the stepping stones, which are the one pale
+  // thing this frame is allowed. A fret is what water does over gravel.
+  for (const side of [-1, 1]) {
+    for (let z = 8.4; z <= 19.2; z += 0.55) {
+      barSites.push({
+        x: side * (4.5 + barRng.range(-0.3, 0.3)), z: z + barRng.range(-0.16, 0.16),
+        sx: barRng.range(0.14, 0.3), sz: barRng.range(0.1, 0.2), ry: barRng.range(0, TAU),
+      });
+    }
+  }
+  for (let i = 0; i < 14; i++) {
+    barSites.push({
+      x: (i % 2 ? 1 : -1) * barRng.range(1.15, 3.7), z: barRng.range(8.6, 19.0),
+      sx: barRng.range(0.12, 0.26), sz: barRng.range(0.09, 0.18), ry: barRng.range(0, TAU),
+    });
+  }
+  const barFirst = foamMatrices.length;
+  const barMatrix = (s, y) => compose(C.x + s.x, y, C.z + s.z, 0, s.ry, 0, s.sx, 0.07, s.sz);
+  for (const s of barSites) foamMatrices.push(barMatrix(s, -9));
+
   const lips = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 4), lipMat, foamMatrices.length);
   foamMatrices.forEach((matrix, i) => lips.setMatrixAt(i, matrix));
   finishInstances(lips, false, false);
   lips.name = 'broken cataract lip foam';
   track(lips, foamMatrices.length);
+  // One write, on the first frame after the bargain, then never again — and it
+  // hangs on the FLAG rather than on the event, so a reload or a death that
+  // respawns past the bargain finds the water already broken.
+  let barBroken = false;
+  tickers.push(() => {
+    if (barBroken || !game.flags?.has('waterfallTaken')) return;
+    barBroken = true;
+    barSites.forEach((s, i) => lips.setMatrixAt(barFirst + i, barMatrix(s, 0.105)));
+    lips.instanceMatrix.needsUpdate = true;
+  });
 
   // Only after the player crosses does the promised water become a rock seal
   // behind them. It never collides or steals control; it is a silhouette and a

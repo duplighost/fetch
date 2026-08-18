@@ -108,6 +108,10 @@ try {
     // ---- the thaw: the bar goes down with the first stone -----------------
     // A real post-thaw world: the ice sheet comes down first (the game's own
     // reload-past-the-thaw path), then the bargain.
+    // How deep the water beside the stones is BEFORE the bargain. The bar
+    // round six raises under the lane is post-bargain only: before it, the
+    // deep water is the lock.
+    const laneBefore = [10, 13, 16, 18].map((dz) => +g.world.terrainHeight(C.x + 2.4, C.z + dz).toFixed(2));
     g.flag('fallsThawed');
     F.stepWith(0.3, {}, false);
     g.director.waterfallTaken();
@@ -125,6 +129,33 @@ try {
     };
     const crossing = drive(C.x, C.z + 2, C.x, C.z + 19, 16);
     const crossed = g.player.pos.z - C.z > 16;
+
+    // ---- HIS NOTE, ROUND SIX: off the SIDES of the stones ----------------
+    // "you can still fall off the sides of the rocks into the water when
+    // crossing them into the waterfall." Round five made the SHORE safe and
+    // left the water beside the stones alone; this is the second asking, so it
+    // is a gate now. The bargain raises a rubble bar under the lane
+    // (terrainHeightFn, outside.js): step off EVERY stone, to BOTH sides, and
+    // keep walking for 1.6 s — about four metres, further than any mis-step
+    // carries — and the water must not take you.
+    //
+    // Running that far sideways is not a mis-step, it is leaving. The pool is
+    // still a pool out past the bar, and the bar's edge is marked with broken
+    // water (atmosphere.js) so the player can see where the shallow ends.
+    const laneAfter = [10, 13, 16, 18].map((dz) => +g.world.terrainHeight(C.x + 2.4, C.z + dz).toFixed(2));
+    const sideSteps = [];
+    for (let i = 0; i < g.bridgeStones.length; i++) {
+      const st = g.bridgeStones[i];
+      for (const side of [-1, 1]) {
+        // A death leaves the director mid-beat; clearing only `dead` leaves the
+        // next drive inching forward and reads as a wall that is not there.
+        if (g.dead) { g.director.respawn(); F.stepWith(0.5, {}, false); }
+        const r = drive(st.position.x, st.position.z, st.position.x + side * 8, st.position.z, 1.6);
+        sideSteps.push({ stone: i, dz: +(st.position.z - C.z).toFixed(1), side, ...r });
+      }
+    }
+    g.director.respawn();
+    F.stepWith(0.5, {}, false);
 
     // ---- HIS NOTE 4: "I died entering the cave" --------------------------
     // The mouth is the one place where a player believes they have arrived and
@@ -192,6 +223,7 @@ try {
     return {
       bearings, locket, locketReached, machineWest, machineWestReached,
       throwStance, throwStanceReached, sillBefore, lane, arrival, walkIn, walkedIn,
+      laneBefore, laneAfter, sideSteps,
       sillAtThaw, sillDown, crossing, crossed, afterRespawn, crossingAgain, crossedAgain,
       draws: g.lastRender.drawCalls,
     };
@@ -226,6 +258,15 @@ try {
     'and it sinks all the way out of the way',
     JSON.stringify(report.sillDown));
   check(report.crossed, 'the crossing still crosses', JSON.stringify(report.crossing));
+  const sideDrowned = report.sideSteps.filter((s) => s.died || s.worstY < -1.5);
+  check(sideDrowned.length === 0,
+    'stepping off the side of every stone lands on the bar, not in the deep',
+    sideDrowned.length
+      ? sideDrowned.map((s) => `stone${s.stone} dz${s.dz} side${s.side} y${s.worstY} end[${s.end}]${s.died ? ' DIED' : ''}`).join(', ')
+      : `${report.sideSteps.length} steps, worst y ${Math.min(...report.sideSteps.map((s) => s.worstY)).toFixed(2)}`);
+  check(report.laneBefore.every((y) => y < -2.4) && report.laneAfter.every((y) => y > -1.2),
+    'and the bar is the bargain: deep beside the stones before it, shallow after',
+    `before ${report.laneBefore.join('/')} -> after ${report.laneAfter.join('/')}`);
   const arrivalDeaths = report.arrival.filter((a) => a.died || a.worstY < -1.5);
   check(arrivalDeaths.length === 0,
     'stepping off the top of the crossing, where the cave is already on screen, no longer drowns',
