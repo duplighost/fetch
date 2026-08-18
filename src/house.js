@@ -3,7 +3,7 @@
 // Grid: origin (-12,-14), 12x10 cells of 2m. Backyard begins at world z=6.
 import * as THREE from 'three';
 import { clamp, damp, smoothstep, TAU } from './util.js';
-import { Mirror, Mirrors, LAYER_DOUBLE, MASK_DOUBLE } from './mirrors.js';
+// (the foyer lag mirror is gone; house.js no longer imports from mirrors.js)
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const HOUSE_TABLES = {
@@ -783,7 +783,7 @@ export function buildHouse(game) {
   buildSculleryCrawler(game);
   buildWindowWatchers(game);
   buildHouseReturnHorror(game);
-  buildHouseLagMirror(game);
+  buildHouseFamilyPhoto(game);
   cellarBoards(game);
   basementAct(game);
   buildPumpGallery(game);
@@ -3803,7 +3803,6 @@ function buildWindowRelay(game) {
     game.after(0.68, () => game.audio.knock({ pos: new THREE.Vector3(0.5, 4.2, -3), gain: 0.44, rate: 0.62 }), { global: true });
     game.after(0.95, () => game.audio.knock({ pos: new THREE.Vector3(4, 4.75, -7), gain: 0.5, rate: 0.55 }), { global: true });
     game.after(1.15, () => game.voidDoorBeat?.open?.('windowRelay'), { global: true });
-    game.houseMirror?.signalRelay?.();
     game.cellarRelayLatch?.release?.();
     return true;
   };
@@ -5310,15 +5309,19 @@ function buildHouseReturnHorror(game) {
   });
 }
 
-// ------------------------------------------------------- the lag mirror
-// This is a real planar reflection from THE LAG's pooled renderer, but the only
-// human shape it reflects follows the player's pose from roughly a second ago.
-// It is deliberately featureless: the finale's skull-wearing reflection remains
-// the game's one unspoiled ending. The beat never takes the camera or controls.
-function buildHouseLagMirror(game) {
-  const { world, scene, renderer, mats: M } = game;
-  // Clear of the living-room door's swing and the foyer console: the previous
-  // decorative mirror was half swallowed by an open panel from the main route.
+// --------------------------------------------------- the family photograph
+// The lag mirror that hung here is gone, on Alex's direct instruction: its
+// first live activation was the game's one remaining freeze (9980 ms, +34
+// shader programs — tools/probe-foyer-freeze.mjs), because a planar-reflection
+// pass that only wakes when a player stares at it can never be warmed by a
+// boot pass. In its frame now: a photograph of a very odd looking family.
+// Painted at boot like every other texture. The wrongness is value and
+// proportion only — never hue: seven bodies of very different sizes all
+// wearing the exact same face at the exact same size, one face dragged into a
+// smear by the exposure, one head turned away, an extra hand on a shoulder
+// between owners, and everyone standing a little too close together.
+function buildHouseFamilyPhoto(game) {
+  const { world, scene } = game;
   const pos = new THREE.Vector3(-3.765, 1.7, -11.25);
   const rotY = Math.PI / 2;
   const frameMat = new THREE.MeshStandardMaterial({
@@ -5341,33 +5344,148 @@ function buildHouseLagMirror(game) {
   crown.rotation.set(0, Math.PI / 2, Math.PI / 2);
   scene.add(crown);
 
-  const pool = new Mirrors(renderer, {
-    budget: 1, size: 384, maxDist: 7,
-    fogColor: 0x080a0b, fogDensity: 0.075,
-  });
-  const pane = pool.add(new Mirror(0.78, 1.3, {
-    tint: 0xaab2b3, edge: 0.035, reflectMask: MASK_DOUBLE,
-  }));
-  pane.place(pos.x + 0.012, pos.y, pos.z, rotY);
-  scene.add(pane.mesh);
+  const cv = document.createElement('canvas');
+  cv.width = 192;
+  cv.height = 320;
+  const c = cv.getContext('2d');
+  let seed = 0x0dfa317;
+  const rand = () => {
+    seed = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    seed ^= seed + Math.imul(seed ^ (seed >>> 7), 61 | seed);
+    return ((seed ^ (seed >>> 14)) >>> 0) / 4294967296;
+  };
 
-  // The reflection renderer is allowed to go nearly black with the room, but
-  // century-old silver never reads as an empty portal. A low, smoked wash sits
-  // over it before the irregular loss layer and preserves a glassy value plane.
+  // the print: a studio backdrop going dark at the corners. VALUES LOW ON
+  // PURPOSE — this hangs an arm's length from the carried lantern, and the
+  // first version painted at honest-photograph values came back a white
+  // rectangle with ghosts in it (band mean 128.9 nose-to-glass; the shore-lip
+  // law again). An old print in a dark house is mostly shadow.
+  const bg = c.createLinearGradient(0, 0, 0, 320);
+  bg.addColorStop(0, '#2c2822');
+  bg.addColorStop(0.55, '#242119');
+  bg.addColorStop(1, '#191713');
+  c.fillStyle = bg;
+  c.fillRect(0, 0, 192, 320);
+  const backdrop = c.createRadialGradient(96, 108, 18, 96, 122, 175);
+  backdrop.addColorStop(0, 'rgba(105,98,86,0.42)');
+  backdrop.addColorStop(0.6, 'rgba(70,65,57,0.2)');
+  backdrop.addColorStop(1, 'rgba(10,9,8,0)');
+  c.fillStyle = backdrop;
+  c.fillRect(0, 0, 192, 320);
+  c.fillStyle = '#1b1915';
+  c.fillRect(0, 272, 192, 48);          // parlor floor
+
+  // one face, stamped for everyone at the same size regardless of the body
+  const FACE_W = 17, FACE_H = 21;
+  const stampFace = (x, y, mode = 'plain') => {
+    c.save();
+    c.translate(x, y);
+    if (mode === 'smear') {
+      // the exposure took this one mid-turn
+      for (let i = 0; i < 7; i++) {
+        c.globalAlpha = 0.15;
+        c.fillStyle = '#8a8172';
+        c.beginPath();
+        c.ellipse(i * 3 - 9, 0, FACE_W / 2, FACE_H / 2, 0, 0, TAU);
+        c.fill();
+      }
+      c.globalAlpha = 1;
+      c.restore();
+      return;
+    }
+    c.fillStyle = '#8a8172';
+    c.beginPath();
+    c.ellipse(0, 0, FACE_W / 2, FACE_H / 2, 0, 0, TAU);
+    c.fill();
+    // hair line, always the same side
+    c.fillStyle = '#26221c';
+    c.beginPath();
+    c.ellipse(0, -FACE_H * 0.34, FACE_W / 2, FACE_H * 0.22, 0, Math.PI, TAU);
+    c.fill();
+    if (mode === 'away') { c.restore(); return; }   // the back of a head
+    c.fillStyle = '#14110d';
+    c.beginPath(); c.ellipse(-3.5, -1.4, 1.3, 1.7, 0, 0, TAU); c.fill();
+    c.beginPath(); c.ellipse(3.5, -1.4, 1.3, 1.7, 0, 0, TAU); c.fill();
+    c.fillRect(-3, 6, 6, 1);                        // the same flat mouth
+    c.restore();
+  };
+  const body = (x, footY, h, w, neck = 3) => {
+    // dark clothes, a pale collar, the stamped face above it
+    c.fillStyle = '#0a0906';
+    c.beginPath();
+    c.moveTo(x - w / 2, footY);
+    c.quadraticCurveTo(x - w / 2 - 2, footY - h * 0.62, x - w * 0.32, footY - h + 5);
+    c.lineTo(x + w * 0.32, footY - h + 5);
+    c.quadraticCurveTo(x + w / 2 + 2, footY - h * 0.62, x + w / 2, footY);
+    c.closePath();
+    c.fill();
+    c.fillStyle = '#6d675b';
+    c.fillRect(x - 2.8, footY - h - neck + 4, 5.6, neck + 2.5);   // the neck
+    return { headX: x, headY: footY - h - neck - FACE_H / 2 + 5 };
+  };
+
+  // back row: four standing, shoulders overlapping, too close
+  const backRow = [
+    body(50, 272, 150, 34, 4),
+    body(78, 272, 112, 31, 22),         // the long neck, on the shortest body
+    body(106, 272, 158, 35, 4),
+    body(136, 272, 140, 33, 4),
+  ];
+  stampFace(backRow[0].headX, backRow[0].headY);
+  stampFace(backRow[1].headX, backRow[1].headY);
+  stampFace(backRow[2].headX, backRow[2].headY, 'smear');
+  stampFace(backRow[3].headX, backRow[3].headY, 'away');
+  // front row: two seated, one child-sized body at the edge wearing the same
+  // full-sized face
+  const seatA = body(64, 300, 92, 44, 3);
+  const seatB = body(116, 300, 96, 46, 3);
+  const small = body(164, 304, 46, 20, 2.5);
+  stampFace(seatA.headX, seatA.headY);
+  stampFace(seatB.headX, seatB.headY);
+  stampFace(small.headX, small.headY);
+  // the extra hand, resting on a shoulder between two owners
+  c.fillStyle = '#8a8172';
+  c.beginPath();
+  c.ellipse(92, 172, 5.4, 3.6, 0.5, 0, TAU);
+  c.fill();
+  for (let i = 0; i < 4; i++) c.fillRect(89 + i * 1.9, 166 + i * 0.5, 1.5, 5.4);
+
+  // plate wear: uneven exposure blotches and a dim border
+  for (let i = 0; i < 26; i++) {
+    const x = rand() * 192, y = rand() * 320, r = 4 + rand() * 16;
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    const lift = rand() < 0.5;
+    g.addColorStop(0, lift ? 'rgba(120,112,98,0.07)' : 'rgba(8,7,5,0.14)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  c.strokeStyle = 'rgba(96,89,76,0.45)';
+  c.lineWidth = 5;
+  c.strokeRect(3, 3, 186, 314);
+
+  const photoTexture = new THREE.CanvasTexture(cv);
+  photoTexture.colorSpace = THREE.SRGBColorSpace;
+  const photo = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.78, 1.3),
+    new THREE.MeshStandardMaterial({ map: photoTexture, color: 0x6a665f, roughness: 0.93, metalness: 0 }));
+  photo.name = 'the family photograph';
+  photo.position.set(pos.x + 0.012, pos.y, pos.z);
+  photo.rotation.y = rotY;
+  scene.add(photo);
+
+  // glass over the print: the same smoked wash and foxing the mirror wore,
+  // because the glass was never the problem
   const silverWash = new THREE.Mesh(
     new THREE.PlaneGeometry(0.775, 1.295),
     new THREE.MeshBasicMaterial({
-      color: 0x53605e, transparent: true, opacity: 0.17,
+      color: 0x53605e, transparent: true, opacity: 0.05,
       depthWrite: false, toneMapped: false, side: THREE.DoubleSide,
     }));
   silverWash.position.set(pos.x + 0.02, pos.y, pos.z);
   silverWash.rotation.y = rotY;
   silverWash.renderOrder = 2;
   scene.add(silverWash);
-
-  // Procedural foxing: edge loss, damp blooms, pinholes and hairline scratches
-  // in the old silver. It keeps the surface architectural rather than a clean
-  // black UI rectangle and costs one transparent draw.
   const foxCanvas = document.createElement('canvas');
   foxCanvas.width = 128;
   foxCanvas.height = 192;
@@ -5378,7 +5496,7 @@ function buildHouseLagMirror(game) {
     foxSeed ^= foxSeed + Math.imul(foxSeed ^ (foxSeed >>> 7), 61 | foxSeed);
     return ((foxSeed ^ (foxSeed >>> 14)) >>> 0) / 4294967296;
   };
-  for (let i = 0; i < 88; i++) {
+  for (let i = 0; i < 62; i++) {
     const edge = foxRand() < 0.72;
     let x = foxRand() * 128, y = foxRand() * 192;
     if (edge) {
@@ -5390,7 +5508,7 @@ function buildHouseLagMirror(game) {
     }
     const r = 2 + foxRand() * (edge ? 14 : 7);
     const grad = fg.createRadialGradient(x, y, 0, x, y, r);
-    const a = 0.12 + foxRand() * 0.34;
+    const a = 0.1 + foxRand() * 0.28;
     grad.addColorStop(0, `rgba(92,82,67,${a})`);
     grad.addColorStop(0.55, `rgba(52,58,57,${a * 0.75})`);
     grad.addColorStop(1, 'rgba(12,15,15,0)');
@@ -5399,232 +5517,18 @@ function buildHouseLagMirror(game) {
     fg.ellipse(x, y, r, r * (0.35 + foxRand()), foxRand() * Math.PI, 0, TAU);
     fg.fill();
   }
-  fg.lineWidth = 0.65;
-  for (let i = 0; i < 22; i++) {
-    fg.strokeStyle = `rgba(176,180,169,${0.05 + foxRand() * 0.12})`;
-    fg.beginPath();
-    const x = foxRand() * 128, y = foxRand() * 192;
-    fg.moveTo(x, y);
-    fg.lineTo(x + (foxRand() - 0.5) * 24, y + 8 + foxRand() * 35);
-    fg.stroke();
-  }
   const foxTexture = new THREE.CanvasTexture(foxCanvas);
   foxTexture.colorSpace = THREE.SRGBColorSpace;
   const foxing = new THREE.Mesh(
     new THREE.PlaneGeometry(0.775, 1.295),
     new THREE.MeshBasicMaterial({
-      map: foxTexture, transparent: true, opacity: 0.78,
+      map: foxTexture, transparent: true, opacity: 0.38,
       depthWrite: false, toneMapped: false, side: THREE.DoubleSide,
     }));
   foxing.position.set(pos.x + 0.024, pos.y, pos.z);
   foxing.rotation.y = rotY;
   foxing.renderOrder = 3;
   scene.add(foxing);
-
-  const double = new THREE.Group();
-  double.name = 'house-mirror-delayed-inhabitant';
-  const coatMat = new THREE.MeshStandardMaterial({ color: 0x111416, roughness: 0.92 });
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0x5b5b57, roughness: 0.88 });
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.25, 0.72, 4, 8), coatMat);
-  torso.position.y = 1.02;
-  torso.scale.set(0.82, 1, 0.62);
-  double.add(torso);
-  const headPivot = new THREE.Group();
-  headPivot.position.y = 1.63;
-  double.add(headPivot);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), skinMat);
-  head.scale.set(0.82, 1.08, 0.86);
-  headPivot.add(head);
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.58, 3, 6), coatMat);
-    arm.position.set(side * 0.29, 1.03, -0.01);
-    arm.rotation.z = side * 0.12;
-    double.add(arm);
-  }
-  double.traverse((o) => o.layers.set(LAYER_DOUBLE));
-  double.visible = false;
-  scene.add(double);
-
-  // Old silver clings to the glass as a second, flatter read of the delayed
-  // body. It keeps the beat legible even when the reflected room is almost
-  // black: a moving value/silhouette signal, never a hue-only trick.
-  const echo = new THREE.Group();
-  echo.name = 'house-mirror-silver-echo';
-  echo.position.set(pos.x + 0.026, pos.y - 0.05, pos.z);
-  echo.rotation.y = Math.PI / 2;
-  const echoMat = new THREE.MeshBasicMaterial({
-    color: 0x87918f, transparent: true, opacity: 0.15,
-    depthWrite: false, toneMapped: false, side: THREE.DoubleSide,
-  });
-  const echoShape = new THREE.Shape();
-  echoShape.moveTo(-0.15, -0.52);
-  echoShape.quadraticCurveTo(-0.22, -0.22, -0.19, 0.01);
-  echoShape.lineTo(-0.34, 0.16);       // one shoulder held too high
-  echoShape.quadraticCurveTo(-0.26, 0.3, -0.12, 0.34);
-  echoShape.lineTo(-0.055, 0.35);
-  echoShape.lineTo(0.075, 0.32);
-  echoShape.lineTo(0.14, 0.29);
-  echoShape.quadraticCurveTo(0.3, 0.22, 0.28, 0.09);
-  echoShape.lineTo(0.18, -0.03);
-  echoShape.quadraticCurveTo(0.24, -0.25, 0.12, -0.52);
-  echoShape.closePath();
-  const echoTorso = new THREE.Mesh(new THREE.ShapeGeometry(echoShape, 4), echoMat);
-  echoTorso.renderOrder = 4;
-  echo.add(echoTorso);
-  const echoHead = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), echoMat);
-  echoHead.position.set(-0.025, 0.49, 0);
-  echoHead.scale.set(0.88, 1.14, 1);
-  echoHead.renderOrder = 4;
-  echo.add(echoHead);
-  const neck = new THREE.Mesh(new THREE.PlaneGeometry(0.105, 0.13), echoMat);
-  neck.position.y = 0.36;
-  neck.renderOrder = 4;
-  echo.add(neck);
-  const echoVoidMat = new THREE.MeshBasicMaterial({
-    color: 0x030506, transparent: true, opacity: 0.58,
-    depthWrite: false, toneMapped: false, side: THREE.DoubleSide,
-  });
-  const faceLossShape = new THREE.Shape();
-  faceLossShape.moveTo(-0.055, -0.085);
-  faceLossShape.quadraticCurveTo(0.025, -0.11, 0.07, -0.025);
-  faceLossShape.lineTo(0.045, 0.07);
-  faceLossShape.quadraticCurveTo(-0.012, 0.11, -0.07, 0.055);
-  faceLossShape.lineTo(-0.035, 0.005);
-  faceLossShape.closePath();
-  const faceVoid = new THREE.Mesh(new THREE.ShapeGeometry(faceLossShape), echoVoidMat);
-  faceVoid.position.set(-0.006, 0.49, 0.002);
-  faceVoid.renderOrder = 5;
-  echo.add(faceVoid);
-  const legVoid = new THREE.Mesh(new THREE.PlaneGeometry(0.035, 0.28), echoVoidMat);
-  legVoid.position.set(0, -0.405, 0.002);
-  legVoid.rotation.z = -0.035;
-  legVoid.renderOrder = 5;
-  echo.add(legVoid);
-  const echoArms = [];
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Group();
-    arm.position.set(side < 0 ? -0.285 : 0.245, side < 0 ? 0.16 : 0.095, 0.001);
-    const upper = new THREE.Mesh(new THREE.PlaneGeometry(0.09, 0.28), echoMat);
-    upper.position.y = -0.13;
-    upper.renderOrder = 4;
-    arm.add(upper);
-    const elbow = new THREE.Group();
-    elbow.position.y = -0.26;
-    const forearm = new THREE.Mesh(new THREE.PlaneGeometry(0.078, 0.27), echoMat);
-    forearm.position.y = -0.13;
-    forearm.renderOrder = 4;
-    elbow.add(forearm);
-    const hand = new THREE.Mesh(new THREE.CircleGeometry(0.047, 12), echoMat);
-    hand.position.y = -0.29;
-    hand.scale.set(0.72, 1.16, 1);
-    hand.renderOrder = 4;
-    elbow.add(hand);
-    elbow.rotation.z = side < 0 ? -0.72 : 0.18;
-    arm.add(elbow);
-    arm.rotation.z = side < 0 ? 0.16 : -0.22;
-    arm.userData.elbow = elbow;
-    echo.add(arm);
-    echoArms.push(arm);
-  }
-  echo.visible = false;
-  scene.add(echo);
-
-  const beat = {
-    id: 'houseLagMirror', pool, pane, double, headPivot, echo, foxing, silverWash, echoArms,
-    awakened: false, relay: false, active: false, watched: 0,
-    poses: [], pos: pos.clone(),
-    signalRelay() {
-      this.relay = true;
-      this.awakened = true;
-      pane.setFlare(0.32);
-      game.audio.glassTink({ pos, gain: 0.56, rate: 0.56 });
-      game.after(0.42, () => game.audio.knock({ pos, gain: 0.34, rate: 0.58 }));
-    },
-    render(sceneArg, cameraArg) {
-      const near = this.awakened && game.act === 'house'
-        && game.player.pos.y > -0.35 && game.player.pos.y < 2.95
-        && game.player.pos.distanceTo(pos) < 7;
-      this.active = near;
-      double.visible = near;
-      echo.visible = near;
-      if (!near) {
-        pane.setActive(false);
-        return false;
-      }
-      pool.setFog(Math.min(0.11, sceneArg.fog?.density ?? 0.075), sceneArg.fog?.color ?? 0x080a0b);
-      pool.update(sceneArg, cameraArg);
-      return pool._activeCount > 0;
-    },
-    dispose() {
-      this.active = false;
-      double.visible = false;
-      echo.visible = false;
-      pane.setActive(false);
-      pool.dispose();
-    },
-  };
-  game.houseMirror = beat;
-
-  const fwd = new THREE.Vector3();
-  const toMirror = new THREE.Vector3();
-  game.tickers.push((dt, time) => {
-    const p = game.player;
-    // The lag buffer belongs to the house act, including both storeys. Once
-    // progression leaves the house there is no reflected image to service, so
-    // stop allocating/shifting 120 pose records a second through every later
-    // act. Do not use visibility or storey height here: walking upstairs must
-    // not erase the continuous 1.05-second betrayal waiting downstairs.
-    if (game.act !== 'house') {
-      beat.watched = 0;
-      if (beat.poses.length) beat.poses.length = 0;
-      return;
-    }
-    const inHouse = p.pos.y > -0.35 && p.pos.y < 2.95;
-    p.camera.getWorldDirection(fwd);
-    toMirror.copy(pos).sub(p.camera.position);
-    const dist = toMirror.length();
-    const looking = inHouse && dist < 4.8 && p.pos.x > pos.x
-      && fwd.dot(toMirror.normalize()) > 0.73;
-    beat.watched = looking ? beat.watched + dt : Math.max(0, beat.watched - dt * 1.7);
-    if (!beat.awakened && beat.watched > 0.38) {
-      beat.awakened = true;
-      game.flag('houseMirrorAwake');
-      game.audio.glassTink({ pos, gain: 0.48, rate: 0.72 });
-      game.after(0.68, () => game.audio.whisper({
-        pos: new THREE.Vector3(-3.96, 1.45, -11.25), gain: 0.2, rate: 0.67, verb: 0.85,
-      }));
-    }
-
-    beat.poses.push({ t: time, x: p.pos.x, y: p.pos.y, z: p.pos.z, yaw: p.yaw, pitch: p.pitch });
-    while (beat.poses.length > 2 && beat.poses[1].t < time - 2.4) beat.poses.shift();
-    const delay = beat.relay ? 1.05 : 0.58;
-    let pose = beat.poses[0];
-    for (const candidate of beat.poses) {
-      if (candidate.t <= time - delay) pose = candidate;
-      else break;
-    }
-    double.position.set(pose.x, pose.y, pose.z);
-    double.rotation.y = pose.yaw;
-    const delayedDx = pose.x - p.pos.x;
-    const delayedDz = pose.z - p.pos.z;
-    echo.position.z = pos.z + clamp(delayedDz * 0.065, -0.23, 0.23);
-    const echoScale = clamp(1 + delayedDx * 0.055, 0.78, 1.22);
-    echo.scale.set(echoScale, 1 + clamp((pose.y - p.pos.y) * 0.08, -0.08, 0.08), echoScale);
-    echo.rotation.x = clamp((pose.yaw - p.yaw) * 0.08, -0.09, 0.09);
-    echoMat.opacity = 0.1 + (beat.relay ? 0.075 : 0.035) + (looking ? 0.035 : 0);
-    echoVoidMat.opacity = 0.42 + (beat.relay ? 0.24 : 0);
-    echoArms[0].rotation.z = 0.16 + (beat.relay ? Math.max(0, Math.sin(time * 0.31)) * 0.34 : 0);
-    echoArms[0].userData.elbow.rotation.z = -0.72
-      - (beat.relay ? Math.max(0, Math.sin(time * 0.27 + 0.9)) * 0.26 : 0);
-    echoArms[1].rotation.z = -0.22 + clamp((pose.yaw - p.yaw) * 0.08, -0.13, 0.13);
-    // Once the window circuit has rung, the reflected inhabitant sometimes
-    // looks toward the study before the player does. The body still lags; only
-    // this small betrayal is independent, and it is entirely inside glass.
-    headPivot.rotation.y = beat.relay
-      ? Math.sin(time * 0.43) * 0.18 + Math.max(0, Math.sin(time * 0.19)) * 0.42
-      : pose.pitch * 0.12;
-    pane.setFlare(0.035 + (beat.relay ? 0.09 : 0) + (looking ? 0.08 : 0));
-  });
 }
 
 // ---------------------------------------------- flooded pump-gallery route

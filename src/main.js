@@ -1318,7 +1318,6 @@ class Game {
     this.enemies.clear();
     this.audio.stopAll({ suspend: true });
     this.finale?.mirrors?.dispose?.();
-    this.houseMirror?.dispose?.();
     for (const material of this._shaderWarmMaterials || []) material.dispose();
     this._shaderWarmMaterials = null;
     this.tickers.length = 0;
@@ -1669,7 +1668,6 @@ class Game {
       this.camera.rotation.y += rky;
     }
     this._updateWindowAimAffordance(rdt);
-    if (this.houseMirror) this.houseMirror.render(this.scene, this.camera);
     this.finale.render(this.scene, this.camera);
 
     // Render the physical world and the first-person cradle as two depth
