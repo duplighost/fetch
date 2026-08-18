@@ -581,6 +581,27 @@ targets.
 - **`tests/underfalls-expansion.mjs` fails TWO checks and both are
   PRE-EXISTING** — verified identical on the untouched round-four tree. Do not
   chase them and do not "fix" them by weakening the suite.
+- **`tests/grave-arena-regression.mjs` fails ONE check and it is also
+  PRE-EXISTING** — "every fight uses quiet stuns and deliberate loud pops",
+  because two of its six seeds miss the bar (seed 145 pops 15 against a
+  required 16; seed 583 quietStuns 9 against pops 18). Verified identical,
+  same seeds and same numbers, on the untouched round-five tip 2026-08-18.
+  Everything else in that file passes. It is a seeded-combat threshold, not a
+  break — but it is real, and if the arena is ever retuned it should be fixed
+  rather than re-noted.
+- **Audio has three probes now** and they are the first thing to run against
+  any "the sound went wrong" report: `tools/probe-audio-storm.mjs` (counts
+  every call into game.audio, per phase), `tools/probe-audio-live.mjs` (a REAL
+  AudioContext — Chrome is launched with `--mute-audio`, so the graph runs
+  while nothing reaches the speakers — watching live sources, context state and
+  master gain), and `tools/probe-audio-cycles.mjs` (loop accumulation across
+  cave re-entries and deaths). **The trap in the second one is written into
+  its header and is worth reading before writing any probe: `page.evaluate`
+  runs ONE synchronous block, and an `ended` event cannot be dispatched inside
+  one — so a live-node count taken that way can only ever go up, and the first
+  run of it read as a thousand-node leak that did not exist.**
+  In game, `game.audio.voiceStats()` reports state, live, peak, dropped and
+  resumes.
 - `stepWith(seconds, controls)` — seconds FIRST; movement is `moveZ`.
 - **Never pipe a test through `tail`/`grep`** — it buffers to EOF and a
   40-second run looks like a hang. Redirect to a file.
