@@ -405,24 +405,39 @@ class Game {
     this.grainCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.grainMat = new THREE.ShaderMaterial({
       transparent: true, depthTest: false, depthWrite: false,
-      uniforms: { uTime: { value: 0 }, uFear: { value: 0 } },
+      uniforms: {
+        uTime: { value: 0 }, uFear: { value: 0 },
+        uResolution: { value: new THREE.Vector2(1280, 720) },
+      },
       vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }',
       fragmentShader: `
         varying vec2 vUv; uniform float uTime; uniform float uFear;
+        uniform vec2 uResolution;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
         void main(){
-          // Grain reads at 1440p as well as 720p only if it is sampled at a
-          // fixed screen scale, and it needs to be perceptible or the frame
-          // comes back looking rendered rather than shot.
-          float g = hash(vUv*vec2(1280.,720.) + fract(uTime)*173.1) - 0.5;
+          // Grain is sampled at the ACTUAL resolution, not a fixed 1280x720.
+          // Pinning the scale was meant to keep it perceptible at 1440p; what
+          // it actually did was make one grain cell cover four screen pixels
+          // there and read as screen-door, and half a pixel at 720p and read
+          // as nothing.
+          float g = hash(vUv*uResolution + fract(uTime)*173.1) - 0.5;
           vec2 c = vUv - 0.5;
           // A vignette that only reaches 16% in the extreme corners is a
           // vignette nobody sees. Start it earlier and let it close harder:
           // the corners of a frame in a game about carrying the only light
-          // should be somewhere the light has not got to.
-          float vig = smoothstep(0.18, 1.05, dot(c,c)*(2.2 + uFear*2.0));
+          // should be somewhere the light has not got to. 0.18 -> 0.14 takes
+          // the reference image's corners, which die well before its edges do.
+          float vig = smoothstep(0.14, 0.98, dot(c,c)*(2.2 + uFear*2.0));
           float a = abs(g)*0.075 + vig*(0.30 + uFear*0.40);
-          gl_FragColor = vec4(vec3(0.007,0.006,0.01), clamp(a, 0., 0.88));
+          vec3 tint = vec3(0.007,0.006,0.01);
+          // ORDERED-ISH DITHER, and the reason is that this game is 70-80%
+          // near-black. ACES into an 8-bit swapchain quantises the fog
+          // gradients into visible rings — the one artefact that makes a dark
+          // frame look cheap — and a sub-LSB of noise before output breaks
+          // them up for free. Invisible to every measured mean in the suite;
+          // MARROW ships exactly this.
+          float d = (hash(vUv*uResolution + 7.13) - 0.5) / 255.0;
+          gl_FragColor = vec4(tint + d, clamp(a + d, 0., 0.88));
         }`,
     });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.grainMat);
@@ -1756,6 +1771,10 @@ class Game {
     };
     this.grainMat.uniforms.uTime.value = REDUCED_MOTION ? 0 : this.time % 300;
     this.grainMat.uniforms.uFear.value = this.fx.fear;
+    // the drawing buffer, not the CSS size — this is the grid the grain and the
+    // dither are quantised against
+    this.grainMat.uniforms.uResolution.value.set(
+      this.renderer.domElement.width, this.renderer.domElement.height);
     this.renderer.render(this.grainScene, this.grainCam);
     this.renderer.autoClear = true;
 
