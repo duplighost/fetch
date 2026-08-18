@@ -5361,13 +5361,13 @@ function buildHouseFamilyPhoto(game) {
   // rectangle with ghosts in it (band mean 128.9 nose-to-glass; the shore-lip
   // law again). An old print in a dark house is mostly shadow.
   const bg = c.createLinearGradient(0, 0, 0, 320);
-  bg.addColorStop(0, '#2c2822');
-  bg.addColorStop(0.55, '#242119');
-  bg.addColorStop(1, '#191713');
+  bg.addColorStop(0, '#221f1a');
+  bg.addColorStop(0.55, '#1b1914');
+  bg.addColorStop(1, '#131210');
   c.fillStyle = bg;
   c.fillRect(0, 0, 192, 320);
   const backdrop = c.createRadialGradient(96, 108, 18, 96, 122, 175);
-  backdrop.addColorStop(0, 'rgba(105,98,86,0.42)');
+  backdrop.addColorStop(0, 'rgba(88,82,72,0.3)');
   backdrop.addColorStop(0.6, 'rgba(70,65,57,0.2)');
   backdrop.addColorStop(1, 'rgba(10,9,8,0)');
   c.fillStyle = backdrop;
@@ -5384,7 +5384,7 @@ function buildHouseFamilyPhoto(game) {
       // the exposure took this one mid-turn
       for (let i = 0; i < 7; i++) {
         c.globalAlpha = 0.15;
-        c.fillStyle = '#8a8172';
+        c.fillStyle = '#b3a894';
         c.beginPath();
         c.ellipse(i * 3 - 9, 0, FACE_W / 2, FACE_H / 2, 0, 0, TAU);
         c.fill();
@@ -5393,7 +5393,7 @@ function buildHouseFamilyPhoto(game) {
       c.restore();
       return;
     }
-    c.fillStyle = '#8a8172';
+    c.fillStyle = '#b3a894';
     c.beginPath();
     c.ellipse(0, 0, FACE_W / 2, FACE_H / 2, 0, 0, TAU);
     c.fill();
@@ -5411,7 +5411,7 @@ function buildHouseFamilyPhoto(game) {
   };
   const body = (x, footY, h, w, neck = 3) => {
     // dark clothes, a pale collar, the stamped face above it
-    c.fillStyle = '#0a0906';
+    c.fillStyle = '#1a1712';
     c.beginPath();
     c.moveTo(x - w / 2, footY);
     c.quadraticCurveTo(x - w / 2 - 2, footY - h * 0.62, x - w * 0.32, footY - h + 5);
@@ -5419,7 +5419,7 @@ function buildHouseFamilyPhoto(game) {
     c.quadraticCurveTo(x + w / 2 + 2, footY - h * 0.62, x + w / 2, footY);
     c.closePath();
     c.fill();
-    c.fillStyle = '#6d675b';
+    c.fillStyle = '#8f8778';
     c.fillRect(x - 2.8, footY - h - neck + 4, 5.6, neck + 2.5);   // the neck
     return { headX: x, headY: footY - h - neck - FACE_H / 2 + 5 };
   };
@@ -5444,7 +5444,7 @@ function buildHouseFamilyPhoto(game) {
   stampFace(seatB.headX, seatB.headY);
   stampFace(small.headX, small.headY);
   // the extra hand, resting on a shoulder between two owners
-  c.fillStyle = '#8a8172';
+  c.fillStyle = '#b3a894';
   c.beginPath();
   c.ellipse(92, 172, 5.4, 3.6, 0.5, 0, TAU);
   c.fill();
@@ -5468,7 +5468,7 @@ function buildHouseFamilyPhoto(game) {
   photoTexture.colorSpace = THREE.SRGBColorSpace;
   const photo = new THREE.Mesh(
     new THREE.PlaneGeometry(0.78, 1.3),
-    new THREE.MeshStandardMaterial({ map: photoTexture, color: 0x6a665f, roughness: 0.93, metalness: 0 }));
+    new THREE.MeshStandardMaterial({ map: photoTexture, color: 0x7c7871, roughness: 0.93, metalness: 0 }));
   photo.name = 'the family photograph';
   photo.position.set(pos.x + 0.012, pos.y, pos.z);
   photo.rotation.y = rotY;
