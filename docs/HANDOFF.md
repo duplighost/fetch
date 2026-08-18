@@ -20,6 +20,12 @@ round-five freeze class, one instance left. His report ("doesn't matter if i
 click or not") fits — it is not the warmup race, it is first-activation cost.
 
 - REPRODUCE: warm boot, walk the foyer, look at the mirror, `?hitch=1` log.
+  **REPRODUCED (tools/probe-foyer-freeze.mjs): a 9980 ms frame that links +34
+  programs, +181 geometries, +1 texture, fired the moment the mirror is
+  awakened at stair distance.** The warm pass never covered these programs
+  because nothing activates the mirror without a player staring at it.
+  Deleting the beat deletes the class instance — but the probe stays, and
+  after the fix the same walk must show ZERO hitches.
 - FIX per his instruction: delete the whole beat (pool, pane, double, echo,
   silver wash, tickers, `signalRelay` hookup at house.js:3806, the
   `houseMirror.render` call in main.js render()). KEEP the built frame boxes —
@@ -74,6 +80,41 @@ skull.js `_buildViewmodel` hands against the finale double's hand build, flip
 the held hands so they read as HOLDING (backs of fingers to camera, palms
 cradling), iterate with tools/shot-held.mjs against his screenshot. FEEL is
 untouched — this is presentation only.
+
+### 5. THE GRAPHICAL PASS — AFTER the fixes, never alongside them
+
+His sequencing, stated twice, so it is the law of the round: **fix notes 1-4
+first. Then, once the fixes are done and gated, run a full polish on the
+graphics as its own phase.** And his constraint on that phase, verbatim:
+**"i don't want the graphical pass to fuck anything up. i just need it to
+look great. i'll give him an image to base it on"** — HE WILL POST A
+REFERENCE IMAGE IN THE NEW THREAD. The image is the brief; wait for it, do
+not start the pass from taste alone.
+
+Two named targets he called out in advance, whatever the image shows:
+- **the car and the bodies in the graveyard** — "look a lot better";
+- **the mausoleum EXTERIORS in the graveyard** — same.
+
+How to keep the polish from breaking anything (this is the whole point):
+- Visuals only. No mechanics, no colliders moved, no FEEL constants, no
+  light-census changes, no new verbs. If a beautification wants a collider,
+  it is not part of this phase.
+- Work in small commits, and run the FULL gate suite after each one — smoke,
+  autotest, regressions, playthrough, warm-start, basin-shore — not once at
+  the end. A polish commit that reddens a gate gets reverted, not argued with.
+- The graveyard is the tight district: 450-draw ceiling and the southward
+  view already costs ~1130 (RECORDED, NOT ASSERTED). Prefer instances on
+  meshes that already exist and world.box into batched materials; re-run
+  district-culling + render-perf after every dressing commit.
+- Photograph everything from player poses and MEASURE (near-band luminance,
+  the shot-shore idiom). The recurring failure mode is working-but-illegible
+  — and its opposite: a lit near-white surface two metres from the lantern
+  blows out (the kin/shore law). He is colourblind; value and shape only.
+- Raid marrow (C:UsersAlexProjectsmarrow) for the graveyard, its car,
+  its bodies, its buildings — the district was ported from it, and every
+  strong thing in FETCH was a port.
+- Known adjacent debt worth folding in: west mausoleum interior reads as a
+  bright box; falls far-stream trunks clip white under the lantern.
 
 ## Laws (unchanged)
 
