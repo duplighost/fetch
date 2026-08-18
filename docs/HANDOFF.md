@@ -1,3 +1,92 @@
+# HANDOFF — 2026-08-17: ROUND SIX PLAN (from Alex's post-round-five play notes)
+
+He played round five. His notes, verbatim where it matters, and the plan.
+Reproduce first, then fix — every wrong conclusion this project ever shipped
+came from reasoning instead of opening the image or the log.
+
+## His four notes
+
+### 1. "There is one freeze for a few seconds... I believe it is in the
+### beginning after you unlock the first stairs to the first floor. There is a
+### mirror showing a reflection. Let's just get rid of that and replace it
+### with a photo of a very odd looking family."
+
+The foyer lag-mirror (`buildHouseLagMirror`, house.js:5318): a real planar
+reflection with its own `Mirrors` pool (384², MASK_DOUBLE), a delayed
+"inhabitant" double, and a silver echo. It only ACTIVATES when awakened
+(looked at within 4.8 m) and near — which no warm pass and no act-tour probe
+ever did, so its first real render is unwarmed work paid mid-play: exactly the
+round-five freeze class, one instance left. His report ("doesn't matter if i
+click or not") fits — it is not the warmup race, it is first-activation cost.
+
+- REPRODUCE: warm boot, walk the foyer, look at the mirror, `?hitch=1` log.
+- FIX per his instruction: delete the whole beat (pool, pane, double, echo,
+  silver wash, tickers, `signalRelay` hookup at house.js:3806, the
+  `houseMirror.render` call in main.js render()). KEEP the built frame boxes —
+  they are already the right frame. In the glass's place: a boot-painted
+  canvas photograph of a very odd looking family. Odd through value and
+  proportion (never hue): too many people for the room of the frame, shared
+  faces, wrong heights, one face lost to the exposure. Keep the foxing
+  overlay on top — old photo behind ruined glass. Check it under the lantern
+  from two metres (near-band measure; a pale print blows to white).
+- Verify: the same foyer walk shows ZERO hitches; house draw budget drops.
+
+### 2. "you can still fall off the sides of the rocks into the water when
+### crossing them into the waterfall."
+
+Round five ringed the shore and barred the lane but left the water BESIDE the
+stones deep on purpose. He is telling us that was wrong — a side-step off a
+stone mid-crossing still drowns. When he repeats himself it is priority.
+
+- FIX: when the stones rise, the riverbed rises with them — a submerged
+  causeway under the lane (terrainHeightFn clearing branch, gated on
+  `waterfallTaken`), so a slip is a splash into shin-to-ankle water on rubble,
+  and the stones (0.37) stay a step up (< STEP_UP) from it. Pre-thaw nothing
+  changes: the sill bars the lane and the deep water still kills.
+- Dress it: low rubble instances under the lane (frozenFallsRoots) so the
+  shallow read is visible, not invisible luck.
+- Regression: post-thaw, strafe off every stone both sides — never below
+  -1.5, and the crossing still completes after the stumble. Pre-thaw suite
+  (24 bearings, barred lane) must stay green.
+
+### 3. "in the under waterfall cave area make that enemy teleport in front of
+### you, a few times. but not so close that it instantly gets you."
+
+The Drowned Choir chases from behind your footsteps. He wants it AHEAD,
+a few times: it should stop being only a pursuer and start being ambush.
+
+- Read enemies.js choir first: catch radius, speeds, existing route logic,
+  and choir-route-occlusion-regression's constraints.
+- Design: at most ~3 times per cave run, when the choir is far behind and the
+  player is moving up the route, it submerges (audio goes under) and
+  surfaces 10-14 m AHEAD on the player's own route with its call — then
+  normal behaviour. Never inside a pinch it fully blocks; heardSpeed stays
+  under RUN (4.7) — running away must keep working. Playthrough gate must
+  still COMPLETE untouched.
+
+### 4. "in this whole game, the hands are facing so the palm side is against
+### the skull, so it doesn't look like he's holding the skull. its fine after
+### the skull goes and we got it right in the last room of the game."
+
+The held viewmodel's hands are oriented wrong; the empty-handed pose (post-
+waterfall) and the reflection's grip in the mirror room are right. Compare
+skull.js `_buildViewmodel` hands against the finale double's hand build, flip
+the held hands so they read as HOLDING (backs of fingers to camera, palms
+cradling), iterate with tools/shot-held.mjs against his screenshot. FEEL is
+untouched — this is presentation only.
+
+## Laws (unchanged)
+
+Gates all green before PR: smoke, autotest, regressions, playthrough,
+warm-start, basin-shore, plus district-culling + render-perf (house is at
+438/450 — the mirror removal buys room, the portrait must not spend it).
+Throw grammar sacred, FEEL_PROFILE frozen, no HUD, no words, no hue reads,
+no runtime light census changes, copy is his voice. PR base
+`claude/aug17-round5-notes` (#32 in the stack, on #31). Site ships only with
+his approval, per qualiacology AGENTS.md.
+
+---
+
 # HANDOFF — 2026-08-17: ROUND FIVE IS BUILT (branch claude/aug17-round5-notes)
 
 All five of his notes are built and gated. Written by Claude Opus 5 against the
