@@ -1,8 +1,28 @@
-# HANDOFF — 2026-08-17: ROUND SIX PLAN (from Alex's post-round-five play notes)
+# HANDOFF — 2026-08-17: ROUND SIX — STATE AND PLAN
 
-**START WITH docs/ROUND-SIX.md** — the full step-by-step, including where the
-work stopped mid-session and what is unfinished. This section is the reference;
-that file is the instructions.
+**START WITH docs/ROUND-SIX.md** — the full step-by-step per fix. This section
+is the reference; that file is the instructions.
+
+**STATE (2026-08-17, late — verified by Fable in a fresh session, against the
+tree and the gates, not assumed):**
+
+- **Note 1 is BUILT AND GATED** (`5476383` + `ec9d35c`, pushed): the foyer
+  mirror is deleted whole, the very odd family photograph hangs in its frame,
+  and `tools/probe-foyer-freeze.mjs` reports ZERO hitches on the walk that
+  used to freeze for ten seconds. The full suite was re-run against this
+  exact tip: smoke, autotest 26, regressions 157, playthrough COMPLETE,
+  warm-start, basin-shore, district-culling, render-perf — ALL GREEN. The
+  game runs, and it finishes.
+- **Notes 2, 3, 4 are UNTOUCHED.** Researched down to the constants, and the
+  constants were spot-checked against src this session (RAISED_L/R
+  finale.js:21, `cradle` rz 0.27 skull.js:531, DROWNED_CHOIR enemies.js:43,
+  `beginDrownedChoir` enemies.js:1018 — all exactly where the plan says).
+  Build them in ROUND-SIX.md's order — 2, then 3, then 4 — gating each.
+- **THE REFERENCE IMAGE FOR PHASE TWO IS POSTED.** Alex posted it in the
+  session this block was written in. The extracted read — what to port, the
+  cheap levers, the traps — is written into ROUND-SIX.md phase two. If you
+  cannot see the image itself, that read is the brief; it was written while
+  looking at the pixels.
 
 He played round five. His notes, verbatim where it matters, and the plan.
 Reproduce first, then fix — every wrong conclusion this project ever shipped
@@ -14,6 +34,9 @@ came from reasoning instead of opening the image or the log.
 ### beginning after you unlock the first stairs to the first floor. There is a
 ### mirror showing a reflection. Let's just get rid of that and replace it
 ### with a photo of a very odd looking family."
+
+**STATUS: BUILT (`5476383`), read fixed by value separation (`ec9d35c`),
+gated.** Kept here for the record; nothing below this line in §1 is left to do.
 
 The foyer lag-mirror (`buildHouseLagMirror`, house.js:5318): a real planar
 reflection with its own `Mirrors` pool (384², MASK_DOUBLE), a delayed
@@ -91,9 +114,15 @@ His sequencing, stated twice, so it is the law of the round: **fix notes 1-4
 first. Then, once the fixes are done and gated, run a full polish on the
 graphics as its own phase.** And his constraint on that phase, verbatim:
 **"i don't want the graphical pass to fuck anything up. i just need it to
-look great. i'll give him an image to base it on"** — HE WILL POST A
-REFERENCE IMAGE IN THE NEW THREAD. The image is the brief; wait for it, do
-not start the pass from taste alone.
+look great. i'll give him an image to base it on"** — THE IMAGE IS POSTED
+(2026-08-17): a first-person frame of the held skull in a ruined bedroom,
+lantern to the left, moonlit window ahead. The full read — four portable
+properties, the cheap levers that buy them, and the traps — is in
+ROUND-SIX.md phase two. His caveat when he posted it: "it might be too hard
+to do something like that. but maybe theres an easy way to make the game
+look better without making it slow" — so the image is a DIRECTION to
+extract properties from, not a render target. And he pointed out the hands
+in it hold the skull correctly, so it is also the fix-4 reference.
 
 Two named targets he called out in advance, whatever the image shows:
 - **the car and the bodies in the graveyard** — "look a lot better";
@@ -123,8 +152,11 @@ How to keep the polish from breaking anything (this is the whole point):
 ## Laws (unchanged)
 
 Gates all green before PR: smoke, autotest, regressions, playthrough,
-warm-start, basin-shore, plus district-culling + render-perf (house is at
-438/450 — the mirror removal buys room, the portrait must not spend it).
+warm-start, basin-shore, plus district-culling + render-perf. House draws are
+UNCHANGED by the mirror removal — 412 at house, 438 house-after-cave, byte-for
+the round-five numbers, because the sampled poses never awakened the mirror
+and the portrait rides the existing house batches. Do not bank on headroom
+that never appeared: the ceiling is still 438/450 at the worst pose.
 Throw grammar sacred, FEEL_PROFILE frozen, no HUD, no words, no hue reads,
 no runtime light census changes, copy is his voice. PR base
 `claude/aug17-round5-notes` (#32 in the stack, on #31). Site ships only with

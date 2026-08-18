@@ -15,57 +15,53 @@ laws and the numbers. Do not read the whole of house.js/outside.js — they are
 
 ---
 
-## READ THIS FIRST: where the work actually stopped (2026-08-17, late)
+## READ THIS FIRST: the state (2026-08-17, late — verified, not assumed)
 
-This round was started by Claude Fable in a session that kept getting cut off,
-and the thread was handed to Opus mid-flight. Nobody was finished. **If you are
-Fable picking this back up, or Opus starting fresh, the state below is the
-truth — trust it over anything either of us said in chat.**
+Round six was started by Fable, handed to Opus mid-flight, and then re-verified
+by Fable in a fresh session against the tree and the gates on this exact tip.
+**The state below was checked, not remembered — trust it over anything anyone
+said in chat.**
 
-**DONE and committed (`5476383`, pushed to origin):**
+**DONE, committed, pushed, and GATED:**
 
 - **Note 1, the foyer mirror.** Reproduced first (a single 9980 ms frame
   linking +34 shader programs, because the lag mirror only builds its planar
   reflection once a human has stared at it, so no boot warm pass could ever
   reach it). Deleted whole — pool, pane, delayed inhabitant, silver echo,
   tickers, the `signalRelay` hookup, the render/dispose calls in main.js, and
-  house.js's now-dead `mirrors.js` import. Replaced with the family photograph
-  painted on canvas at boot. The same probe now reports **zero hitches and
-  257 → 257 programs** across the same walk.
+  house.js's now-dead `mirrors.js` import; zero references survive in src.
+  Replaced with the family photograph painted on canvas at boot. The same
+  probe now reports **zero hitches and 257 → 257 programs** across the walk
+  that used to freeze for ten seconds.
+- **The photograph reads now — verified by eye against the committed shots**
+  (`scratch-photo/01`/`03`): a dark print, a cluster of small pale faces at
+  wrong heights, same face whatever the body, one smear, one turned away. It
+  clears the bar — *a family photograph with something wrong about it*, not a
+  grey rectangle. `ec9d35c` got there the right way: value SEPARATION
+  (backdrop and clothes down, faces and collars up), not a fourth pass of
+  global darkening. Judge it only at the stairs and oblique poses;
+  nose-to-glass puts the 58-cd lantern a metre from the wall and tells you
+  nothing. One residual, recorded not fixed: the white frame and its hanger
+  are now the palest things in the shot and pull the eye before the print
+  does. If Alex wants the print stranger or the frame quieter when he plays
+  it, that is his call, not a defect.
+- **The full gate suite is green on this tip** (re-run 2026-08-17 by Fable):
+  smoke, autotest 26, regressions 157, playthrough COMPLETE, warm-start,
+  basin-shore, district-culling, render-perf, plus the foyer probe. The game
+  runs and finishes after the mirror removal.
 - New and working: `tools/probe-foyer-freeze.mjs`,
   `tools/shot-family-photo.mjs`.
 
-**UNFINISHED — pick these up in this order:**
+**REMAINING — build in this order, gating each:**
 
-1. **The photograph is not visually settled.** It is correct, cheap and
-   freeze-free, but it still reads washed out. Three darkening passes are
-   already in (print values, material tint `0x6a665f`, silver wash 0.05,
-   foxing 0.38) and the near-band numbers barely moved: 54.5 from the stairs,
-   116.1 nose-to-glass, 74.5 oblique.
-
-   What has NOT been tried, and is probably the answer: stop darkening
-   everything together and give the FIGURES real value separation from the
-   backdrop — right now the bodies and the ground are close in value, so the
-   whole print greys out into fog. Also check whether the white wooden frame
-   is now the palest thing in the shot and is stealing the eye.
-
-   Run `node tools/shot-family-photo.mjs`, open all three PNGs in
-   `scratch-photo/`, and judge the **stairs** and **oblique** poses. Do not
-   tune against the nose-to-glass pose: the 58-cd skull lantern is a metre
-   from the wall there and blows out the wallpaper too, so it flatters
-   nothing and tells you nothing.
-
-   The bar: at the stairs pose it should read instantly as *a family
-   photograph with something wrong about it*, not as a grey rectangle.
-
-2. **No gates have been run since the mirror came out.** Do this before
-   writing anything new. The removal touched `src/house.js` and `src/main.js`.
-   House draw counts should have gone DOWN (one fewer render target pass and a
-   pool of meshes gone); nothing has confirmed that yet. Full set: smoke,
-   autotest, regressions, playthrough, warm-start-regression,
-   basin-shore-regression, district-culling-regression, render-perf.
-
-3. **Notes 2, 3 and 4 are untouched.** Their step-by-step plans are below.
+1. **Fix 2 — the crossing stones' side-fall** (plan below, untouched).
+2. **Fix 3 — the Choir surfaces ahead** (plan below, untouched; constants
+   and primitives spot-checked against src/enemies.js this session).
+3. **Fix 4 — the held hands' half-turn** (plan below, untouched; `cradle`
+   rz 0.27 vs finale ±(π−0.10) confirmed at skull.js:531 / finale.js:21).
+4. **PHASE TWO — the graphics pass, only after 2–4 are committed and green.
+   The reference image is POSTED; its read is in the phase-two section
+   below.** His sequencing is the law of the round.
 
 **Also true right now:** round five is LIVE on qualiacology.com and FETCH is
 the first card on the homepage. Game PR #31 (round five) is still open and
@@ -310,22 +306,80 @@ This is the part where he is worried you will disappear. Read this whole
 section before touching anything.
 
 ### The brief
-He will post a REFERENCE IMAGE. His words: *"i don't want the graphical pass to
-fuck anything up. i just need it to look great."* Named targets, called out in
-advance:
+He POSTED the reference image (2026-08-17; the read is the next section). His
+words: *"i don't want the graphical pass to fuck anything up. i just need it
+to look great."* Named targets, called out in advance:
 - **the car in the graveyard**
 - **the bodies in the graveyard**
 - **the mausoleum EXTERIORS in the graveyard**
 
-His own worry, verbatim: *"I don't know if the picture i'll give him for the
-graphics is a way he'll actually be able to improve stuff."* So: treat the
-image as a **direction**, not a spec. Extract from it three or four concrete,
-nameable properties — the value structure (where is it dark, where is the one
-bright thing), the silhouette language (chunky? spindly? broken?), the amount
-of visual noise, the palette's VALUE spread — and write those down in the
-handoff as your read of it before you start. If the image cannot be translated
-into properties like those, say so to Alex and ask, rather than guessing for an
-hour.
+And his caveat when he posted it: *"it might be too hard to do something like
+that. but maybe theres an easy way to make the game look better without making
+it slow."* So: the image is a **direction**, not a spec. The read below was
+written while looking at the pixels — it is the brief even if you cannot see
+the image yourself. If a frame decision genuinely needs the pixels and you do
+not have them, ask Alex to re-post rather than guessing for an hour.
+
+### The reference image — the read (posted 2026-08-17)
+
+The frame: first-person, both hands holding the skull at chest height, in a
+ruined bedroom at night. A lit lantern on a dresser at frame-left paints the
+left wall warm; a window dead ahead with a key hanging from a string in front
+of it, cold night forest beyond; a big dark wardrobe; a framed picture on the
+right wall showing the moonlit falls; peeling floral wallpaper; plank floor,
+worn rug. Two facts first:
+
+- **The hands in it are the fix-4 target made visible.** Fingers wrapped
+  around the skull's SIDES, backs of the fingers to the camera, thumbs
+  behind. When you tune `cradle`, this image is the judge, held next to
+  `tools/shot-held.mjs` output.
+- **It is a value image, not a hue image.** Everything it does survives
+  greyscale, which is exactly this project's law. Port it entirely in value,
+  shape and texture terms.
+
+The four properties that make it read, in porting order:
+
+1. **Value structure: black corners, one warm pool, one bright focal.** The
+   room dies to near-black in the corners and at the ceiling. The lantern
+   owns ONE pool with believable falloff. The skull is the brightest thing
+   in frame and sits against dark mid-ground; the window is a cool second
+   source that silhouettes rather than fills. Nothing sits in fog-grey mids
+   — which is FETCH's one recurring value failure. This property, not any
+   object, is what should generalise to the graveyard targets: judge the
+   car, the bodies and the mausoleums by whether their FRAMES have it.
+2. **A vignette and fine grain over everything.** All four corners darkened,
+   low-amplitude noise across the frame. Most of the "photograph" feel is
+   these two, and they are screen-space cheap — but read the warm-law trap
+   below before building either.
+3. **Wear on every surface, at LOW contrast.** Damage patches in the
+   wallpaper, grain and a specular sheen on the boards, the rug threadbare.
+   The noise is fine and never fights the value read. Every FETCH surface is
+   a boot-painted canvas, so wear is free where it matters: zero draws, zero
+   programs, just more honest painting in the texture functions.
+4. **Chunky dark masses, thick frames, one pale thing per frame.** The
+   furniture is heavy, soft-edged, dark; openings wear thick trim; each
+   frame holds a single bright subject. A composition rule, not an object
+   rule.
+
+Buying 1–3 without breaking the laws:
+
+- **Any new material is a new shader program, and an unwarmed program is the
+  round-five freeze born again.** A vignette/grain overlay wants to be ONE
+  unlit fullscreen quad with a boot-painted canvas texture — but whatever
+  form it takes, it must exist and be compiled by the boot warm pass, inside
+  the pinned light census. After adding one: warm-start gate, plus a
+  `?hitch=1` walk. This is the single likeliest way phase two breaks the
+  game. Respect it in every polish commit.
+- **A game-wide overlay moves every measured number.** Near-band means and
+  any pinned luminance shift under a vignette and grain. Tune strength
+  against the legibility gates; if a pinned number reddens, the argument is
+  with the vignette's strength, not with the pin.
+- **The floor sheen is roughness/metalness VALUES on materials that already
+  exist** — value tweaks are free. ADDING a map where none existed flips a
+  shader define: that is a new program, same warm law.
+- **The corners and the mids are albedo and ambient values, never lights.**
+  Law 4 stands whole. Moonlight through a window is painted glow on the
+  glass or an emissive value — never a light.
 
 ### The tactic that keeps this from eating the week: work FRAMES, not objects
 
