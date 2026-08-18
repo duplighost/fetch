@@ -176,52 +176,69 @@ three are his, from round five, and all three are pinned by tests.
 "in the under waterfall cave area make that enemy teleport in front of you, a
 few times. but not so close that it instantly gets you."
 
-### What this is
-The Drowned Choir, in the Underfalls (`src/underfalls.js`, creature logic in
-`src/enemies.js`, `beginDrownedChoir` / `drownedChoirHear`). Today it is purely
-a pursuer: it hears your footsteps and follows the sound. He wants it to
-sometimes be AHEAD — ambush, not chase.
+### THIS IS A REPEAT. Read this part twice.
+`src/enemies.js` already carries his EARLIER instruction, in a comment above
+the constants: *"The enemy inside the waterfall should be more difficult and
+should spawn way in front of you."* That was implemented as a far spawn ONCE,
+at the start of the act. He is now asking for it **a few times, during the
+run.** The law of this project applies: when he repeats himself it is because
+we did not do it the first time. Do not re-litigate it, build it.
 
-### Read before you write
-- `enemies.js`: the choir's states, speeds, catch radius, and how it routes.
-  `heardSpeed` **must stay under RUN (4.7)** — running away is the escape and
-  it has to keep working. That is a law, not a tuning value.
-- `underfalls.js`: `layout.segments` / `route` / `projectUnderfalls` — the
-  route is an authored polyline with widths. Use it. Anything that places a
-  creature by raw XZ instead of by route position will eventually put it
-  inside rock.
-- `tests/choir-route-occlusion-regression.mjs` — existing constraints on where
-  the Choir may be and what it may see. Read its assertions before designing.
+### The numbers you may not touch (enemies.js, `DROWNED_CHOIR`, ~line 39)
+```
+warning: 2.20   drySpeed: 2.60   heardSpeed: 4.35   attackRange: 2.30
+attackCommit: 0.92   attackRadius: 1.30   recovery: 0.95
+```
+`heardSpeed: 4.35` is **UNTOUCHABLE** — it sits under RUN (4.7) and the comment
+in the file explains why: running away has to work or the chapter becomes a
+coin flip. The fairness proof the walking bot re-verifies every playthrough:
+WALK (2.7) × attackCommit (0.92) = 2.48 m of travel inside the commit window
+against a 1.30 m strike radius — a **1.9× margin**. Your surfacing must not
+erode it. Surface far enough out that the player still has that margin, i.e.
+**never inside attackRange (2.30) and never closer than ~10 m.**
 
-### The design to build
-Bounded, legible, and never a cheap shot:
+### The pieces already in the file
+- `beginDrownedChoir({ pos, heardPos })` — enemies.js ~1018. It calls
+  `endDrownedChoir('replace')` first, builds the body, and clamps into the
+  Underfalls. **This is your reposition primitive; you probably do not need a
+  new one.** Note it resets `state:'warning'` and `memoryT`, which is exactly
+  the "it surfaces and starts again" beat you want.
+- `drownedChoirHear(pos, intensity, source)` — enemies.js ~1079. `source:'call'`
+  raises `revealT` and plays `drownedCall`. Use it for the surface moment.
+- The Underfalls route: `game.underfalls.project/route/groundAt/clamp` and
+  `layout.segments` (each with a width `w`). **Place by route, never by raw XZ**
+  — a raw offset will eventually put it inside rock.
 
-- At most **3 surfacings per cave run**. Count them on the state object.
-- Trigger only when: the player is in the cave act, moving forward along the
-  route, and the Choir is genuinely BEHIND and far (say route-distance > 12 m
-  back), and the last surfacing was at least ~25 s ago.
-- On trigger: it submerges — the audio goes under, the body drops out — and
-  reappears **10–14 m ahead of the player on their own route**, then behaves
-  exactly as it always does. Ten metres is his "not so close that it instantly
-  gets you"; verify with the actual catch radius and confirm a player walking
-  forward at normal speed has at least ~2 seconds before contact.
-- Never surface inside a pinch it fully blocks — check the route width at the
-  target node and pick the next node along if the corridor is too narrow. He
-  must always be able to get past it, because the escape is to run.
-- Sound sells it. It already has a call (`drownedCall`); use the existing
-  audio, and let the submerge be silence for a beat — the silence is the tell.
+### Build it like this
+Add a small state block to the choir entity (`surfacings: 0`, `nextSurfaceAt`).
+Each tick in the cave act, trigger when ALL of:
+- `game.act === 'cave'` and the Choir exists and is not `'spent'`;
+- `surfacings < 3`;
+- at least ~25 s since the last one;
+- the Choir is genuinely BEHIND: its route distance is at least ~12 m back
+  along the player's direction of travel, and the player is moving forward.
+
+On trigger: go quiet for a beat (the silence is the tell — do not add a new
+sound, the absence of the loop IS the signal), then reposition to a route node
+**10–14 m ahead of the player's own route position**, and call
+`drownedChoirHear(playerPos, …, 'call')` so it announces itself as it surfaces.
+Skip the node and take the next one if its width `w` is so narrow the body
+would fully plug the corridor — he must always be able to get past it, because
+running past is the escape.
 
 ### Done when
-- `tests/playthrough.mjs` COMPLETE, unchanged in structure.
-- `choir-route-occlusion-regression` green.
-- A new regression: over a scripted cave run, surfacings ≤ 3, every surface
-  point is on the route, and the minimum player-to-Choir distance at the
-  moment of surfacing is ≥ 10 m.
-- `heardSpeed` still < 4.7. Assert it.
+- New regression: over a scripted cave run, `surfacings <= 3`, every surface
+  point projects onto the route, and the player-to-Choir distance at each
+  surfacing is `>= 10` m.
+- `heardSpeed === 4.35` asserted in that test so a future tune cannot drift it.
+- `tests/choir-route-occlusion-regression.mjs` still green.
+- `tests/playthrough.mjs` still COMPLETE — that bot WALKS, and its survival is
+  the fairness proof.
 
 ### Do not
-Do not make it faster, do not increase its catch radius, and do not give it a
-new instant-kill. He asked for placement, not lethality.
+Do not raise any speed, do not widen `attackRadius`, do not shorten `warning`.
+He asked for placement, not lethality. If the playthrough bot starts dying, the
+change is wrong even if it feels scarier.
 
 ---
 
@@ -232,31 +249,58 @@ new instant-kill. He asked for placement, not lethality.
 skull, so it doesn't look like he's holding the skull. its fine after the skull
 goes and we got it right in the last room of the game."
 
-### What that means concretely
-There are three hand rigs in this game and only the held one is wrong:
-1. The **held viewmodel** hands, `src/skull.js` `_buildViewmodel` (and the
-   `hold` group it parents into) — WRONG, all game, every act with the skull.
-2. The **empty-handed** pose after the waterfall — he says this is fine.
-3. The **finale double's** grip in the mirror room — he says this is RIGHT.
-   `src/finale.js`, the reflection figure's hands. **This is your reference.**
+### The answer is already written down in this repo
+`src/finale.js`, lines 13–21, above `RAISED_L`/`RAISED_R` — the pose he says is
+RIGHT — documents the whole trick:
 
-So: open finale.js's hand construction, open skull.js's, and find what differs
-— it will be a rotation on the hand/finger groups (palms should cradle the
-skull, backs of the fingers toward the camera). Match the finale's convention.
+> "Roughly (-PI/2, 0, ±PI) — fingers up, backs of the hands to the camera,
+> thumbs lateral… **The ±PI about each hand's own local Z is the finger axis:
+> it turns the hand over without mirroring it**, which matters because mkHand
+> puts the handedness in the GEOMETRY (right thumb at local -X, left at +X).
+> Negating thumb offsets instead would put a left hand on the right wrist."
 
-### How to iterate without guessing
-`tools/shot-held.mjs` already exists and photographs the held pose. Change,
-shoot, LOOK, repeat. Two or three iterations, not twenty. The screenshot he
-sent with this note is the ground truth for the "before".
+```
+RAISED_L = { x: -1.24, y:  0.30, z:  (Math.PI - 0.10) }
+RAISED_R = { x: -1.24, y: -0.30, z: -(Math.PI - 0.10) }
+```
+
+Now compare the held pose, `src/skull.js` ~line 529, `this._handPose`:
+
+```
+cradle:  { x: 0.114, y: -0.168, z: 0.052, rx: -0.58, ry: 0.71, rz: 0.27 }
+empty:   { x: 0.133, y: -0.147, z: 0.043, rx: -0.33, ry: 0.50, rz: 0.15 }
+lowered: { x: 0.152, y: -0.56,  z: 0.028, rx: -0.06, ry: 0.34, rz: 0.05 }
+```
+
+**`cradle.rz` is 0.27. The finale's is ±(PI − 0.10). The held hands never got
+the half-turn about the finger axis.** That is the bug he is describing, and it
+explains why only the held pose is wrong: `lowered` is out of frame so nobody
+sees it, and the finale sets its own rotations every frame from RAISED_L/R.
+
+### The fix
+Roll `cradle` (and check `empty`) about the finger axis by ~π and re-tune. In
+`_applyHandPose` (skull.js ~642) the rotation is applied as
+`rotation.set(rx, -side * ry, -side * rz)`, so the sign is already mirrored per
+hand — change the magnitude, not the mirroring. Start at `rz: 0.27 - Math.PI`,
+shoot it, and expect to adjust `rx`/`ry` by a few hundredths afterwards, because
+turning the hand over changes which way the thumbs read.
+
+### Verify
+`tools/shot-held.mjs` already photographs the held pose. Change → shoot → LOOK
+→ adjust. Two or three iterations. Also shoot: looking down, and mid-throw
+(hands open) — the `empty` pose blends from the same constants, so a fix that
+only looks right while cradling is half a fix.
 
 ### Done when
-The held skull reads as HELD from the default pose and from a look-down pose,
-and the finale room is untouched.
+The skull reads as HELD from the default pose and looking down, the empty pose
+still reads as open hands, and the finale room is untouched (it is: it writes
+its own rotations).
 
 ### Do not
-Do not touch `FEEL_PROFILE`, throw arcs, catch timing, or the hand ANIMATION
-(the bob/sway). This is orientation only — presentation, not feel. If a change
-alters when or how the skull leaves the hand, you have gone too far.
+Do not touch `FEEL_PROFILE`, throw arcs, catch timing, `HOLD_POSE`, or the
+grip/bob animation. Orientation constants only. There is a warning at skull.js
+~525 saying a pose fix aimed at the finale changes nothing on screen — read it
+before you edit, so you edit the right file.
 
 ---
 
