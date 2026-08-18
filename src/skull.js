@@ -311,9 +311,17 @@ export class Skull {
     // Slightly off the old orange-red: under the warm viewmodel key a saturated
     // albedo came back as salmon plastic. These sit a step darker and a step
     // less saturated so the key can do the warming.
-    const skin = new THREE.MeshStandardMaterial({ color: 0x5d3f36, roughness: 0.97, metalness: 0 });
-    const crease = new THREE.MeshStandardMaterial({ color: 0x4b3029, roughness: 1.0, metalness: 0 });
-    const nailMat = new THREE.MeshStandardMaterial({ color: 0x6b5046, roughness: 0.82, metalness: 0 });
+    // Darker than they were (0x5d3f36 / 0x4b3029 / 0x6b5046). In the reference
+    // image the skull is the pale thing in the frame and the hands are
+    // weathered mid-dark; here both were sitting near the top of the range,
+    // because the viewmodel light is most of what either of them is lit by and
+    // a lit MeshStandard compresses albedo differences as it saturates. The
+    // albedo cut does not buy a proportional pixel cut (the shore lip measured
+    // 5x albedo for 1.4x pixels), but it is free, and it puts the skull back on
+    // top of the value order where it belongs.
+    const skin = new THREE.MeshStandardMaterial({ color: 0x452e28, roughness: 0.97, metalness: 0 });
+    const crease = new THREE.MeshStandardMaterial({ color: 0x36221d, roughness: 1.0, metalness: 0 });
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x503a33, roughness: 0.82, metalness: 0 });
     // held so the last room can change what they are made of
     this._handSkin = { skin, crease, nail: nailMat };
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
@@ -553,7 +561,35 @@ export class Skull {
       // turn a hand over without mirroring it). Rolling PI and changing
       // nothing else inverts the CURL as well, and the shot came back with
       // both hands folded down out of the bottom of the frame.
-      cradle: { x: 0.114, y: -0.130, z: 0.052, rx: -1.942, ry: 0.253, rz: -1.060 },
+      //
+      // SECOND PASS, from his screenshot: "those hands look nasty. and clip
+      // through. we need to have actual human hands holding a skull." Both
+      // halves of that were true and they had different causes.
+      //
+      // CLIPPING was measurable and is now measured. probe-grip-clip.mjs puts
+      // each hand's box at 0.355 x 0.365 x 0.296 in hold space against a skull
+      // of 0.212 x 0.257 x 0.29 — the hands are as big as the thing they hold —
+      // and the palm-inward pass seated them at |x| 0.115 when the skull's own
+      // half-width is 0.106. They were inside it. shot-grip-sweep.mjs now
+      // samples every hand vertex against the skull's ellipsoid and reports the
+      // percentage buried; this seat measures ZERO, deepest zero.
+      //
+      // NASTY was the finger direction. Fingers pointing up and curling round
+      // the far side show the camera four proximal lumps and no hand at all.
+      //
+      // THEN HE POSTED THE REFERENCE IMAGE, and it settled it. What it shows:
+      // wrists at the very bottom edge, fingers pointing UP the sides of the
+      // cranium and nearly straight, laid ON the bone and following its curve;
+      // backs of the hands and backs of the fingers to the camera; thumbs
+      // hidden behind; fingertips at about eye-socket height. Not curled round
+      // anything, and not laid across the face either.
+      //
+      // Two things had to be true at once for that to work. The fingers must
+      // rise near-VERTICALLY: angled inward they converge into the cranium
+      // exactly as they pass its widest point (measured, 7-13% buried). And
+      // they must be much straighter while held, which is what the finger
+      // constants in _updateHands now do.
+      cradle: { x: 0.156, y: -0.118, z: 0.122, rx: -1.671, ry: -0.060, rz: -1.370 },
       // Untouched. "its fine after the skull goes": the hands drop, open
       // outward and roll until the backs, the knuckle line and both thumbs are
       // in frame, and they have read as hands since round two. The cradle now
@@ -716,8 +752,22 @@ export class Skull {
     for (const f of this._fingers) {
       const wave = Math.sin(this._handT * 0.7 + f.phase) * 0.03;   // idle micro-life
       const curl = this._grip * (f.thumb ? 0.9 : 1.25) + wave + tremble;
-      f.k1.rotation.x = -(0.35 + curl * 0.75);
-      f.k2.rotation.x = -(0.3 + curl * 0.95);
+      // Fingers wrapped round a skull are not fingers closed on nothing. The
+      // held pose rests them FLATTER so they drape over the bone instead of
+      // curling into the air in front of it — which is what let the seat come
+      // close enough to read as a grip while still measuring zero buried.
+      // The amount is driven by the pose's own blend, so the empty hand keeps
+      // exactly the curl it was tuned with (it is the pose he says already
+      // works), and `_grip` — with its threat tightening and its catch feel —
+      // is not touched at all.
+      // Both the rest bend AND the grip's contribution shrink while holding.
+      // The reference image's fingers are nearly straight, laid flat along the
+      // cranium; a 37-degree first joint reads as a fist closed on air no
+      // matter where the hand is seated. Threat still tightens them, the
+      // tremble is untouched, and `_grip` itself is never written here.
+      const held01 = 1 - (this._handPose ? this._handPose.t : 1);
+      f.k1.rotation.x = -(0.35 - 0.20 * held01 + curl * (0.75 - 0.30 * held01));
+      f.k2.rotation.x = -(0.3 - 0.16 * held01 + curl * (0.95 - 0.38 * held01));
     }
   }
 
