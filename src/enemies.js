@@ -48,6 +48,42 @@ const DROWNED_CHOIR = Object.freeze({
   recovery: 0.95,         // 1.25 — a miss costs it less
 });
 
+// HIS NOTE, ROUND SIX: "in the under waterfall cave area make that enemy
+// teleport in front of you, a few times. but not so close that it instantly
+// gets you."
+//
+// This is the SECOND asking. The comment at the top of this file already
+// carries the first — "should spawn way in front of you" — and that was built
+// as one far spawn at the start of the act. He is asking for it to happen
+// again, during the run. It is placement, not lethality: not one number in
+// DROWNED_CHOIR moves, and the fairness proof the walking bot re-runs every
+// playthrough is untouched.
+//
+// The guards are what keep "in front of you" from becoming "on top of you":
+// it only ever surfaces while it is genuinely BEHIND and you are walking away
+// from it, never nearer than ten metres, never in a corridor narrow enough for
+// its body to plug (running past it IS the escape), and never on the last
+// stretch before the hatch, where a body across the way out is not a scare but
+// a wall. It arrives in a fresh warning, so the 2.2 s fuse has to burn before it can
+// move at all.
+const CHOIR_SURFACE = Object.freeze({
+  max: 3,             // "a few times"
+  firstDelay: 12,     // the act opens with its own far spawn; let that land first
+  cooldown: 25,
+  ahead: [10.5, 11.5, 12.5, 13.5],   // metres further along the main route
+  minStraight: 10.0,  // "not so close that it instantly gets you"
+  // MEASURED, not guessed. The first build asked for twelve metres of gap
+  // behind before it would surface, and probe-choir-surfacing walked the whole
+  // 125 m route without one firing: this thing does not trail you by twelve
+  // metres, it trails you by three to seven, all chapter. The number that
+  // matters is only that a surfacing must never cancel a strike that was about
+  // to land — so: outside attackRange (2.30) with margin, and 'stalk' only.
+  minBehind: 4.5,
+  minWidth: 1.05,     // half-width: body r is 0.42, so this always leaves a way past
+  keepClear: 6.0,     // never surface inside this much of the hatch
+  hush: 1.15,         // the loop goes out first. the SILENCE is the tell.
+});
+
 // Kneeler crosses the player in the forest's darkest value range. Its old
 // near-black violet body merged with trunks even inside the skull's 11.5 m
 // lantern, leaving only two eyes and a pale jaw. Lift the neutral surface just
@@ -1046,6 +1082,9 @@ export class Enemies {
       warned: false,
       loop: null,
       nav: null,
+      surfacings: 0,
+      surfaceCd: CHOIR_SURFACE.firstDelay,
+      hushT: 0,
     };
     const underfalls = game.underfalls;
     if (underfalls) {
@@ -2137,6 +2176,112 @@ export class Enemies {
     return e.acousticNav.route;
   }
 
+  // It comes up in front of you. See CHOIR_SURFACE for why each guard is here.
+  _maybeSurfaceChoir(e, dt) {
+    const game = this.game;
+    const underfalls = game.underfalls;
+    if (!underfalls?.projectMain) return;
+    if (e.hushT > 0) {
+      e.hushT -= dt;
+      if (e.hushT <= 0) this._surfaceChoirAt(e);
+      return;
+    }
+    e.surfaceCd -= dt;
+    if (e.surfacings >= CHOIR_SURFACE.max || e.surfaceCd > 0) return;
+    // never out of a committed strike or a recoil: those beats are the
+    // contract the player is currently reading
+    if (e.state !== 'stalk') return;
+    const player = game.player;
+    const here = underfalls.projectMain(player.pos.x, player.pos.z);
+    const there = underfalls.projectMain(e.pos.x, e.pos.z);
+    if (!here || !there) return;
+    if (here.routeDistance - there.routeDistance < CHOIR_SURFACE.minBehind) return;
+    // and you have to be WALKING AWAY from it. Surfacing ahead of a player who
+    // has turned round to face it is just a spawn in the face.
+    const vx = player.vel?.x || 0, vz = player.vel?.z || 0;
+    const vl = Math.hypot(vx, vz);
+    if (vl < 0.8) return;
+    const probe = underfalls.projectMain(player.pos.x + vx / vl * 0.8, player.pos.z + vz / vl * 0.8);
+    if (!probe || probe.routeDistance <= here.routeDistance) return;
+
+    if (!this._choirSurfacePoint()) return;
+    e.hushT = CHOIR_SURFACE.hush;
+  }
+
+  // WHERE it comes up is decided when it comes up, not when the hush starts.
+  // The first build chose the point at trigger time and the probe caught it:
+  // the player walks three metres during the beat of silence, so a surfacing
+  // measured at ten metres arrived at 7.4. Everything here is re-asked against
+  // the live player. (What is NOT re-asked is whether they are still walking —
+  // the silence is designed to stop them, and aborting on that would mean the
+  // better the tell works, the less often the beat fires.)
+  _choirSurfacePoint() {
+    const game = this.game;
+    const underfalls = game.underfalls;
+    const player = game.player;
+    const here = underfalls?.projectMain?.(player.pos.x, player.pos.z);
+    if (!here) return null;
+    // Two passes. The first will only take a point you cannot currently see,
+    // so the thing is THERE when the corridor opens rather than appearing in
+    // front of your eyes — a hard cut you are watching is the cheapest version
+    // of this beat. If the whole reach ahead is visible, the second pass takes
+    // it anyway: the silence and the call have already announced it, and a
+    // surfacing that never fires is worth less than one you half-see.
+    let fallback = null;
+    for (const hidden of [true, false]) {
+      for (const ahead of CHOIR_SURFACE.ahead) {
+        const p = underfalls.mainPointAt(here.routeDistance + ahead);
+        if (!p || p.remaining < CHOIR_SURFACE.keepClear) continue;
+        if (p.w < CHOIR_SURFACE.minWidth) continue;
+        if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) < CHOIR_SURFACE.minStraight) continue;
+        const candidate = { x: p.x, z: p.z, w: p.w, ahead };
+        if (!hidden) { fallback ||= candidate; continue; }
+        const seen = underfalls.lineOfSight?.(
+          { x: player.pos.x, y: player.pos.y + 1.5, z: player.pos.z },
+          { x: p.x, y: p.y + 1.4, z: p.z }, { pad: 0.2 });
+        if (!seen) return candidate;
+      }
+    }
+    return fallback;
+  }
+
+  _surfaceChoirAt(e) {
+    const target = this._choirSurfacePoint();
+    // The corridor moved under the beat: hold the counter, try again shortly.
+    if (!target) { e.surfaceCd = 4; return; }
+    const game = this.game;
+    const underfalls = game.underfalls;
+    e.pos.set(target.x, e.pos.y, target.z);
+    underfalls?.clamp?.(e.pos, 0);
+    if (underfalls) e.pos.y = underfalls.groundAt(e.pos.x, e.pos.z);
+    e.mesh.position.copy(e.pos);
+    // every cached route through the old position is now a lie
+    e.nav = null;
+    e.acousticNav = null;
+    e.washV.set(0, 0, 0);
+    e.wetT = 0;
+    // It surfaces and STARTS AGAIN: the warning fuse has to burn before it can
+    // move, which is what makes ten metres ahead a scare instead of a death.
+    e.state = 'warning';
+    e.stateT = 0;
+    e.memoryT = 3.5;
+    e.heardStrength = 0.35;
+    e.surfacings++;
+    e.surfaceCd = CHOIR_SURFACE.cooldown;
+    if (e.loop) e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
+    // and it announces itself as it comes up, at the sound you just made
+    this.drownedChoirHear(game.player.pos, 0.5, 'call');
+    e.revealT = Math.max(e.revealT, 2.6);
+    (game.spawnLog ||= []).push(['choir', 'surface', Math.round(e.pos.x), Math.round(e.pos.z), +game.time.toFixed(1)]);
+    (this.choirSurfaceLog ||= []).push({
+      n: e.surfacings,
+      x: +e.pos.x.toFixed(2), z: +e.pos.z.toFixed(2),
+      w: +(target.w ?? 0).toFixed(2), ahead: target.ahead ?? null,
+      playerDist: +Math.hypot(e.pos.x - game.player.pos.x, e.pos.z - game.player.pos.z).toFixed(2),
+      t: +game.time.toFixed(1),
+    });
+  }
+
   _updateDrownedChoir(e, dt, camPos, camFwd) {
     const game = this.game;
     const player = game.player;
@@ -2162,6 +2307,9 @@ export class Enemies {
       game.underfalls?.clamp?.(e.pos, dt);
       e.washV.multiplyScalar(Math.exp(-4.2 * dt));
     }
+
+    // before anything reads its position this frame
+    this._maybeSurfaceChoir(e, dt);
 
     let dx = player.pos.x - e.pos.x;
     let dz = player.pos.z - e.pos.z;
@@ -2432,7 +2580,13 @@ export class Enemies {
       : 0;
     if (e.loop) {
       e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
-      e.loop.setState(level, reveal, pressure, rear);
+      // THE SILENCE IS THE TELL. No new sound announces a surfacing — the loop
+      // that has followed you the whole chapter simply stops, and when it comes
+      // back it is in front of you. (Adding a cue here would be the third time
+      // this project answered a state change with more noise instead of a
+      // legible one.)
+      const hush = e.hushT > 0 ? 0 : 1;
+      e.loop.setState(level * hush, reveal * hush, pressure * hush, rear * hush);
     }
     return { level, dir: toE.clone() };
   }

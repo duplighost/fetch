@@ -183,6 +183,44 @@ function chamberProjection(chamber, x, z) {
   };
 }
 
+// The same projection, but over the MAIN route only, plus its inverse. The
+// Choir's surfacings are placed with these (round six, his note 3: "make that
+// enemy teleport in front of you, a few times"), and the union projection
+// above cannot do it: it can answer with a SECRET segment, whose distances are
+// measured along its own path, so "twelve metres ahead" would mean twelve
+// metres along a corridor the player is not walking.
+export function projectUnderfallsMain(layout, x, z) {
+  let best = null;
+  for (const seg of layout.mainSegments) {
+    const p = segmentProjection(seg, x, z);
+    if (!best || p.clearance < best.clearance) best = p;
+  }
+  return best;
+}
+
+// The world point a given distance along the main route, with the corridor
+// half-width there — a body wider than the corridor would plug it, and running
+// past this thing is the whole escape.
+export function underfallsMainPointAt(layout, routeDistance) {
+  const segs = layout?.mainSegments;
+  if (!segs?.length) return null;
+  const last = segs[segs.length - 1];
+  const total = last.distance + last.length;
+  const d = clamp(routeDistance, 0, total);
+  let seg = last;
+  for (const s of segs) {
+    if (d <= s.distance + s.length) { seg = s; break; }
+  }
+  const t = clamp((d - seg.distance) / (seg.length || 1), 0, 1);
+  return {
+    x: seg.a.x + seg.dx * t,
+    z: seg.a.z + seg.dz * t,
+    y: lerp(seg.a.y, seg.b.y, t),
+    w: lerp(seg.a.w, seg.b.w, t),
+    index: seg.index, t, routeDistance: d, remaining: total - d, total,
+  };
+}
+
 // Signed walk-region query: clearance <= 0 is valid floor. The smallest
 // clearance wins, which correctly treats crossing corridors and chambers as a
 // union instead of letting one narrow branch pinch another shut.
@@ -1530,6 +1568,8 @@ export function buildUnderfalls(game) {
     groundAt(x, z) { return underfallsGroundAt(layout, x, z); },
     contains(x, z, pad = 0) { return underfallsContains(layout, x, z, pad); },
     project(x, z) { return projectUnderfalls(layout, x, z); },
+    projectMain(x, z) { return projectUnderfallsMain(layout, x, z); },
+    mainPointAt(d) { return underfallsMainPointAt(layout, d); },
     lineOfSight(a, b, options) { return underfallsLineOfSight(layout, a, b, options); },
     route(a, b, options) { return findUnderfallsRoute(layout, a, b, options); },
   };
