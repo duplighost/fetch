@@ -41,7 +41,7 @@ const FOG_COLOR_BY_ACT = {
   // horizon, and the draw distance reads as authored rather than as a budget.
   // Interiors keep a fog slightly off their background — a room SHOULD have a
   // far wall, and matching there just flattens it.
-  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x050b16,
+  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x0b141c,
   forest: 0x030b10, clearing: 0x071821, cave: 0x07141a, mirror: 0x111620,
 };
 // How much free light each act gets, as a scale on the house's tuning. The
@@ -58,8 +58,15 @@ const AMBIENT_BY_ACT = {
   // preserving enough floor/wall value for the physical route grammar to read.
   forest: 0.54, clearing: 0.68, cave: 0.42, mirror: 0.6,
 };
+// The graveyard's haze came up from 0x050b16 to 0x0b141c (fog and background
+// together — the equality is the district's own law, and breaking it puts a
+// visible geometry horizon back). At near-black, every pale object in the yard
+// popped out of NOTHING: no depth, no layers, and the far treeline that
+// atmosphere.js instances by the hundred was invisible behind it. A readable
+// haze is what lets a silhouette be a silhouette. MARROW, which this yard came
+// from, sits at 0x14262b for exactly this reason.
 const BACKGROUND_BY_ACT = {
-  bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
+  bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x0b141c,
   forest: 0x030b10, clearing: 0x071821, cave: 0x02080b, mirror: 0x080b12,
 };
 

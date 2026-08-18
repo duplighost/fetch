@@ -403,15 +403,31 @@ function dirtPaint(g, w, h, r) {
   grain(g, w, h, 0.09, r);
 }
 
+// THE LARGEST SURFACE IN THE GRAVEYARD, and the one every pale object in the
+// district is judged against.
+//
+// It was not too bright. Measured through tools/probe-albedo.mjs, the product
+// the shader actually samples — map mean 0.198 times the grade's #3d4a3c —
+// is 0.0124 linear, comfortably UNDER the ~0.03 anything-you-walk-up-to
+// ceiling. Normalising the painter down, which is what a reading of the
+// painter alone argues for, would have taken the yard's floor four times
+// darker and answered "no mids, no focal" by deleting the last of the mids.
+//
+// What it was is GREEN: chroma 2.03, meaning the surface carried twice as much
+// of its read in hue as in value, in the one channel the player cannot see.
+// Every colour below is luminance-matched to what it replaced, so the value
+// spread — which was always the right instinct — survives intact and only the
+// billiard-felt goes. Grey-blond, dead, trodden: moss over clay.
 function grassPaint(g, w, h, r) {
-  g.fillStyle = rgb(52, 50, 38);
+  g.fillStyle = rgb(51, 50, 47);
   g.fillRect(0, 0, w, h);
-  stains(g, w, h, 6, r, '30,26,18', 0.22, 0.08, 0.3); // bare worn patches
-  stains(g, w, h, 4, r, '86,82,58', 0.12, 0.06, 0.2);
-  // blades: the wide value spread does the work, not the (barely) green tint
+  stains(g, w, h, 6, r, '27,26,24', 0.22, 0.08, 0.3); // bare worn patches
+  stains(g, w, h, 4, r, '82,81,78', 0.12, 0.06, 0.2);
+  // blades: the wide value spread does the work, and now it is the only thing
+  // doing it — a two-point channel spread is a whisper of life, not a cue
   for (let i = 0; i < 950; i++) {
     const v = 46 + r.float() * 52;
-    g.strokeStyle = `rgba(${(v + 8) | 0},${(v + 12) | 0},${(v * 0.72) | 0},${0.4 + r.float() * 0.4})`;
+    g.strokeStyle = `rgba(${v | 0},${(v + 2) | 0},${(v - 3) | 0},${0.4 + r.float() * 0.4})`;
     g.lineWidth = 1;
     const x = r.float() * w, y = r.float() * h, len = 3 + r.float() * 6;
     g.beginPath(); g.moveTo(x, y);
@@ -420,7 +436,7 @@ function grassPaint(g, w, h, r) {
   }
   // dead pale tufts — the graveyard reads grey-blond, not green
   for (let i = 0; i < 90; i++) {
-    g.strokeStyle = `rgba(128,118,86,${0.3 + r.float() * 0.3})`;
+    g.strokeStyle = `rgba(122,119,110,${0.3 + r.float() * 0.3})`;
     const x = r.float() * w, y = r.float() * h;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + r.gauss() * 3, y - 4 - r.float() * 6); g.stroke();
   }

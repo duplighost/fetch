@@ -389,7 +389,13 @@ class Game {
     // light the player is carrying — the forest floor outshone the skull's own
     // pool and the trunks were the brightest objects on screen. A carried light
     // needs something dark to carve.
-    tint('grass', 0x3d4a3c);
+    // #3d4a3c was green on top of a green painter, and multiplying two green
+    // biases is how the yard's floor ended up carrying twice as much read in
+    // hue as in value. #474845 is the same LUMINANCE (0.064 linear, measured)
+    // with the bias taken out — the grade keeps every bit of its darkening job
+    // and stops doing a colouring one. tools/probe-albedo.mjs prints the
+    // product; it is the only honest way to judge either of these numbers.
+    tint('grass', 0x474845);
     tint('dirt', 0x4a4239);
     tint('bark', 0x4e4a42);
   }
