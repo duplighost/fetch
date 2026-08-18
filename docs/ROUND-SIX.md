@@ -371,6 +371,25 @@ worn rug. Two facts first:
   around the skull's SIDES, backs of the fingers to the camera, thumbs
   behind. When you tune `cradle`, this image is the judge, held next to
   `tools/shot-held.mjs` output.
+  - **SEEN, 2026-08-18, and three things the written read above left out.**
+    The fingers are **near-VERTICAL and nearly STRAIGHT** — they rise up the
+    sides of the cranium and lie flat along the bone, following its curve.
+    They are not curled round anything and they are not laid across the face;
+    both were tried and shot on the way to this, and the frames are in
+    `scratch-hands/`. Angle them inward even slightly and they converge into
+    the cranium exactly as they pass its widest point (measured: 13% and 9.3%
+    of hand vertices buried). Second: the wrists sit at the very bottom edge
+    of the frame and the fingertips reach about EYE-SOCKET height. Third, and
+    it is a value fact, not a pose one: **the hands are mid-DARK and the skull
+    is the pale thing.** FETCH had them at nearly the same value, which is the
+    same disease as the graveyard's car.
+  - Clipping is measurable and there are now tools for it:
+    `tools/probe-grip-clip.mjs` reports the rig in hold space (each hand box
+    is 0.355 x 0.365 x 0.296 against a skull of 0.212 x 0.257 x 0.29 — the
+    hands are as big as the thing they hold), and `tools/shot-grip-sweep.mjs`
+    aims a pose from a finger direction plus a palm direction, then reports
+    the percentage of hand vertices inside the skull's ellipsoid. Zero is the
+    bar and the shipped seat measures zero.
 - **It is a value image, not a hue image.** Everything it does survives
   greyscale, which is exactly this project's law. Port it entirely in value,
   shape and texture terms.
