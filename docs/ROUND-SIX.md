@@ -15,7 +15,48 @@ laws and the numbers. Do not read the whole of house.js/outside.js — they are
 
 ---
 
-## READ THIS FIRST: the state (2026-08-17, late — verified, not assumed)
+## READ THIS FIRST: the state (2026-08-18 — PHASE ONE IS DONE)
+
+**All four of his notes are built, committed and green.** Phase one is closed.
+The only thing left in round six is PHASE TWO, the graphics pass, and its
+section is at the bottom of this file. Do not re-open phase one.
+
+- **Note 1, the foyer mirror** — done in the previous session (`5476383`,
+  `ec9d35c`). Details below.
+- **Note 2, falling off the crossing** (`5717391`). `terrainHeightFn` raises a
+  rubble bar under the lane once `waterfallTaken` is set — upward only, eased
+  at every edge, post-bargain only. Measured with `tools/probe-causeway.mjs`:
+  24 of 40 step-offs used to drown, now every WALK survives at worst y −0.98
+  against the −1.5 line. Only a sustained 1.6 s sideways SPRINT — five and a
+  half metres out, which is leaving the crossing, not slipping off it — still
+  finds the deep, and the bar's edge is marked with broken water so you can
+  see where the shallow ends. `basin-shore-regression` gained two checks.
+- **Note 3, the Choir surfacing ahead** (`3c4bd6c`). Up to three times, ten to
+  fourteen metres further along the main route, announced by the loop going
+  SILENT and then a call. New gate: `tests/choir-surfacing-regression.mjs`,
+  which also pins all seven DROWNED_CHOIR numbers.
+- **Note 4, the held hands** (`e9b0efa`). `cradle` is now aimed palm-INWARD:
+  `{ y −0.130, rx −1.942, ry 0.253, rz −1.060 }`. `empty` and `lowered` are
+  untouched, because he said so ("its fine after the skull goes").
+
+**Two things worth knowing before phase two:**
+
+- **The bedroom in the reference image is the game's own opening bedroom.**
+  `tools/shot-grip.mjs` shoots it: lantern on the dresser at frame left, window
+  dead ahead with the moon in it, wardrobe right, peeling floral wallpaper. So
+  the reference is not only a direction — it is a BEFORE/AFTER of a frame this
+  game already has, and it is the cheapest place to test the four properties.
+- **Nothing below the plunge pool's surface can ever be drawn.** The pool has
+  an opaque murk body (round four's fix for "you can see under the water which
+  is odd"), so the doc's old "shoot the shallow rubble under your feet" was not
+  achievable; the surface is the only place a signal can live there.
+
+New tools this round: `probe-causeway`, `probe-choir-surfacing`,
+`shot-crossing`, `shot-grip`, `shot-grip-sweep`, `shot-mirror-hands`.
+
+---
+
+## The state as it stood when phase one began (2026-08-17, late)
 
 Round six was started by Fable, handed to Opus mid-flight, and then re-verified
 by Fable in a fresh session against the tree and the gates on this exact tip.
@@ -52,16 +93,13 @@ said in chat.**
 - New and working: `tools/probe-foyer-freeze.mjs`,
   `tools/shot-family-photo.mjs`.
 
-**REMAINING — build in this order, gating each:**
+**REMAINING — build in this order, gating each:** *(all four are now DONE —
+kept for the plans, which record what was asked and why)*
 
-1. **Fix 2 — the crossing stones' side-fall** (plan below, untouched).
-2. **Fix 3 — the Choir surfaces ahead** (plan below, untouched; constants
-   and primitives spot-checked against src/enemies.js this session).
-3. **Fix 4 — the held hands' half-turn** (plan below, untouched; `cradle`
-   rz 0.27 vs finale ±(π−0.10) confirmed at skull.js:531 / finale.js:21).
-4. **PHASE TWO — the graphics pass, only after 2–4 are committed and green.
-   The reference image is POSTED; its read is in the phase-two section
-   below.** His sequencing is the law of the round.
+1. ~~Fix 2 — the crossing stones' side-fall.~~
+2. ~~Fix 3 — the Choir surfaces ahead.~~
+3. ~~Fix 4 — the held hands' half-turn.~~
+4. **PHASE TWO — the graphics pass. This is the whole of what is left.**
 
 **Also true right now:** round five is LIVE on qualiacology.com and FETCH is
 the first card on the homepage. Game PR #31 (round five) is still open and
@@ -457,6 +495,55 @@ gate gets reverted, not argued with. Small commits make that cheap.
 already measures ~1130 (`RECORDED, NOT ASSERTED` in district-culling — a
 pre-existing problem, not yours, but it means the south view has no headroom at
 all). If you want to spend draws there, you must first take some back.
+
+### THE POSE LIST AND THE BEFORE SET — DONE (2026-08-18). This is the queue.
+
+`tools/shot-graveyard-frames.mjs` shoots fourteen poses covering the yard the
+way a player moves through it, each with its near band and its draw count.
+Numbers in `tests/results/graveyard-frames.json`, frames in
+`scratch-graveyard/before/`. **They were opened and looked at**, and they say
+something more useful than "the car needs work":
+
+**His three named targets are not three art problems. They are ONE value
+problem with three faces** — every one of them is a large, untextured, PALE
+mass sitting in a frame that is otherwise 40-80% near-black. That is exactly
+the trap already written down twice in this file (a lit MeshStandard blows to
+white near the lantern whatever its albedo) and exactly the reference image's
+first property inverted: black corners with no warm pool and no focal, and then
+one enormous fog-grey object owning every pale pixel.
+
+Ranked worst-first. **This list is the work queue and the stopping condition.
+Do not add to it mid-pass.**
+
+1. **THE CAR IS A WHITE SLAB** (04, 03, 05). Near band mean 42.9 standing
+   beside it. It reads as an unpainted plastic model of a car, not wrecked
+   steel — flat panels, no wear, no value break. AND: 808 draws standing
+   beside it, 709 from inside its beam. Nobody had recorded that; the car is
+   the second-worst draw cost in the district after the south view.
+2. **THE MAUSOLEUM EXTERIORS ARE WHITE BOXES** (11, 12). Four untextured pale
+   planes and a cone roof, every line straight and unbroken, palest thing in
+   frame (max 230), and 12 is the ONLY frame in the whole set that clips.
+3. **THE BODIES ARE PALE MANNEQUINS** (07, 06). outside.js:3641 says this was
+   fixed by dropping the skin to 0x241f1c and explains the maths — and standing
+   over one still gives a near-white figure on near-black ground. So whatever
+   is pale is NOT the skin. Measure which material owns those pixels (the
+   hide-one-thing-at-a-time attribution pass in `shot-shore.mjs` does exactly
+   this) before changing a single colour.
+4. **MID-YARD LOOKING SOUTH: 1203 DRAWS** (08) against the 450 ceiling. Not a
+   beauty problem — a headroom problem. Nothing can be SPENT in this yard
+   until some of this is taken back.
+5. **NO MIDS, NO FOCAL** (02, 14, 10, 01). 70-80% of the near band is
+   near-black with nothing to look at. The reference image's first property is
+   black corners AND one warm pool AND one bright focal; these frames have
+   only the corners. 01 is the arrival — the district's first frame — and it
+   is a dark nothing at 413 draws.
+6. **The north views already read** (09, 13: mean 33.3 and 21, and the gate
+   lanterns give them a real focal). Bottom of the queue. Leave them.
+
+One more thing the frames show that is not on his list: **the grass carries its
+read in hue** — a flat saturated green — which is the one channel he cannot
+use. It is also the single largest surface in every frame, so its value is what
+every pale object is being judged against.
 
 ### Raid, don't invent
 `C:\Users\Alex\Projects\marrow` is where this graveyard came from — its car,
