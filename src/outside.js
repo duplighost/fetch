@@ -334,13 +334,35 @@ function buildGraveyard(game) {
 
 function buildGraveyardLandmarks(game) {
   const { world, scene, mats: M } = game;
-  const stone = M.headstone.clone();
-  stone.color.multiplyScalar(0.64);
+  // THE MAUSOLEUMS WERE HEADSTONES THE SIZE OF ROOMS.
+  //
+  // M.headstone is a 256px map with no course structure in it at all — it was
+  // painted to be a headstone, deliberately pale — stretched across a 3.6 x
+  // 2.65 m wall at repeat 1, which is about 71 pixels per metre. Times 0.64 it
+  // measured 0.102 linear (probe-albedo), three times the district's own
+  // anything-you-walk-up-to ceiling and the palest large surface in the yard.
+  // Four untextured planes and a cone: a white box with a hat on it.
+  //
+  // M.stone is the answer and it was already in the building: coursed ashlar,
+  // 512px at repeat 2x1 (about 284 px/m here, four times the detail), mortar
+  // joints that the shared bumpMap rakes under a moving lantern, and 0.0398
+  // linear. Same Lambert+map+bumpMap shape as the material it replaces, so it
+  // is the same shader program — and the same TEXTURE object, so no clone and
+  // no second upload; the repeat is shared and stays where the house set it.
+  //
+  // x1.5 lands it at ~0.06: still the district's landmark, still lighter than
+  // the yard, no longer the thing that clips.
+  const stone = M.stone.clone();
+  stone.color.multiplyScalar(1.5);
   if ('emissive' in stone) {
     // A distant mausoleum must stay a room-shaped value landmark even after
-    // the skull light falls off; the doorway remains absolute black.
+    // the skull light falls off; the doorway remains absolute black. Down from
+    // 0.38: that floor was set to hold up a material with no texture in it,
+    // and an unconditional glow under coursed stone just washes the courses
+    // back out. Verified at both ends — frame 12 stops clipping, and the far
+    // approach still reads as a room-shaped mass.
     stone.emissive = new THREE.Color(0x343a3c);
-    stone.emissiveIntensity = 0.38;
+    stone.emissiveIntensity = 0.2;
   }
   const soil = M.dirt.clone();
   soil.color.multiplyScalar(0.72);
@@ -362,16 +384,30 @@ function buildGraveyardLandmarks(game) {
       g.add(m);
       return m;
     };
-    add(new THREE.BoxGeometry(3.6, 2.65, 0.34), stone, 0, 1.3, 1.55);
-    add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, -1.62, 1.3, 0);
-    add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, 1.62, 1.3, 0);
+    // A CENTURY OF SETTLING, and it costs nothing: every line in this
+    // building was dead straight and every angle exact, which is the cheap-3D
+    // tell that no amount of texture fixes. The pieces are merged into one
+    // mesh a few lines below, so a degree of yaw here and three centimetres of
+    // sink there are free — the same trick the basin lip used, applied to
+    // masonry that has stood in wet ground since before anyone alive.
+    const back = add(new THREE.BoxGeometry(3.6, 2.65, 0.34), stone, 0, 1.3, 1.55);
+    back.rotation.y = mirror * 0.012;
+    const westWall = add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, -1.62, 1.29, 0);
+    westWall.rotation.z = mirror * 0.011;
+    const eastWall = add(new THREE.BoxGeometry(0.38, 2.65, 3.2), stone, 1.62, 1.315, 0);
+    eastWall.rotation.z = mirror * -0.007;
     // front wall leaves a human-width black doorway and a shallow porch.
-    add(new THREE.BoxGeometry(1.15, 2.65, 0.34), stone, -1.22, 1.3, -1.55);
-    add(new THREE.BoxGeometry(1.15, 2.65, 0.34), stone, 1.22, 1.3, -1.55);
-    add(new THREE.BoxGeometry(0.92, 0.42, 0.34), stone, 0, 2.43, -1.55);
-    add(new THREE.BoxGeometry(4.25, 0.18, 1.15), stone, 0, 0.09, -1.75);
-    const roof = add(roofGeo, stone, 0, 3.15, 0);
-    roof.rotation.y = Math.PI / 4;
+    const jambL = add(new THREE.BoxGeometry(1.15, 2.65, 0.34), stone, -1.22, 1.275, -1.55);
+    jambL.rotation.z = 0.014;
+    add(new THREE.BoxGeometry(1.15, 2.65, 0.34), stone, 1.22, 1.3, -1.552);
+    const lintel = add(new THREE.BoxGeometry(0.92, 0.42, 0.34), stone, 0, 2.43, -1.55);
+    lintel.rotation.z = mirror * 0.02;
+    // the plinth has taken the worst of it: one corner is going down
+    const plinth = add(new THREE.BoxGeometry(4.25, 0.18, 1.15), stone, 0, 0.075, -1.75);
+    plinth.rotation.set(0.008, mirror * -0.01, mirror * 0.015);
+    const roof = add(roofGeo, stone, 0, 3.145, 0);
+    roof.rotation.y = Math.PI / 4 + mirror * 0.026;
+    roof.rotation.z = mirror * 0.013;
     roof.scale.z = 0.82;
     const darkness = add(new THREE.PlaneGeometry(1.04, 2.05), voidMat, 0, 1.18, -1.735);
     darkness.rotation.y = mirror < 0 ? Math.PI : 0;
@@ -412,7 +448,14 @@ function buildGraveyardLandmarks(game) {
       const R = OSSUARY_THROAT, cz = z + (R.z0 + R.z1) / 2;
       for (let i = 0; i < 4; i++) {
         const side = i < 2 ? -1 : 1;
-        world.box(M.headstone, x + side * (R.hx + 0.27), 0.1,
+        // M.stone, not M.headstone. These four slabs lie flat inside the west
+        // doorway in raw, ungraded headstone — 0.159 linear, the palest
+        // material in the game — and they are most of why frame 12 was the
+        // only shot in the set that clipped: a bright pool on the floor of the
+        // one opening that is supposed to be absolute black. M.stone is four
+        // times darker and the static shell already batches it (house.js puts
+        // a block of it in the crawl), so this costs nothing at all.
+        world.box(M.stone, x + side * (R.hx + 0.27), 0.1,
           cz - 0.32 + (i % 2) * 0.64, 0.52, 0.1, 0.66, side * 0.16);
       }
     }

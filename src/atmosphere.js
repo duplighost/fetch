@@ -365,9 +365,18 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     // their shoulders reads as ground that has been moving for a century.
     it.sink = rng.chance(0.3) ? rng.range(-0.34, -0.12) : rng.range(-0.04, 0.02);
     it.width = rng.range(0.78, 1.2);
-    it.value = rng.range(0.36, 0.84);
     // and no two of them weathered the same. Value only — the whole yard was
     // one flat pale grey before this line.
+    //
+    // The range moves down at both ends. The stones are meant to be this
+    // district's pale landmarks and they stay that — but stoneMat measures
+    // 0.138 linear (probe-albedo), and at the top of the old range that is
+    // 0.116 against a ceiling of 0.03, so the ones you walk past clipped to
+    // featureless white and took their carving with them. A landmark you
+    // cannot read the shape of is not a landmark. Lowering the floor as well
+    // sinks more of them into the dark, which is the other half of the same
+    // job: a yard where every stone is pale has no pale thing in it.
+    it.value = rng.range(0.26, 0.62);
   });
 
   const stoneFamily = (kind, geo, name) => {

@@ -31,6 +31,8 @@ const POSES = {
   carBeam: [-3.6, 20.5, -9, 1.0, 14.5],     // 05, from inside its beam
   body: [0.2, 20.2, 0.2, 0.1, 22.4],        // 07
   mausoleum: [15.6, 26.8, 15.6, 1.5, 31.5], // 11
+  west: [-9.5, 29.5, -14.6, 1.8, 34.2],     // 12, the only frame that clips
+  stones: [7, 23.5, 10.5, 0.5, 33],         // 14, among the stones, low
 };
 
 const server = await ensureServer();
