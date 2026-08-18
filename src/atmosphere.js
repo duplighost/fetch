@@ -502,7 +502,20 @@ function buildGraveyardDress(game, track, own, ownTexture) {
   // Lantern cages ration pale verticals at the path bends.  They are emissive
   // silhouettes only (no extra dynamic lights), keeping both performance and
   // combat visibility predictable.
-  const lanternSites = [[-3.4, 15.6, -0.12], [0.45, 23.4, 0.08], [3.2, 32.0, -0.08]];
+  // THE ARRIVAL HAD NO FOCAL. Frame 01 is the district's first — you come out
+  // of the house and this is the graveyard's opening statement — and it was a
+  // dark nothing: seventy-five percent near-black with no warm pool and
+  // nothing to look at. The reference image's first property is black corners,
+  // one warm pool, one bright focal, and the gate lanterns at the far end
+  // already prove the recipe works here (frames 09 and 13 are the two in the
+  // set that read).
+  //
+  // So the funeral walk gains one more lantern, standing on the arrival
+  // sightline from the house door at (0,7.5) toward (0,20). No new light — the
+  // ember is unlit MeshBasic, the law about the light census is absolute — and
+  // no new draw: these are three InstancedMeshes and this is a fourth instance
+  // of each.
+  const lanternSites = [[-2.2, 12.4, -0.16], [-3.4, 15.6, -0.12], [0.45, 23.4, 0.08], [3.2, 32.0, -0.08]];
   const postMat = own(cloneTint(game.mats?.metal, 0x20262a,
     () => new THREE.MeshLambertMaterial({ color: 0x20262a })));
   if (postMat.color) postMat.color.multiplyScalar(0.38);
