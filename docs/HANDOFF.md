@@ -6,7 +6,17 @@ guesses — and the wrong guesses are where the real bugs were, so they are
 written down here rather than quietly corrected.
 
 PR: this branch, base `claude/aug17-notes` — the fifth storey of
-#30 → #29 → #28 → #27. Never rebase a storey.
+#30 → #29 → #28 → #27. Never rebase a storey. **Still open**; #30 lands first.
+
+**IT IS ALREADY LIVE.** Site PR #70 is merged (`145a73a`): qualiacology.com
+serves round five, production boot-checked green (10/10, real title click), and
+FETCH is now the FIRST card on the homepage with THE EATEN PATH off the
+featured row and still on /games/ — he asked for that directly on the day.
+Tell him to hard-refresh; he has not played it yet.
+
+**ROUND SIX STARTS IN A NEW WORKTREE.** This tree is finished:
+`git worktree add C:\Users\Alex\Projects\fetch-<date> -b claude/<date>-notes
+claude/aug17-round5-notes`, PR base `claude/aug17-round5-notes`.
 
 ## What shipped, by his numbered note
 
