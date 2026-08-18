@@ -143,7 +143,7 @@ How to keep the polish from breaking anything (this is the whole point):
   the shot-shore idiom). The recurring failure mode is working-but-illegible
   — and its opposite: a lit near-white surface two metres from the lantern
   blows out (the kin/shore law). He is colourblind; value and shape only.
-- Raid marrow (C:UsersAlexProjectsmarrow) for the graveyard, its car,
+- Raid marrow (C:\Users\Alex\Projects\marrow) for the graveyard, its car,
   its bodies, its buildings — the district was ported from it, and every
   strong thing in FETCH was a port.
 - Known adjacent debt worth folding in: west mausoleum interior reads as a
