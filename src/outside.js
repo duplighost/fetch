@@ -310,7 +310,12 @@ function buildGraveyard(game) {
   game.tickers.push((dt, t) => {
     // dying flicker — brightness carries the unease, not color
     const beat = Math.sin(t * 13) > -0.82 ? 1 : 0.15;
-    head.intensity = beat * (280 + Math.sin(t * 3.1) * 50);
+    // 280 -> 225, and this is deliberately the LAST and smallest lever on the
+    // bodies rather than the first. The beam across the graves is authored
+    // drama and frame 05 is built on it, so what comes off is the amount that
+    // stops the dead being floodlit without stopping the beam being a beam.
+    // Intensity changes are free: the light census is untouched.
+    head.intensity = beat * (225 + Math.sin(t * 3.1) * 42);
     // the lens answers its own lamp, so the flicker is visible from the SIDE
     // too — not only in the beam thrown out across the graves
     if (game.wreckLens) game.wreckLens.color.setScalar(0.055 + beat * 0.30);
@@ -3760,22 +3765,55 @@ function buildGraveyardBodies(game) {
   // sits close to the night while the small areas of exposed skin remain
   // legible in the skull light; the former shared mid-grey made every body read
   // as one injection-moulded mannequin.
-  const clothes = [0x12191e, 0x211317, 0x111b19, 0x1d1c14].map((color) =>
-    new THREE.MeshStandardMaterial({ color, roughness: 0.98 }));
-  const trousers = [0x090c0f, 0x100b0e, 0x0a100f, 0x11110d].map((color) =>
-    new THREE.MeshStandardMaterial({ color, roughness: 0.99 }));
-  const seam = new THREE.MeshStandardMaterial({ color: 0x050607, roughness: 1 });
+  // LAMBERT, AND THIS IS THE WHOLE FIX.
+  //
+  // Two rounds have now recoloured the dead and failed, and the comment below
+  // still explains, correctly, why the skin had to come down to 0x241f1c. It
+  // was never going to be enough, and tools/probe-body-specular.mjs says why in
+  // one number: set every one of these materials to PURE BLACK and 79% of what
+  // you see on a body is still there.
+  //
+  // MeshStandardMaterial's dielectric specular uses a fixed F0 of 0.04 no
+  // matter what the albedo is. Cloth at 0.004 linear under the ~30 irradiance
+  // of the wreck's headlight plus the lantern you are holding gets 0.12 of
+  // diffuse and 1.2 of specular: ten to one, and the ten is the part no
+  // recolour can reach. It is the basement boiler's disease exactly — "the
+  // boiler stayed pale plastic through a 6.7x albedo cut because what was pale
+  // was never the albedo" — and the answer there was to stop being glossy. A
+  // corpse in wet clothes is not glossy at all.
+  //
+  // Lambert has no specular term whatsoever. It is also this project's
+  // workhorse — stone, brick, grass, wallpaper and the headstones are all
+  // Lambert — so nothing here is exotic. These are built at boot on
+  // scene-reachable objects, so the warm pass compiles them inside the pinned
+  // light census; the warm-start gate and a ?hitch=1 walk both ran.
+  // The four of them differ by VALUE now, not by hue. The old set —
+  // 0x12191e blue, 0x211317 red, 0x111b19 green, 0x1d1c14 yellow — spanned a
+  // 1.3x range in luminance and did all its real work in colour, which is the
+  // one channel the player cannot use; with the specular gone, the middle one
+  // simply became a man in a pink shirt. These span 3.3x, so the dead read as
+  // four different people in a greyscale photograph, which is the only place
+  // this game's reads are allowed to live.
+  const clothes = [0x141414, 0x1c1b1a, 0x0f1011, 0x232220].map((color) =>
+    new THREE.MeshLambertMaterial({ color }));
+  const trousers = [0x0b0b0b, 0x121212, 0x080809, 0x161515].map((color) =>
+    new THREE.MeshLambertMaterial({ color }));
+  const seam = new THREE.MeshLambertMaterial({ color: 0x050607 });
   // 0x554941 is 0.087 linear, and the lantern delivers ~19 at the two metres
   // you stand over a body at: 1.65, hard clipped. That is why the dead read as
   // pale shop mannequins rather than people — the skin was the brightest thing
   // in the yard, brighter than the headstones the act uses as its landmarks.
   // Everything you can walk up to in this game has to live under ~0.03.
-  const skin = new THREE.MeshStandardMaterial({ color: 0x241f1c, roughness: 1 });
-  const shoe = new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.98 });
-  const hair = new THREE.MeshStandardMaterial({ color: 0x11100f, roughness: 1 });
-  const faceDark = new THREE.MeshStandardMaterial({ color: 0x080909, roughness: 1 });
+  const skin = new THREE.MeshLambertMaterial({ color: 0x241f1c });
+  const shoe = new THREE.MeshLambertMaterial({ color: 0x0b0b0c });
+  const hair = new THREE.MeshLambertMaterial({ color: 0x11100f });
+  const faceDark = new THREE.MeshLambertMaterial({ color: 0x080909 });
+  // The one part of a body the light genuinely cannot reach: where it meets the
+  // ground. Unlit, so no lantern lifts it, and deepened — this is the same
+  // lever that gave the wreck its weight, and a figure whose edges dissolve
+  // into the yard is a figure lying ON the yard rather than hovering over it.
   const contactMat = new THREE.MeshBasicMaterial({
-    color: 0x010202, transparent: true, opacity: 0.58, depthWrite: false,
+    color: 0x010202, transparent: true, opacity: 0.74, depthWrite: false,
     side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1,
   });
   const Y = new THREE.Vector3(0, 1, 0);
@@ -3845,20 +3883,45 @@ function buildGraveyardBodies(game) {
   // outline: shoulder shelf, rib cage, waist, jaw and occiput.  It is cheaper
   // than stacking spheres and, crucially, never presents a circular capsule
   // silhouette to the camera.
+  // CLOTH, not shrinkwrap.
+  //
+  // Measured at pose 07 (tools/probe-body-attribution.mjs): the trousers own
+  // 1321 pixels at a mean of 72.9 and the clothes 752 at 62, while the SKIN —
+  // the thing two rounds have now recoloured — owns ninety-two pixels. Nothing
+  // on a body is pale. They are lit: near-black cloth times the ~30 irradiance
+  // of the wreck's headlight plus the lantern you are standing there holding.
+  //
+  // These lofts carry position and nothing else — no uv survives, and
+  // batchStaticGroup intersects attributes anyway — so a cloth map is not
+  // available at any price. What IS available is the surface itself. The rings
+  // were already nudged by a fixed 2% alternation; making that a real
+  // two-frequency fold, around the body and along it, gives the normals
+  // something to do and turns one flat lit value into creases with shadow in
+  // them. Same vertex count, same geometry count, same draw: it is the loft it
+  // always was, rumpled.
   const sectionGeometry = (sections, sides = 8) => {
     const positions = [];
     const indices = [];
-    for (const s of sections) {
+    sections.forEach((s, i) => {
       for (let j = 0; j < sides; j++) {
         const a = (j / sides) * TAU + Math.PI / sides;
-        const irregular = 1 + ((j & 1) ? 0.025 : -0.018);
+        // integer harmonics only — anything else tears the ring at the seam
+        // The torso and pelvis carry 14-15 sides rather than the 8-9 they had:
+        // a three-and-five harmonic fold sampled at eight points is above
+        // Nyquist and comes back as noise, not as cloth. Six more vertices per
+        // ring is nothing — the geometry COUNT is unchanged, which is the gate
+        // that matters — and it is the difference between a crease and a
+        // faceting artefact.
+        const fold = 1 + Math.sin(a * 3 + i * 2.1) * 0.075
+          + Math.sin(a * 5 - i * 1.35) * 0.042
+          + ((j & 1) ? 0.02 : -0.015);
         positions.push(
-          (s.x || 0) + Math.cos(a) * s.w * irregular,
-          s.y + Math.sin(a) * s.h,
+          (s.x || 0) + Math.cos(a) * s.w * fold,
+          s.y + Math.sin(a) * s.h * fold,
           s.z,
         );
       }
-    }
+    });
     for (let i = 0; i < sections.length - 1; i++) {
       for (let j = 0; j < sides; j++) {
         const n = (j + 1) % sides;
@@ -3911,9 +3974,15 @@ function buildGraveyardBodies(game) {
       const up = new THREE.Vector3().crossVectors(tangent, side).normalize();
       for (let j = 0; j < sides; j++) {
         const angle = (j / sides) * TAU + 0.19;
+        // a sleeve and a trouser leg crease along their length too — same
+        // integer-harmonic fold as the torso, a little shallower because a
+        // limb has a bone in it
+        const fold = 1 + Math.sin(angle * 3 + i * 1.7) * 0.05
+          + Math.sin(angle * 5 - i * 2.3) * 0.028
+          + (j & 1 ? -0.02 : 0.04);
         const ring = path[i].clone()
-          .addScaledVector(side, Math.cos(angle) * radii[i] * (j & 1 ? 0.98 : 1.04))
-          .addScaledVector(up, Math.sin(angle) * radii[i] * flatten);
+          .addScaledVector(side, Math.cos(angle) * radii[i] * fold)
+          .addScaledVector(up, Math.sin(angle) * radii[i] * flatten * fold);
         positions.push(ring.x, ring.y, ring.z);
       }
     }
@@ -4001,14 +4070,14 @@ function buildGraveyardBodies(game) {
       { x: shoulderSkew * 0.5, y: 0.225, z: -0.02, w: 0.315, h: 0.175 },
       { x: -shoulderSkew, y: 0.205, z: 0.22, w: 0.22, h: 0.135 },
       { x: 0.015 * (i & 1 ? 1 : -1), y: 0.2, z: 0.34, w: 0.235, h: 0.13 },
-    ], 9), cloth);
+    ], 15), cloth);
     torso.castShadow = true;
     group.add(torso);
     const pelvis = new THREE.Mesh(sectionGeometry([
       { x: 0.01, y: 0.19, z: 0.25, w: 0.22, h: 0.12 },
       { x: -0.01, y: 0.19, z: 0.43, w: 0.3, h: 0.145 },
       { x: 0.018 * (i % 2 ? -1 : 1), y: 0.175, z: 0.58, w: 0.265, h: 0.12 },
-    ], 8), trouser);
+    ], 14), trouser);
     group.add(pelvis);
 
     // The irregular hem and raised lapel create cloth-over-body layering, not
@@ -4123,7 +4192,10 @@ function buildGraveyardBodies(game) {
       group.add(f);
     }
     if (i === 3) {
-      const sheetMat = new THREE.MeshStandardMaterial({ color: 0x353834, roughness: 1, side: THREE.DoubleSide });
+      // 0x353834 is 0.035 linear — right on the district ceiling, and the one
+      // body wearing it was the pale one of the four. A sheet that has been
+      // dragged across a graveyard is not clean linen.
+      const sheetMat = new THREE.MeshLambertMaterial({ color: 0x1d1f1c, side: THREE.DoubleSide });
       const rows = 6, cols = 5, vertices = [], indices = [];
       for (let row = 0; row < rows; row++) {
         const t = row / (rows - 1);
