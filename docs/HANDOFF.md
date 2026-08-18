@@ -1,5 +1,9 @@
 # HANDOFF — 2026-08-17: ROUND SIX PLAN (from Alex's post-round-five play notes)
 
+**START WITH docs/ROUND-SIX.md** — the full step-by-step, including where the
+work stopped mid-session and what is unfinished. This section is the reference;
+that file is the instructions.
+
 He played round five. His notes, verbatim where it matters, and the plan.
 Reproduce first, then fix — every wrong conclusion this project ever shipped
 came from reasoning instead of opening the image or the log.
