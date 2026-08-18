@@ -528,7 +528,37 @@ export class Skull {
     // on screen. Edit finale.js for that beat.
     this._handPose = {
       hands: [L, R],
-      cradle: { x: 0.114, y: -0.168, z: 0.052, rx: -0.58, ry: 0.71, rz: 0.27 },
+      // THE GRIP. "in this whole game, the hands are facing so the palm side
+      // is against the skull, so it doesn't look like he's holding the skull.
+      // its fine after the skull goes and we got it right in the last room of
+      // the game." He is right about both halves of that: EMPTY already turns
+      // over (see below) and finale.js's RAISED_L/R already read as hands.
+      //
+      // The old cradle was rx -0.58, ry 0.71, rz 0.27, and what that produced
+      // was two upturned palms with the fingers pointing back at the camera —
+      // the skull presented on them rather than held. mkHand grows the fingers
+      // along local +Z and curls them toward local +Y, so +Y is the palm
+      // normal: pointing +Y at the CAMERA is the whole bug.
+      //
+      // These numbers are not hand-guessed. tools/shot-grip-sweep.mjs aims the
+      // hand instead — finger axis up and a little forward, palm INWARD at the
+      // skull — and reads the Euler back off the basis, which works because
+      // _applyHandPose applies (rx, -side*ry, -side*rz), so the stored numbers
+      // ARE the applied angles for the left hand. Palm inward puts the backs
+      // and the knuckle line toward the camera and wraps the fingers round the
+      // cheek, which is the grip in the reference image he posted.
+      //
+      // NOTE the half-turn alone is not the fix, though it is where this
+      // started (finale.js documents +-PI about the finger axis as the way to
+      // turn a hand over without mirroring it). Rolling PI and changing
+      // nothing else inverts the CURL as well, and the shot came back with
+      // both hands folded down out of the bottom of the frame.
+      cradle: { x: 0.114, y: -0.130, z: 0.052, rx: -1.942, ry: 0.253, rz: -1.060 },
+      // Untouched. "its fine after the skull goes": the hands drop, open
+      // outward and roll until the backs, the knuckle line and both thumbs are
+      // in frame, and they have read as hands since round two. The cradle now
+      // starts from a turned-over pose too, so the release is a smaller
+      // gesture than it was, not a bigger one.
       empty: { x: 0.133, y: -0.147, z: 0.043, rx: -0.33, ry: 0.50, rz: 0.15 },
       // After the waterfall bargain the skull is GONE — nothing is coming
       // back to these hands, so they stop waiting for it. Mostly out of
