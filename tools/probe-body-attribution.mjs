@@ -15,24 +15,34 @@
 // Reports, for each material of the body you stand over: how much of the near
 // band's brightness it owns, and what its own pixels measure.
 //
-//   node tools/probe-body-attribution.mjs [bodyIndex]
+// Also does the car, which has the same disease and wants the same shape of
+// answer: it is batched too, so its children are one merged mesh per material.
+//
+//   node tools/probe-body-attribution.mjs [body0-3|car]
 import { ensureServer, launchBrowser, openPage, URL_BASE, resultsPath } from '../tests/lib/harness.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-const BODY = Number(process.argv[2] ?? 1);
+const TARGET = process.argv[2] ?? 'body1';
 const outDir = 'scratch-bodies';
 mkdirSync(outDir, { recursive: true });
 
-// pose 07: standing over a body, the frame the queue complains about
-const POSE = [0.2, 20.2, 0.2, 0.1, 22.4];
+// the frame the queue complains about, per target
+const POSES = {
+  body0: [-5.8, 15.4, -5.8, 0.3, 18.3],
+  body1: [0.2, 20.2, 0.2, 0.1, 22.4],   // 07 standing over a body
+  body2: [0.2, 20.2, 0.2, 0.1, 22.4],
+  body3: [0.2, 20.2, 0.2, 0.1, 22.4],
+  car: [-12.2, 14.5, -9, 0.9, 14],      // 04 standing beside the car
+};
+const POSE = POSES[TARGET] || POSES.body1;
 
 const server = await ensureServer();
 const browser = await launchBrowser();
 try {
   const { page, errors } = await openPage(browser, `${URL_BASE}/?test=1&mute=1`);
   await page.waitForFunction(() => window.__FETCH?.ready === true, null, { timeout: 120000, polling: 100 });
-  const out = await page.evaluate(async ({ pose, bodyIndex }) => {
+  const out = await page.evaluate(async ({ pose, target }) => {
     const F = window.__FETCH, g = window.__game;
     F.start();
     F.teleport('graveyard');
@@ -106,8 +116,10 @@ try {
       };
     };
 
-    const body = (g.graveBodies || [])[bodyIndex];
-    if (!body) return { error: 'no such body', count: (g.graveBodies || []).length };
+    const body = target === 'car'
+      ? g.graveCar
+      : (g.graveBodies || [])[Number(target.replace('body', ''))];
+    if (!body) return { error: 'no such target', target };
     const reference = settle();
     const rows = [];
     for (const child of body.children) {
@@ -144,17 +156,17 @@ try {
       spot.intensity = spotWas;
     }
     return {
-      bodyIndex, referenceBand: band(reference), rows, bodyOwned,
+      target, referenceBand: band(reference), rows, bodyOwned,
       spotWas, dimmed,
       png: g.renderer.domElement.toDataURL('image/png'),
     };
-  }, { pose: POSE, bodyIndex: BODY });
+  }, { pose: POSE, target: TARGET });
 
   if (out.error) { console.log('ERROR', out); }
   else {
-    writeFileSync(join(outDir, `pose07-body${BODY}.png`), Buffer.from(out.png.split(',')[1], 'base64'));
+    writeFileSync(join(outDir, `${TARGET}.png`), Buffer.from(out.png.split(',')[1], 'base64'));
     console.log(`near band of the whole frame: mean ${out.referenceBand.mean}  max ${out.referenceBand.max}`);
-    console.log(`the entire body owns ${out.bodyOwned.pixels} px (${out.bodyOwned.pctOfFrame}% of frame),`
+    console.log(`the entire ${TARGET} owns ${out.bodyOwned.pixels} px (${out.bodyOwned.pctOfFrame}% of frame),`
       + ` mean ${out.bodyOwned.meanBefore} max ${out.bodyOwned.maxBefore}`);
     console.log('\nper material, worst first:');
     console.log('surface                          colour    px    %frame   mean  max   without');
@@ -169,7 +181,7 @@ try {
       console.log(`  it moves ${out.dimmed.bodyPixels.pixels} px, mean ${out.dimmed.bodyPixels.meanBefore}`
         + ` -> ${out.dimmed.bodyPixels.meanAfter}`);
     }
-    writeFileSync(resultsPath('body-attribution.json'), JSON.stringify(
+    writeFileSync(resultsPath(`attribution-${TARGET}.json`), JSON.stringify(
       { ...out, png: undefined }, null, 2));
   }
   console.log('errors:', errors.slice(0, 3).join(' | ') || 'none');

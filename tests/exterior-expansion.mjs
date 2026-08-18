@@ -312,7 +312,11 @@ try {
       g.graveCar?.name === 'wrecked station wagon'
         && g.graveCarDebris?.children.length >= 4
         && g.graveBodies?.length === 4
-        && g.graveDragMarks?.isInstancedMesh && g.graveDragMarks.count === 4,
+        // Four drag marks, one per body, plus three more of the same quad
+        // lying under the wreck as its ground contact — the point of this
+        // check is that the whole aftermath is ONE instanced mesh, and it
+        // still is.
+        && g.graveDragMarks?.isInstancedMesh && g.graveDragMarks.count === 7,
       {
         car: g.graveCar?.name,
         debris: g.graveCarDebris?.children.length,

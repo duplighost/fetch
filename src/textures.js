@@ -633,9 +633,11 @@ function machineIronPaint(g, w, h, r) {
 function carPaintPaint(g, w, h, r) {
   g.fillStyle = rgb(44, 52, 58);
   g.fillRect(0, 0, w, h);
-  // chalking: paint oxidises unevenly, in big soft fields
-  stains(g, w, h, 10, r, '96,104,108', 0.16, 0.1, 0.4);
-  stains(g, w, h, 8, r, '16,20,24', 0.24, 0.08, 0.34);
+  // chalking: paint oxidises unevenly, in big soft fields. Pushed hard at BOTH
+  // ends — the mean is pinned at the bottom of this function, so contrast in
+  // here is free, and contrast is the only thing a floodlit surface has.
+  stains(g, w, h, 10, r, '150,158,160', 0.26, 0.1, 0.4);
+  stains(g, w, h, 9, r, '7,9,11', 0.5, 0.08, 0.34);
   // clear-coat failure: hard-edged pale islands with a dark lip
   for (let i = 0; i < 7; i++) {
     const x = r.float() * w, y = r.float() * h, rad = 8 + r.float() * 26;
@@ -646,45 +648,87 @@ function carPaintPaint(g, w, h, r) {
       if (p === 0) g.moveTo(vx, vy); else g.lineTo(vx, vy);
     }
     g.closePath();
-    g.fillStyle = `rgba(120,124,120,${0.12 + r.float() * 0.12})`;
+    g.fillStyle = `rgba(178,182,178,${0.2 + r.float() * 0.18})`;
     g.fill();
-    g.strokeStyle = 'rgba(20,16,12,0.35)'; g.lineWidth = 1; g.stroke();
+    g.strokeStyle = 'rgba(8,7,6,0.6)'; g.lineWidth = 1.4; g.stroke();
   }
-  // rust: blooms with a bright core and a dark bleed, the way it actually goes
-  for (let i = 0; i < 16; i++) {
-    const x = r.float() * w, y = h * (0.45 + r.float() * 0.55), rad = 4 + r.float() * 15;
+  // PANEL LINES. A car is panels, and the gaps between them hold a decade of
+  // road film. Hard-edged, near-black, with grime bleeding out of one side:
+  // the single most car-shaped mark available at zero cost.
+  for (let i = 0; i < 5; i++) {
+    const vertical = r.chance(0.55);
+    const at = (0.1 + r.float() * 0.8) * (vertical ? w : h);
+    const bleed = g.createLinearGradient(
+      vertical ? at : 0, vertical ? 0 : at,
+      vertical ? at + 13 : 0, vertical ? 0 : at + 13);
+    bleed.addColorStop(0, 'rgba(6,7,8,0.72)');
+    bleed.addColorStop(1, 'rgba(6,7,8,0)');
+    g.fillStyle = bleed;
+    if (vertical) g.fillRect(at, 0, 14, h); else g.fillRect(0, at, w, 14);
+    g.strokeStyle = 'rgba(4,4,5,0.9)';
+    g.lineWidth = 1.2 + r.float() * 0.8;
+    g.beginPath();
+    if (vertical) { g.moveTo(at, 0); g.lineTo(at + r.gauss() * 1.5, h); }
+    else { g.moveTo(0, at); g.lineTo(w, at + r.gauss() * 1.5); }
+    g.stroke();
+  }
+  // rust: a DARK bloom, not a bright one. Oxide on a night surface is one of
+  // the darkest things on the car, and it used to be painted three times
+  // lighter than the field it ate into — which is most of why the panels read
+  // as one flat sheet with some pattern on it.
+  for (let i = 0; i < 18; i++) {
+    const x = r.float() * w, y = h * (0.4 + r.float() * 0.6), rad = 5 + r.float() * 17;
     const gr = g.createRadialGradient(x, y, 1, x, y, rad);
-    gr.addColorStop(0, `rgba(112,64,32,${0.36 + r.float() * 0.3})`);
-    gr.addColorStop(0.55, 'rgba(72,42,24,0.26)');
-    gr.addColorStop(1, 'rgba(48,30,18,0)');
+    gr.addColorStop(0, `rgba(19,13,9,${0.62 + r.float() * 0.3})`);
+    gr.addColorStop(0.5, 'rgba(31,20,13,0.44)');
+    gr.addColorStop(1, 'rgba(38,26,17,0)');
     g.fillStyle = gr; g.fillRect(0, 0, w, h);
-    // pinholes where it has gone through
-    g.fillStyle = 'rgba(14,11,9,0.6)';
-    for (let p = 0, n = r.int(2, 7); p < n; p++) {
+    // pinholes where it has gone through — the only true black on the panel
+    g.fillStyle = 'rgba(2,2,3,0.92)';
+    for (let p = 0, n = r.int(3, 9); p < n; p++) {
       const a = r.float() * TAU, d = r.float() * r.float() * rad;
-      g.beginPath(); g.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, 0.6 + r.float() * 1.5, 0, TAU); g.fill();
+      g.beginPath(); g.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, 0.6 + r.float() * 1.8, 0, TAU); g.fill();
     }
+    // and a pale halo of blistered paint lifting at the edge of the bloom
+    g.strokeStyle = `rgba(150,150,144,${0.1 + r.float() * 0.14})`;
+    g.lineWidth = 0.8;
+    g.beginPath(); g.arc(x, y, rad * 0.86, r.float() * TAU, r.float() * TAU + 2.4); g.stroke();
   }
-  // road dirt sprayed up from the bottom edge
-  const dirt = g.createLinearGradient(0, h, 0, h * 0.4);
-  dirt.addColorStop(0, 'rgba(38,32,24,0.55)');
-  dirt.addColorStop(1, 'rgba(38,32,24,0)');
+  // road dirt sprayed up from the bottom edge, to an honest near-black sill.
+  // The lower third of a wreck standing in a field is not dark grey; it is
+  // where the light stops.
+  const dirt = g.createLinearGradient(0, h, 0, h * 0.34);
+  dirt.addColorStop(0, 'rgba(5,5,6,0.94)');
+  dirt.addColorStop(0.45, 'rgba(14,13,11,0.6)');
+  dirt.addColorStop(1, 'rgba(20,18,14,0)');
   g.fillStyle = dirt; g.fillRect(0, 0, w, h);
-  speckle(g, w, h, 260, ['#3a3128', '#221d18', '#4c4034'], r, 0.4, 2);
-  // scratches — long, shallow, barely lighter
-  for (let i = 0; i < 22; i++) {
-    g.strokeStyle = `rgba(150,154,152,${0.05 + r.float() * 0.09})`;
-    g.lineWidth = 0.7 + r.float();
+  speckle(g, w, h, 300, ['#241e18', '#0d0b09', '#3c332a'], r, 0.4, 2);
+  // scratches: BARE METAL. A scratch through dead paint is the brightest thing
+  // on the panel, not a slightly lighter grey — and a bright hairline is what
+  // makes a floodlit surface read as having a surface at all.
+  for (let i = 0; i < 26; i++) {
+    g.strokeStyle = `rgba(216,220,216,${0.3 + r.float() * 0.45})`;
+    g.lineWidth = 0.5 + r.float() * 0.7;
     const y = r.float() * h, x = r.float() * w, len = 14 + r.float() * 70;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + len, y + r.gauss() * 3); g.stroke();
   }
-  cracks(g, w, h, 5, r, 'rgba(16,13,11,0.4)', 0.8, 10);
+  cracks(g, w, h, 6, r, 'rgba(5,4,4,0.7)', 0.8, 10);
   grain(g, w, h, 0.07, r);
   // Measured: at the distance you first see the wreck the carried lantern is
   // 91% of its light and the body came back at 0.26 mean — against a graveyard
   // averaging 0.03. That is why it read as a clean pale model of a car parked
   // in a dark field. A derelict should be one of the DARKER things out there,
   // with the headstones staying the pale landmarks. 0.032 puts it under them.
+  //
+  // And 0.032 is where it STAYS. Round seven's finding is that the car was
+  // never pale: probe-albedo puts this map at 0.032 against a district ceiling
+  // of about 0.03, and the pale pixels belong to the wreck's own headlight,
+  // which throws 300 candela straight across the body field. Darkening a
+  // floodlit surface buys almost nothing — the shore lip measured a fivefold
+  // albedo cut for a 1.4x pixel cut — so everything above spends its budget on
+  // VARIANCE at this same mean instead: near-black rust and sills that no
+  // amount of light can lift, bare-metal scratches that go bright, and hard
+  // panel lines to break the sheet. Under a floodlight, variance is the read.
   toMeanValue(g, w, h, 0.032);
 }
 

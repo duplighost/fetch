@@ -3458,14 +3458,27 @@ function buildWreckedCar(game) {
   // colour here would multiply the painted value straight back up.
   const paint = M.carPaint;
   const rust = M.carPaint.clone();
-  rust.color.setHex(0xb08c6a);   // the same surface, biased toward oxide
+  // The tint MULTIPLIES the map, so this is 0.032 x 0.25 = 0.008 linear —
+  // already three times darker than the painted panels, which is the right
+  // direction and was worth checking rather than assuming (a hex set over a
+  // mapped material is one of this project's standing traps). Desaturated from
+  // #b08c6a: chroma 3.0 down to 2.0, same job, and rust that announces itself
+  // by being orange is announcing itself in the one channel he cannot read.
+  rust.color.setHex(0x9c8570);
   rust.roughness = 0.95;
   // Glass that has stood outside for years is not a mirror. Rough it right up
   // and drop the transmission — a clean 0.12-roughness pane was catching the
   // moon like a showroom and was the brightest thing on the whole wreck.
+  //
+  // 0.55 was still glossy enough to hold a broad pale specular sheet under the
+  // skull lantern, so the glasshouse read as another body panel and the
+  // windshield's crack star had nothing to be seen against. Rough it to 0.84,
+  // drop the opacity so more of the 0x17191a upholstery behind it shows
+  // through, and take the tint down: the cabin should be the hole in the
+  // middle of the wreck.
   const glass = new THREE.MeshStandardMaterial({
-    color: 0x0d151b, roughness: 0.55, metalness: 0.1,
-    transparent: true, opacity: 0.82,
+    color: 0x090e13, roughness: 0.84, metalness: 0.06,
+    transparent: true, opacity: 0.72,
   });
   const tyre = new THREE.MeshStandardMaterial({ color: 0x070809, roughness: 0.98 });
   // The lens. MeshBasic is UNLIT, so this was a fixed 0.77-luminance shape —
@@ -3578,8 +3591,11 @@ function buildWreckedCar(game) {
   }
   const crackGeo = new THREE.BufferGeometry();
   crackGeo.setAttribute('position', new THREE.Float32BufferAttribute(crackPos, 3));
+  // Now that the glass behind it is genuinely dark, the star can be the money
+  // detail it was always meant to be: an unlit bright line on a black pane.
+  // 0.52 was tuned against glass that was nearly as pale as the line was.
   const cracks = new THREE.LineSegments(crackGeo, new THREE.LineBasicMaterial({
-    color: 0xaeb8b5, transparent: true, opacity: 0.52,
+    color: 0xaeb8b5, transparent: true, opacity: 0.78,
   }));
   cracks.name = 'shattered windshield star';
   car.add(cracks);
@@ -3594,6 +3610,32 @@ function buildWreckedCar(game) {
   }
   // The missing rear wheel leaves a naked hub; the wheel itself lies in grass.
   add(hubGeo, rust, -1.42, 0.42, 0.92, Math.PI / 2);
+
+  // THE DARK IT HAD NONE OF.
+  //
+  // Measured at the pose you stand beside it (tools/probe-albedo-ab.mjs): the
+  // painted shell owns 22.6% of that frame at a mean of 88, and a 6.7x cut in
+  // its albedo buys 1.66x on those pixels — the surface is riding the top of
+  // the tone curve and albedo has stopped being the variable. Darkening the
+  // paint is not the lever and never was.
+  //
+  // What a floodlit object needs is somewhere the light CANNOT go. These are
+  // MeshBasic, so they are not lit at all and no lantern can lift them: a sill
+  // strip down each flank where a rocker panel rots first, and a liner behind
+  // each arch. They read as the shadow under a car because that is exactly
+  // what a shadow under a car is — a place the light did not reach.
+  //
+  // `cavity` is already a material of this group (it lines the engine bay), so
+  // all of this merges into a bucket that already exists: zero new draws, zero
+  // new materials, zero new programs.
+  for (const side of [-0.9, 0.9]) {
+    const sill = add(new THREE.BoxGeometry(4.3, 0.16, 0.06), cavity, 0, 0.31, side);
+    sill.rotation.z = -0.025;
+  }
+  add(new THREE.BoxGeometry(4.1, 0.1, 1.7), cavity, 0, 0.26, 0);   // the underbody
+  for (const [x, z] of [[-1.42, -0.91], [1.42, -0.91], [1.42, 0.91], [-1.42, 0.91]]) {
+    add(new THREE.CylinderGeometry(0.46, 0.46, 0.2, 12), cavity, x, 0.42, z * 0.86, Math.PI / 2);
+  }
   const loose = new THREE.Mesh(wheelGeo, tyre);
   loose.position.set(-7.4, 0.25, 16.0);
   loose.rotation.set(1.2, 0.35, 0.4);
@@ -3713,7 +3755,25 @@ function buildGraveyardBodies(game) {
     color: 0x030405, transparent: true, opacity: 0.62,
     depthWrite: false, side: THREE.DoubleSide,
   });
-  const dragMarks = new THREE.InstancedMesh(dragGeo, dragMat, sites.length);
+  // ...and the same quad, three more times, lying under the wreck.
+  //
+  // The car reads as a pale mass FLOATING on the yard: it is crushed, ribbed,
+  // batched and painted, and it has no ground contact whatsoever, because it
+  // casts into a shadow map that its own headlight and the moon both miss at
+  // this angle. An unlit near-black anchor under a floodlit object is the
+  // single highest-value pixel change available on it, and here it is free —
+  // same InstancedMesh, same material, same geometry, zero new draws.
+  const CAR = { x: -9, z: 14, yaw: -0.96 };
+  // the car's long axis, laid out in world space: rotation.y maps local +X to
+  // (cos, 0, -sin), and the quad's long side is its local +Z, so the Y-euler
+  // that lines them up is atan2 of that vector.
+  const carAxis = new THREE.Vector3(Math.cos(CAR.yaw), 0, -Math.sin(CAR.yaw));
+  const carShadows = [
+    [0, 2.3, 1.4],      // the body, corner to corner
+    [1.55, 1.7, 0.78],  // out under the crushed end
+    [-1.5, 1.95, 0.86], // and the tail, where the drag marks start
+  ];
+  const dragMarks = new THREE.InstancedMesh(dragGeo, dragMat, sites.length + carShadows.length);
   const dragMtx = new THREE.Matrix4(), dragQ = new THREE.Quaternion();
   const dragP = new THREE.Vector3(), dragScale = new THREE.Vector3();
   const dragEuler = new THREE.Euler();
@@ -3726,6 +3786,13 @@ function buildGraveyardBodies(game) {
       dragQ, dragScale.set(0.82 + i * 0.08, 1, 0.9 + (i % 2) * 0.25),
     );
     dragMarks.setMatrixAt(i, dragMtx);
+  });
+  carShadows.forEach(([along, sx, sz], i) => {
+    const x = CAR.x + carAxis.x * along, z = CAR.z + carAxis.z * along;
+    const gy = Math.sin(x * 0.23) * Math.sin(z * 0.31) * 0.22;
+    dragQ.setFromEuler(dragEuler.set(0, Math.atan2(carAxis.x, carAxis.z), 0));
+    dragMtx.compose(dragP.set(x, gy + 0.02, z), dragQ, dragScale.set(sx, 1, sz));
+    dragMarks.setMatrixAt(sites.length + i, dragMtx);
   });
   dragMarks.instanceMatrix.needsUpdate = true;
   dragMarks.name = 'graveyard body drag marks';
