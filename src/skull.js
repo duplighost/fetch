@@ -346,9 +346,19 @@ export class Skull {
     const SHAFT = new THREE.CapsuleGeometry(0.006, 0.03, 3, 7);
     const JOINT = new THREE.SphereGeometry(0.01, 8, 6);
     const BLOCK = new THREE.BoxGeometry(1, 1, 1);
-    const shaft = (parent, r, len, z, s, mat = boneMat) => {
+    // ...and the same argument for the FLESH, which was still building six
+    // unique geometries per digit — sixty across ten fingers, in a game whose
+    // mirror act sat at 1449 against a 1500 gate. One capsule and one ball
+    // scaled per-mesh serve every segment, knuckle and pad; the nail borrows
+    // BLOCK. A capsule scaled unevenly is an ellipsoid-capped shaft, which is
+    // what a phalanx is, and scaling width and height differently is how a
+    // finger stops having a circular cross-section — which is most of what
+    // "sausages" means.
+    const FSEG = new THREE.CapsuleGeometry(0.01, 0.03, 4, 10);
+    const FBALL = new THREE.SphereGeometry(0.01, 10, 8);
+    const shaft = (parent, r, len, z, s, mat = boneMat, droop = 0) => {
       const m = bony(new THREE.Mesh(SHAFT, mat));
-      m.rotation.x = Math.PI / 2;
+      m.rotation.x = Math.PI / 2 + droop;
       m.position.z = z * s;
       m.scale.set((r / 0.006) * s, (len / 0.03) * s, (r / 0.006) * s);
       parent.add(m);
@@ -363,53 +373,70 @@ export class Skull {
       return m;
     };
 
-    const mkFinger = (parent, x, y, z, scale, yaw) => {
+    // A finger segment from the shared capsule. `droop` is a constant tilt
+    // baked into the MESH and never into k1/k2 — update() ASSIGNS their
+    // rotation.x every frame and would erase anything left on the group.
+    const seg = (parent, r, len, z, s, droop = 0) => {
+      const m = fleshy(new THREE.Mesh(FSEG, skin));
+      m.rotation.x = Math.PI / 2 + droop;
+      m.position.z = z * s;
+      const k = (r / 0.01) * s;
+      // wider than tall: a finger's cross-section is an ellipse, and a round
+      // one at this camera distance is the whole sausage read
+      m.scale.set(k * 1.05, (len / 0.03) * s, k * 0.82);
+      parent.add(m);
+      return m;
+    };
+    const ball = (parent, r, y, z, s, mat, sx, sy, sz) => {
+      const m = fleshy(new THREE.Mesh(FBALL, mat));
+      m.position.set(0, y * s, z * s);
+      const k = (r / 0.01) * s;
+      m.scale.set(k * sx, k * sy, k * sz);
+      parent.add(m);
+      return m;
+    };
+
+    // proportions: proximal 0.0145 -> 0.0100 puts a 39 mm finger on screen at
+    // 27, which is human; the taper across the three segments goes from 24% to
+    // 34%. The LENGTHS are untouched — they were never the problem.
+    const mkFinger = (parent, x, y, z, scale, yaw, droop = 0, knuckle = 1) => {
       const k1 = new THREE.Group();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
       // proximal: fattest, sunk into the palm so no gap shows
-      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0145 * scale, 0.03 * scale, 4, 10), skin);
-      s1.rotation.x = Math.PI / 2;
-      s1.position.z = 0.02 * scale;
-      k1.add(s1);
-      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.0122 * scale, 10, 8), crease);
-      kn.position.z = 0.046 * scale;
-      kn.scale.set(1, 0.9, 0.85);
-      k1.add(kn);
+      const s1 = seg(k1, 0.0100, 0.03, 0.02, scale, droop);
+      // the knuckles are the "this is a hand" tell at this distance, so no two
+      // of them stand equally proud
+      const kn = ball(k1, 0.0122 * knuckle, 0.0012, 0.046, scale, crease, 1, 0.9, 0.85);
       const k2 = new THREE.Group();
       k2.position.set(0, 0, 0.048 * scale);
       // middle phalanx
-      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 * scale, 0.024 * scale, 4, 10), skin);
-      s2.rotation.x = Math.PI / 2;
-      s2.position.z = 0.018 * scale;
-      k2.add(s2);
+      const s2 = seg(k2, 0.0080, 0.024, 0.018, scale, droop * 0.6);
       // distal: a static curl off k2 — pad, slight inward bend, nail on top
       const d = new THREE.Group();
       d.position.set(0, -0.001, 0.0335 * scale);
       d.rotation.x = -0.35;
-      const s3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.016 * scale, 4, 10), skin);
-      s3.rotation.x = Math.PI / 2;
-      s3.position.z = 0.012 * scale;
-      d.add(s3);
-      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.0105 * scale, 10, 8), skin);
-      pad.position.set(0, -0.002, 0.024 * scale);
-      pad.scale.set(1, 0.85, 1);
-      d.add(pad);
-      const nail = new THREE.Mesh(new THREE.BoxGeometry(0.0115 * scale, 0.0022, 0.014 * scale), nailMat);
-      nail.position.set(0, 0.0085 * scale, 0.02 * scale);
-      nail.rotation.x = 0.18;
+      const s3 = seg(d, 0.0066, 0.016, 0.012, scale);
+      const pad = ball(d, 0.0084, -0.002, 0.024, scale, skin, 1, 0.85, 1);
+      const nail = fleshy(new THREE.Mesh(BLOCK, nailMat));
+      // narrower than the fingertip it sits on, and no two quite square to it
+      nail.scale.set(0.0110 * scale * 0.8, 0.0022, 0.014 * scale);
+      nail.position.set(0, 0.0072 * scale, 0.02 * scale);
+      nail.rotation.set(0.18, droop * 1.6, 0);
       d.add(nail);
       k2.add(d);
       k1.add(k2);
       parent.add(k1);
-      for (const m of [s1, kn, s2, s3, pad, nail]) fleshy(m);
       // the same finger in bone: three shafts, a knuckle and a joint, and a
-      // flared tuft where a fingertip has no pad to hide behind
-      shaft(k1, 0.0066, 0.032, 0.021, scale);
-      condyle(k1, 0.0102, 0.047, scale);
-      shaft(k2, 0.0057, 0.025, 0.018, scale);
-      condyle(k2, 0.0086, 0.0335, scale);
-      shaft(d, 0.0046, 0.015, 0.012, scale);
+      // flared tuft where a fingertip has no pad to hide behind. The shaft
+      // radii were already under the OLD flesh; they have to stay under the
+      // new, thinner flesh too, so they come in with it — and they take the
+      // same droop, or the bone hand walks out of the skin at the knuckles.
+      shaft(k1, 0.0050, 0.032, 0.021, scale, boneMat, droop);
+      condyle(k1, 0.0078, 0.047, scale);
+      shaft(k2, 0.0042, 0.025, 0.018, scale, boneMat, droop * 0.6);
+      condyle(k2, 0.0064, 0.0335, scale);
+      shaft(d, 0.0034, 0.015, 0.012, scale, boneMat);
       const tuft = bony(new THREE.Mesh(JOINT, boneMat));
       tuft.position.set(0, 0, 0.0245 * scale);
       const tk = 0.62 * scale;
@@ -431,7 +458,9 @@ export class Skull {
       // webbing: flesh across the finger bases so they grow FROM the hand
       const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), skin);
       web.position.set(0, 0.004, 0.058);
-      web.scale.set(2.05, 0.62, 0.7);
+      // narrower, because the roots are: at 2.05 the web now overhung the
+      // outer fingers by several millimetres of bare flesh
+      web.scale.set(1.75, 0.62, 0.7);
       hand.add(web);
       fleshy(palm); fleshy(heel); fleshy(web);
       // and the hand under the hand: a carpal block and a fan of four
@@ -443,7 +472,9 @@ export class Skull {
       carpal.scale.set(0.062, 0.019, 0.036);
       hand.add(carpal);
       for (let i = 0; i < 4; i++) {
-        const tipX = (i - 1.5) * 0.028, tipZ = 0.062;
+        // the metacarpal fan follows the finger roots to their new spacing,
+        // or the bone hand reaches out to where the fingers used to be
+        const tipX = [-0.0355, -0.0120, 0.0125, 0.0355][i], tipZ = 0.062;
         const rootX = (i - 1.5) * 0.0125, rootZ = -0.014;
         const mc = bony(new THREE.Mesh(SHAFT, boneMat));
         mc.position.set((tipX + rootX) / 2, 0.003, (tipZ + rootZ) / 2);
@@ -472,14 +503,39 @@ export class Skull {
       const rootArc = side < 0
         ? [-0.004, 0.001, 0.003, 0.0]
         : [0.0, 0.003, 0.001, -0.004];
+      // EVENNESS IS THE OTHER HALF OF "SAUSAGES". Four digits at one spacing,
+      // one yaw step and one girth read as a row of organ pipes however well
+      // each is modelled — so nothing below is a multiple of anything.
+      //
+      // Roots: a uniform 0.028 step spanned 84 mm, which was already wide and
+      // reads splayed once the fingers are thin. These are accumulated from
+      // uneven gaps and span 71.
+      const rootX = [-0.0355, -0.0120, 0.0125, 0.0355];
+      // Yaw: was (i-1.5) x 0.105, a perfect fan. The pinky splays, the ring is
+      // nearly straight, the index comes out a touch. Mirrored the same way the
+      // scales are, so the index stays nearest each thumb.
+      const yawFan = side < 0
+        ? [-0.168, -0.052, 0.028, 0.126]     // pinky, ring, middle, index
+        : [-0.126, -0.028, 0.052, 0.168];    // index, middle, ring, pinky
+      // Droop: a few degrees of tilt baked into the meshes inside k1/k2 (never
+      // the groups — update() assigns their rotation.x outright).
+      const droopSet = side < 0
+        ? [0.085, 0.032, 0.048, 0.06]
+        : [0.06, 0.048, 0.032, 0.085];
+      // and which knuckle sits proudest
+      const knuckleSet = side < 0
+        ? [0.78, 0.92, 1.15, 1.0]
+        : [1.0, 1.15, 0.92, 0.78];
       for (let i = 0; i < 4; i++) {
         const f = mkFinger(
           hand,
-          (i - 1.5) * 0.028,
-          0.006,
+          rootX[i],
+          0.006 + (i & 1 ? 0.0012 : -0.0009),
           0.062 + rootArc[i],
           fingerScale[i],
-          (i - 1.5) * 0.105,
+          yawFan[i],
+          droopSet[i],
+          knuckleSet[i],
         );
         f.phase = i * 0.9;
         this._fingers.push(f);
