@@ -2795,6 +2795,12 @@ function buildOssuaryRoute(game) {
       this.exitT = 0;
       this.entryLid = { t: 0, open: false, moving: false };
       this.exitLid = { t: 0, open: false, moving: false };
+      // a reset must never leave a press queued: a restore that seats a lid
+      // open would otherwise take the player down the instant it lands
+      this._descendOnOpen = false;
+      this._ascendOnOpen = false;
+      this._pendingDescend = false;
+      this._pendingAscend = false;
       surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
       surfaceSlab.rotation.x = 0;
       surfacePit.visible = false;
@@ -2850,6 +2856,9 @@ function buildOssuaryRoute(game) {
     if (!state.inOssuary) return;
     if (!state.exitLid.open && !state.exitLid.moving) {
       state.exitLid.moving = true;
+      // and the way out obeys the same rule, because "everything you can open
+      // should kind of work the same way" is his and it is older than this note
+      state._ascendOnOpen = true;
       const here = new THREE.Vector3(OX, FLOOR + 1.0, OZ);
       game.audio.stoneGrind({ pos: here, gain: 0.82, rate: 0.62 });
       game.after(0.5, () => game.audio.creak({ pos: here, gain: 0.45, rate: 0.8 }));
@@ -2966,6 +2975,15 @@ function buildOssuaryRoute(game) {
     }
     if (!state.entryLid.open && !state.entryLid.moving) {
       state.entryLid.moving = true;
+      // HIS NOTE, 2026-08-18: "to enter that mausoleum it shouldn't be that the
+      // hatch opens into a hole. it should bring you down when you hit E on
+      // it." It used to be one verb with two answers — the first press took the
+      // stone off, the second took you down — and that reads as a hatch that
+      // opens onto a hole you then have to ask about again. One press does both
+      // now: the stone slides, and the descent fires the moment it is clear.
+      // The lid still takes its ~0.9 s, so the stone is never skipped; it is
+      // the second PRESS that is gone, not the opening.
+      state._descendOnOpen = true;
       game.audio.stoneGrind({ pos: throatAt, gain: 0.82, rate: 0.62 });
       game.after(0.55, () => game.audio.creak({ pos: throatAt, gain: 0.45, rate: 0.78 }));
       game.after(0.95, () => game.audio.metalDrop({ pos: throatAt, gain: 0.5, rate: 0.6 }));
@@ -3101,9 +3119,22 @@ function buildOssuaryRoute(game) {
     surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.72;
     surfaceSlab.rotation.x = -state.slabT * 0.42;
 
+    // ONE PRESS. The stone opening is not the answer to the verb, it is the
+    // first half of it — the descent fires as soon as the way is genuinely
+    // clear. doDescendOssuary re-checks the stance and the skull, so stepping
+    // away or throwing it in the meantime simply drops the intent.
+    if (eLid.open && state._descendOnOpen) {
+      state._descendOnOpen = false;
+      if (!state.inOssuary) state._pendingDescend = true;
+    }
+
     const xLid = state.exitLid;
     xLid.t += ((xLid.moving ? 1 : 0) - xLid.t) * Math.min(1, dt * 1.1);
     xLid.open = xLid.t > 0.98;
+    if (xLid.open && state._ascendOnOpen) {
+      state._ascendOnOpen = false;
+      if (state.inOssuary) state._pendingAscend = true;
+    }
     exitLidPivot.position.y = FLOOR + 0.95 - smoothstep(0, 1, xLid.t) * 1.98;
     // the aperture stops being a wall only once the panel is genuinely clear —
     // the exit slab's law, and Door's. Opening the collider while the stone

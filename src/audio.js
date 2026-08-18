@@ -87,6 +87,26 @@ export class GameAudio {
     this.ctx = ctx;
     if (ctx.state === 'suspended') ctx.resume();
 
+    // THE WATCHDOG. His report, 2026-08-18: "a major sound problem in the next
+    // area that triggers loud sound until it just stops playing sound."
+    //
+    // The second half of that is a state a browser can put us in on its own —
+    // Chrome suspends an AudioContext under CPU or memory pressure, and once
+    // suspended FETCH is silent for the rest of the run with no way back,
+    // because init() is the only thing that ever resumed it and init() only
+    // runs once. Whatever causes the loud part, silence must not be permanent.
+    // Nothing here masks a bug: _voiceStats records every intervention so the
+    // next occurrence reports itself instead of being guessed at.
+    this._voices = 0;
+    this._peakVoices = 0;
+    this._droppedVoices = 0;
+    this._resumes = 0;
+    ctx.addEventListener?.('statechange', () => {
+      if (ctx.state === 'running' || ctx.state === 'closed') return;
+      this._resumes++;
+      ctx.resume?.().catch?.(() => {});
+    });
+
     // master bus
     this.master = ctx.createGain(); this.master.gain.value = 0.9;
     this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 7500;
@@ -762,8 +782,22 @@ export class GameAudio {
   }
 
   // one-shot buffer player; verb send is post-envelope/post-panner, never raw source
+  // No more than this many one-shot voices at once. Normal play measures 0-2
+  // live sources plus a handful of one-shots (tools/probe-audio-live.mjs), so
+  // this ceiling is never met by the game working; it is only ever met by the
+  // game misbehaving, and when it is, the result is a dropped sound instead of
+  // a graph that gets louder until the context gives up.
+  static VOICE_CAP = 40;
+
   _play(buf, { pos = null, gain = 1, rate = 1, when = 0, verb = 0.3, dest = null } = {}) {
     if (!this._ready) return null;
+    if (this._voices >= GameAudio.VOICE_CAP) {
+      this._droppedVoices = (this._droppedVoices || 0) + 1;
+      if (this._droppedVoices === 1) {
+        console.warn('[FETCH audio] voice cap hit — dropping one-shots. Something is calling far more sound than play produces; see tools/probe-audio-live.mjs.');
+      }
+      return null;
+    }
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
     src.buffer = buf; src.playbackRate.value = rate;
@@ -774,8 +808,28 @@ export class GameAudio {
     tail.connect(dest || this.master);
     if (verb > 0) { vs = ctx.createGain(); vs.gain.value = verb; tail.connect(vs).connect(this.verbBus); }
     src.start(ctx.currentTime + when);
-    src.onended = () => { try { src.disconnect(); g.disconnect(); tail.disconnect(); if (vs) vs.disconnect(); } catch {} };
+    this._voices++;
+    if (this._voices > this._peakVoices) this._peakVoices = this._voices;
+    src.onended = () => {
+      this._voices = Math.max(0, this._voices - 1);
+      try { src.disconnect(); g.disconnect(); tail.disconnect(); if (vs) vs.disconnect(); } catch {}
+    };
     return src;
+  }
+
+  // What the audio engine has actually been doing. Read it after a session
+  // that went wrong: droppedVoices > 0 means something stormed the mixer, and
+  // resumes > 0 means the browser suspended us and the watchdog caught it.
+  voiceStats() {
+    return {
+      ready: !!this._ready,
+      state: this.ctx?.state ?? 'none',
+      voices: this._voices | 0,
+      peakVoices: this._peakVoices | 0,
+      droppedVoices: this._droppedVoices | 0,
+      resumes: this._resumes | 0,
+      cap: GameAudio.VOICE_CAP,
+    };
   }
 
   // output bus for live-synthesized one-shots: voices connect (post their own
