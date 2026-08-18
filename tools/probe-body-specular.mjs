@@ -12,17 +12,20 @@
 // If black albedo still renders bright, the cloth needs to stop being
 // MeshStandard, not get darker.
 //
-//   node tools/probe-body-specular.mjs
+//   node tools/probe-body-specular.mjs [body1|car]
 import { ensureServer, launchBrowser, openPage, URL_BASE } from '../tests/lib/harness.mjs';
 
-const POSE = [0.2, 20.2, 0.2, 0.1, 22.4];   // 07, standing over a body
+const TARGET = process.argv[2] ?? 'body1';
+ const POSE = TARGET === 'car'
+  ? [-12.2, 14.5, -9, 0.9, 14]              // 04, standing beside the wreck
+  : [0.2, 20.2, 0.2, 0.1, 22.4];            // 07, standing over a body
 
 const server = await ensureServer();
 const browser = await launchBrowser();
 try {
   const { page, errors } = await openPage(browser, `${URL_BASE}/?test=1&mute=1`);
   await page.waitForFunction(() => window.__FETCH?.ready === true, null, { timeout: 120000, polling: 100 });
-  const out = await page.evaluate(async (pose) => {
+  const out = await page.evaluate(async ({ pose, target }) => {
     const F = window.__FETCH, g = window.__game;
     F.start();
     F.teleport('graveyard');
@@ -62,8 +65,8 @@ try {
       return prev;
     };
 
-    const body = (g.graveBodies || [])[1];
-    if (!body) return { error: 'no body' };
+    const body = target === 'car' ? g.graveCar : (g.graveBodies || [])[1];
+    if (!body) return { error: 'no target' };
     // the two biggest cloth surfaces, by the attribution pass
     const targets = body.children.filter((c) => c.material?.isMeshStandardMaterial
       && c.material.color && c.visible);
@@ -115,7 +118,7 @@ try {
       })),
       asIs, black, blackRough, roughOnly,
     };
-  }, POSE);
+  }, { pose: POSE, target: TARGET });
 
   if (out.error) console.log('ERROR', out);
   else {

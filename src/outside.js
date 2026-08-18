@@ -3513,7 +3513,6 @@ function buildWreckedCar(game) {
   // #b08c6a: chroma 3.0 down to 2.0, same job, and rust that announces itself
   // by being orange is announcing itself in the one channel he cannot read.
   rust.color.setHex(0x9c8570);
-  rust.roughness = 0.95;
   // Glass that has stood outside for years is not a mirror. Rough it right up
   // and drop the transmission — a clean 0.12-roughness pane was catching the
   // moon like a showroom and was the brightest thing on the whole wreck.

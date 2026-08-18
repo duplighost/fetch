@@ -1007,7 +1007,17 @@ export function makeMaterials() {
   // Sooty cast iron is nearly matte, and matte is what lets the map be seen.
   M.machine      = std({ ...bump(T(512, 512, 32, machineIronPaint, 3, 1), 0.42), roughness: 0.95, metalness: 0.0 });
   // The wreck. Extrude UVs run in world units, so repeat 1 is one metre a tile.
-  M.carPaint     = std({ ...bump(T(512, 512, 33, carPaintPaint, 1, 1), 0.20), roughness: 0.93, metalness: 0.0 });
+  //
+  // Lambert, for the boiler's reason and the graveyard bodies' reason, measured
+  // a third time on this surface: set this map to pure black and 52% of what
+  // you see on the car is still there (tools/probe-body-specular.mjs). At
+  // roughness 0.93 there was no gloss left to want — what the specular term was
+  // contributing was a broad white wash from a point light, in a game with no
+  // environment map, over paint the painter above describes as chalked and
+  // clear-coat-failed. That wash is most of "the car reads as an unpainted
+  // plastic model". Lambert carries the bumpMap per-fragment in r161, so the
+  // panel relief this map was authored for survives the change.
+  M.carPaint     = lam(bump(T(512, 512, 33, carPaintPaint, 1, 1), 0.20));
   M.headstone    = lam(bump(T(256, 256, 24, headstonePaint), 0.14));
   M.rock         = std({ ...bump(T(256, 256, 25, rockPaint, 2, 2), 0.26), roughness: 0.6, metalness: 0.05 });
   M.curtain      = lam({ map: T(256, 256, 26, curtainPaint), side: THREE.DoubleSide });
