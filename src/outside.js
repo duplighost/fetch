@@ -375,6 +375,17 @@ function buildGraveyardLandmarks(game) {
     roof.scale.z = 0.82;
     const darkness = add(new THREE.PlaneGeometry(1.04, 2.05), voidMat, 0, 1.18, -1.735);
     darkness.rotation.y = mirror < 0 ? Math.PI : 0;
+    // the seal and the funeral flip this plane's visibility at runtime, so it
+    // is the one piece of the building that cannot be baked into the shell
+    darkness.userData.noBatch = true;
+    // Nine meshes for a box with a hat. The pair cost eighteen draws in a
+    // district that looks south into 1203 of them; batched they cost four, and
+    // nothing here ever moves independently except the doorway above.
+    // enemies.js used to recognise a hollow room by counting a group's
+    // children (>= 6); after the merge there are two, so the identity moves
+    // onto an explicit flag and matches exactly the same two groups.
+    g.userData.mausoleumRoom = true;
+    batchStaticGroup(g, 'mausoleum');
     scene.add(g);
     if (x < 0) game.ritualMausoleum = { group: g, darkness, x, z };
     else game.sealedMausoleum = { group: g, darkness, x, z };
@@ -4217,12 +4228,20 @@ export class Forest {
     // house and graveyard props no longer need to submit hundreds of draws
     // whenever the player turns south in the forest.
     const lookback = new Set(game.graveyardLookbackRoots || []);
+    // The house's interior belongs to syncHouseInteriorCulling from the moment
+    // the player leaves the building, which is earlier and stricter than this
+    // culler's gate line. Exactly one culler owns a root, or the two save/
+    // restore maps fight and something comes back on that should not.
+    const interior = new Set(game.houseInteriorRoots || []);
     this.backDistrictRoots = [
       ...(game.houseRenderRoots || []),
       ...(game.graveyardRenderRoots || []),
-    ].filter((root) => !lookback.has(root));
+    ].filter((root) => !lookback.has(root) && !interior.has(root));
     this.backDistrictVisibility = new Map();
     this.backDistrictCullActive = false;
+    this.houseInteriorRoots = game.houseInteriorRoots || [];
+    this.houseInteriorVisibility = new Map();
+    this.houseInteriorCullActive = false;
 
     // NOTE: the forest zone/surface are registered in buildOutside AFTER the
     // clearing and cave, so their tighter rects win the first-match scan.
@@ -5920,6 +5939,48 @@ export class Forest {
       if (root.parent === this.game.scene) root.visible = visible;
     }
     this.backDistrictVisibility.clear();
+  }
+
+  // The furnished house, hidden the moment the player is no longer standing in
+  // it. Its silhouette is world-shell geometry and survives untouched; what
+  // goes is every chair, fixture and mechanism the graveyard was rendering
+  // through a wall. Measured: the south view falls from 1203 draws to 671
+  // without changing a single pixel (tools/shot-cull-audit.mjs).
+  //
+  // Same save/restore shape as syncBackDistrictCulling, and the same parent
+  // check for the same reason: pinned lights live under world.lightRoot and no
+  // culler may ever touch one.
+  syncHouseInteriorCulling() {
+    const act = this.game.act;
+    const inside = act === 'bedroom' || act === 'house' || act === 'basement';
+    if (!inside) {
+      // Capture the authored state once, on the way out...
+      if (!this.houseInteriorCullActive) {
+        this.houseInteriorCullActive = true;
+        this.houseInteriorVisibility.clear();
+        for (const root of this.houseInteriorRoots) {
+          if (root.parent !== this.game.scene) continue;
+          this.houseInteriorVisibility.set(root, root.visible);
+        }
+      }
+      // ...then hold it down every frame, because the house does not stop
+      // running when you walk out of it. The crawl-space counterweight writes
+      // `visible` on its cable and its four links from a ticker on every
+      // frame of the game, whatever act you are in, and a one-shot hide loses
+      // to it five draws at a time. Re-asserting is also self-correcting: any
+      // mechanism that owns a visibility bit recomputes it on the first frame
+      // after the restore below, so nothing can come back stale.
+      for (const root of this.houseInteriorRoots) {
+        if (root.visible && root.parent === this.game.scene) root.visible = false;
+      }
+      return;
+    }
+    if (!this.houseInteriorCullActive) return;
+    this.houseInteriorCullActive = false;
+    for (const [root, visible] of this.houseInteriorVisibility) {
+      if (root.parent === this.game.scene) root.visible = visible;
+    }
+    this.houseInteriorVisibility.clear();
   }
 
   update(dt) {

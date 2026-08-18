@@ -273,14 +273,20 @@ export class Mirrors {
 
     const r = this.renderer;
     const prevTarget = r.getRenderTarget();
-    scope.visible = false; // a pane must not appear in its own reflection
+    // A pane must not appear in its own reflection — but put back what was
+    // there, not an unconditional `true`. A district culler is allowed to have
+    // hidden this pane (the foyer photograph is a house render root, and the
+    // graveyard hides the house's interior), and restoring it to visible here
+    // handed one draw back every frame from the far side of the map.
+    const wasVisible = scope.visible;
+    scope.visible = false;
     try {
       r.setRenderTarget(rt);
       r.clear();
       r.render(scene, vc);
     } finally {
       r.setRenderTarget(prevTarget);
-      scope.visible = true;
+      scope.visible = wasVisible;
     }
     return true;
   }

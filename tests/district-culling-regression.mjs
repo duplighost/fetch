@@ -151,6 +151,60 @@ try {
       { ...graveArrival, caveDressAtGrave, ceiling: 450 },
     );
 
+    // THE HOUSE'S INTERIOR IS OFF OUT HERE, AND COMES BACK EXACTLY.
+    //
+    // The building's silhouette is world-shell geometry and is not in this set
+    // at all; what is in it is the furniture, the fixtures and the mechanisms
+    // the yard was rendering straight through a wall. Two properties, and the
+    // second is the dangerous one: hidden while outside, and restored bit for
+    // bit on return — a culler that restores `false` leaves the player walking
+    // back into an empty house.
+    const interiorRoots = g.houseInteriorRoots || [];
+    const interiorVisibleOutside = interiorRoots.filter((root) => root.visible).map((root) => ({
+      label: label(root),
+      children: root.children.map((child) => label(child)).slice(0, 6),
+      at: root.position.toArray().map(round),
+    }));
+    const interiorHoldsNoLight = interiorRoots.every((root) => {
+      let lights = 0;
+      root.traverse((o) => { if (o.isLight) lights++; });
+      return lights === 0 && !root.isLight;
+    });
+    const backDistrictOwnsNone = !forest.backDistrictRoots.some((root) => interiorRoots.includes(root));
+    check(
+      'the graveyard hides the house interior, owns it alone, and never hides a light with it',
+      interiorRoots.length > 200
+        && interiorVisibleOutside.length === 0
+        && interiorHoldsNoLight
+        && backDistrictOwnsNone,
+      {
+        interiorRoots: interiorRoots.length,
+        stillVisible: interiorVisibleOutside.slice(0, 6),
+        interiorHoldsNoLight,
+        backDistrictOwnsNone,
+        backDistrictRoots: forest.backDistrictRoots.length,
+      },
+    );
+    const backInside = enter('house');
+    const interiorRestoreDiff = visibilityDiff(houseSnapshot)
+      .filter((entry) => entry.endsWith(':false->true') || entry.endsWith(':true->false'));
+    check(
+      'walking back into the house restores every interior visibility bit exactly',
+      backInside.act === 'house'
+        && interiorRestoreDiff.length === 0
+        && interiorRoots.some((root) => root.visible)
+        && backInside.drawCalls > 0 && backInside.drawCalls < 450,
+      { ...backInside, restoreDiff: interiorRestoreDiff.slice(0, 8), ceiling: 450 },
+    );
+    const graveAgain = enter('graveyard');
+    check(
+      'and leaving again hides it again',
+      graveAgain.act === 'graveyard'
+        && interiorRoots.every((root) => !root.visible)
+        && graveAgain.drawCalls > 0 && graveAgain.drawCalls < 450,
+      { ...graveAgain, ceiling: 450 },
+    );
+
     g.player.pos.z = 32;
     g.player.pos.y = g.world.groundHeightAt(g.player.pos.x, g.player.pos.z, 3);
     g.player._sync(0);
@@ -364,8 +418,20 @@ try {
         && ossuaryAfter.drawCalls > 0 && ossuaryAfter.drawCalls < 450,
       { ...ossuaryAfter, ceiling: 450 },
     );
-    // ...and the pre-existing southward cost, measured and recorded so it can
-    // never quietly get worse without somebody reading a number.
+    // ...and the southward cost, which is no longer merely recorded.
+    //
+    // It was 1133 here (and 1203 at the worst yard pose) against a 450 ceiling,
+    // because nothing hid the furnished house while the player stood in the
+    // graveyard: walls occlude nothing in three.js, so the frustum took every
+    // chair and fixture in the building. syncHouseInteriorCulling now hides the
+    // house's interior roots from the moment the player leaves it, measured
+    // root-by-root against the pixels (tools/shot-cull-audit.mjs) so the
+    // building's silhouette — which lives in the world static shell, not in
+    // these roots — is untouched. Southward fell to 283: cheaper than north.
+    //
+    // Asserted against the district ceiling, because a culler that quietly
+    // stops engaging puts this straight back over 1100 and that is exactly the
+    // regression this line exists to catch.
     g.player.pos.set(-8, 0.04, 20);
     g.player.yaw = 0;
     g.player._sync(0);
@@ -376,11 +442,12 @@ try {
     g.player._sync(0);
     F.step(1 / 120, 1, false);
     g.render();
+    const northward = g.lastRender.drawCalls;
     check(
-      'RECORDED, NOT ASSERTED: the graveyard costs far more looking south than north',
-      true,
-      { southward, northward: g.lastRender.drawCalls, ceiling: 450,
-        note: 'pre-existing; every pose this file sampled faced north. See HANDOFF.' },
+      'the graveyard looking south stays under the district ceiling',
+      southward > 0 && southward < 450,
+      { southward, northward, ceiling: 450,
+        note: 'was 1133 before the house-interior culler; every pose this file used to sample faced north.' },
     );
 
     // THE MARROW: the third sealed district obeys the same law — occupied,

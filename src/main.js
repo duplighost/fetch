@@ -182,6 +182,7 @@ class Game {
     // forest can retire that finished chapter when the player crosses the
     // graveyard gate, including when they immediately look back.
     this.houseRenderRoots = this.scene.children.slice(houseRenderStart);
+    this.houseInteriorRoots = this._findHouseInteriorRoots();
     buildOutside(this);
     this.atmosphere = buildAtmosphere(this);
     this.finale = new Finale(this);
@@ -290,6 +291,46 @@ class Game {
     this._buildGrain();
     this._exposeDebug();
     this._scheduleShaderWarmup();
+  }
+
+  // Which of the house's render roots can the graveyard actually SEE?
+  //
+  // Standing mid-yard and looking south submitted 1203 draw calls against a
+  // 450 ceiling and not one of them was the graveyard: walls occlude nothing
+  // in three.js, so the far plane held the entire furnished house and the
+  // frustum took the lot. What SHOULD survive is the building's silhouette —
+  // the player is meant to see the house standing behind them, and the arrival
+  // reads against that shape — but the silhouette is not in here at all: the
+  // exterior walls are world.box geometry, merged into the static shell by
+  // finishStatic(). These roots are the furniture, the fixtures and the
+  // mechanisms, plus the handful of pieces that stand proud of the roofline.
+  //
+  // tools/shot-cull-audit.mjs measured all 453 of them the only honest way —
+  // hide one, render, pixel-diff, restore — at five graveyard poses plus two
+  // deliberate look-backs at the house. Exactly eleven changed a pixel by more
+  // than 3/765, and every one of them reaches above the eaves on the
+  // graveyard-facing side. So that is the rule, with margin, rather than a
+  // list of 420 array indices that would rot the first time someone adds a
+  // chair: a root that stays below y 5.5 or behind z 5.5 is interior.
+  //
+  // Roots with no geometry at all (the three house PointLights) never qualify:
+  // the visible light count keys every shader program in the game and hiding
+  // one mid-play is the round-five freeze born again.
+  _findHouseInteriorRoots() {
+    const EAVES_Y = 5.5, YARD_FACE_Z = 5.5;
+    const box = new THREE.Box3();
+    // The basement's dropcloths hide one real walker, spawned during the house
+    // build, so an enemy mesh is sitting in this array. Nothing that can move,
+    // chase or be fought belongs in a static culling ledger at any price.
+    const enemyMeshes = new Set((this.enemies?.list || []).map((e) => e.mesh));
+    return this.houseRenderRoots.filter((root) => {
+      if (root.isLight || enemyMeshes.has(root)) return false;
+      root.updateWorldMatrix(true, true);
+      box.makeEmpty();
+      box.expandByObject(root);
+      if (box.isEmpty() || !Number.isFinite(box.max.y) || !Number.isFinite(box.max.z)) return false;
+      return !(box.max.y >= EAVES_Y && box.max.z >= YARD_FACE_Z);
+    });
   }
 
   // ---------------------------------------------------------------- setup
@@ -1436,6 +1477,12 @@ class Game {
     this.audio.update(dt, this.camera.position, this.camera);
 
     for (const t of this.tickers) t(dt, this.time);
+    // AFTER the tickers, deliberately. The house keeps running when you walk
+    // out of it — the crawl-space counterweight writes `visible` on its cable
+    // and links from a ticker every frame of the game — so a culler that ran
+    // with the other district cullers up in forest.update() got overwritten
+    // before the frame was drawn. This is the last word on visibility.
+    if (this.forest) this.forest.syncHouseInteriorCulling();
     this._updateGore(dt);
     for (const st of this.bridgeStones) {
       if (st.userData.rise && st.position.y < 0.12) st.position.y = Math.min(0.12, st.position.y + dt * 0.7);

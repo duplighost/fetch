@@ -3118,10 +3118,12 @@ export class Enemies {
 
   _graveMausoleumAt(pos) {
     // outside.js exposes the authored landmark groups. Identify the two hollow
-    // groups structurally instead of duplicating their coordinates here; pits
-    // are meshes and therefore cannot be mistaken for rooms.
+    // groups by the flag it sets on them instead of duplicating their
+    // coordinates here; pits are meshes and therefore cannot be mistaken for
+    // rooms. (The flag replaced a child count, which stopped telling the truth
+    // once the pair were batched down to two meshes each.)
     for (const landmark of this.game.graveLandmarks || []) {
-      if (!landmark.isGroup || landmark.children.length < 6) continue;
+      if (!landmark.isGroup || !landmark.userData.mausoleumRoom) continue;
       if (Math.abs(pos.x - landmark.position.x) < 1.38
         && pos.z > landmark.position.z - 1.34
         && pos.z < landmark.position.z + 1.38) return landmark;
