@@ -321,7 +321,11 @@ export class Skull {
     // top of the value order where it belongs.
     const skin = new THREE.MeshStandardMaterial({ color: 0x452e28, roughness: 0.97, metalness: 0 });
     const crease = new THREE.MeshStandardMaterial({ color: 0x36221d, roughness: 1.0, metalness: 0 });
-    const nailMat = new THREE.MeshStandardMaterial({ color: 0x503a33, roughness: 0.82, metalness: 0 });
+    // Nails now face the camera (they used to sit on the palm side, unseen), so
+    // their roughness is suddenly load-bearing: at 0.82 under a lamp this close
+    // they came back as pale chips of wood glued to the fingertips. A nail is
+    // only a shade lighter than the finger it caps, and barely glossier.
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x4a352e, roughness: 0.93, metalness: 0 });
     // held so the last room can change what they are made of
     this._handSkin = { skin, crease, nail: nailMat };
     const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
@@ -399,30 +403,55 @@ export class Skull {
     // proportions: proximal 0.0145 -> 0.0100 puts a 39 mm finger on screen at
     // 27, which is human; the taper across the three segments goes from 24% to
     // 34%. The LENGTHS are untouched — they were never the problem.
+    // BEADS ON A STRING was the read, and tools/probe-finger-profile.mjs says
+    // why in one column of numbers: the proximal capsule ENDED at 0.045 s and
+    // the middle one BEGAN at 0.046 s — butted end to end, never overlapping —
+    // so every finger had a waist at each joint, and the only thing hiding the
+    // seam was a knuckle ball 33% WIDER than the shaft it sat on. Capsule,
+    // bead, capsule, bead, capsule: a wooden artist's mannequin.
+    //
+    // A real finger is one continuous tube whose width barely changes at the
+    // joints. So the segments now overlap by a third of their length (the far
+    // cap of each sits INSIDE the near cap of the next, which is free — the
+    // hidden geometry costs nothing and the silhouette can no longer pinch),
+    // and the knuckles swell 12% instead of 33%, keeping the shaft's own
+    // elliptical cross-section so they read as bone under skin rather than as
+    // a ball threaded on a wire.
     const mkFinger = (parent, x, y, z, scale, yaw, droop = 0, knuckle = 1) => {
       const k1 = new THREE.Group();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
-      // proximal: fattest, sunk into the palm so no gap shows
-      const s1 = seg(k1, 0.0100, 0.03, 0.02, scale, droop);
-      // the knuckles are the "this is a hand" tell at this distance, so no two
-      // of them stand equally proud
-      const kn = ball(k1, 0.0122 * knuckle, 0.0012, 0.046, scale, crease, 1, 0.9, 0.85);
+      // proximal: fattest, sunk into the palm so no gap shows, and long enough
+      // that its far cap is buried inside the middle phalanx
+      const s1 = seg(k1, 0.0100, 0.036, 0.018, scale, droop);
+      // MCP knuckle. Same ellipse as the shaft, 12% bigger, and short: it is a
+      // swelling, not a joint sphere. No two stand equally proud, but the range
+      // is now millimetres rather than the third of a finger it used to be.
+      const kn = ball(k1, 0.0112 * knuckle, 0.0, 0.046, scale, crease, 1.05, 0.82, 0.72);
       const k2 = new THREE.Group();
-      k2.position.set(0, 0, 0.048 * scale);
-      // middle phalanx
-      const s2 = seg(k2, 0.0080, 0.024, 0.018, scale, droop * 0.6);
+      k2.position.set(0, 0, 0.042 * scale);
+      // middle phalanx — starts 15 mm (hold scale) behind where the proximal
+      // ends, so the two capsules interpenetrate instead of meeting
+      const s2 = seg(k2, 0.0085, 0.028, 0.014, scale, droop * 0.6);
+      // PIP knuckle: the one that actually shows on a curled finger, and the
+      // one this rig never had. It also covers the bone twin's condyle, which
+      // used to poke a fraction of a millimetre out of the old thin middle.
+      const kn2 = ball(k2, 0.0098 * knuckle, 0.0, 0.0335, scale, crease, 1.05, 0.82, 0.70);
       // distal: a static curl off k2 — pad, slight inward bend, nail on top
       const d = new THREE.Group();
-      d.position.set(0, -0.001, 0.0335 * scale);
+      d.position.set(0, -0.001, 0.034 * scale);
       d.rotation.x = -0.35;
-      const s3 = seg(d, 0.0066, 0.016, 0.012, scale);
-      const pad = ball(d, 0.0084, -0.002, 0.024, scale, skin, 1, 0.85, 1);
+      const s3 = seg(d, 0.0068, 0.020, 0.010, scale);
+      const pad = ball(d, 0.0080, 0.0016, 0.023, scale, skin, 1, 0.88, 1);
       const nail = fleshy(new THREE.Mesh(BLOCK, nailMat));
-      // narrower than the fingertip it sits on, and no two quite square to it
-      nail.scale.set(0.0110 * scale * 0.8, 0.0022, 0.014 * scale);
-      nail.position.set(0, 0.0072 * scale, 0.02 * scale);
-      nail.rotation.set(0.18, droop * 1.6, 0);
+      // narrower than the fingertip it sits on, and no two quite square to it.
+      // DORSAL, which is the side it was not on: the fingers curl toward local
+      // +y, so +y is the palm — and the nails were sitting on it, face down
+      // against the skull where the camera has never once seen them. Backs of
+      // the hands are what this cradle shows, and backs of hands have nails.
+      nail.scale.set(0.0104 * scale * 0.8, 0.0015, 0.0125 * scale);
+      nail.position.set(0, -0.0060 * scale, 0.019 * scale);
+      nail.rotation.set(-0.10, droop * 1.6, 0);
       d.add(nail);
       k2.add(d);
       k1.add(k2);
@@ -434,7 +463,7 @@ export class Skull {
       // same droop, or the bone hand walks out of the skin at the knuckles.
       shaft(k1, 0.0050, 0.032, 0.021, scale, boneMat, droop);
       condyle(k1, 0.0078, 0.047, scale);
-      shaft(k2, 0.0042, 0.025, 0.018, scale, boneMat, droop * 0.6);
+      shaft(k2, 0.0042, 0.025, 0.015, scale, boneMat, droop * 0.6);
       condyle(k2, 0.0064, 0.0335, scale);
       shaft(d, 0.0034, 0.015, 0.012, scale, boneMat);
       const tuft = bony(new THREE.Mesh(JOINT, boneMat));
@@ -522,10 +551,13 @@ export class Skull {
       const droopSet = side < 0
         ? [0.085, 0.032, 0.048, 0.06]
         : [0.06, 0.048, 0.032, 0.085];
-      // and which knuckle sits proudest
+      // and which knuckle sits proudest. The spread used to be 0.78 to 1.15,
+      // which was a third of a finger's width and read as four different-sized
+      // beads; now it modulates a 12% swelling, so it varies the knuckle line
+      // by a millimetre or two the way real ones do.
       const knuckleSet = side < 0
-        ? [0.78, 0.92, 1.15, 1.0]
-        : [1.0, 1.15, 0.92, 0.78];
+        ? [0.94, 1.0, 1.08, 1.03]
+        : [1.03, 1.08, 1.0, 0.94];
       for (let i = 0; i < 4; i++) {
         const f = mkFinger(
           hand,
