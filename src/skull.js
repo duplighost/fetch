@@ -442,7 +442,12 @@ export class Skull {
       d.position.set(0, -0.001, 0.034 * scale);
       d.rotation.x = -0.35;
       const s3 = seg(d, 0.0068, 0.020, 0.010, scale);
-      const pad = ball(d, 0.0080, 0.0016, 0.023, scale, skin, 1, 0.88, 1);
+      // THE PAD IS THE CONTACT. It is the one part of the hand pressed against
+      // the bone, and a pressed pad is in its own shadow -- so it takes the
+      // crease colour rather than the open-skin colour. Costs nothing (the
+      // mesh and the material both already existed) and it is what makes the
+      // fingertips read as touching rather than as ending near.
+      const pad = ball(d, 0.0080, 0.0016, 0.023, scale, crease, 1, 0.88, 1);
       const nail = fleshy(new THREE.Mesh(BLOCK, nailMat));
       // narrower than the fingertip it sits on, and no two quite square to it.
       // DORSAL, which is the side it was not on: the fingers curl toward local
@@ -476,20 +481,28 @@ export class Skull {
 
     this._fingers = [];
     const mkHand = (side) => {
+      // A HAND IS FLAT. This one was 116 mm across and 52 mm THICK -- the
+      // measurement that names what the frames had been showing since round
+      // two: not a hand with poor detail, a mitten. A real palm is about
+      // 90 mm across and 28 thick, and thickness is the number that decides
+      // whether the thing at the bottom of the screen reads as a hand or as a
+      // sock with fingers sewn on. (Calibration is the skull's own: it is
+      // 0.166 in hold space and a human cranium is ~145 mm, so a hold unit is
+      // 874 mm and every number here can be checked against a hand.)
       const hand = new THREE.Group();
       const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 14, 10), skin);
-      palm.scale.set(1.28, 0.58, 1.35);
+      palm.scale.set(1.03, 0.36, 1.22);          // 94 x 33 x 111 mm
       hand.add(palm);
       const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 8), skin);
       heel.position.set(0, -0.004, -0.04);
-      heel.scale.set(1.3, 0.65, 0.9);
+      heel.scale.set(1.06, 0.44, 0.92);          // the wrist, 63 x 26 mm
       hand.add(heel);
       // webbing: flesh across the finger bases so they grow FROM the hand
       const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), skin);
       web.position.set(0, 0.004, 0.058);
       // narrower, because the roots are: at 2.05 the web now overhung the
       // outer fingers by several millimetres of bare flesh
-      web.scale.set(1.75, 0.62, 0.7);
+      web.scale.set(1.60, 0.42, 0.72);
       hand.add(web);
       fleshy(palm); fleshy(heel); fleshy(web);
       // and the hand under the hand: a carpal block and a fan of four
@@ -543,9 +556,14 @@ export class Skull {
       // Yaw: was (i-1.5) x 0.105, a perfect fan. The pinky splays, the ring is
       // nearly straight, the index comes out a touch. Mirrored the same way the
       // scales are, so the index stays nearest each thumb.
+      // ...but the SPREAD came down by a third in round eight. Four fingers at
+      // 19 degrees of fan, laid on a skull, let the room show through between
+      // every pair, and four separated tubes with daylight between them read as
+      // a rake. Fingers on bone lie close enough to touch each other. The
+      // unevenness is what round seven was after and it is all still here.
       const yawFan = side < 0
-        ? [-0.168, -0.052, 0.028, 0.126]     // pinky, ring, middle, index
-        : [-0.126, -0.028, 0.052, 0.168];    // index, middle, ring, pinky
+        ? [-0.112, -0.034, 0.019, 0.084]     // pinky, ring, middle, index
+        : [-0.084, -0.019, 0.034, 0.112];    // index, middle, ring, pinky
       // Droop: a few degrees of tilt baked into the meshes inside k1/k2 (never
       // the groups — update() assigns their rotation.x outright).
       const droopSet = side < 0
@@ -589,7 +607,9 @@ export class Skull {
       thumb.phase = 4.2;
       thumb.thumb = true;
       this._fingers.push(thumb);
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.068, 0.24, 12), sleeveMat);
+      // and the cuff comes in with the wrist it sits on: a 91 mm sleeve mouth
+      // on a 63 mm wrist was most of what made the bottom of the frame a sock
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.062, 0.24, 12), sleeveMat);
       sleeve.position.set(0, -0.03, -0.15);
       sleeve.rotation.x = 1.3;
       hand.add(sleeve);
