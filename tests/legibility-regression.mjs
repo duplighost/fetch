@@ -159,7 +159,7 @@ const result = await page.evaluate(() => {
   // has to carry is sound and motion. Both are pinned here.
   const calls = [];
   const realCreak = g.audio.creak.bind(g.audio);
-  g.audio.creak = (opts = {}) => { calls.push({ ref: opts.ref ?? null, pos: opts.pos ? [opts.pos.x, opts.pos.z] : null }); return realCreak(opts); };
+  g.audio.creak = (opts = {}) => { calls.push({ ref: opts.ref ?? 2.4, roll: opts.roll ?? 1.5, pos: opts.pos ? [opts.pos.x, opts.pos.z] : null }); return realCreak(opts); };
   // Measure the motion where a player sees it: METRES travelled by the far end
   // of the limb. (The first cut sampled the arm quaternion's w, which for a
   // 0.14-radian swing moves by 0.0014 and says nothing a human could see.)
@@ -168,9 +168,20 @@ const result = await page.evaluate(() => {
   g.audio.creak = realCreak;
   let swingRange = 0;
   for (const a of swings) for (const b of swings) swingRange = Math.max(swingRange, a.distanceTo(b));
+  // What actually matters is not the reference distance, it is how much of the
+  // sound survives the thirty metres between the limb and where the player is
+  // standing when it falls. gain = (max(d, ref)/ref)^-roll is the panner's own
+  // exponential model; at the kit's default 2.4/1.5 this comes out at 0.023,
+  // which is why the crash written to be LOUD was never heard.
+  const carry = (d, ref, roll) => Math.pow(Math.max(d, ref) / ref, -roll);
   const announce = {
     calls: calls.length,
     ref: calls[0]?.ref ?? null,
+    roll: calls[0]?.roll ?? null,
+    carry30: calls.length ? +carry(30, calls[0].ref, calls[0].roll).toFixed(3) : 0,
+    nearFalloff: calls.length
+      ? +(carry(3, calls[0].ref, calls[0].roll) / carry(15, calls[0].ref, calls[0].roll)).toFixed(2)
+      : 1,
     atTheLimb: calls.every((c) => c.pos && Math.hypot(c.pos[0] - branch().x, c.pos[1] - branch().z) < 6),
     swingRange: +swingRange.toFixed(4),
   };
@@ -236,7 +247,8 @@ const a = result.announce;
 const announceChecks = [
   ['the limb keeps calling while it hangs unhit (3+ times in 30 s)', a.calls >= 3],
   ['it calls FROM the limb, so HRTF can point a head at it', a.atTheLimb],
-  ['it is allowed to carry: refDistance >= 12 m (the default 2.4 puts 30 m at 1/44 gain)', (a.ref ?? 0) >= 12],
+  ['it carries: a quarter of it survives the 30 m to where the player stands', a.carry30 >= 0.25],
+  ['and it still fades in the near field, so walking toward it reads as approach', a.nearFalloff >= 1.4],
   ['and it MOVES when it speaks: the far end travels 15 cm+', a.swingRange >= 0.15],
 ];
 console.log('');
@@ -244,7 +256,7 @@ for (const [name, ok] of announceChecks) {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}`);
   if (!ok) failures.push(name);
 }
-console.log(`        measured: ${a.calls} calls, ref ${a.ref} m, the limb's far end travels ${a.swingRange} m`);
+console.log(`        measured: ${a.calls} calls, ref ${a.ref} m / roll ${a.roll}, ${a.carry30} of source gain left at 30 m, ${a.nearFalloff}x louder at 3 m than 15 m, far end travels ${a.swingRange} m`);
 
 for (const [name, data] of Object.entries(result.shots || {})) {
   writeFileSync(shotPath(`legibility-${name}`), Buffer.from(String(data).split(',')[1], 'base64'));

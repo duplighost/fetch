@@ -2,7 +2,7 @@
 // every beat runs on accumulated dt so the whole game can be stepped by tests.
 // Scare law: dread first; teach a rule, break it once; silence is a weapon.
 import * as THREE from 'three';
-import { clamp, lerp, damp, smoothstep } from './util.js';
+import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
@@ -771,6 +771,25 @@ export class Director {
           const z = site[1] + Math.cos(i * 4.3 + a.wave) * 0.7;
           const e = g.enemies.spawn('walker', x, z, 'wind');
           e.graveArena = true;
+          // THE RING IS AUTHORED, NOT ROLLED.
+          //
+          // 2.399963 rad is the GOLDEN ANGLE, and the reason the old code used
+          // it was never that the spawn counter was a good source of variety —
+          // it was that consecutive integers times the golden angle are the
+          // most evenly spread set of angles that exists. That is what keeps a
+          // horde AROUND you instead of bunched on one side of you.
+          //
+          // Round ten cut the arena's dependence on the global spawn counter by
+          // hashing the spawn point instead. That fixed the coupling and threw
+          // away the spread with it: measured over these authored sites, the
+          // hash leaves a 222-degree hole in the ring at wave two and 154- and
+          // 120-degree holes at wave three, where the golden angle's worst gap
+          // is 85. So the wave says where each walker stands in the ring, out of
+          // its OWN index — the authored spread back, and still immune to
+          // whatever else happened to spawn earlier in the run.
+          const ringIndex = i + a.wave * 2;
+          e.orbitAngle = (ringIndex * 2.399963) % TAU;
+          e.orbitSign = ringIndex % 2 ? 1 : -1;
           e.graveRiseDur = 1.08;
           e.graveRiseT = e.graveRiseDur;
           e.windT = -i * 0.13;

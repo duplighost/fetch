@@ -21,6 +21,9 @@ const Q = new URLSearchParams(location.search);
 const TEST_MODE = Q.has('test') || Q.has('autotest');
 const HITCH_LOG = Q.has('hitch');
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// A first-draw batch costing more than this means the driver is doing work the
+// link poll could not see coming. See _warmDrawTick.
+const WARM_DRAW_SLOW_MS = 120;
 const _impV = new THREE.Vector3();
 const OCC_AXES = ['x', 'y', 'z'];   // slab-test order for the E-pick occlusion
 const VERSION = '0.5.0-intruder';
@@ -855,6 +858,7 @@ class Game {
   // district past the house, so warm what he walks into next, next.
   _warmDrawList() {
     const seen = new Set();
+    const pushed = new Set();
     const work = [];
     // The skull is the one thing that is NOT in the scene at boot: the opening
     // wakes you empty-handed and bootAbsent() takes its root out of every graph
@@ -873,7 +877,12 @@ class Game {
         const key = `${material.uuid}|${layout}|${kind}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        work.push(object);
+        // ONE ENTRY PER OBJECT, even when it carries several materials: three
+        // draws a multi-material mesh once per group, so a single draw warms
+        // all of them. Listing it twice was also a real bug — two entries in
+        // one batch made the second capture the frustumCulled the first had
+        // already set false, and restore it false forever.
+        if (!pushed.has(object)) { pushed.add(object); work.push(object); }
       }
     };
     for (const root of roots) root.traverse(collect);
@@ -895,7 +904,12 @@ class Game {
   _warmDrawable(object) {
     if (!(object.layers.mask & 1)) return false;
     if (object.isInstancedMesh && object.count === 0) return false;
-    for (let p = object; p; p = p.parent) if (!p.visible) return false;
+    let root = object;
+    for (let p = object; p; p = p.parent) { if (!p.visible) return false; root = p; }
+    // ...and it has to be IN the scene. The list deliberately includes the
+    // detached skull root, whose children would otherwise be called drawable,
+    // counted as drawn, and never rendered at all. Those want the proxy path.
+    if (root !== this.scene) return false;
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     return materials.every((m) => !m || m.visible !== false);
   }
@@ -903,10 +917,13 @@ class Game {
   _warmDrawProxy(object) {
     let proxy;
     if (object.isInstancedMesh) {
-      proxy = new THREE.InstancedMesh(object.geometry, object.material, Math.max(1, object.count || 1));
+      // ONE instance is all a warm draw needs, and asking for one is also all
+      // it allocates — the constructor sizes a Float32Array(count * 16) that
+      // the next line throws away for the shared buffer.
+      proxy = new THREE.InstancedMesh(object.geometry, object.material, 1);
       proxy.instanceMatrix = object.instanceMatrix;      // shared, never written
       if (object.instanceColor) proxy.instanceColor = object.instanceColor;
-      proxy.count = Math.max(1, object.count || 1);
+      proxy.count = 1;
     } else if (object.isSkinnedMesh) return null;        // needs its skeleton; it is on screen every frame anyway
     else if (object.isPoints) proxy = new THREE.Points(object.geometry, object.material);
     else if (object.isLineSegments) proxy = new THREE.LineSegments(object.geometry, object.material);
@@ -915,8 +932,11 @@ class Game {
     else proxy = new THREE.Mesh(object.geometry, object.material);
     proxy.frustumCulled = false;
     proxy.layers.mask = 1;
-    proxy.matrixAutoUpdate = false;
-    proxy.matrixWorld.copy(object.matrixWorld);
+    // It draws at the staging group's origin, not where the original stands,
+    // and that is fine — frustumCulled is off, so where it sits changes
+    // nothing about which program gets specialized. (An earlier version copied
+    // matrixWorld here and it was dead code: the staging group updates its
+    // children's world matrices from their identity local matrix every frame.)
     return proxy;
   }
 
@@ -980,8 +1000,24 @@ class Game {
 
   _warmDrawTick(budgetMs = 6) {
     const state = this.warmDraw;
-    if (!state || state.status === 'done' || state.status === 'skipped') return;
+    if (!state || state.status === 'done' || state.status === 'skipped' || state.status === 'degraded') return;
     if (this.terminal || this.paused || this.hitStop > 0) return;
+    // A BATCH THAT COST TOO MUCH BUYS SILENCE BEFORE THE NEXT ONE.
+    //
+    // The budget can stop the pass from STARTING another batch; it cannot make
+    // a render call that has already begun return sooner. Everything above
+    // assumes the link poll keeps a blocking draw out of the frame — and on a
+    // driver with no KHR_parallel_shader_compile there is no poll to keep it
+    // out, only the guess that such a driver linked synchronously. Chrome on
+    // ANGLE always has the extension, so that guess is the one thing here no
+    // measurement on this machine can test, and Safari/Metal is exactly where
+    // it is least likely to hold.
+    //
+    // So the pass watches its own cost. A batch over WARM_DRAW_SLOW_MS drops it
+    // to one draw at a time and stands down for a stretch proportional to the
+    // overrun. On a driver that behaves, this never fires; on one that does
+    // not, the damage is a few long frames spread thin instead of a wall.
+    if (state.holdUntil && performance.now() < state.holdUntil) return;
     // Programs first, draws after: drawing with a program the driver has not
     // finished linking is a block, and the block is the thing being cured.
     if (!this._warmGateSettled()) return;
@@ -1017,7 +1053,7 @@ class Game {
     // renderer walks all 2184 objects to build its list whatever the camera can
     // see. Behind the title that fixed cost is worth amortising over a batch;
     // in play it is not, because a batch can only ever make one frame longer.
-    const batchSize = this.started ? 1 : 4;
+    const batchSize = (this.started || state.slow) ? 1 : 4;
     const frameStart = performance.now();
     const staged = [];
     let spent = 0;
@@ -1050,18 +1086,29 @@ class Game {
         spent += ms;
         state.drawn += staged.length;
         if (ms > state.worstMs) state.worstMs = +ms.toFixed(1);
+        if (ms > WARM_DRAW_SLOW_MS) {
+          state.slow = true;
+          state.slowBatches = (state.slowBatches || 0) + 1;
+          state.holdUntil = performance.now() + Math.min(4000, ms * 4);
+          break;
+        }
       }
     } catch (error) {
+      // Degraded is TERMINAL, and it has to clean up after itself: the tick
+      // returns early on it forever after, so this is the last chance to take
+      // the staging group out of the scene and let the work list go.
       state.errors.push(`draw: ${error?.message || error}`);
       state.status = 'degraded';
+      state.work = null;
+      if (this._warmRoot) { this.scene.remove(this._warmRoot); this._warmRoot = null; }
     } finally {
       // A throw mid-batch must not leave the world un-culled or the staging
       // group holding proxies: this pass is invisible or it is a bug.
       for (const [object, culled, proxy] of staged) {
-        if (proxy) this._warmRoot.remove(proxy);
+        if (proxy) this._warmRoot?.remove(proxy);
         else object.frustumCulled = culled;
       }
-      this._warmRoot.visible = false;
+      if (this._warmRoot) this._warmRoot.visible = false;
       this.renderer.setScissorTest(scissorTest);
       this.renderer.setScissor(scissor.x, scissor.y, scissor.z, scissor.w);
       this.renderer.setViewport(viewport.x, viewport.y, viewport.z, viewport.w);
@@ -2082,7 +2129,19 @@ class Game {
       // fixed few milliseconds and stops. Behind the title it runs at a wide
       // budget because nothing there can be spoiled by a long frame; in play it
       // tip-toes, and it is finished long before anyone reaches the stairs.
-      this._warmDrawTick(this.started ? 6 : 20);
+      //
+      // CAUGHT, ALWAYS. Every re-arm of requestAnimationFrame below this line
+      // is downstream of it, so an exception here would stop the frame loop for
+      // good — the game frozen, with no path back. Warmth is worth nothing at
+      // that price: if this ever throws, it stands down and the game plays on.
+      try {
+        this._warmDrawTick(this.started ? 6 : 20);
+      } catch (error) {
+        if (this.warmDraw) {
+          this.warmDraw.status = 'degraded';
+          this.warmDraw.errors.push(`tick: ${error?.message || error}`);
+        }
+      }
       if (TEST_MODE && !this._selfStep) {
         this.render();
         if (!this.terminal) requestAnimationFrame(tick);

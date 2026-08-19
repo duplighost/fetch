@@ -78,6 +78,12 @@ below. Notes outrank every line of this file the moment they arrive.
   could hear by measuring the thing he said he never saw.
 - Raid his other games (`C:\Users\Alex\Projects\`) before writing anything
   fresh. Every strong thing in FETCH has been a port.
+- **Audit your own round before it ships.** Round ten's deploy audit found a
+  222-degree hole in the horde's ring, a throw path that would have frozen the
+  game permanently, and an unbounded blocking draw on any GPU without
+  `KHR_parallel_shader_compile` — none of which any of the fourteen gates could
+  see, because they all run `?test=1` and `?test=1` skips the warm passes. If
+  your round adds a code path that only real players take, no gate covers it.
 - **Never edit a src file while a gate is running.** The server reads from disk;
   a half-finished edit is a syntax error in somebody's page and a red gate you
   will spend twenty minutes explaining.

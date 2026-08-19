@@ -1629,7 +1629,14 @@ function buildKeyTreeClimb(game) {
   const KEY_T = 0.22, BONE_T = 0.45, HIT_T = 0.8;
   const keyHang = at(KEY_T), boneHang = at(BONE_T), hitAt = at(HIT_T);
   const KEY_DROP = 0.42;                              // string length under the branch
-  const KEY_TREE_REF = 15;                            // metres this limb is allowed to be heard from
+  // How far this limb is allowed to be heard from, and how it fades getting
+  // there. 4.5 m / 0.55 lands at 0.35 of source gain at thirty metres — the
+  // same carry a 15 m reference would buy — while still falling from 1.0 at
+  // three metres to 0.65 at ten and 0.52 at fifteen, so walking toward it
+  // tells you that you are. A wide ref alone would have made every one of
+  // those distances identical.
+  const KEY_TREE_REF = 4.5;
+  const KEY_TREE_ROLL = 0.55;
 
   // callT/swing/calls: the limb's own voice while it hangs unfelled — see the
   // ticker below for why a working, reachable, lit branch still needed one.
@@ -1818,12 +1825,12 @@ function buildKeyTreeClimb(game) {
     // reference with exponential rolloff puts a 30 m event at a FORTY-FOURTH of
     // its gain, so "it comes down LOUD" has been arriving as nothing at all.
     // KEY_TREE_REF is how far this announcement is allowed to carry.
-    game.audio.brushCrash({ pos: A.clone(), gain: 0.62, rate: 0.66, ref: KEY_TREE_REF });
+    game.audio.brushCrash({ pos: A.clone(), gain: 0.62, rate: 0.66, ref: KEY_TREE_REF, roll: KEY_TREE_ROLL });
     game.after(0.35, () => game.audio.creak({
-      pos: at(0.4), gain: 0.66, rate: 0.5, verb: 0.8, ref: KEY_TREE_REF,
+      pos: at(0.4), gain: 0.66, rate: 0.5, verb: 0.8, ref: KEY_TREE_REF, roll: KEY_TREE_ROLL,
     }), { global: true });
     game.after(1.15, () => game.audio.creak({
-      pos: hitAt.clone(), gain: 0.4, rate: 0.64, verb: 0.8, ref: KEY_TREE_REF,
+      pos: hitAt.clone(), gain: 0.4, rate: 0.64, verb: 0.8, ref: KEY_TREE_REF, roll: KEY_TREE_ROLL,
     }), { global: true });
     return true;
   };
@@ -1896,7 +1903,7 @@ function buildKeyTreeClimb(game) {
         climb.callT = 5.4 + (Math.sin(climb.calls * 2.399963) * 0.5 + 0.5) * 3.2;
         climb.swing = 1;
         if (game.act === 'graveyard' && !game.ossuary?.inOssuary && !game.marrow?.inMarrow) {
-          game.audio.creak({ pos: hitAt, gain: 0.62, rate: 0.46 + (climb.calls % 3) * 0.05, verb: 0.8, ref: KEY_TREE_REF });
+          game.audio.creak({ pos: hitAt, gain: 0.62, rate: 0.46 + (climb.calls % 3) * 0.05, verb: 0.8, ref: KEY_TREE_REF, roll: KEY_TREE_ROLL });
         }
       }
       climb.swing = Math.max(0, (climb.swing || 0) - dt * 1.15);

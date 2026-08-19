@@ -351,14 +351,21 @@ try {
   // the same authored fight for everybody, forever — and one of these six bots
   // dies at wave two in it.
   //
-  // NOTHING WAS TUNED TO GET GREEN. A horde that can kill you is the design; the
-  // gate that matters is that the death is real and you come back from it, which
-  // is the respawn check at the bottom of this file. What would be a regression
-  // is the fight becoming UNSURVIVABLE — so the bar is five of six, and any run
-  // that dies has to die to a committed, CLAIMED strike rather than a stray one.
+  // NOTHING WAS EVER TUNED. For a while this bar sat at five of six, because
+  // with the orbits coming off a positional hash one seed died at wave two and
+  // no difficulty knob should be invented to hide that. Then the deploy audit
+  // found what the hash had cost — the golden angle it replaced is what keeps
+  // the horde AROUND you, and the hash left a 222-degree hole in the ring — and
+  // restoring the authored spread out of the wave's own index put ALL SIX back
+  // to three waves cleared (guards 65/70/68/79/92/71, seed 583 among them).
+  //
+  // So six of six is the bar again, and now it is true for the right reason:
+  // the fight is the authored fight, it is identical run to run, and it depends
+  // on nothing outside itself. Any run that does die still has to die to a
+  // committed, CLAIMED strike rather than a stray one.
   const cleared = report.seeds.filter((seed) => seed.clear && !seed.dead && seed.wave === 3);
-  check('the horde stays survivable: at least five of six seeded fights clear three waves',
-    cleared.length >= Math.min(5, report.seeds.length)
+  check('every seeded fight clears three waves, and any death is a committed claimed strike',
+    cleared.length === report.seeds.length
       && report.seeds.every((seed) => seed.clear || seed.deaths.every((d) => d.attacker?.claimed)),
     report.seeds.map((seed) => ({ seed: seed.seed, clear: seed.clear, dead: seed.dead,
       wave: seed.wave, guard: seed.guard, deaths: seed.deaths })));

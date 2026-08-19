@@ -789,13 +789,18 @@ export class GameAudio {
   // a graph that gets louder until the context gives up.
   static VOICE_CAP = 40;
 
-  // `ref` widens the panner's reference distance for a sound that is MEANT to
-  // carry. The default 2.4 m is right for the world you are standing in and
-  // wrong for a landmark: exponential rolloff puts a 30-metre event at 1/44 of
-  // its gain, which is how the key tree came down eighty metres away, announced
-  // itself twice, and was never heard (tools/probe-key-tree-legibility.mjs).
-  // The model clamps d to refDistance, so a wider ref never makes a near sound
-  // louder — it only stops a far one from vanishing.
+  // `ref` and `roll` shape the falloff for a sound that is MEANT to carry. The
+  // kit's 2.4 m / 1.5 is right for the world you are standing in and wrong for
+  // a landmark: exponential rolloff puts a 30-metre event at 1/44 of its gain,
+  // which is how the key tree came down thirty metres away, announced itself
+  // twice, and was never heard (tools/probe-key-tree-legibility.mjs).
+  //
+  // REACH FOR `roll` BEFORE `ref`. The model is gain = (max(d, ref)/ref)^-roll,
+  // so widening ref alone buys distance by FLATTENING everything inside it —
+  // ref 15 means a sound is at full strength whether you are at 14 metres or
+  // touching it, which is not a landmark, it is a wall of sound with a lip. A
+  // gentler rolloff carries the same distance and keeps the near field
+  // falling off, so walking toward the thing still tells you that you are.
   _play(buf, { pos = null, gain = 1, rate = 1, when = 0, verb = 0.3, dest = null, ref, roll } = {}) {
     if (!this._ready) return null;
     if (this._voices >= GameAudio.VOICE_CAP) {

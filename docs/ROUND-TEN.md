@@ -61,6 +61,54 @@ counter, which set every walker's `orbitAngle` and `orbitSign`. Changing
 outcomes and made the losing seed survive again. One extra spawn anywhere in the
 run re-rolled the horde. That is the whole of "it got harder".
 
+**And the first fix for it was half right, which the deploy audit caught before
+this shipped.** Cutting the coupling by hashing the spawn point kept the fight
+stable and threw away the thing the old code was actually for: 2.399963 rad is
+the GOLDEN ANGLE, and consecutive integers times it are the most evenly spread
+set of angles there is. That is what keeps a horde AROUND you. Measured over the
+arena's eight authored sites, the hash left a **222-degree hole** in the ring at
+wave two and 154- and 120-degree holes at wave three, where the golden angle's
+worst gap is 85. So the wave now hands each walker its ring index out of its own
+loop counter (`director.js`), golden angle and alternating direction: the
+authored spread back, still immune to whatever spawned earlier in the run. The
+spawn-point hash stays as the default for everything outside the arena.
+
+## What the deploy audit changed, before any of it went live
+
+Round ten was audited adversarially on the way to the site, and it came back
+with real defects in this round's own code — the kind the fourteen gates cannot
+see, because every one of them runs `?test=1`, which skips the warm passes
+entirely. All fixed before the sync:
+
+- **The horde's formation** (above): a 222-degree hole in the ring.
+- **A throw in the warm pass would have frozen the game permanently.**
+  `_warmDrawTick` is called from the frame loop AHEAD of every
+  `requestAnimationFrame` re-arm, and its two gate calls sat outside the try
+  block. One exception and the loop never re-arms — no frames, no recovery. It
+  is wrapped now, and it stands down instead of taking the game with it.
+- **The per-frame budget could not bound a single render call.** The only thing
+  keeping a blocking draw out of a frame was the link poll, and on a driver with
+  no `KHR_parallel_shader_compile` there is no poll — only the guess that such a
+  driver linked synchronously inside `compile()`. Chrome on ANGLE always has the
+  extension, so that guess is the one thing no measurement on this machine can
+  test, and Safari/Metal is where it is least likely to hold. The pass now
+  watches its own cost: a batch over 120 ms drops it to one draw at a time and
+  stands it down for four times the overrun.
+- **A mesh with two materials was listed twice**, and two entries in one batch
+  made the second capture the `frustumCulled` the first had already set false —
+  restoring it false forever. One entry per object now; a multi-material mesh is
+  drawn once per group anyway, so a single draw still warms all of them.
+- **`degraded` was not terminal**: the early return knew `done` and `skipped`
+  only, so a failed pass re-entered every frame for the rest of the session with
+  its staging group still in the scene.
+- **The audio `ref` comment was wrong about the near field.** Widening
+  refDistance alone does not merely stop a far sound vanishing — it flattens
+  everything inside it, and ref 15 meant the limb's creak was at full strength
+  whether you stood fifteen metres away or touched it. It is 4.5 m with a 0.55
+  rolloff now: the same 0.35 of source gain at thirty metres, and still falling
+  from 1.0 at three metres to 0.52 at fifteen, so walking toward it reads as
+  approach. The legibility gate pins the carry and the falloff, not the number.
+
 ## Findings to carry
 
 - **A draw issued while the driver is linking waits for the QUEUE, not for its
