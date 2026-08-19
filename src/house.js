@@ -6209,6 +6209,141 @@ function buildPumpGallery(game) {
   world.candles.push({ x: -13.75, y: B + 1.7, z: -6.8, intensity: 1.3, r: 5 });
   world.candles.push({ x: -17.55, y: B + 0.75, z: -3, intensity: 0.8, r: 4 });
 
+  // ----------------------------------------------- THE FLOOR IS MOVING TOO
+  // HIS NOTE, 2026-08-19: "I like the idea of disgusting bugs on the ground in
+  // that basement area too." The ossuary's floor vermin were built to be
+  // portable and this is the port, verbatim in law: ONE InstancedMesh, one
+  // draw, unlit near-black (a bug is a silhouette that moves, not a lit
+  // object), motion quantised to ~14 Hz so the population TWITCHES on a shared
+  // beat instead of gliding, seeded RNG, and no colliders, lights, fetch
+  // targets or enemies-list entries — it cannot touch pathing, the census, or
+  // the basement's draw budget beyond that one call.
+  //
+  // Seeded where a real infestation would be: the wall bases, the sealed
+  // channel's lips, and the wet ground under the pump row. Never on the water
+  // itself, and never in the bridge lane the player crosses under hold.
+  const GALLERY_BUG_N = 150;
+  const galleryBugs = (() => {
+    const body = new THREE.CapsuleGeometry(0.042, 0.062, 3, 6);
+    body.rotateX(Math.PI / 2);
+    const parts = [body];
+    for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const leg = new THREE.CylinderGeometry(0.006, 0.004, 0.075, 4);
+      leg.rotateZ(side * (0.9 + i * 0.12));
+      leg.translate(side * 0.042, -0.012, -0.03 + i * 0.032);
+      parts.push(leg);
+    }
+    const mesh = new THREE.InstancedMesh(mergeGeometries(parts),
+      new THREE.MeshBasicMaterial({ color: 0x0a0806 }), GALLERY_BUG_N);
+    mesh.name = 'pump gallery floor vermin';
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.userData.noBatch = true;
+    mesh.visible = false;
+    // THE TRAP THAT ATE THE FIRST CUT OF THIS, and it is worth knowing about:
+    // the upper-sector culler below classifies every scene mesh with
+    // Box3.setFromObject(object, false), which for an InstancedMesh reads the
+    // BASE GEOMETRY through the object's own matrix and never looks at a single
+    // instance matrix. A mesh sitting at the origin with 150 instances down in
+    // the basement therefore measures as a thing at y ~ 0 — the ground floor —
+    // and gets its layer mask zeroed the moment the player goes downstairs,
+    // which is precisely when it is supposed to be crawling. It was visible,
+    // frustumCulled false, parented to the scene, its matrices correct, and
+    // drawn nowhere: layers.mask was 0.
+    //
+    // So the mesh LIVES at the basement floor and the instances are local to
+    // it. That is also just truer.
+    mesh.position.y = B;
+    scene.add(mesh);
+    return mesh;
+  })();
+  const galleryBugState = [];
+  {
+    const vermin = new RNG(0x9e11);
+    const rnd = () => vermin.float();
+    // three seed bands, weighted the way filth actually collects
+    const bands = [
+      // [x0, x1, z0, z1, weight] — west wall base and the far landing
+      [-19.7, -19.2, -9.4, 5.6, 0.3],
+      // the channel lips, east and west of the trough
+      [-17.55, -17.32, -9.2, 1.4, 0.22],
+      [-14.84, -14.62, -9.2, 1.4, 0.18],
+      // the wet ground under the pump row
+      [-19.4, -13.4, 4.4, 6.0, 0.2],
+      // the east wall base, back toward the crawl door
+      [-13.2, -12.7, -8.6, 3.4, 0.1],
+    ];
+    const total = bands.reduce((s, b) => s + b[4], 0);
+    for (let i = 0; i < GALLERY_BUG_N; i++) {
+      let pick = rnd() * total;
+      let band = bands[0];
+      for (const b of bands) { pick -= b[4]; if (pick <= 0) { band = b; break; } }
+      const x = band[0] + rnd() * (band[1] - band[0]);
+      const z = band[2] + rnd() * (band[3] - band[2]);
+      galleryBugState.push({ x, z, hx: x, hz: z, yaw: rnd() * TAU, tx: x, tz: z,
+        speed: 0.5 + rnd() * 0.6, pause: rnd() * 1.8, dart: 0 });
+    }
+  }
+  const gBugM = new THREE.Matrix4();
+  const gBugQ = new THREE.Quaternion();
+  const gBugP = new THREE.Vector3();
+  const gBugS = new THREE.Vector3(1, 1, 1);
+  const gBugUp = new THREE.Vector3(0, 1, 0);
+  let gBugFrame = -1;
+  let gBugAudioT = 0;
+  game.tickers.push((dt, time) => {
+    const here = game.act === 'basement' && game.player.pos.x < -11.6;
+    galleryBugs.visible = here;
+    if (!here) return;
+    const frame = Math.floor(time * 14);
+    if (frame === gBugFrame) return;
+    gBugFrame = frame;
+    gBugAudioT -= 1 / 14;
+    const p2 = game.player.pos;
+    let scattered = false;
+    for (let i = 0; i < GALLERY_BUG_N; i++) {
+      const b = galleryBugState[i];
+      const dx = b.x - p2.x, dz = b.z - p2.z;
+      const near2 = dx * dx + dz * dz;
+      if (near2 < 1.96) {
+        const d = Math.max(0.001, Math.sqrt(near2));
+        b.tx = b.x + (dx / d) * 2.2;
+        b.tz = b.z + (dz / d) * 2.2;
+        b.dart = 0.5;
+        b.pause = 0;
+        scattered = true;
+      }
+      if (b.dart > 0) b.dart = Math.max(0, b.dart - 1 / 14);
+      if (b.pause > 0) { b.pause -= 1 / 14; continue; }
+      const tx = b.tx - b.x, tz = b.tz - b.z;
+      const dist = Math.hypot(tx, tz);
+      if (dist < 0.08) {
+        if (Math.random() < 0.5) { b.pause = 0.4 + Math.random() * 1.4; continue; }
+        const a = Math.random() * TAU, r = 0.3 + Math.random() * 1.1;
+        // they wander around where they were SEEDED, so the bands stay bands
+        // and nothing ever crawls out onto the water or into the bridge lane
+        b.tx = clamp(b.x + Math.cos(a) * r, b.hx - 1.3, b.hx + 1.3);
+        b.tz = clamp(b.z + Math.sin(a) * r, b.hz - 1.3, b.hz + 1.3);
+        continue;
+      }
+      const v = (b.dart > 0 ? 2.6 : b.speed) / 14;
+      b.x += (tx / dist) * v;
+      b.z += (tz / dist) * v;
+      b.yaw = Math.atan2(tx, tz);
+    }
+    if (scattered && gBugAudioT <= 0) {
+      gBugAudioT = 0.35;
+      game.audio.webTear({ pos: p2, gain: 0.1, rate: 1.9 });
+    }
+    for (let i = 0; i < GALLERY_BUG_N; i++) {
+      const b = galleryBugState[i];
+      gBugP.set(b.x, 0.02, b.z);        // local to the mesh, which sits at B
+      gBugQ.setFromAxisAngle(gBugUp, b.yaw);
+      galleryBugs.setMatrixAt(i, gBugM.compose(gBugP, gBugQ, gBugS));
+    }
+    galleryBugs.instanceMatrix.needsUpdate = true;
+  });
+
   const route = {
     id: 'pumpGallery', state: 'idle', progress: 0, latched: false, armed: false,
     gateOpen: false, heard: false, winch, cradle, pawl, water, pawlDrive: 1,
