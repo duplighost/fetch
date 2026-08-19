@@ -1299,6 +1299,25 @@ class Game {
   _setAudioPaused(paused) {
     const ctx = this.audio?.ctx;
     if (!ctx) return;
+    // THE GAIN GOES FIRST, AND IT DOES NOT DEPEND ON THE CONTEXT OBEYING.
+    //
+    // Suspending an AudioContext is a request with a promise attached, and the
+    // engine's own watchdog resumes on any non-running state without asking who
+    // asked for it (audio.js) — so a pause is a race, and the thing that loses
+    // it is silence. Alex has twice reported a sound that gets stuck loud in
+    // the cave; the cause is not found (the frozen-loop theory was refuted —
+    // every enemy loop has the same shape, so it would not be one district).
+    // This does not claim to fix it. It makes a PAUSE silent regardless of what
+    // is playing or why, which is the one thing that was always supposed to be
+    // true, and it costs a gain ramp.
+    const master = this.audio?.master?.gain;
+    if (master) {
+      const now = ctx.currentTime || 0;
+      try {
+        master.cancelScheduledValues(now);
+        master.setTargetAtTime(paused ? 0 : (this.terminal ? 0 : 0.9), now, 0.015);
+      } catch { /* a context mid-teardown owns its own silence */ }
+    }
     try {
       const op = paused ? ctx.suspend?.() : ctx.resume?.();
       Promise.resolve(op).catch(() => {}).finally(() => {
