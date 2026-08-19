@@ -2852,12 +2852,12 @@ function buildOssuaryRoute(game) {
       this.progress = 0;
       this.slabT = 0;
       this.exitT = 0;
+      this.armed = false;
+      this.armT = 0;
       this.entryLid = { t: 0, open: false, moving: false };
       this.exitLid = { t: 0, open: false, moving: false };
-      // a reset must never leave a press queued: a restore that seats a lid
-      // open would otherwise take the player down the instant it lands
-      this._descendOnOpen = false;
-      this._ascendOnOpen = false;
+      // a reset must never leave a press queued: an armed verb surviving a
+      // restore would take the player down the instant it lands
       this._pendingDescend = false;
       this._pendingAscend = false;
       surfaceSlab.position.set(mausoleum.x, 0.11, mausoleum.z + 0.15);
@@ -2889,10 +2889,13 @@ function buildOssuaryRoute(game) {
   // zero — both are gone as of 2026-08-17.) Same law as every other swap in
   // this file: the verb ARMS, the ticker EXECUTES, so the cullers run on the
   // pre-exit pose and the seal's save/restore maps stay coherent.
-  const doAscendOssuary = () => {
+  const doAscendOssuary = (viaVerb = false) => {
     const player = game.player;
     const p = player.pos;
-    if (!state.inOssuary || !state.exitLid.open) return false;
+    if (!state.inOssuary) return false;
+    // the VERB does not wait for the stone (see climbBack); the walk-into-it
+    // fallback still cannot fire through a panel that is still in the doorway
+    if (!viaVerb && !state.exitLid.open) return false;
     if (game.skull?.mode !== 'held') return false;
     state.inOssuary = false;
     // Out of the mausoleum's doorway, FACING OUT. It used to land you at yaw PI
@@ -2913,18 +2916,27 @@ function buildOssuaryRoute(game) {
   // E on the hatch: shut stone opens it; open stone lets you through.
   const climbBack = () => {
     if (!state.inOssuary) return;
+    const here = new THREE.Vector3(OX, FLOOR + 1.0, OZ);
+    // ...and the way out refuses out loud too. It used to open the stone for an
+    // empty-handed player and then silently decline to take them through it,
+    // which is the one thing this game is not allowed to do.
+    if (game.skull?.mode !== 'held') {
+      if (game.time > (state._refuseAt || 0)) {
+        state._refuseAt = game.time + 1.1;
+        game.audio.lockedRattle({ pos: here, gain: 0.42, rate: 0.78 });
+        game.impact('locked', here);
+      }
+      return;
+    }
     if (!state.exitLid.open && !state.exitLid.moving) {
       state.exitLid.moving = true;
       // and the way out obeys the same rule, because "everything you can open
       // should kind of work the same way" is his and it is older than this note
-      state._ascendOnOpen = true;
-      const here = new THREE.Vector3(OX, FLOOR + 1.0, OZ);
       game.audio.stoneGrind({ pos: here, gain: 0.82, rate: 0.62 });
       game.after(0.5, () => game.audio.creak({ pos: here, gain: 0.45, rate: 0.8 }));
       game.shake(0.1);
-      return;
     }
-    if (state.exitLid.open) state._pendingAscend = true;
+    state._pendingAscend = true;
   };
   state.climbBack = climbBack;
 
@@ -2959,7 +2971,9 @@ function buildOssuaryRoute(game) {
     // aside the moment the FUNERAL resolved, so the way down was simply open
     // and crossing it swallowed you. Now the funeral only unlocks it; the lid
     // is a verb. The walk-over survives — it just cannot fire through stone.
-    if (!state.entryLid.open) return false;
+    // the WALK-OVER still cannot fire through stone — a lid in the doorway is
+    // a lid. The verb is exempt: it is the hand that just took the stone off.
+    if (!state.entryLid.open && !viaVerb) return false;
     if (!viaVerb) {
       // the walk-over keeps its tighter band: it must not fire from the
       // doorway where the player is only leaning in to look
@@ -3032,24 +3046,27 @@ function buildOssuaryRoute(game) {
       }
       return;
     }
+    // HIS NOTE, 2026-08-19: "the other you hit e to get in, and e to get out on
+    // the right things. but in this one you hit e, and it opens slowly, then
+    // you can walk over it and be teleported... the other one under the
+    // graveyard is perfect." The perfect one is the MARROW: descend() there
+    // sets a pending flag and you are down on the next district tick, and the
+    // way out is the same verb on the way up. No wait in either direction.
+    //
+    // This hatch answered E and then made you wait ~0.9 s inside your own verb
+    // while the stone travelled — which is the same complaint he filed a round
+    // earlier against the walk-over version, in different words: a hatch that
+    // opens onto a hole you have to ask about again. The stone still slides
+    // (it was never the problem, and skipping it would skip the sound); it
+    // just finishes BEHIND you now.
     if (!state.entryLid.open && !state.entryLid.moving) {
       state.entryLid.moving = true;
-      // HIS NOTE, 2026-08-18: "to enter that mausoleum it shouldn't be that the
-      // hatch opens into a hole. it should bring you down when you hit E on
-      // it." It used to be one verb with two answers — the first press took the
-      // stone off, the second took you down — and that reads as a hatch that
-      // opens onto a hole you then have to ask about again. One press does both
-      // now: the stone slides, and the descent fires the moment it is clear.
-      // The lid still takes its ~0.9 s, so the stone is never skipped; it is
-      // the second PRESS that is gone, not the opening.
-      state._descendOnOpen = true;
       game.audio.stoneGrind({ pos: throatAt, gain: 0.82, rate: 0.62 });
       game.after(0.55, () => game.audio.creak({ pos: throatAt, gain: 0.45, rate: 0.78 }));
       game.after(0.95, () => game.audio.metalDrop({ pos: throatAt, gain: 0.5, rate: 0.6 }));
       game.shake(0.12);
-      return;
     }
-    if (state.entryLid.open) state._pendingDescend = true;
+    state._pendingDescend = true;
   };
   state.descend = descend;
   // registered on the mouth plane, which is already a Mesh — registerInteract
@@ -3178,22 +3195,12 @@ function buildOssuaryRoute(game) {
     surfaceSlab.position.z = mausoleum.z + 0.15 + state.slabT * 0.72;
     surfaceSlab.rotation.x = -state.slabT * 0.42;
 
-    // ONE PRESS. The stone opening is not the answer to the verb, it is the
-    // first half of it — the descent fires as soon as the way is genuinely
-    // clear. doDescendOssuary re-checks the stance and the skull, so stepping
-    // away or throwing it in the meantime simply drops the intent.
-    if (eLid.open && state._descendOnOpen) {
-      state._descendOnOpen = false;
-      if (!state.inOssuary) state._pendingDescend = true;
-    }
+    // (the descent no longer waits on this lid — see descend(). The slide is
+    // flavour that finishes behind you, not a gate on your own verb.)
 
     const xLid = state.exitLid;
     xLid.t += ((xLid.moving ? 1 : 0) - xLid.t) * Math.min(1, dt * 1.1);
     xLid.open = xLid.t > 0.98;
-    if (xLid.open && state._ascendOnOpen) {
-      state._ascendOnOpen = false;
-      if (state.inOssuary) state._pendingAscend = true;
-    }
     exitLidPivot.position.y = FLOOR + 0.95 - smoothstep(0, 1, xLid.t) * 1.98;
     // the aperture stops being a wall only once the panel is genuinely clear —
     // the exit slab's law, and Door's. Opening the collider while the stone
@@ -3231,7 +3238,7 @@ function buildOssuaryRoute(game) {
     // is a HATCH at both ends now. The crosshair offers it whenever you are
     // down here and near the cap wall.
     exitLidInter.enabled = state.inOssuary;
-    if (state._pendingAscend) { state._pendingAscend = false; doAscendOssuary(); }
+    if (state._pendingAscend) { state._pendingAscend = false; doAscendOssuary(true); }
     // and the walk-into-it fallback survives, gated on the stone actually being
     // out of the way: once the hatch stands open, walking out still works.
     if (state.inOssuary && xLid.open && p.z < OZ + 0.28 && skull?.mode === 'held') {

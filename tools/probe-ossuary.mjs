@@ -105,8 +105,13 @@ try {
     walkTo(MX, MZ - 1.35, 14);
     g.ossuary.descend();
     F.stepWith(0.1, {}, false);
-    check('the first press moves the stone and nothing else',
-      st.entryLid.moving === true && st.inOssuary === false);
+    // ROUND NINE, his note: "you hit e, and it opens slowly, then you can walk
+    // over it... the other one under the graveyard is perfect." The marrow is
+    // instant both ways, so this is too. The stone still slides; it just
+    // finishes behind you, and the press no longer waits on it.
+    check('the press moves the stone AND takes you down in the same breath',
+      st.entryLid.moving === true && st.inOssuary === true,
+      { lidT: +st.entryLid.t.toFixed(3) });
     for (let i = 0; i < 80 && !st.entryLid.open; i++) F.stepWith(0.1, {}, false);
     check('the lid finishes opening on its own clock', st.entryLid.open === true,
       { t: +st.entryLid.t.toFixed(2) });
