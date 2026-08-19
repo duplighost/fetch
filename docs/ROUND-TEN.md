@@ -170,7 +170,7 @@ known-red left in anything this round touched — `house-expansion` and
 | warm-start | PASS (+0 programs across the whole game; press-to-play 725 ms; basement first draws 85 ms) |
 | basin-shore, choir-surfacing, district-culling, render-perf, grip-contact | PASS |
 | **legibility (new)** | PASS |
-| **grave-arena** | **PASS — first time; re-pinned to what the fight actually promises** |
+| **grave-arena** | **PASS — first time, and at six of six: restoring the authored ring spread put every seed back to three waves cleared (guards 65/70/68/79/92/71)** |
 | house-expansion, horror-expansion | PASS (both were permanently red) |
 
 `underfalls-expansion` ×2 is still known-red and PRE-EXISTING; nothing this
@@ -186,6 +186,8 @@ round went near it.
 | `dd9d26c` | two permanently-red assertions stop lying |
 | `157e608` | the tree keeps asking until you hit it |
 | `7271cca` | the warm pass covers the skull too |
+| `aa0b50e` | the round-ten record, and round eleven's brief |
+| `c344166` | six defects the gates could not see, found on the way to the site |
 
 ---
 
