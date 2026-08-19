@@ -5,6 +5,30 @@ this repo (Claude Code, Codex/Sol, anything else). Trust it over your own
 assumptions. Keep it true: if you change the workflow, update this file in
 the same commit.
 
+## Where things are (read this before you go looking)
+
+- **`main` is the game.** It holds exactly what is live at
+  https://qualiacology.com/fetch/ . If you clone this repo and run it, that is
+  the real thing. (This was not true until 2026-08-19: main had been frozen on
+  the 0.6.1 "first light" build since 2026-08-11 while nine rounds of work
+  happened on branches. If you are reading an old note that says otherwise,
+  the note is stale.)
+- **Nothing in this repo deploys.** There is no CI here and no Netlify or
+  Vercel config. The live site is a SEPARATE repository,
+  `duplighost/qualiacology`, which keeps its own copy of this `src/` under
+  `fetch/`. Shipping = copy the changed `src/` files into that repo (LF
+  endings), verify all 22 identical, then follow ITS `AGENTS.md`. Never try to
+  deploy from here.
+- **The `claude/*` and `codex/*` branches are history, not choices.** Each is
+  one finished round, stacked on the one before. They are kept so the record
+  survives; you do not need any of them. Older round PRs were closed as
+  superseded once main caught up — closed, not deleted.
+- **Work in a fresh `git worktree`, never in a shared checkout.**
+  `C:\Users\Alex\Projects\fetch-claude` is stale and shared; do not use it.
+- **The round records are in `docs/`** — `ROUND-NINE.md` is the most recent and
+  is the one to read first; each round's file carries what was measured, what
+  was wrong, and what is still open.
+
 ## What this is
 
 FETCH — first-person browser horror. You wake holding a skull you cannot get
@@ -27,8 +51,12 @@ beats your instincts.
 3. **NO HUD.** No words or meters on screen during active play. State lives in
    the skull (jaw chatter = proximity, grown eyes track threats), in audio, in
    light. Text belongs only to non-playing overlays: title, pause, and retry.
-4. **Never hue-only meaning.** Alex is colorblind. Threat/state = brightness,
-   motion, shape, timing, sound. (Time-stop = you hurt it.)
+4. **Never hue-only meaning.** Threat/state = brightness, motion, shape,
+   timing, sound. (Time-stop = you hurt it.) **NOT because Alex is colorblind
+   — he is not, and he corrected that directly on 2026-08-18; older notes
+   across these docs still get it wrong.** The law stands on its own: these are
+   dark rooms lit by one carried light, so hue is the channel the game itself
+   destroys. Value, shape and motion are what survive a lantern.
 5. **Audio-first horror.** HRTF spatial. You hear things before you see them.
    Enemies own a sound before they own a mesh.
 6. **Quiet vs loud is the economy.** Stun is quiet and temporary; popping is

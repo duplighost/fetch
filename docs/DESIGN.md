@@ -14,7 +14,10 @@ the spine — when in doubt during the build, this wins.
 - **NO HUD.** Nothing on screen but the world and your hands. State lives in the
   skull itself (what it's carrying, what it looks like, what it's doing), in audio,
   and in light. (Kick-ball design contract, carried over.)
-- **Colorblind-safe.** Never hue-only meaning. Threat = motion, brightness, sound
+- **Value-first.** Never hue-only meaning. Threat = motion, brightness, sound.
+  (Called "colorblind-safe" for months; Alex is not colorblind and said so on
+  2026-08-18. The rule survives its wrong reason: one carried lantern in dark
+  rooms is what makes hue unreliable.)
   direction, timing.
 - **Audio is half the game.** HRTF spatial. Footsteps you can point to with your
   eyes closed. The skull moans in flight — doppler on the way out, close and wet

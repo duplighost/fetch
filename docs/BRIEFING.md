@@ -37,7 +37,11 @@ Known issues / active work: `docs/PLAYTEST-1.md`, `docs/PLAYTEST-2.md`.
    feel of Alex's kick-ball game and it is the law.
 3. **NO HUD, no on-screen words.** State lives in the world: the skull's face,
    the jaw chatter, light, sound. (Alex's UI philosophy.)
-4. **Colorblind law:** Alex is colorblind. Never encode meaning in hue alone —
+4. **The value law** (long mis-called the "colorblind law"): **Alex is NOT
+   colorblind — he corrected that on 2026-08-18.** The law is unchanged and it
+   is load-bearing, it just has a truer reason: this game is dark rooms lit by
+   one carried light, which is the thing that destroys hue. Never encode
+   meaning in hue alone —
    use shape, brightness, motion, timing.
 5. **No control theft.** The game never takes the camera or moves the player.
 6. **Sounds come from things** — especially the skull. Spatialized (HRTF),
