@@ -921,6 +921,140 @@ function bonePaint(g, w, h, r) {
   grain(g, w, h, 0.045, r);
 }
 
+// stains that survive the wrap: a capsule's u runs right round the finger, so
+// a blotch drawn near one edge has to come back round the other side
+function wrapStains(g, w, h, n, r, col, alpha, minR, maxR) {
+  for (let i = 0; i < n; i++) {
+    const x0 = r.float() * w, y = r.float() * h;
+    const rad = (minR + r.float() * (maxR - minR)) * w;
+    const a = alpha * (0.5 + r.float());
+    for (const dx of [-w, 0, w]) {
+      const gr = g.createRadialGradient(x0 + dx, y, rad * 0.15, x0 + dx, y, rad);
+      gr.addColorStop(0, `rgba(${col},${a})`);
+      gr.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = gr;
+      g.fillRect(0, 0, w, h);
+    }
+  }
+}
+
+// skinPaint — the back of a hand, at the distance the cradle holds it.
+//
+// The one surface in this game that had no texture at all. Every wall, floor,
+// coffin and car in FETCH is a painted canvas and the hands the player looks
+// at for the whole game were flat colour: one value, one hue, smooth shading
+// over a shape. That is most of what is left of "they still don't look like
+// human hands" once they are the right proportions and actually touching the
+// skull — you can model a hand correctly and it will still read as a mannequin
+// while its surface is a plastic that has never been anywhere.
+//
+// This map MULTIPLIES rather than replaces. Round seven spent three passes
+// putting the hands a stop or two under the skull in the value order and they
+// have to stay there, so this is authored around white and carries only the
+// variation; toMeanValue pulls it to 0.92 and the material colours are lifted
+// by the reciprocal. Same hands, same value, every pixel of them different.
+//
+// It is the bumpMap too, and that is the point. The kit's note above
+// M.wallpaper is the law here: a surface with no relief under a moving lantern
+// is a picture of a thing, and the light has to be able to rake across it. A
+// hand is mostly creases.
+//
+// Every finger segment shares one capsule, so this cannot carry landmarks —
+// u runs around the circumference and v along the segment, and whatever sits
+// at a given v appears on every phalanx of every finger. Which is close to
+// true of real fingers anyway: creases at the joints, grain everywhere.
+function skinPaint(g, w, h, r) {
+  // SCALE FIRST, and it is the thing the first pass got wrong. One capsule
+  // serves every phalanx, so this whole sheet wraps ONE finger segment — about
+  // forty screen pixels of it at the distance the cradle holds the hand. 256 px
+  // of texture landing on 40 means everything finer than about eight pixels
+  // here is gone to the mip chain before the player ever sees it. The first
+  // pass painted hairline creases and one-pixel pores at 1.39x contrast and
+  // came back invisible; every feature below is deliberately coarse and
+  // deliberately dark.
+  g.fillStyle = rgb(250, 248, 245);
+  g.fillRect(0, 0, w, h);
+  // broad tonal drift — skin at hand scale is blotchy, never one tone
+  wrapStains(g, w, h, 10, r, '128,112,100', 0.50, 0.08, 0.24);
+  wrapStains(g, w, h, 6, r, '255,254,252', 0.30, 0.06, 0.18);
+  // and it has been somewhere: ground-in dirt, tight and uneven so it cannot be
+  // mistaken for shading
+  wrapStains(g, w, h, 9, r, '46,38,30', 0.55, 0.03, 0.12);
+
+  // TRANSVERSE CREASES, which are the strongest cue there is at this size.
+  // A fold has a dark valley and a lit lip, and painting both is what lets the
+  // same sheet serve as the bump map. Whole sine cycles across the width so the
+  // line meets itself at the capsule's seam.
+  const crease = (y0, k, amp, dark, lw, phase) => {
+    const line = (dy, style, width) => {
+      g.strokeStyle = style; g.lineWidth = width;
+      g.beginPath();
+      for (let x = 0; x <= w; x += 4) {
+        const y = y0 + dy + Math.sin((x / w) * TAU * k + phase) * amp;
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+    };
+    line(-lw * 0.9, `rgba(255,253,250,${dark * 0.55})`, lw * 0.8);
+    line(0, `rgba(52,40,32,${dark})`, lw);
+  };
+  // the joints: two dense bands of them, because that is where a hand creases
+  for (const band of [0.13, 0.87]) {
+    for (let i = 0; i < 7; i++) {
+      crease(h * band + r.gauss() * h * 0.045, r.int(1, 3), 1.2 + r.float() * 2.6,
+        0.30 + r.float() * 0.30, 1.8 + r.float() * 2.0, i * 1.7);
+    }
+  }
+  // and the rest of the length, looser
+  for (let i = 0; i < 12; i++) {
+    crease(r.float() * h, r.int(1, 4), 1.0 + r.float() * 3.0,
+      0.14 + r.float() * 0.22, 1.4 + r.float() * 1.8, i * 0.9);
+  }
+
+  // pores cluster, they do not sprinkle — and at this scale a pore has to be
+  // two or three pixels or it is nothing
+  for (let c = 0; c < 26; c++) {
+    const px0 = r.float() * w, py0 = r.float() * h, spread = 10 + r.float() * 34;
+    for (let i = 0, n = r.int(12, 34); i < n; i++) {
+      g.fillStyle = `rgba(84,68,56,${0.16 + r.float() * 0.28})`;
+      g.beginPath();
+      g.arc(px0 + r.gauss() * spread, py0 + r.gauss() * spread,
+        0.9 + r.float() * r.float() * 2.0, 0, TAU);
+      g.fill();
+    }
+  }
+
+  // NO LONGITUDINAL VEINS. The first strong pass had three of them — an
+  // extensor tendon down a finger, a vein across the back of the hand — and
+  // they were the only feature that came back WRONG rather than weak. One
+  // sheet serves capsules and spheres both, and a line that runs helpfully
+  // down a phalanx runs across the palm as a smear; at hand scale the render
+  // read as woodgrain. Anything directional in here has to survive being
+  // wrapped on geometry it was not aimed at, and only the rings do.
+  //
+  // So the rest of the skin is isotropic on purpose: mottle, pores, dry nicks,
+  // grain. They read the same whichever way the sheet lands.
+  for (let c = 0; c < 18; c++) {
+    const px0 = r.float() * w, py0 = r.float() * h, spread = 18 + r.float() * 40;
+    for (let i = 0, n = r.int(8, 22); i < n; i++) {
+      g.fillStyle = `rgba(226,220,212,${0.20 + r.float() * 0.30})`;
+      g.beginPath();
+      g.arc(px0 + r.gauss() * spread, py0 + r.gauss() * spread,
+        1.4 + r.float() * 3.4, 0, TAU);
+      g.fill();
+    }
+  }
+  // a few dry splits and nicks, dark enough to survive the mip chain
+  cracks(g, w, h, 9, r, 'rgba(38,28,22,0.42)', 1.4, 9);
+  grain(g, w, h, 0.09, r);
+  // Authored around white so the material colour keeps carrying the value, and
+  // pulled to 0.85 rather than the first pass's 0.92 because the contrast this
+  // needs has to come from somewhere. skull.js lifts both hand colours by the
+  // reciprocal, so the hands sit exactly where round seven put them in the
+  // value order.
+  toMeanValue(g, w, h, 0.85);
+}
+
 function waterPaint(g, w, h, r) {
   g.fillStyle = rgb(16, 22, 28);
   g.fillRect(0, 0, w, h);
@@ -1032,4 +1166,17 @@ export function makeMaterials() {
 
   cached = M;
   return M;
+}
+
+// The hands are built in skull.js rather than here, because becomeBone mutates
+// those exact material objects in the last room and they cannot be shared out
+// of the cached set. Their SURFACE still belongs in the texture kit like every
+// other surface in this game. One texture, shared by the skin and the crease —
+// it is the same skin, and sharing it is one upload and one bump map.
+let handSkinTex = null;
+export function handSkinTexture() {
+  if (!handSkinTex) {
+    handSkinTex = canvasTexture(256, 256, (g, w, h) => skinPaint(g, w, h, ROOT.fork(34)), { repeat: true });
+  }
+  return handSkinTex;
 }

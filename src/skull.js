@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+import { handSkinTexture } from './textures.js';
 
 const _anchorLook = new THREE.Vector3();
 import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
@@ -319,8 +320,27 @@ export class Skull {
     // albedo cut does not buy a proportional pixel cut (the shore lip measured
     // 5x albedo for 1.4x pixels), but it is free, and it puts the skull back on
     // top of the value order where it belongs.
-    const skin = new THREE.MeshStandardMaterial({ color: 0x452e28, roughness: 0.97, metalness: 0 });
-    const crease = new THREE.MeshStandardMaterial({ color: 0x36221d, roughness: 1.0, metalness: 0 });
+    // ...and then round eight gave them a SURFACE. These were the last flat
+    // materials in the game: one value, one hue, smooth shading over a shape,
+    // on the object the player looks at in every frame from the first to the
+    // last. Every wall, coffin, headstone and car in FETCH is a canvas painted
+    // at boot; the hands were plastic.
+    //
+    // The map multiplies rather than replaces, so the value work survives: it
+    // is authored around white, pulled to a mean of 0.85 (textures.js
+    // skinPaint), and these two colours are lifted by the reciprocal — same
+    // hands, same place in the value order, every pixel of them different.
+    // It is the bumpMap as well, which is most of the point: the light the
+    // player carries moves, and a hand it cannot rake across is a shape.
+    const skinTex = handSkinTexture();
+    const skin = new THREE.MeshStandardMaterial({
+      color: 0x51362f, roughness: 0.97, metalness: 0,
+      map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
+    });
+    const crease = new THREE.MeshStandardMaterial({
+      color: 0x3f2822, roughness: 1.0, metalness: 0,
+      map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
+    });
     // Nails now face the camera (they used to sit on the palm side, unseen), so
     // their roughness is suddenly load-bearing: at 0.82 under a lamp this close
     // they came back as pale chips of wood glued to the fingertips. A nail is
