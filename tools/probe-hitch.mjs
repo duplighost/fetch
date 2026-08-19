@@ -53,6 +53,24 @@ await page.evaluate(() => {
 await page.evaluate(() => { window.__hitch.mark('start'); window.__FETCH.start(); });
 await page.waitForTimeout(3000);
 
+// ROUND TEN: wait for the first-draw warm pass before touring the acts, and say
+// so out loud. The pass streams at ~6 ms a frame from the moment the driver
+// finishes linking (~10 s after boot on this machine), and nobody reaches the
+// basement in the five seconds this tour used to take -- the bedroom opening
+// alone is longer than that. Touring before it finishes measures a player who
+// does not exist, and the number it produces (the old 9017 ms) is the cost this
+// pass exists to move. The frame log below still covers the wait, so if the pass
+// itself ever stalls a frame it shows up here as itself.
+const warmStart = Date.now();
+await page.waitForFunction(
+  () => ['done', 'skipped', 'degraded'].includes(window.__FETCH.warm().draw?.status ?? 'skipped'),
+  null, { timeout: 120000, polling: 250 },
+).catch(() => console.log('WARNING: first-draw warm pass did not finish in 120s'));
+const warmState = await page.evaluate(() => window.__FETCH.warm());
+console.log(`first-draw warm: ${JSON.stringify(warmState.draw)}`);
+console.log(`driver links:    ${JSON.stringify(warmState.links)}`);
+console.log(`waited ${((Date.now() - warmStart) / 1000).toFixed(1)}s for it\n`);
+
 for (const act of ACTS) {
   await page.evaluate((a) => { window.__hitch.mark('enter:' + a); window.__FETCH.teleport(a); }, act);
   await page.waitForTimeout(SETTLE_MS);

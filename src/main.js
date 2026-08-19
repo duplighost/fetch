@@ -291,6 +291,7 @@ class Game {
     this._buildGrain();
     this._exposeDebug();
     this._scheduleShaderWarmup();
+    this._scheduleWarmDraw();
   }
 
   // Which of the house's render roots can the graveyard actually SEE?
@@ -809,6 +810,264 @@ class Game {
     if (shader !== 'created' && shader !== 'ready' && shader !== 'degraded') return false;
     const texture = this.textureWarmup?.status;
     return texture === 'ready' || texture === 'degraded' || texture === 'skipped';
+  }
+
+  // ------------------------------------------------- first-draw warm-up
+  // THE OTHER HALF OF THE FREEZE, and the older half. compile() links a program
+  // and initTexture() uploads pixels — but ANGLE/D3D11 does the rest of its work
+  // (input layout, driver-side specialization, whatever is left of the link)
+  // when a program is first USED in a draw. The game only ever does that in a
+  // district's first frame, forty or more of them in one gulp, and that is the
+  // seven-to-nine second stall Alex has reported since round six: "loading new
+  // areas just about always freezes it."
+  //
+  // Measured on this machine, cold profile (tools/probe-hitch.mjs, then
+  // tools/probe-warm-draw.mjs with this pass in front of the tour):
+  //   entering the basement   9017 ms  ->   76 ms
+  //   house 37, graveyard 28, forest 26, clearing 28, cave 35, mirror 138.
+  // BOTH SIDES REPORT +0 PROGRAMS. Nothing here is a compile, and the 191
+  // geometries the stalling frame uploads are not it either — the same run puts
+  // 162 geometries into the forest in 48 ms. It was never the geometry.
+  //
+  // THE TWO TRAPS THIS KIND OF PASS DIES ON, AND WHAT IT DOES INSTEAD:
+  //  * `visible` IS NEVER TOUCHED. Revealing an object reveals the lights under
+  //    it, the light census moves, and every lit material in the game needs a
+  //    new program — the exact disease this exists to cure. Anything hidden,
+  //    culled to layers.mask 0, or held at instance count 0 is drawn as a PROXY
+  //    that shares its geometry and material and owns no children at all.
+  //  * IT DRAWS INTO THE DEFAULT FRAMEBUFFER, never a render target. A target's
+  //    colour space is part of the program key, so a target-warmed program is
+  //    the wrong variant — it is why the mirror pass needs its own set. One
+  //    pixel behind a scissor, over-painted by the frame that follows it.
+  _scheduleWarmDraw() {
+    const state = this.warmDraw = {
+      status: 'scheduled', total: 0, drawn: 0, proxies: 0, skipped: 0,
+      spentMs: 0, worstMs: 0, frames: 0, errors: [],
+    };
+    // Same rule as the shader warmup: the deterministic suites start hundreds of
+    // times and must not pay for driver warmth they never use. ?warmup=1 opts in.
+    if (TEST_MODE && !Q.has('warmup')) { state.status = 'skipped'; state.reason = 'test-mode'; }
+  }
+
+  // One draw per (material x geometry layout x object kind). That tuple is what
+  // decides a program AND its vertex input layout, so the game's 2184 meshes
+  // collapse to ~532 draws. Route order on top: the freeze lands on the first
+  // district past the house, so warm what he walks into next, next.
+  _warmDrawList() {
+    const seen = new Set();
+    const work = [];
+    this.scene.traverse((object) => {
+      if (!(object.isMesh || object.isPoints || object.isLine || object.isSprite)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      for (const material of materials) {
+        if (!material) continue;
+        const layout = Object.keys(object.geometry?.attributes || {}).sort().join(',');
+        const kind = `${object.isInstancedMesh ? 'i' : ''}${object.isSkinnedMesh ? 's' : ''}`
+          + `${object.isPoints ? 'p' : ''}${object.isLine ? 'l' : ''}${object.isSprite ? 'S' : ''}`
+          + `${object.geometry?.index ? 'x' : ''}`;
+        const key = `${material.uuid}|${layout}|${kind}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        work.push(object);
+      }
+    });
+    const ROUTE = ['bedroom', 'house', 'basement', 'graveyard', 'forest', 'clearing', 'cave', 'mirror'];
+    const rank = (object) => {
+      const e = object.matrixWorld.elements;
+      const zone = this.world.zoneAt?.({ x: e[12], y: e[13], z: e[14] });
+      const index = ROUTE.indexOf(zone);
+      return index < 0 ? ROUTE.length : index;
+    };
+    return work
+      .map((object, i) => [rank(object), i, object])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1])
+      .map((entry) => entry[2]);
+  }
+
+  // Drawable RIGHT NOW through a layer-0 camera? If not, it needs a proxy —
+  // and the reason it is not drawable is never something this pass may change.
+  _warmDrawable(object) {
+    if (!(object.layers.mask & 1)) return false;
+    if (object.isInstancedMesh && object.count === 0) return false;
+    for (let p = object; p; p = p.parent) if (!p.visible) return false;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    return materials.every((m) => !m || m.visible !== false);
+  }
+
+  _warmDrawProxy(object) {
+    let proxy;
+    if (object.isInstancedMesh) {
+      proxy = new THREE.InstancedMesh(object.geometry, object.material, Math.max(1, object.count || 1));
+      proxy.instanceMatrix = object.instanceMatrix;      // shared, never written
+      if (object.instanceColor) proxy.instanceColor = object.instanceColor;
+      proxy.count = Math.max(1, object.count || 1);
+    } else if (object.isSkinnedMesh) return null;        // needs its skeleton; it is on screen every frame anyway
+    else if (object.isPoints) proxy = new THREE.Points(object.geometry, object.material);
+    else if (object.isLineSegments) proxy = new THREE.LineSegments(object.geometry, object.material);
+    else if (object.isLine) proxy = new THREE.Line(object.geometry, object.material);
+    else if (object.isSprite) proxy = new THREE.Sprite(object.material);
+    else proxy = new THREE.Mesh(object.geometry, object.material);
+    proxy.frustumCulled = false;
+    proxy.layers.mask = 1;
+    proxy.matrixAutoUpdate = false;
+    proxy.matrixWorld.copy(object.matrixWorld);
+    return proxy;
+  }
+
+  // Pointed at empty sky with a one-degree, two-metre frustum: the live scene
+  // culls itself away and only what this pass deliberately un-culls is drawn.
+  _warmDrawCamera() {
+    if (this._warmCamera) return this._warmCamera;
+    const camera = new THREE.PerspectiveCamera(1, 1, 0.1, 2);
+    camera.position.set(0, 4000, 0);
+    camera.up.set(0, 0, 1);
+    camera.lookAt(0, 5000, 0);
+    camera.layers.set(0);                                // the world pass's mask
+    camera.updateMatrixWorld(true);
+    return (this._warmCamera = camera);
+  }
+
+  // NEVER DRAW WHILE THE DRIVER IS STILL LINKING. compile() hands ~261 programs
+  // to ANGLE and they finish on its own threads 10.1 SECONDS later (measured:
+  // tools/probe-link-poll.mjs). A draw issued into that queue does not wait for
+  // its own program — it waits for the queue: the first warm draw, issued the
+  // instant the compile returned, cost 6867 ms in one frame. Which is the old
+  // freeze wearing a new hat.
+  //
+  // KHR_parallel_shader_compile is the one question you can ask about link state
+  // without waiting for the answer to be yes. Asking about all 261 costs ~21 ms,
+  // too much for a frame — so this walks the list a few at a time and stops at
+  // the first unfinished one, because a linked program never un-links and the
+  // scan only ever has to catch up. ~1-24 checks a frame, and it converges the
+  // moment the driver does.
+  _warmLinksSettled(budget = 24) {
+    const state = this._warmLinks || (this._warmLinks = { status: 'polling', cursor: 0, pollMs: 0, startedAt: performance.now() });
+    if (state.status !== 'polling') return state.status === 'settled';
+    if (state.ext === undefined) {
+      state.ext = this.renderer.getContext().getExtension('KHR_parallel_shader_compile') || null;
+      // No extension means the driver linked synchronously inside compile():
+      // there is no queue to wait for and nothing to ask about.
+      if (!state.ext) { state.status = 'settled'; state.reason = 'no-khr'; return true; }
+    }
+    const programs = this.renderer.info.programs;
+    if (state.total !== programs.length) { state.list = programs.slice(); state.total = programs.length; state.cursor = 0; }
+    const gl = this.renderer.getContext();
+    const t0 = performance.now();
+    let checks = 0;
+    while (state.cursor < state.list.length && checks++ < budget) {
+      let done = true;
+      try { done = !!gl.getProgramParameter(state.list[state.cursor].program, state.ext.COMPLETION_STATUS_KHR); }
+      catch { done = true; }                      // disposed mid-scan: not our problem to wait on
+      if (!done) break;
+      state.cursor++;
+    }
+    state.pollMs = +(state.pollMs + (performance.now() - t0)).toFixed(1);
+    if (state.cursor >= state.list.length) {
+      state.status = 'settled';
+      state.settledMs = +(performance.now() - state.startedAt).toFixed(0);
+      return true;
+    }
+    // A program that never reports done must not park the warm pass forever.
+    if (performance.now() - state.startedAt > 30000) { state.status = 'settled'; state.reason = 'timeout'; return true; }
+    return false;
+  }
+
+  _warmDrawTick(budgetMs = 6) {
+    const state = this.warmDraw;
+    if (!state || state.status === 'done' || state.status === 'skipped') return;
+    if (this.terminal || this.paused || this.hitStop > 0) return;
+    // Programs first, draws after: drawing with a program the driver has not
+    // finished linking is a block, and the block is the thing being cured.
+    if (!this._warmGateSettled()) return;
+    if (!this._warmLinksSettled()) return;
+    if (!state.work) {
+      try {
+        state.work = this._warmDrawList();
+        state.total = state.work.length;
+        state.index = 0;
+        state.status = 'running';
+        this._warmRoot = new THREE.Group();
+        this._warmRoot.name = 'warm-draw staging';
+        this._warmRoot.visible = false;
+        this.scene.add(this._warmRoot);
+      } catch (error) {
+        state.status = 'skipped';
+        state.errors.push(`list: ${error?.message || error}`);
+        return;
+      }
+    }
+
+    const camera = this._warmDrawCamera();
+    const viewport = this._warmViewport || (this._warmViewport = new THREE.Vector4());
+    const scissor = this._warmScissor || (this._warmScissor = new THREE.Vector4());
+    this.renderer.getViewport(viewport);
+    this.renderer.getScissor(scissor);
+    const scissorTest = this.renderer.getScissorTest();
+    this.renderer.setScissorTest(true);
+    this.renderer.setScissor(0, 0, 1, 1);
+    this.renderer.setViewport(0, 0, 1, 1);
+
+    // A render costs ~7 ms of scene traversal before it draws anything — the
+    // renderer walks all 2184 objects to build its list whatever the camera can
+    // see. Behind the title that fixed cost is worth amortising over a batch;
+    // in play it is not, because a batch can only ever make one frame longer.
+    const batchSize = this.started ? 1 : 4;
+    const frameStart = performance.now();
+    const staged = [];
+    let spent = 0;
+    try {
+      while (state.index < state.work.length && spent < budgetMs) {
+        staged.length = 0;
+        while (staged.length < batchSize && state.index < state.work.length) {
+          const object = state.work[state.index++];
+          if (this._warmDrawable(object)) {
+            staged.push([object, object.frustumCulled, null]);
+            object.frustumCulled = false;
+          } else {
+            const proxy = this._warmDrawProxy(object);
+            if (!proxy) { state.skipped++; continue; }
+            this._warmRoot.add(proxy);
+            staged.push([object, null, proxy]);
+            state.proxies++;
+          }
+        }
+        if (!staged.length) break;
+        this._warmRoot.visible = true;
+        const t0 = performance.now();
+        this.renderer.render(this.scene, camera);
+        const ms = performance.now() - t0;
+        this._warmRoot.visible = false;
+        for (const [object, culled, proxy] of staged) {
+          if (proxy) this._warmRoot.remove(proxy);
+          else object.frustumCulled = culled;
+        }
+        spent += ms;
+        state.drawn += staged.length;
+        if (ms > state.worstMs) state.worstMs = +ms.toFixed(1);
+      }
+    } catch (error) {
+      state.errors.push(`draw: ${error?.message || error}`);
+      state.status = 'degraded';
+    } finally {
+      // A throw mid-batch must not leave the world un-culled or the staging
+      // group holding proxies: this pass is invisible or it is a bug.
+      for (const [object, culled, proxy] of staged) {
+        if (proxy) this._warmRoot.remove(proxy);
+        else object.frustumCulled = culled;
+      }
+      this._warmRoot.visible = false;
+      this.renderer.setScissorTest(scissorTest);
+      this.renderer.setScissor(scissor.x, scissor.y, scissor.z, scissor.w);
+      this.renderer.setViewport(viewport.x, viewport.y, viewport.z, viewport.w);
+    }
+
+    state.frames++;
+    state.spentMs = +(state.spentMs + (performance.now() - frameStart)).toFixed(1);
+    if (state.index >= state.work.length && state.status !== 'degraded') {
+      state.status = 'done';
+      state.work = null;
+      if (this._warmRoot) { this.scene.remove(this._warmRoot); this._warmRoot = null; }
+    }
   }
 
   _dropQuality() {
@@ -1813,6 +2072,11 @@ class Game {
         if (!this.terminal) requestAnimationFrame(tick);
         return;
       }
+      // Ahead of every render path, and cheap by construction: it spends a
+      // fixed few milliseconds and stops. Behind the title it runs at a wide
+      // budget because nothing there can be spoiled by a long frame; in play it
+      // tip-toes, and it is finished long before anyone reaches the stairs.
+      this._warmDrawTick(this.started ? 6 : 20);
       if (TEST_MODE && !this._selfStep) {
         this.render();
         if (!this.terminal) requestAnimationFrame(tick);
@@ -1885,6 +2149,10 @@ class Game {
         return {
           shader: { ...g.shaderWarmup },
           textures: g.textureWarmup ? { ...g.textureWarmup } : null,
+          draw: g.warmDraw ? { ...g.warmDraw, work: undefined } : null,
+          links: g._warmLinks
+            ? { status: g._warmLinks.status, linked: g._warmLinks.cursor, total: g._warmLinks.total ?? 0, pollMs: g._warmLinks.pollMs, settledMs: g._warmLinks.settledMs ?? null }
+            : null,
           settled: g._warmGateSettled(),
           entryLatencyMs: g.entryLatencyMs ?? null,
           programsAtEntry: g._programsAtEntry ?? null,
