@@ -193,7 +193,11 @@ export class Director {
         this._removeResident();
       });
     }
-    // the storeroom shapes: two lies and a truth
+    // the storeroom shapes: two lies and a truth. The truth is SPAWNED HERE
+    // now, not at house build time -- respawn() below clears every enemy, so a
+    // boot-spawned walker was deleted by any death anywhere and never came
+    // back. Arming on entry means a cleared list costs nothing.
+    g.dropcloths?.arm();
     this._storeArmed = true;
   }
 
@@ -673,6 +677,8 @@ export class Director {
   _updateStoreroom(dt) {
     const g = this.game;
     if (!this._storeArmed || g.act !== 'basement') return;
+    // retires the dropcloth walker only if it was actually put down
+    g.dropcloths?.watch();
     const p = g.player.pos;
     // two lies: passing the shapes plays steps behind you; nothing is there
     if (!this._lie1 && p.x < 0 && p.z < 0) {

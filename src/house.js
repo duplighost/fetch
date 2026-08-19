@@ -2,7 +2,7 @@
 // Declarative tables for the world compiler + furnishing + the act-gating props.
 // Grid: origin (-12,-14), 12x10 cells of 2m. Backyard begins at world z=6.
 import * as THREE from 'three';
-import { clamp, damp, smoothstep, TAU } from './util.js';
+import { clamp, damp, RNG, smoothstep, TAU } from './util.js';
 // (the foyer lag mirror is gone; house.js no longer imports from mirrors.js)
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -1408,9 +1408,30 @@ function furnish(game) {
   K.bottle(-2.72, B + 1.18, -4.58, 0.7);
 
   // the dropcloths: human-adjacent shapes under sheets, mid-lunge poses.
-  // one of them is real. which one is decided at boot. no one can warn you.
+  // one of them is real. which one is decided once per run. no one can warn you.
+  //
+  // HIS NOTE, 2026-08-19: "if you die in the beginning and checkpoint, i don't
+  // think the enemy appears behind that thing in the basement." He was right,
+  // and this block was the mechanism. The real one used to be spawned HERE, at
+  // house build time, which is boot -- and director.respawn() calls
+  // enemies.clear(), which takes ALL of them. So any death anywhere before the
+  // player ever reached the basement deleted the basement's best scare
+  // permanently, because nothing ever spawned it a second time.
+  //
+  // It is a lazy, re-armable spawner now: the sheet is built at boot and held
+  // in hand, and the walker is spawned when the player actually ENTERS the
+  // basement (director._enterBasement -> arm()). A cleared enemy list costs
+  // nothing; the next entry re-arms. `consumed` is set only when the thing has
+  // actually been PUT DOWN, so dying un-arms nothing.
+  //
+  // And the index comes off the SEEDED RNG instead of Math.random(): a run is
+  // reproducible now. tests/playthrough.mjs walks this room, and a different
+  // basement every run is exactly the shape of its known flake.
   const sheetSpots = [[-2.8, -1.2, 0.7], [0.6, -4.6, 2.4], [2.6, -4.2, 4.4], [-1.2, -5.2, 5.6]];
-  const realIdx = Math.floor(Math.random() * sheetSpots.length);
+  const realIdx = new RNG(0x0d2c17).int(0, sheetSpots.length - 1);
+  const decoySheets = [];
+  let realSheet = null;
+  let realSpot = null;
   sheetSpots.forEach(([x, z, ry], i) => {
     const sheet = new THREE.Group();
     const body = new THREE.Mesh(new THREE.ConeGeometry(0.42, 1.9, 8), M.curtain);
@@ -1420,16 +1441,93 @@ function furnish(game) {
     sheet.add(body, head);
     sheet.rotation.z = 0.12;                      // mid-lunge lean
     if (i === realIdx) {
-      const e = game.enemies.spawn('walker', x, z, 'standing', B + 1);   // the BASEMENT storey
-      e.standing = true;
-      sheet.position.y = 0;
-      e.mesh.add(sheet);                          // it wears its cloth when it comes
+      sheet.position.y = 0;                       // local to the walker that will wear it
+      realSheet = sheet;
+      realSpot = [x, z];
     } else {
       sheet.position.set(x, B, z);
       sheet.rotation.y = ry;
       scene.add(sheet);
+      decoySheets.push({ index: i, sheet, x, z, fall: 0, target: null });
     }
   });
+
+  // ...and the same note's second half: "it would also be cool if those other
+  // dummies in the basement could be hit in the same way even if they arent
+  // enemies." A decoy answers a throw ONCE. It topples, the cloth drags, it
+  // lands -- and there is NOTHING under it. The relief IS the scare here, and
+  // it teaches that these sheets are hittable, which makes the real one's
+  // answer worse the moment it comes.
+  for (const d of decoySheets) {
+    d.target = world.addFetchTarget({
+      id: `basementDropcloth:${d.index + 1}`,
+      pos: new THREE.Vector3(d.x, B + 0.95, d.z),
+      radius: 0.72,
+      onHit(skull, at) {
+        if (skull.mode !== 'outbound') return 'continue';
+        if (d.fall > 0) return 'return';
+        d.fall = 0.0001;                          // the ticker owns the pose from here
+        this.enabled = false;
+        game.flag(`dropclothFelled:${d.index + 1}`);
+        game.impact('hurt', at || d.target.pos);
+        game.audio.clothDrag({ pos: d.target.pos, gain: 0.62, rate: 0.86 });
+        game.after(0.34, () => game.audio.thud({
+          pos: d.target.pos, gain: 0.5, rate: 0.62, intensity: 0.35,
+        }), { global: true });
+        game.player.noise = Math.max(game.player.noise, 0.55);
+        return 'return';
+      },
+    });
+  }
+  if (decoySheets.length) {
+    game.tickers.push((dt) => {
+      for (const d of decoySheets) {
+        if (d.fall <= 0 || d.fall >= 1) continue;
+        // pose derived from ONE scalar, so a forced restore seats it in a
+        // single assignment -- the exit-slab law, restated
+        d.fall = Math.min(1, d.fall + dt * 2.35);
+        const e = d.fall * d.fall * (3 - 2 * d.fall);
+        d.sheet.rotation.x = e * 1.42;
+        d.sheet.rotation.z = 0.12 * (1 - e) + Math.sin(e * Math.PI) * 0.1;
+        d.sheet.position.y = B + Math.sin(e * Math.PI) * 0.06 - e * 0.12;
+      }
+    });
+  }
+
+  // The record the director arms on basement entry and watches while the
+  // player is down here. It is the only owner of the real one.
+  game.dropcloths = {
+    realIdx, walker: null, consumed: false,
+    arm() {
+      if (this.consumed || !realSheet) return null;
+      if (this.walker && game.enemies.list.includes(this.walker)) return this.walker;
+      const [x, z] = realSpot;
+      const e = game.enemies.spawn('walker', x, z, 'standing', B + 1);   // the BASEMENT storey
+      e.standing = true;
+      // AND IT KEEPS TO ITS ROOM. enemies.js's own comment on tether: an
+      // unbounded Standing One "would convert every look-away into a
+      // corridor-length pursuit", which is exactly what this one did — it could
+      // follow the player out of the storeroom and stand in the boiler doorway,
+      // and with the spot now seeded rather than drawn fresh every boot that
+      // stopped being a one-in-four surprise and became the shape of the run.
+      // 4.5 m is the storeroom: it still crosses the room behind you, which is
+      // the whole beat (director._updateStoreroom's "truth"), and it still
+      // reaches the crawl door. It just cannot leave with you.
+      e.home = { x, z };
+      e.tether = 4.5;
+      e.mesh.add(realSheet);                      // it wears its cloth when it comes
+      this.walker = e;
+      return e;
+    },
+    // Put down = consumed. Gone from the list while still on its feet is a
+    // director clear (death, restart) -- and that must never retire it.
+    watch() {
+      const e = this.walker;
+      if (!e) return;
+      if (e.state === 'dying') this.consumed = true;
+      else if (!game.enemies.list.includes(e)) this.walker = null;
+    },
+  };
 
   // webs across the basement corridor — real strand geometry, not cartoon
   // planes (playtest 3b): radial spokes, sagging spiral rings, a couple of
