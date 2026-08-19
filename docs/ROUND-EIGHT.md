@@ -228,3 +228,28 @@ Landed knowledge, for whoever touches this next:
 
 All thirteen gates green. Before/afters: `scratch-hands/R9-vs-live.png`
 (production vs branch) and `R9-vs-r8.png` (capsule vs skin).
+
+---
+
+# ADDENDUM 2 (2026-08-19, commit `5fdf1d6`): his two live notes on the skinned hands
+
+He called the rebuild "likely a huge improvement" and gave two notes from the
+frames, both landed:
+
+1. **"An odd little square thing sticking out."** The NAILS — flat BLOCK chips
+   sized for the old capsule fingertips, corners standing off the curved
+   skinned tube; the thumbs' sat visible under the skull. His call: ditch
+   them. Deleted, all ten. If nails ever return they are a painted patch in
+   the skin sheet, never geometry.
+2. **"Are those black boxes under the hands supposed to be sleeves?"** Yes —
+   and they are load-bearing story (playtest 2: without arms rooted off the
+   bottom of the frame, the hands read as the SKULL's own). Fixed as cloth:
+   curtain-sheet folds + lifted base on the sleeve, open-ended DoubleSide
+   tubes (a capped cylinder shows its end disc as a flat dark polygon), and a
+   further-lifted clone for the FOREARMS, which sit outside the cradle lamps'
+   reach and can never be lit — their value is baked in. `probe-black-quad.mjs`
+   is the method: toggle parts in a fixed pose instead of guessing; it also
+   proved the remaining dark wedge in the steep-down pose is the bedroom
+   desk's unlit side (world furniture, same as production, not the arms).
+
+Warm pass now uploads 41 textures (the forearm cloth clone). All gates green.
