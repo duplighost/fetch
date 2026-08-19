@@ -856,7 +856,12 @@ class Game {
   _warmDrawList() {
     const seen = new Set();
     const work = [];
-    this.scene.traverse((object) => {
+    // The skull is the one thing that is NOT in the scene at boot: the opening
+    // wakes you empty-handed and bootAbsent() takes its root out of every graph
+    // until the window breaks. Without it here, the game's most important
+    // object meets the driver for the first time on the frame it arrives.
+    const roots = [this.scene, this.skull?.root].filter((r) => r && (r === this.scene || !r.parent));
+    const collect = (object) => {
       if (!(object.isMesh || object.isPoints || object.isLine || object.isSprite)) return;
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) {
@@ -870,7 +875,8 @@ class Game {
         seen.add(key);
         work.push(object);
       }
-    });
+    };
+    for (const root of roots) root.traverse(collect);
     const ROUTE = ['bedroom', 'house', 'basement', 'graveyard', 'forest', 'clearing', 'cave', 'mirror'];
     const rank = (object) => {
       const e = object.matrixWorld.elements;
