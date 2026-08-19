@@ -6,6 +6,14 @@ thread (Opus 5). It supersedes `ROUND-SEVEN-PLAN.md` as the entry point; the
 laws in `ROUND-SEVEN-LOOK.md` all still bind, and `ROUND-SEVEN.md` is the
 record of what just shipped.
 
+**Every number and line citation in this document was re-verified on the final
+tree (commit `841267e`) after the deploy, same day:** the full ten-gate suite
+fresh-run green; site `fetch/src` 22/22 byte-identical to this branch;
+production serving round seven (grain + car-Lambert markers confirmed by
+fetch); AABB, sweep, bone-hands and viewmodel-light probes re-measured; the
+hitch walk re-run; and the open items below re-probed rather than carried on
+faith. Trust these numbers over any earlier log in `tests/results/r7/`.
+
 ---
 
 ## Where the game is
@@ -34,18 +42,34 @@ a first hands pass all landed. The record, with every number, is
   playing it. Expect notes; his notes outrank this document.
 
 **Open items that are NOT this round unless he says so** (carry the list, do
-not silently adopt any of it):
-- **Entering the basement costs a ~7-second frame** — 191 geometry uploads,
-  zero shader compiles, pre-existing (round-six tree does 6.4 s). The real
-  "loading freezes" complaint, cause attached, unclaimed.
-- **`tests/playthrough.mjs` is non-deterministic** — failed twice on an
-  unchanged tree, 6/6 green since. One of the four basement dropcloths spawns
+not silently adopt any of it — each was RE-PROBED on the final tree, so the
+descriptions below are current, not inherited):
+- **A ~7-8 second frame on first entry past the house** — and note the
+  attribution FLOATS: one hitch walk pins it on `enter:basement` (+191
+  geometries), the next on `enter:graveyard` (+46), always with ZERO shader
+  compiles. Same disease either way — a first-touch geometry/buffer upload
+  burst — and pre-existing (6.4 s on the untouched round-six tree). The real
+  "loading freezes" complaint, cause attached, unclaimed. `probe-hitch.mjs`
+  reproduces it in one run.
+- **`tests/playthrough.mjs` is non-deterministic** — failed twice in one
+  ten-minute window on an unchanged tree; green on every run since (6+ on
+  this tree, 4/4 on the baseline). One of the four basement dropcloths spawns
   as a real walker from `Math.random()`, right on the failing route. If it
   reds on a commit that couldn't have caused it, re-run before reverting, and
   suspect this first.
-- The graveyard key-under-the-tree reveal he never saw; the cave sound failure
-  (if he hits it, ask for `__game.audio.voiceStats()`); the cave back wall
-  "you can go through a bit."
+- **The graveyard key-under-the-tree reveal.** Re-probed: the MECHANISM
+  passes clean (`probe-key-tree.mjs`: one hit on the branch → key and bones
+  drop, the fetch retrieves it, `gotgateKey3` sets). So the open item is
+  purely LEGIBILITY — he opened the latch and never SAW the reveal happen.
+  Measure the reveal (view-cone integral, luminance ratio vs the ground it
+  lands on), don't re-fix the working mechanism. NEW, found while re-probing:
+  the probe's final pose — under the tree, pitched up into the canopy —
+  renders **~582 draws** (593 pre-round-seven), over the 450 ceiling at a
+  pose the 14-frame set never covers. Pre-existing, unclaimed; if a future
+  round takes it, start attribution at the canopy and the sky pass.
+- The cave sound failure (if he hits it, ask for
+  `__game.audio.voiceStats()`); the cave back wall "you can go through a
+  bit" — still unexamined.
 - Known permanently-red gates, do not chase: `underfalls-expansion` ×2,
   `grave-arena-regression` ×1 (seeds 145/583).
 
@@ -90,9 +114,9 @@ whole game, and each of these is asserted by a tool or a playthrough beat:
    it.
 2. **The animation contract.** `_fingers[]` entries keep `.k1` (Group), `.k2`
    (Group), `.phase`, `.thumb`. `update()` ASSIGNS `k1.rotation.x` /
-   `k2.rotation.x` every frame (`skull.js:~770`) — grip curl, threat tremble,
-   graveyard fear, idle micro-life. Static droop/roll must be baked into MESH
-   transforms inside the groups, never onto the groups.
+   `k2.rotation.x` every frame (`skull.js:825-826`) — grip curl, threat
+   tremble, graveyard fear, idle micro-life. Static droop/roll must be baked
+   into MESH transforms inside the groups, never onto the groups.
 3. **The hands go DOWN and come back.** Pose blends held↔empty via
    `_applyHandPose(t, g)`; when mode is `'gone'` they sink out of frame
    (`goneBlend`), and `raiseHands(seconds)` lifts them for authored beats
@@ -104,16 +128,18 @@ whole game, and each of these is asserted by a tool or a playthrough beat:
    joins the held pass.
 5. **Geometry is shared.** One capsule (`FSEG`), one ball (`FBALL`), one box
    for nails, three bone primitives — scaled per mesh. Mirror act sits at
-   1377/1500; round seven's commit asserts the count went down. Do not
-   un-share.
-6. **The measured gates.** `probe-grip-clip.mjs`: hand AABB must stay ≤
-   0.245 × 0.441 × 0.193 in hold space (currently 0.241 × 0.439 × 0.190).
-   `shot-grip-sweep.mjs`: ~zero % buried in the skull (current worst 0.2%;
-   note it OVERWRITES the cradle while running — shoot grip only after a
-   clean reboot). `shot-bone-hands.mjs`: fingers grow +Z, curl +Y
-   (`dorsalZ > 0.6 && fingersY > 0.5`), the bone twin must sit inside the
-   flesh, and **the mirrors must not see the viewmodel**.
-   `probe-viewmodel-light.mjs`: the cradle's calibrated lamps.
+   ~1377-1378/1500 (drifts ±1 between runs); round seven's commit asserts the
+   count went down. Do not un-share.
+6. **The measured gates** (all re-verified on the final tree). `probe-grip-
+   clip.mjs`: hand AABB must stay ≤ 0.245 × 0.441 × 0.193 in hold space
+   (currently 0.241 × 0.439 × 0.190). `shot-grip-sweep.mjs`: ~zero % buried
+   in the skull (current worst 0.2%; it mutates the live cradle while it
+   runs, but every tool boots its own browser, so this only matters if you
+   drive sweep and grip inside one page — separate invocations are safe in
+   any order). `shot-bone-hands.mjs`: fingers grow +Z, curl +Y (`dorsalZ >
+   0.6 && fingersY > 0.5`), the bone twin must sit inside the flesh, and
+   **the mirrors must not see the viewmodel**. `probe-viewmodel-light.mjs`:
+   the cradle's calibrated lamps.
 7. **The render path.** There is no separate viewmodel camera: `render()`
    runs the ONE camera twice — layer 0 for the world, depth cleared, then
    LAYER_HELD for the cradle, which is lit by its own three lamps
@@ -222,9 +248,9 @@ re-check the silhouette against the reference. Free, constructor-only.
 
 **4. Cradle-pose flatness.** In the reference the fingers lie nearly straight
 along the cranium. `update()` already flattens the held pose via `held01`
-(`skull.js:~768`); the rest-bend constants there are look-only and were tuned
-by eye once before. Small moves, re-shoot, re-sweep — flatter fingers sit
-closer to the bone and the buried% gate is the guardrail.
+(`skull.js:824-826`); the rest-bend constants there are look-only and were
+tuned by eye once before. Small moves, re-shoot, re-sweep — flatter fingers
+sit closer to the bone and the buried% gate is the guardrail.
 
 **5. The cradle lamps.** Warm key / cool fill / rim already exist as three
 LAYER_HELD lights. Colour and intensity changes are census-safe. If the hands
