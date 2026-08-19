@@ -58,6 +58,7 @@ export class World {
     this.postClamp = null;           // fn(pos, dt) set by forest builder
     this.surfaceZones = [];          // {min,max, surface}
     this._geo = new Map();           // material -> geometry list (merged at finish)
+    this._shellByMat = new Map();    // material -> the shell clone finishStatic merged it into
 
     this._buildCandlePool();
   }
@@ -87,6 +88,12 @@ export class World {
     this._geo.get(mat).push(g);
   }
 
+  // The shell material a source material was merged into, once finishStatic has
+  // run: null before that, and null for a material that contributed no static
+  // boxes. Ask through this rather than comparing against the source material,
+  // which can never match the clone.
+  shellFor(mat) { return this._shellByMat.get(mat) || null; }
+
   finishStatic() {
     const grid = this._buildOcclusionGrid(AO_CELL);
     this.shellStats = { materials: 0, vertices: 0, cells: grid.size };
@@ -99,6 +106,19 @@ export class World {
       const shellMat = mat.clone();
       shellMat.vertexColors = true;
       shellMat.name = (mat.name || 'shell') + ':shell';
+      // ...AND THE SHELL REMEMBERS WHAT IT WAS CLONED FROM.
+      //
+      // A clone is never === its source, so any code asking "is this mesh the
+      // rock batch?" by comparing against game.mats.rock silently answers no,
+      // forever. underfalls.js did exactly that to spare the cave's own floor
+      // from the district hide, and the cave has therefore been drawn WITHOUT A
+      // FLOOR since the day this clone was introduced (8d4c5a2, 2026-08-14):
+      // the player walks a lit ribbon with an unlit gutter either side, which
+      // is what Alex reported as "the path on the ground looked kind of
+      // boring". Nothing caught it, because no gate looks at what a floor is
+      // made of.
+      shellMat.userData.shellOf = mat;
+      this._shellByMat.set(mat, shellMat);
       this._bakeContactShading(merged, grid, AO_CELL);
       const mesh = new THREE.Mesh(merged, shellMat);
       mesh.castShadow = true;

@@ -1347,7 +1347,12 @@ function installCaveVisibility(game, state) {
     // shared rock batch at boot. Keeping that one batch costs one call; the
     // hundreds of distant house/basement prop meshes do not belong in a cave
     // render merely because the camera happens to face southwest.
-    || (child.isMesh && child.material === game.mats.rock)
+    // ...and it is the SHELL that carries them, never game.mats.rock itself.
+    // finishStatic merges under a clone (world.js), so this used to read
+    // `child.material === game.mats.rock`, which no mesh in the scene can ever
+    // satisfy — and the cave was drawn without its floor from 2026-08-14 until
+    // this line was fixed. Ask the World what it cloned instead.
+    || (child.isMesh && child.material && child.material === game.world.shellFor(game.mats.rock))
     // materials the district authored for itself (wet ribbon, dry lintel)
     || (child.isMesh && child.material?.userData?.underfalls);
 
