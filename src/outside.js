@@ -316,6 +316,27 @@ function buildGraveyard(game) {
     // stops the dead being floodlit without stopping the beam being a beam.
     // Intensity changes are free: the light census is untouched.
     head.intensity = beat * (225 + Math.sin(t * 3.1) * 42);
+    // ...unless it is SCREAMING, or finished. The alarm strobes the same lamp
+    // on its own period — a hard square, not this dying flutter — so the sound
+    // and the light are obviously one machine. Intensity only: the light census
+    // is never touched. (round nine)
+    const wreck = game.wreck;
+    if (wreck?.dead) {
+      head.intensity = 0;
+      if (game.wreckLens) game.wreckLens.color.setScalar(0.012);
+      return;
+    }
+    if (wreck?.alarm) {
+      const strobe = Math.sin(t * 8.1) > 0 ? 1 : 0.06;
+      // 300/0.50, not 340/0.67: round seven measured this lens as the single
+      // brightest surface on the wreck at 0.77 and pulled it down on purpose.
+      // The alarm is allowed to be the loudest thing here, not to walk that
+      // back — 0.50 is well clear of the dying flicker (0.355) and well under
+      // the value they rejected.
+      head.intensity = strobe * 300;
+      if (game.wreckLens) game.wreckLens.color.setScalar(0.05 + strobe * 0.45);
+      return;
+    }
     // the lens answers its own lamp, so the flicker is visible from the SIDE
     // too — not only in the beam thrown out across the graves
     if (game.wreckLens) game.wreckLens.color.setScalar(0.055 + beat * 0.30);
@@ -893,7 +914,10 @@ function buildDestructibleGraves(game) {
 
   // One fixed pool for every chip and topple. Breaking all six stones cannot
   // allocate another Mesh or grow the scene: exhausted cosmetics are dropped.
-  const DEBRIS_CAP = 36;
+  // 36 -> 52: the wrecked wagon fires its stages through THIS pool rather
+  // than standing up a second one (round nine). Same mesh, same draw, same
+  // recycling law — exhausted cosmetics are still simply dropped.
+  const DEBRIS_CAP = 52;
   const debrisMesh = new THREE.InstancedMesh(
     new THREE.DodecahedronGeometry(0.12, 0), stoneMat, DEBRIS_CAP,
   );
@@ -3913,6 +3937,17 @@ function buildWreckedCar(game) {
   doorPanel.castShadow = true;
   cabin.castShadow = false;
 
+  // HIS NOTE, 2026-08-19: "I want to be able to destroy the hell out of the car
+  // in the graveyard by throwing the skull at it. maybe it even has a car alarm
+  // going off before you destroy it."
+  //
+  // FOUR pieces come OUT of the static batch, because a merged mesh cannot move
+  // and these four have to: the roof crushes, the glasshouse collapses with it,
+  // the hanging door comes off, and the peeled hood goes with it. Everything
+  // else stays merged, so the wreck costs exactly what it always cost.
+  // (The crack star is LineSegments and batchStaticGroup never took it.)
+  for (const piece of [roof, cabin, door, tornHood]) piece.userData.noBatch = true;
+
   batchStaticGroup(car, 'wrecked wagon');
 
   car.position.set(-9, -0.02, 14);
@@ -3920,8 +3955,172 @@ function buildWreckedCar(game) {
   scene.add(car);
   car.updateMatrixWorld(true);
   const bounds = new THREE.Box3().setFromObject(car);
-  world.addCollider(bounds.min.x + 0.12, -0.2, bounds.min.z + 0.12,
+
+  // ------------------------------------------------------- BREAKING IT UP
+  // Modelled on the breakable graves, which is this game's blessed
+  // destructible: an addFetchTarget with a hit count, POOLED debris (theirs,
+  // enlarged — not a second pool), a collider that drops on the last hit, a
+  // flag so the state survives a checkpoint restore, and noise that draws the
+  // dead. The alarm turns that last part into the loop: it screams from the
+  // first hit, it pulls walkers the whole time it screams, and the only way to
+  // shut it up is to finish the job.
+  //
+  // Every stage is derived from ONE scalar (wreck.wreckT, paid out from the
+  // hit count) so a forced restore seats the pose in a single assignment, and
+  // the sounds are latched on the hit itself so a restore is silent.
+  const WRECK_DEBRIS_OWNER = 90;
+  const wreckAt = new THREE.Vector3(-9, 0.9, 14);
+  const wreck = {
+    hits: 0, stages: 4, wreckT: 0, alarm: false, dead: false,
+    _alarmT: 0, _wail: 0, collider: null, target: null,
+    reset() {
+      // a finished wreck STAYS finished: the flag is the truth, and un-crushing
+      // a car the player already took apart would be the graveyard reset eating
+      // their work
+      if (game.flags.has('wreckDestroyed')) return;
+      this.hits = 0;
+      this.wreckT = 0;
+      this.alarm = false;
+      this.dead = false;
+      this._alarmT = 0;
+      this._wail = 0;
+      if (this.collider) this.collider.max.y = Math.min(1.75, bounds.max.y);
+      if (this.target) this.target.enabled = true;
+      cracks.visible = true;
+      glass.opacity = 0.72;
+      poseWreck(0);                             // the pose is seated, not eased
+      for (const d of game.graveDebrisPool?.entries || []) {
+        if (d.owner !== WRECK_DEBRIS_OWNER) continue;
+        d.active = false;
+        d.owner = -1;
+        d.settled = false;
+      }
+    },
+  };
+  wreck.collider = world.addCollider(bounds.min.x + 0.12, -0.2, bounds.min.z + 0.12,
     bounds.max.x - 0.12, Math.min(1.75, bounds.max.y), bounds.max.z - 0.12);
+  game.wreck = wreck;
+
+  // ONE function owns the pose, so the ticker and a restore cannot disagree.
+  function poseWreck(t) {
+    const e = t * t * (3 - 2 * t);
+    // the roof comes down and twists; the glasshouse goes with it
+    roof.position.y = 1.68 - e * 0.72;
+    roof.rotation.z = -0.025 - e * 0.2;
+    roof.rotation.x = 0.02 + e * 0.1;
+    cabin.scale.y = 1 - e * 0.42;
+    cabin.position.y = -e * 0.06;
+    glass.opacity = 0.72 * (1 - Math.min(1, e * 2.4));
+    // the hanging door finishes coming off, and the hood peels back
+    door.rotation.y = -0.82 - e * 0.9;
+    door.rotation.x = e * 0.5;
+    door.position.y = 0.43 - e * 0.42;
+    tornHood.rotation.z = 0.19 + e * 0.62;
+    tornHood.position.y = 1.25 + e * 0.12;
+    tornHood.position.x = 1.72 - e * 0.3;
+  }
+
+  const shedDebris = (count, spread) => {
+    const pool = game.graveDebrisPool;
+    if (!pool) return;
+    let made = 0;
+    for (let i = 0; i < pool.entries.length && made < count; i++) {
+      const d = pool.entries[i];
+      if (d.active) continue;
+      const angle = wreck.hits * 1.31 + made * 2.39;
+      d.active = true;
+      d.owner = WRECK_DEBRIS_OWNER;
+      d.age = 0;
+      d.settled = false;
+      d.scale = 0.5 + ((wreck.hits + made * 2) % 5) * 0.14;
+      d.p.set(wreckAt.x + Math.cos(angle) * spread * 0.5, 1.05 + made * 0.09,
+        wreckAt.z + Math.sin(angle) * spread * 0.5);
+      d.v.set(Math.cos(angle) * (0.9 + made * 0.16), 1.7 + made * 0.19,
+        Math.sin(angle) * (0.9 + made * 0.16));
+      d.spin.set(2.4 + made, angle, 1.7 + made * 0.21);
+      made++;
+    }
+  };
+
+  wreck.target = world.addFetchTarget({
+    id: 'wreckedWagon', object: null, pos: wreckAt.clone(), radius: 2.35,
+    onHit(skull, at) {
+      if (skull.mode !== 'outbound') return 'continue';
+      if (wreck.dead) return 'return';
+      // THE CAR DOES NOT SHIELD THE DEAD. This target is a 2.35 m sphere so the
+      // wreck is easy to hit on purpose — but the arena is fought around it,
+      // and a walker standing against the panels must not be able to hide
+      // behind a car. If a body is inside the impact, the skull goes through to
+      // it and this hit never happened. (The guard lives on the TARGET, never
+      // in _checkTargets: FEEL_PROFILE's law.)
+      const point = at || wreckAt;
+      for (const e of game.enemies.list) {
+        if (e.state === 'dying') continue;
+        if (Math.hypot(e.pos.x - point.x, e.pos.z - point.z) < 1.75) return 'continue';
+      }
+      wreck.hits++;
+      const stage = wreck.hits;
+      game.impact('hurt', point);
+      game.player.noise = 1;
+      if (stage === 1) {
+        // IT WAKES UP. The alarm is the answer to the first hit, and it is
+        // also the price of it.
+        wreck.alarm = true;
+        wreck._alarmT = 0;
+        game.audio.thud({ pos: point, gain: 0.7, rate: 0.5, intensity: 0.7, crack: true });
+        game.audio.glassTink({ pos: point, gain: 0.5, rate: 0.9 });
+      } else if (stage === 2) {
+        cracks.visible = false;                 // the glasshouse goes
+        game.audio.glassShatter({ pos: point, gain: 0.85, rate: 0.92 });
+        game.audio.thud({ pos: point, gain: 0.6, rate: 0.6, intensity: 0.5 });
+        shedDebris(3, 1.4);
+      } else if (stage === 3) {
+        game.audio.metalDrop({ pos: point, gain: 0.8, rate: 0.5 });
+        game.audio.thud({ pos: point, gain: 0.72, rate: 0.46, intensity: 0.8, crack: true });
+        shedDebris(4, 1.9);
+        game.enemies.resonancePulse?.(wreckAt, 6.2, 1.0);
+      } else {
+        // DEAD. The alarm does not stop, it DIES — the pitch sagging out from
+        // under the wail. Same grammar the boiler speaks. The lamp goes with it.
+        wreck.dead = true;
+        wreck.alarm = false;
+        game.audio.carAlarm({ pos: wreckAt, gain: 0.85, dying: true });
+        game.audio.thud({ pos: point, gain: 0.9, rate: 0.4, intensity: 1, crack: true });
+        game.audio.metalDrop({ pos: point, gain: 0.9, rate: 0.42 });
+        game.after(0.7, () => game.audio.stoneGrind({
+          pos: wreckAt, gain: 0.5, rate: 0.5, verb: 0.8,
+        }), { global: true });
+        shedDebris(6, 2.6);
+        game.shake(0.42);
+        wreck.collider.max.y = 0.62;            // you can walk over what is left
+        this.enabled = false;
+        game.flag('wreckDestroyed');
+        game.enemies.resonancePulse?.(wreckAt, 7.4, 1.25);
+      }
+      return 'return';
+    },
+  });
+
+  game.tickers.push((dt) => {
+    const want = wreck.hits / wreck.stages;
+    if (Math.abs(want - wreck.wreckT) > 0.0005) {
+      wreck.wreckT += (want - wreck.wreckT) * Math.min(1, dt * 5.5);
+      poseWreck(wreck.wreckT);
+    }
+    if (!wreck.alarm) return;
+    // ONE CYCLE PER PERIOD, never a loop: audio.carAlarm is bounded and this
+    // ticker is what makes it repeat, so nothing can outlive the wreck.
+    wreck._alarmT -= dt;
+    if (wreck._alarmT <= 0) {
+      wreck._alarmT = 1.24;
+      wreck._wail++;
+      game.audio.carAlarm({ pos: wreckAt, gain: 0.8, rate: 1 - wreck.hits * 0.03 });
+      // and it CALLS THEM. This is the whole loop: the noise is what hitting it
+      // costs, and finishing the job is the only way to take the cost back.
+      game.enemies.resonancePulse?.(wreckAt, 5.6, 0.85);
+    }
+    game.player.noise = Math.max(game.player.noise, 0.72);
+  });
 
   // Debris stays outside the car group so the tight gameplay collider is not
   // silently enlarged by a suitcase or glass shard several metres away.

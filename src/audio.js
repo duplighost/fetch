@@ -1161,6 +1161,58 @@ export class GameAudio {
     }
   }
 
+  // THE CAR ALARM. His round-nine note: "maybe it even has a car alarm going
+  // off before you destroy it." A dying wagon's alarm, not a showroom's: two
+  // alternating tones on a battery that has been in a graveyard for years, so
+  // every cycle sags a little and the horn under it is more rattle than tone.
+  //
+  // ONE CYCLE PER CALL, hard-bounded. The car's ticker re-fires it on a period
+  // while the alarm is live, so nothing here loops and nothing can outlive the
+  // wreck — the cave's unbounded voice is still an open bug and this does not
+  // repeat it. opts.dying sags the whole cycle into silence instead: the
+  // game's dying-machine grammar, the same sentence the boiler speaks.
+  carAlarm(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t0 = ctx.currentTime;
+    const dying = !!opts.dying;
+    const rate = opts.rate ?? 1;
+    const cycles = dying ? 3 : 4;
+    const step = dying ? 0.26 : 0.19;
+    const out = this._bus(opts, cycles * step + 0.6, 0.9, opts.verb ?? 0.55);
+    for (let i = 0; i < cycles; i++) {
+      const t = t0 + i * step;
+      // the sag: a dying battery drops pitch across the cycle, and a dying
+      // alarm drops it across the whole wail
+      const sag = dying ? 1 - i / cycles * 0.62 : 1 - i * 0.012;
+      const hz = (i % 2 ? 618 : 494) * rate * sag;
+      const peak = (dying ? 0.34 - i * 0.09 : 0.4) * (1 - i * 0.02);
+      for (const [mult, amp] of [[1, 1], [2, 0.34], [3, 0.16]]) {
+        const o = ctx.createOscillator();
+        o.type = mult === 1 ? 'square' : 'sine';
+        o.frequency.setValueAtTime(hz * mult, t);
+        if (dying) o.frequency.exponentialRampToValueAtTime(hz * mult * 0.72, t + step * 0.92);
+        const g = ctx.createGain();
+        this._env(g, t, Math.max(0.0003, peak * amp), 0.012, step * 0.78);
+        o.connect(g).connect(out);
+        o.start(t);
+        o.stop(t + step + 0.05);
+      }
+      // the horn's own body: a short filtered noise rattle riding each tone,
+      // so it reads as a fitting bolted to a rusted panel
+      const src = ctx.createBufferSource();
+      src.buffer = this._noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1750 * rate * sag;
+      bp.Q.value = 3.4;
+      const ng = ctx.createGain();
+      this._env(ng, t, 0.11 * (dying ? 0.6 : 1), 0.01, step * 0.6);
+      src.connect(bp).connect(ng).connect(out);
+      src.start(t);
+      src.stop(t + step);
+    }
+  }
+
   // A real struck servant bell, not the generic metal-drop cluster.  The
   // inharmonic partials and long positional tail make the window relay audible
   // from either floor, so its causal payoff cannot be mistaken for a loose

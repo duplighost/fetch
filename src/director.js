@@ -1186,6 +1186,7 @@ export class Director {
       if (g.graveyardGate) g.graveyardGate.reset();
       for (const grave of g.resonantGraves || []) grave.reset?.();
       for (const grave of g.destructibleGraves || []) grave.reset?.();
+      g.wreck?.reset?.();
       g.ossuary?.reset?.();
     } else if (cp === 'graveyard' && graveResolved) {
       if (this.graveArena) { this.graveArena.done = true; this.graveArena.pending = 0; }
