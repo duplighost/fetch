@@ -4085,7 +4085,21 @@ function buildWreckedCar(game) {
   };
 
   wreck.target = world.addFetchTarget({
-    id: 'wreckedWagon', object: null, pos: wreckAt.clone(), radius: 2.35,
+    // 3.0, NOT 2.35, AND THE REASON IS THE COLLIDER, NOT THE CAR.
+    // The wagon is a 5.0 x 2.1 m body rotated 55 degrees, wrapped in a single
+    // AXIS-ALIGNED collider taken from Box3.setFromObject: 4.39 x 5.08 m, which
+    // blocks 24 m2 of ground where the car occupies 10.4. The old 2.35 m sphere
+    // sat INSIDE that box on both broad sides and all four corners, and
+    // skull.js collides before it tests targets — so the skull bounced off an
+    // invisible wall it could not reach through. Swept over 3600 bearings, 86%
+    // of approaches never got near the sphere; the only two that landed were
+    // about +/-11 degrees due east and +/-14 due west. That is exactly Alex's
+    // "maybe you have to hit it in certain parts".
+    // 3.0 clears the broad faces (2.49/2.59) without reaching the corners
+    // (3.31-3.40), so the car answers a throw from any side and still does not
+    // answer one aimed at open grass. It is deliberately NOT wider: this sphere
+    // is also where every impact sound and effect spawns.
+    id: 'wreckedWagon', object: null, pos: wreckAt.clone(), radius: 3.0,
     onHit(skull, at) {
       if (skull.mode !== 'outbound') return 'continue';
       if (wreck.dead) return 'return';
@@ -4134,7 +4148,14 @@ function buildWreckedCar(game) {
         }), { global: true });
         shedDebris(6, 2.6);
         game.shake(0.42);
-        wreck.collider.max.y = 0.62;            // you can walk over what is left
+        // What is left is a CRUSHED CAR, not a kerb. 0.62 read as "walk over
+        // it" but the player steps up 0.5 (player.js STEP_UP) from graveyard
+        // terrain that sits at +0.18 under the wreck — 0.68 clears 0.62, so the
+        // dead wagon became walk-through over three quarters of its footprint
+        // while its shell never moved. Alex: "when you do walk into it, you go
+        // right through it." 0.98 is under the standing roofline and over the
+        // step, so you climb the graves and not the car.
+        wreck.collider.max.y = 0.98;
         this.enabled = false;
         game.flag('wreckDestroyed');
         game.enemies.resonancePulse?.(wreckAt, 7.4, 1.25);
