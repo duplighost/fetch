@@ -1,4 +1,185 @@
-# ROUND NINE — HIS FIVE NOTES. The brief.
+# ROUND NINE — THE RECORD. All five notes are built.
+
+**Built 2026-08-19 on `claude/aug19-round9`, worktree
+`C:\Users\Alex\Projects\fetch-aug19-round9`, stacked on
+`claude/aug18-round7-look` at `749f471`. NOT pushed, NOT deployed.** Six
+commits, one per note. The brief this was built from is kept below, unchanged,
+because it was researched to root cause and it was right about every mechanism
+it named.
+
+**Alex has not played any of it.** His notes outrank everything written here.
+
+## What landed, in his order
+
+1. **The car can be destroyed, and it screams while you do it.** Four hits.
+   First hit wakes a two-tone alarm on a dead battery, strobing the wreck's own
+   dying headlight on the wail's period; it pins player noise and calls the dead
+   every cycle, and there is no way to stop it except finishing the job. Then
+   the glasshouse, then the door and the peeled hood, then it dies — the alarm
+   sagging out from under itself rather than stopping, the lamp out, the roof
+   down, the collider dropped so you can walk over what is left.
+2. **The ossuary hatch is instant, both ways, like the marrow.** E and you are
+   down; E and you are up. The stone still slides — it finishes behind you. The
+   way out refuses out loud now too, which it never did.
+3. **The weighted basket turns the wheel on.** The counterweight starts visibly
+   locked (a pawl standing in the rim, the core dark) and knocks when thrown at.
+   Solving the kennel runs cause down a visible wire, knock by knock, thirteen
+   metres north, and the pawl lets go. The hold itself is unchanged. Both
+   residents moved out of the corridor and into the rooms.
+4. **The basement's best scare stops dying with you**, and the three decoy
+   sheets topple when hit, with nothing underneath.
+5. **The pump-gallery latch cannot be missed any more**, and the gallery floor
+   is crawling.
+
+## The numbers
+
+| | |
+|---|---|
+| His pump bug, driven as he described it | arrives on the far bank at **progress 0.787** — the old rule latched at 0.9 |
+| Ossuary E, press to being underground | **one tick** (was ~0.9 s of lid) |
+| The kennel wire on screen, from where he walks | **1.64%** of the frame, **6.2x** the floor's luminance |
+| Each car stage's change to the frame | **11.4 / 6.0 / 6.9 / 5.5 %** (varies a little with the strobe phase) |
+| Intact car vs finished car | **9.6%** of the frame |
+| Alarm strobe, phase to phase | **3.6%** of the frame |
+| Gallery vermin on screen, standing look | **0.19%** of the frame |
+| Playthrough, five consecutive runs | **5/5 COMPLETE** (4/5 before the tether) |
+| Alarm audio, 20 s of continuous wailing | peak **5 voices of a 40 cap**, 0 dropped, settles when the wreck dies |
+| Draw cost added | 1 mesh in the ossuary (the wire), 1 in the basement (the vermin), 4 unbatched car pieces |
+
+## THE FINDING OF THE ROUND, and it is a question for him
+
+**The graveyard fight has been quietly easier than it was written, because a
+basement enemy was eating its attack tokens.** `tests/grave-arena-regression`
+never clears the enemy list — it only clears `graveArena` enemies — so the
+boot-spawned basement dropcloth walker was in `enemies.list` for the entire
+seeded fight, holding attack-token budget that the graveyard therefore never
+spent on you. Item 4 removes that walker from boot. The fight is now at the
+pressure it was authored with, for the first time, and **seed 583 loses at wave
+2 (guard 38) where it used to survive (guard 61)**.
+
+Proved rather than argued, three ways: disabling the new car target changes
+nothing; reverting `src/outside.js` to base entirely changes nothing (so it is
+not the car); and re-adding a boot-spawned basement walker to my tree makes
+seed 583 pass again, along with every other seed. A global-`Math.random()`
+phase-shift experiment on the base tree ruled that out too — the arena is
+completely insensitive to it.
+
+**So this is his call, and it is a design question, not a bug:** the graveyard
+fight got harder because a bug that was making it easier is gone. Tune it back
+down, or is it right that the fight finally runs at full pressure? Nothing has
+been tuned either way — the gate is left red and honest.
+
+## Three findings worth carrying
+
+**The ossuary's district seal has been hiding every wire ever laid in it.**
+`keepInOssuary`/`syncOssuaryVisibility` hides every scene child that is not
+`routeRoot` while the player is underground — and `world.box` merges into the
+world SHELL, which is a scene child. So a floor conduit laid with `world.box`
+down there is drawn nowhere, and always has been: the exit-slab wiring, its
+"the basement's blessed vocabulary" comment and all, has never been visible to
+anybody. Found by toggling the merged mesh off and diffing the frame. **The
+first two cuts of the kennel wire measured 0.00% of pixels and I would have
+shipped both of them.** Anything that must be seen inside the ossuary goes in
+`routeRoot` as a real mesh — merged, so it is still one draw.
+
+**An InstancedMesh is classified by its base geometry at the origin.** The
+pump gallery's upper-sector culler files every scene mesh by
+`Box3.setFromObject(object, false)`, which for an InstancedMesh reads the base
+geometry through the object's own matrix and never looks at an instance matrix.
+A vermin mesh sitting at the origin with 150 instances in the basement measures
+as a thing at y ≈ 0 — ground-floor house — and gets its layer mask zeroed the
+moment the player goes downstairs, which is exactly when it should be crawling.
+It was `visible`, `frustumCulled = false`, parented to the scene, matrices
+correct, and drawn nowhere; `layers.mask` was `0`. The mesh lives at the
+basement floor now and its instances are local to it. **If something is not on
+screen and every obvious property is right, print `layers.mask`.**
+
+**`world.finishStatic()` clones the material it merges under.** Toggling your
+own material's `.visible` to measure a merged thing does nothing — the drawn
+object is the shell's clone (`<name>:shell`). Cost half an hour before the seal
+above was found.
+
+**And the playthrough flake is diagnosed, not merely re-rolled.** Seeding the
+dropcloth index made it deterministic — which immediately exposed what the
+`Math.random()` was hiding: the real walker is a Standing One with **no
+tether**, and enemies.js's own comment says an unbounded one "would convert
+every look-away into a corridor-length pursuit". It could follow the player out
+of the storeroom and stand in the boiler doorway, and the bot's route to the
+boiler runs straight past sheet spot 0. One run in four used to pick that spot;
+seeding pinned it. It has a 4.5 m tether now — the storeroom — so it still
+crosses the room behind you, still reaches the crawl door, and cannot leave
+with you. Five playthrough runs after the tether: **5/5 COMPLETE**. Five before it: 4/5.
+
+## What I changed that was pinned, and why
+
+- **`tests/failure-state-regression.mjs`** — the counterweight is armed by the
+  kennel now, so its hold-commitment page takes the same silent `restoreArm()`
+  a respawn takes, and asserts the locked answer first (new check).
+- **`tests/playthrough.mjs`** — pays the kennel cradle before the wheel. The
+  kennel scare is on the critical path now; that is the point of item 3, not a
+  cost of it.
+- **`tools/probe-ossuary.mjs`** — stopped asserting "the first press moves the
+  stone and nothing else", which is the contract he asked us to delete.
+
+## Gates
+
+Green on the final tree: smoke, autotest, regressions (157), playthrough
+(COMPLETE), warm-start, basin-shore, choir-surfacing, district-culling (max
+365 of 450; the occupied ossuary 142), render-perf, grip-contact,
+failure-state, pump-release-recovery, house-critical-path,
+enemy-standing-postclear, basement-foundations, window-scare,
+house-return-horror, exterior-expansion, perf-pool, creature-audio,
+enemy-stain.
+
+Not green, all three explained:
+
+- **`grave-arena-regression`** — the token finding above. One check was already
+  red on the base tree ("quiet stuns and deliberate loud pops"); the other
+  three are seed 583 losing at wave 2 and its downstream checks. His call.
+- **`horror-expansion` ×1** — PRE-EXISTING, verified identical on the untouched
+  base tree (`749f471`): "the chapel displacement is visibly first and remains
+  non-attacking", choirCount 1. Nothing this round went near the Choir.
+- **`house-expansion` ×1** — PRE-EXISTING, verified identical on base. It
+  asserts a foyer lag mirror that `house.js` line 6 says was deliberately
+  removed; the test was never updated. Somebody should retire that assertion.
+
+`house-critical-path-regression` red-flagged once during the full run with a
+Playwright NAVIGATION error, not an assertion — it was sharing the machine with
+five concurrent playthroughs. Green on its own re-run. Same class as the
+warm-start flake in ROUND-EIGHT.md: a red that means "no machine looked at the
+code" is never a code failure.
+
+New tools, all four of which are the evidence for their item:
+`probe-wreck-destruction`, `probe-ossuary-arming`, `probe-pump-crossing`,
+`probe-basement-dropcloth`. Shots in `tests/shots/r9-*.png` (gitignored, so
+they live on this machine only); side-by-sides for him in
+`scratch-r9-shots/car-before-after.png` and `wheel-dead-vs-armed.png`.
+
+The six commits were split out of one verified tree rather than built up one at
+a time, so the tree the suite went green on is exactly the tree at the tip —
+but every intermediate file content was parsed with `node --check` before it
+was written, and commit 3 of 6 (`74d5e90`) was smoke-tested in a throwaway
+worktree. The history bisects.
+
+## Still open
+
+- **The graveyard fight's difficulty** — the token finding above. His call, and
+  the only thing in this round that changes how hard the game is.
+- The alarm never times out. It is destruction-or-nothing on purpose (his
+  design: the noise is what hitting it costs), but if he finds it exhausting,
+  the mercy knob is the resonance pulse, not the sound.
+- The bridge still retracts under a player who crosses on a rewinding hold. The
+  brief said to ask rather than decide, so it is untouched: **should the rewind
+  freeze while you are standing on the bridge, or is a bridge going away under
+  your feet a hazard he wants?**
+- `docs/ROUND-EIGHT.md`'s two known flakes are unchanged in kind, but the
+  playthrough's `Math.random()` basement is gone — it is seeded now, so if that
+  flake returns it is something else.
+
+---
+---
+
+# ROUND NINE — HIS FIVE NOTES. The brief (kept: it was right).
 
 **Read this first when Alex says "fetch."** Written 2026-08-19 by the
 round-eight thread (Fable 5), against `claude/aug18-round7-look` at `79cb927`,
