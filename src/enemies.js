@@ -2,7 +2,7 @@
 // skull's chatter long before they're seen. Faster than you. Stun is quiet;
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
-import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
+import { clamp, lerp, damp, hash2, smoothstep, TAU } from './util.js';
 
 const KIND = {
   walker: {
@@ -1021,8 +1021,27 @@ export class Enemies {
       loop: this.game.audio.ready ? this.game.audio.enemyLoop(kind) : null,
       hits: 0,
       serial,
-      orbitAngle: (serial * 2.399963) % TAU,
-      orbitSign: serial % 2 ? 1 : -1,
+      // WHERE IT STANDS, NOT WHEN IT WAS MADE.
+      //
+      // These two decide how a figure circles you — the angle it holds and the
+      // direction it walks the ring — and they used to be `serial * 2.399963`
+      // and `serial % 2`, off a counter that EVERY spawn in the game shares.
+      // The graveyard's eight sites and their jitter are fully authored (no
+      // Math.random anywhere in the wave spawner), so that counter was the only
+      // variation the fight had: one extra spawn anywhere earlier in the run —
+      // a basement walker, a house resident — shifted every serial by one,
+      // flipped every orbitSign, and re-rolled the entire horde.
+      //
+      // Proved by changing `this._spawnSerial = 0` to `= 1` and nothing else:
+      // all six seeded fights changed outcome (guards 86/84/74/38/72/66 ->
+      // 75/89/63/60/101/90), and the seed that had started losing at wave two
+      // survived all three waves again. Round nine read that as a basement
+      // enemy eating the arena's attack tokens; it was this.
+      //
+      // A hash of the spawn point is the fight's OWN dice: authored, distinct
+      // per site, and untouchable by anything that spawns elsewhere.
+      orbitAngle: (hash2(Math.round(x * 64), Math.round(z * 64)) / 4294967296) * TAU,
+      orbitSign: hash2(Math.round(z * 64), Math.round(x * 64)) & 1 ? 1 : -1,
     };
     mesh.position.copy(e.pos);
     this.game.scene.add(mesh);
