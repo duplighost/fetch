@@ -1,3 +1,146 @@
+# ROUND TEN — THE RECORD. Polish.
+
+**Built 2026-08-19 on `claude/aug20-round10`, worktree
+`C:\Users\Alex\Projects\fetch-aug20-round10`, off `main` at `ad94ca3`. NOT
+pushed, NOT deployed.** He gave no notes for this round — his standing
+instruction is to work the agenda without waiting for them — so this is the
+brief's ranked list, and **the brief is kept below unchanged because it named
+the right jobs. It was wrong about the CAUSE of both of its first two items,
+and those two corrections are most of the round.**
+
+## What landed
+
+1. **The districts stop freezing when you walk into them.** His oldest unfixed
+   note. Entering the basement cost a **9017 ms** frame; it costs **87 ms**, and
+   every other district is 26–138 ms. It was never the geometry.
+2. **The graveyard fight stops depending on what spawned somewhere else.** The
+   horde did not "get harder" in round nine — every arena walker took its
+   circling angle and direction from the global spawn counter, so any spawn
+   anywhere re-rolled the whole fight. Nothing was tuned; the coupling was cut.
+3. **The tree keeps asking until you hit it.** The key-under-the-branch reveal
+   dropped 30 m behind the player and could not be heard at that distance. It
+   now creaks on a slow cycle and swings when it speaks, until it is hit.
+4. **`tests/legibility-regression.mjs`** — the class of bug this project
+   actually ships (working, and invisible) finally has a gate.
+5. **Two permanently-red assertions stop lying.** A gate that is always red
+   teaches every thread that red is normal.
+
+## The numbers
+
+| | |
+|---|---|
+| Entering the basement, cold profile | **9017 ms → 87 ms** |
+| Every district's first frame | house 37, basement 87, graveyard 28, forest 26, clearing 28, cave 35, mirror 138 ms |
+| The first-draw warm pass itself | 531 draws, **1173 ms total over 165 frames, worst frame 8.3 ms** |
+| What the driver needs after the warm compile | **10.1 s** to finish linking 261 programs |
+| Arena determinism | two runs of six seeds, identical guards (77/77/64/42/77/62) — it had never repeated before |
+| The limb at the moment it falls | **30.4 m away, 53.9° off-centre**, against a 48.8° half-frame |
+| A 30 m sound at the default 2.4 m reference | **1/44 of its gain** |
+| The limb, looked at | 2.69x contrast from the top of the lane; the key in the grass 9x |
+| The ossuary wire, re-measured by the new gate | 1.64% of frame at 6.49x (round nine measured 1.64% / 6.2x) |
+
+## The two corrections
+
+**It was never the geometry.** The stalling frame carries +191 geometries, so
+the brief called it 191 uploads in one gulp. The same run puts 162 geometries
+into the forest in 48 ms — two hundred times cheaper per geometry, which is not
+a difference in geometry. `compile()` links a program and `initTexture()`
+uploads pixels, but **ANGLE/D3D11 does the rest of its work when a program is
+first USED in a draw**, and the game only ever does that in a district's first
+frame, forty at once. Round five fixed the compile half of this disease; this is
+the other half, and the fix is the same shape: do it early, in slices, behind
+the title.
+
+**There were never any attack tokens.** Round nine removed a boot-spawned
+basement walker, watched the graveyard fight change, and concluded that walker
+had been eating the arena's attack-token budget. The arena's eight sites and
+their jitter are fully authored — no `Math.random()` anywhere in the wave
+spawner — so the ONLY variation the fight had was `serial`, the global spawn
+counter, which set every walker's `orbitAngle` and `orbitSign`. Changing
+`this._spawnSerial = 0` to `= 1` and nothing else changed all six seeded
+outcomes and made the losing seed survive again. One extra spawn anywhere in the
+run re-rolled the horde. That is the whole of "it got harder".
+
+## Findings to carry
+
+- **A draw issued while the driver is linking waits for the QUEUE, not for its
+  own program.** The first warm draw, issued the instant `compile()` returned,
+  cost 6867 ms in one frame. `KHR_parallel_shader_compile` is the one question
+  you can ask about link state without waiting for the answer to be yes — the
+  warm pass polls a few programs a frame (85 ms total) and starts only when the
+  driver is done.
+- **Chrome keeps a GPU program cache per profile, so an A/B in one browser is
+  not an A/B.** The second scenario gets every program back from disk in
+  milliseconds and reads as "fixed". Fresh browser per scenario, always.
+- **`refDistance` is a design parameter, not a default.** Exponential rolloff at
+  the kit's 2.4 m puts a 30 m event at 1/44 of its gain. Any sound that is meant
+  to be heard from across a district needs its own reference distance.
+- **Legibility is CONTRAST, not brightness.** A silhouette is as readable as a
+  lamp. Scored on brightness alone, a limb that reads as a black diagonal
+  against the sky (0.37x) scores below a key that reads as nothing (1.02x).
+- **Render until two frames are byte-identical before measuring** — round
+  seven's law, re-learned the hard way. `render()` decays the impact light and
+  jitters the camera while `_shake` is alive; measured un-settled, the key in
+  the grass reported 6.97% of frame at 1.03x. Settled, it is 0.02% at 9x: the
+  opposite conclusion.
+- **A global counter is a hidden coupling.** `serial` looked like an id and was
+  actually the graveyard's dice. If a system's behaviour must be reproducible,
+  derive it from that system's own facts — here, the spawn point.
+- **When a measurement's units are wrong the check is decorative.** The
+  announce's motion was first sampled as the arm quaternion's `w`, which moves
+  0.0014 for a swing whose far end travels 0.76 m.
+
+## Still open, and nobody's round yet
+
+- **One cold-profile stall survives, and it is not per-district.** About seven
+  seconds after the warm compile the page stops receiving frames for ~7 s, once.
+  No JavaScript call owns it — `tools/probe-bedroom-block.mjs` wraps step,
+  render, compile, initTexture and the warm pass and none of them account for
+  it — and **the untouched tree does the same thing in the same place** (7292 ms
+  against 6978 ms). It is the driver finishing ~261 program links, and the only
+  levers on it are fewer programs or a longer title hold. Both are somebody's
+  deliberate decision, not a polish item.
+- **Seed 583 dies at wave two** of the graveyard, to a committed claimed strike,
+  and gets back up. Nothing was tuned to prevent it, because there is no longer
+  a "leaked pressure" to restore. If he wants the fight gentler the honest knob
+  is the wave-2 claim budget in `enemies.js` (`graveWave >= 2 ? 2 : 1`).
+- **Brief items 5, 6 and 8 are untouched**: the hands' tendon relief and knuckle
+  arcs, the cave pair (the sound failure and the back wall you can walk into),
+  and the car alarm's mercy. The under-tree canopy pose still renders ~582 draws
+  against the 450 ceiling and is still unclaimed.
+
+## The gates
+
+**All fourteen green on the finished tree, including the playthrough.** No
+known-red left in anything this round touched — `house-expansion` and
+`horror-expansion` were red before it and are green now.
+
+| | |
+|---|---|
+| smoke, autotest, regressions | PASS |
+| **playthrough** | **COMPLETE — the game can be finished** |
+| warm-start | PASS (+0 programs across the whole game; press-to-play 725 ms; basement first draws 85 ms) |
+| basin-shore, choir-surfacing, district-culling, render-perf, grip-contact | PASS |
+| **legibility (new)** | PASS |
+| **grave-arena** | **PASS — first time; re-pinned to what the fight actually promises** |
+| house-expansion, horror-expansion | PASS (both were permanently red) |
+
+`underfalls-expansion` ×2 is still known-red and PRE-EXISTING; nothing this
+round went near it.
+
+## The commits
+
+| | |
+|---|---|
+| `ede29a9` | six instruments that take the loading hitch apart |
+| `ffb015a` | the districts stop freezing when you walk into them |
+| `a6e377b` | the graveyard fight stops depending on what spawned somewhere else |
+| `dd9d26c` | two permanently-red assertions stop lying |
+| `157e608` | the tree keeps asking until you hit it |
+| `7271cca` | the warm pass covers the skull too |
+
+---
+
 # ROUND TEN — POLISH. The brief.
 
 **Read this first when Alex says "fetch."** Written 2026-08-19 by the

@@ -25,11 +25,11 @@ the same commit.
   superseded once main caught up — closed, not deleted.
 - **Work in a fresh `git worktree`, never in a shared checkout.**
   `C:\Users\Alex\Projects\fetch-claude` is stale and shared; do not use it.
-- **The standing job is `docs/ROUND-TEN.md`** — the polish brief. When Alex
-  says "fetch," read that file first and follow it. The round records
-  (`docs/ROUND-NINE.md` newest) carry what was measured, what was wrong, and
-  what is still open; each brief supersedes this line when a new round starts —
-  update this pointer in the same commit that adds the next brief.
+- **The standing job is `docs/ROUND-ELEVEN.md`.** When Alex says "fetch," read
+  that file first and follow it. The round records (`docs/ROUND-TEN.md` newest)
+  carry what was measured, what was wrong, and what is still open; each brief
+  supersedes this line when a new round starts — update this pointer in the same
+  commit that adds the next brief.
 
 ## What this is
 
@@ -76,7 +76,15 @@ node tests/smoke.mjs         # per-act boot, budgets, screenshots
 node tests/playthrough.mjs   # plays the ENTIRE game via real inputs (10+ min)
 ```
 
+Plus the focused regressions the rounds left behind — warm-start, basin-shore,
+choir-surfacing, district-culling, render-perf, grip-contact, grave-arena, and
+**`tests/legibility-regression.mjs`**, which asks the question the other gates
+cannot: not "did it work" but "could it be seen or heard".
+
 Environment traps (hard-won — do not relearn):
+- **Never edit a src file while a gate is running.** The dev server reads from
+  disk on every request; a half-finished edit is a syntax error in somebody's
+  page and a red gate you will spend twenty minutes explaining.
 - The playthrough runs muted (`?test=1&mute=1`); native WebAudio wedges
   headless Chrome under arena load. Real browsers are unaffected.
 - `page.screenshot` composites the WebGL canvas BLACK headless — read
