@@ -174,3 +174,57 @@ this project asserted it from one hedged aside, and it was wrong. The
 value-first design law stands on its own merits — these are dark rooms lit by
 one carried light, where a hue difference at 20 lux is no difference — but stop
 citing a reason that is not true.
+
+---
+
+# ADDENDUM, same day: THE SKINNED REBUILD (commit `1ab6a2f`)
+
+Alex posted the reference image and his verdict on the capsule hands: *"These
+are definitely not human hands holding a skull"* — and the diagnosis that
+mattered: *"we keep just making hands that have all these weird giant joints
+and balls that don't look like hands."*
+
+That sentence named the disease structurally. We were **assembling** hands out
+of separate solids, and an assembly of solids cannot stop reading as an
+assembly of solids: every capsule shades as its own tube, and every knuckle
+ball exists to hide the seam between two capsules — the balls ARE the
+seam-hiding, which is why the joints kept inflating across four rounds of
+tuning. Everything earlier in this document (contact, proportions, texture)
+was real and survives; it had just hit the ceiling of primitive assembly.
+
+**The rebuild: one continuous skin per hand.** A procedural BufferGeometry —
+tapered elliptical tube per finger, sculpted palm blob — skinned to the SAME
+rig, because `THREE.Bone` is a plain Object3D, so **k1/k2 ARE the bones** and
+the whole animation contract (update()'s assignments, pose blends, sink/raise,
+finale capture, becomeBone's twin as plain children of the same bones)
+survives verbatim. Zero assets, no build step, core three r161.
+
+Landed knowledge, for whoever touches this next:
+
+- **Bind-pose trap:** anything set on the bones BEFORE `Skeleton` creation is
+  bind pose and cancels out of the flesh (the thumb's scale is authored this
+  way on purpose — flesh girth comes from `rf` instead, while the nail and
+  twin, plain children, still inherit the scale like the old rig).
+- **Measurement trap:** a SkinnedMesh's raw `position` attribute is the BIND
+  pose. Every vertex-reading tool now goes through `applyBoneTransform` (reads
+  live bone matrixWorlds; no render needed) and groups per-finger via
+  `skinIndex` + `userData.fingerOfBone`. Updated: grip-contact-regression,
+  probe-grip-contact, sweep-grip-contact, shot-grip-sweep,
+  probe-finger-profile (which also STRAIGHTENS the fingers first — binning a
+  curled finger along a straight axis prints phantom beads).
+- **Texture-v trap:** the sheet's crease bands tile every 1.0 of v, so the
+  ring stations author v explicitly to pin the bands ON the hinges;
+  free-running v wrapped every finger in seven bands like a bandage.
+- **His live note, mid-build:** the flat-ellipsoid palm read as "a flat circle
+  instead of the palm part of a hand" — the blob is now domed toward the
+  knuckles and tapered into the wrist. A palm is not a disc.
+- **Budget:** flesh went ~56 draws → 2 per hand; worst district pose
+  **434 → 370** against the 450 ceiling. One new shader variant (skinning),
+  compiled by the warm pass; every district still enters at +0 programs.
+- His glove/electric-shock idea (a diegetic excuse for non-human hands) is
+  parked, his own preference: it would dilute the bare-hands bone reveal. A
+  lighter version — the first catch SCARS the hands — remains a free texture
+  beat if he ever wants it.
+
+All thirteen gates green. Before/afters: `scratch-hands/R9-vs-live.png`
+(production vs branch) and `R9-vs-r8.png` (capsule vs skin).
