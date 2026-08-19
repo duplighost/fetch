@@ -1765,7 +1765,25 @@ function bedroomAct(game) {
     chimeT -= dt;
     if (chimeT <= 0) {
       chimeT = 5 + Math.random() * 4;
-      game.audio.glassTink({ pos: locket.position, gain: 0.16, rate: 1.9 });
+      // IT HAS TO CARRY OUT OF THE BEDROOM, because that is where he found it.
+      // This chimed at 0.16 through a 2.4 m reference distance — audible at the
+      // window it was authored for and inaudible everywhere else. He met it
+      // from the graveyard instead, as a fourth gold glint in a tree full of
+      // keys, and reported it as a bug: "there actually looks like another key
+      // all the way up against the top of the tree." It is not a key. It is the
+      // one thing in the game the skull keeps, and it should sound like
+      // jewellery from across the yard. Same carry the key-tree limb uses, and
+      // gated the same way so an optional trinket does not chime through five
+      // acts or from inside the sealed ossuary.
+      const outdoors = (game.act === 'bedroom' || game.act === 'graveyard')
+        && !game.ossuary?.inOssuary && !game.marrow?.inMarrow;
+      if (outdoors) {
+        game.audio.glassTink({
+          pos: locket.position,
+          gain: game.act === 'bedroom' ? 0.16 : 0.42,
+          rate: 1.9, ref: 4.5, roll: 0.55,
+        });
+      }
     }
   });
   world.addFetchTarget({
@@ -1785,7 +1803,11 @@ function bedroomAct(game) {
       worn.scale.set(0.8, 1, 0.34);
       worn.position.y = -0.055;
       dangle.add(worn);
-      dangle.position.set(0.048, -0.04, 0.055);
+      // Its own place on the jaw. The marrow relic hangs at (0.052, -0.035,
+      // 0.05) — 8 mm away on two objects 2-4 cm across, so a player carrying
+      // both saw one lump and could not tell the keepsake was there at all
+      // ("i could hardly tell it was there inside the skull").
+      dangle.position.set(0.048, -0.072, 0.062);
       skull.jaw.add(dangle);
       game.locketDangle = dangle;
       game.flag('keepsake');
