@@ -2410,8 +2410,33 @@ export class Enemies {
               gain: 0.86,
             });
           } else if (!miss && !game.dead) {
+            // IT CATCHES YOU AND IT LETS YOU GO. His call, 2026-08-19, on the
+            // last walk before the mirror room: "i find myself debating whether
+            // this last cave waterfall area needs the enemy in it... if we do
+            // make him apear and not attack, that would be awesome."
+            //
+            // So the second catch is no longer a death. It is the same beat as
+            // the first — the recoil, the choking impact, the full-value fear —
+            // and then the thing is SPENT and stops pursuing. The apparition he
+            // asked for in round six survives intact (it still rises, still
+            // stands across the chapel, still teleports ahead of you); what
+            // goes is the kill. The walk before the ending is now suspicion
+            // rather than a lottery, which is what he said it should be.
+            //
+            // Restoring the death is this branch and nothing else: put back
+            // game.director.death(e) and delete the beat below.
             e.state = 'spent';
-            game.director.death(e);
+            e.stateT = 0;
+            const sx = e.pos.x - player.pos.x, sz = e.pos.z - player.pos.z;
+            const sl = Math.hypot(sx, sz) || 1;
+            e.washV.x += sx / sl * 4.6;
+            e.washV.z += sz / sl * 4.6;
+            game.fx.fear = 1;
+            game.shake(0.5);
+            game.audio.drownedImpact({
+              pos: new THREE.Vector3(player.pos.x, player.pos.y + 1.25, player.pos.z),
+              gain: 0.95,
+            });
           } else {
             e.state = 'recover';
             e.stateT = 0;
