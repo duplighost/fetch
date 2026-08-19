@@ -82,6 +82,18 @@ try {
   check(start.started && start.titleHidden && start.pauseVisible && start.label === 'Pause game',
     'starting hands control to the player and exposes a visible labelled pause control');
 
+  // THE NEW OPENING: the room boots skull-less; the skull arrives only after
+  // the bedroom bell is found and rung. This suite is about pause/title
+  // ownership, not the arrival — jump through the canonical test contract (a
+  // hard teleport completes the arrival silently and hands over the skull) so
+  // every skull-handling assertion below exercises the post-arrival game.
+  // Without this, the checkpoint-restart check would respawn into a
+  // pre-arrival room and correctly find the skull absent.
+  await page.evaluate(() => {
+    window.__FETCH.teleport('bedroom');
+    window.__FETCH.stepWith(0.3, {}, false);
+  });
+
   const armed = await page.evaluate(() => {
     const g = window.__game;
     // A lightweight deterministic context proves suspend/resume ownership

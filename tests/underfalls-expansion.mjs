@@ -118,17 +118,25 @@ try {
       },
     );
 
-    const caveLightsOn = U.lights.length === 10 && U.lights.every((light) => light.visible);
+    // Asserted by EMISSION, not by scene-graph visibility. The shader light
+    // census is pinned (World.pinLightCensus) because changing the number of
+    // visible lights makes three.js recompile every lit material in the game,
+    // so a hidden light is now a black light that stays in the scene rather
+    // than one that leaves it. This predicate is strictly stronger than the
+    // old `!light.visible`: it fails both for a light that is left in the
+    // scene AND for one that is left burning.
+    const emits = (light) => light.color.getHex() !== 0 && light.intensity > 0;
+    const caveLightsOn = U.lights.length === 9 && U.lights.every(emits);
     const wheelBeforeHouse = U.pump.wheel.rotation.z;
     const pistonBeforeHouse = U.pump.piston.position.y;
     F.teleport('house');
     F.stepWith(1.0, {}, false);
-    const houseLightsOff = U.lights.every((light) => !light.visible);
+    const houseLightsOff = U.lights.every((light) => !emits(light));
     const hiddenMachinesPaused = U.pump.wheel.rotation.z === wheelBeforeHouse
       && U.pump.piston.position.y === pistonBeforeHouse;
     F.teleport('cave');
     F.stepWith(1 / 120, {}, false);
-    const caveLightsRestored = U.lights.every((light) => light.visible);
+    const caveLightsRestored = U.lights.every(emits);
     check(
       'Underfalls lights and machine ambience exist only while the cave act owns them',
       caveLightsOn && houseLightsOff && hiddenMachinesPaused && caveLightsRestored,
@@ -271,10 +279,6 @@ try {
     g.player.yaw = Math.atan2(-dx, -dz);
     g.player.pitch = Math.max(-1.3, Math.min(1.3, Math.atan2(dy, Math.hypot(dx, dz))));
     g.player._sync(0);
-    // This route is intentionally exercised through sim-only steps. Refresh
-    // every possible occluder and the newly revealed hatch before asking
-    // Three's raycaster to consume their world transforms.
-    g.scene.updateMatrixWorld(true);
     const hatchTarget = g._crosshairTarget()?.id || null;
     F.stepWith(1 / 120, { interactPressed: true }, false);
     F.stepWith(2.0, {}, false);

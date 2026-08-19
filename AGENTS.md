@@ -9,30 +9,11 @@ the same commit.
 
 FETCH — first-person browser horror. You wake holding a skull you cannot get
 rid of; thrown, it comes back. It is the key, the weapon, the only light, and
-the threat radar. Route: bedroom → house → basement → graveyard → physical
-under-yard ossuary → sealing forest → waterfall (it doesn't come back — the
-one broken promise) → Underfalls → shrinking mirror room (the reflection wears
-it). Design spine: docs/DESIGN.md.
+the threat radar. Route: bedroom → house → basement → graveyard → sealing
+forest → waterfall (it doesn't come back — the one broken promise) → cave →
+shrinking mirror room (the reflection wears it). Design spine: docs/DESIGN.md.
 Owner: Alex (alexdguitar@gmail.com). His word beats this file; this file
 beats your instincts.
-
-## Active 2026-08-10 polish candidate
-
-The current integration candidate is the isolated worktree
-`C:\Users\Alex\Documents\Codex\2026-08-09\mak\work\fetch-polish-20260810` on
-branch `codex/fetch-polish-20260810`, based on
-`c6b486e723f1f265d6aecb3d7ee7c52f454e957e`. It is an implemented, uncommitted
-candidate under final QA. It is **not** the canonical source release, a package,
-a preview, or production. Production remains the separately verified
-`0.5.0-intruder` site copy until the complete release chain finishes.
-
-For responsibilities, do not duplicate prose across files:
-
-- `docs/WALKTHROUGH.md` owns the exact spoiler route and optionality.
-- `docs/STATE-OF-PLAY.md` owns the compact implementation/release boundary.
-- The newest `docs/HANDOFF.md` section owns commands, evidence, identities, and
-  remaining release work.
-- `docs/PLAYTEST-1.md` owns Alex's human-readability reports and their status.
 
 ## The laws (violating these is a regression, not a style choice)
 
@@ -65,37 +46,6 @@ node tests/smoke.mjs         # per-act boot, budgets, screenshots
 node tests/playthrough.mjs   # plays the ENTIRE game via real inputs (10+ min)
 ```
 
-Current baseline cardinalities are `autotest` **24**, `regressions` **50**,
-`smoke` **eight acts**, and `playthrough` **38 milestones**. A count is not a
-pass: the frozen source must complete each command with zero browser errors.
-
-The 2026-08-10 polish candidate also changes causal readability, physical
-traversal, reflection/context recovery, and first-use GPU behavior. Run these
-focused gates before the four canonical gates; do not substitute them for the
-full playthrough:
-
-```sh
-node tests/house-critical-path-regression.mjs    # 21 route/crawler/error checks
-node tests/basement-causality-regression.mjs     # 16 visible-causality/error checks
-node tests/backhalf-traversal-polish.mjs         # physical ossuary, 3-knot chain, Kneeler, 8 stones
-node tests/underfalls-wayfinding-regression.mjs  # 19 shell/route/hatch/error checks
-node tests/pause-title-regression.mjs             # 25 pause/title/pointer-lock checks
-node tests/window-relay-lifecycle-regression.mjs  # 10 relay lifecycle checks
-node tests/dead-flight-interaction-regression.mjs # 6 dead-state interaction checks
-node tests/mirror-failure-regression.mjs          # 6 fail-closed/recovery checks
-node tests/flame-transfer-perf-regression.mjs     # normal/restored guest + pilot paths
-node tests/audio-startup-regression.mjs           # live WebAudio Wake slicing/idempotence/teardown
-node tests/transition-warmup-regression.mjs       # D3D11 first-use/context-loss matrix
-node tests/render-perf.mjs                        # real GPU render budgets
-node tests/district-culling-regression.mjs        # district ownership/draw budget
-```
-
-The flame-transfer, audio-startup, transition, render-performance, and
-district-culling gates are real-browser/GPU evidence. Run browser/GPU gates
-serially on system Chrome with D3D11, close every test-owned browser, and record
-the final counts from the frozen source. Historical green JSON or screenshots
-from an earlier working edit do not certify the release candidate.
-
 Environment traps (hard-won — do not relearn):
 - The playthrough runs muted (`?test=1&mute=1`); native WebAudio wedges
   headless Chrome under arena load. Real browsers are unaffected.
@@ -123,8 +73,8 @@ Environment traps (hard-won — do not relearn):
 - `src/audio.js` — all-procedural WebAudio engine (HRTF, beds, one-shots).
 - `src/textures.js` — procedural material kit. `src/util.js` — RNG/math.
 - `docs/DESIGN.md` — the spine + idea-bank triage. `docs/PLAYTEST-1.md` —
-  Alex's human playtest ledger. `docs/WALKTHROUGH.md` — spoiler route and
-  optionality. `docs/HANDOFF.md` — release evidence and session diary.
+  Alex's playtest punch list = the current work queue. `docs/HANDOFF.md` —
+  session diary.
 
 ## Cloud agents & the gates
 

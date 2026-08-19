@@ -10,7 +10,9 @@ let failed = false;
 
 try {
   const { page, errors } = await openPage(browser, `http://localhost:${server.port}/?test=1&mute=1`);
-  await page.waitForFunction('window.__FETCH && window.__FETCH.ready === true', null, { timeout: 60000 });
+  // 300s: boots take 24-45s when a concurrent agent's test battery owns the
+  // GPU (see HANDOFF 2026-08-14). Wall-clock slowness is not failure.
+  await page.waitForFunction('window.__FETCH && window.__FETCH.ready === true', null, { timeout: 300000 });
   page.on('console', (msg) => {
     const t = msg.text();
     if (t.startsWith('[beat]')) console.log('  ' + t.slice(7));
@@ -55,13 +57,45 @@ try {
         const dx = x - g.player.pos.x, dz = z - g.player.pos.z;
         if (Math.hypot(dx, dz) < 0.7) return true;
         if (g.dead) return false;
-        g.player.yaw = Math.atan2(-dx, -dz);
+        // The house is inhabited now. A pursuer whose body blocks the path
+        // (or whose contact is about to land) gets the real answer mid-walk:
+        // a quiet stun-throw, exactly what a player does. Then keep walking.
+        if (g.act === 'house' && g.skull.mode === 'held') {
+          const res = g.director._liveResident?.() || g.director.resident;
+          if (res && res.state !== 'stunned' && res.state !== 'dying') {
+            const rd = Math.hypot(res.pos.x - g.player.pos.x, res.pos.z - g.player.pos.z);
+            if (rd < 3.4 && Math.abs(res.pos.y - g.player.pos.y) < 1.8) {
+              const ry = g.player.yaw, rp = g.player.pitch;
+              aimAt(res.pos.x, res.pos.y + 1.4, res.pos.z);
+              F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+              F.stepWith(0.35, { throwHeld: true });
+              F.stepWith(1 / 120, { throwReleased: true });
+              waitHeld();
+              g.player.yaw = ry; g.player.pitch = rp; g.player._sync(0);
+              t += 1.2;
+            }
+          }
+        }
+        g.player.yaw = Math.atan2(-(x - g.player.pos.x), -(z - g.player.pos.z));
         F.stepWith(0.1, { moveZ: 1, run });
         t += 0.1;
       }
       return Math.hypot(x - g.player.pos.x, z - g.player.pos.z) < 1.5;
     };
     const useAt = (x, y, z) => { aimAt(x, y, z); F.stepWith(1 / 120, { interactPressed: true }); };
+    // The house is inhabited from early in the act now, so the bot plays the
+    // intended answer instead of assuming an empty stage: a quiet stun-throw
+    // whenever the Resident presses in. This exercises the real mechanic (the
+    // stun) rather than weakening the gate.
+    const fendOff = (radius = 7.5) => {
+      const res = g.director._liveResident?.() || g.director.resident;
+      if (!res || g.dead) return;
+      const d = Math.hypot(res.pos.x - g.player.pos.x, res.pos.z - g.player.pos.z);
+      if (d > radius || res.state === 'stunned' || g.skull.mode !== 'held') return;
+      throwAt(res.pos.x, res.pos.y + 1.4, res.pos.z, 0.25);
+      F.stepWith(0.3);
+      waitHeld();
+    };
     const fightNearbyWalkers = (range = 12) => {
       for (let i = 0; i < 10; i++) {
         if (g.dead) return;
@@ -77,9 +111,123 @@ try {
     F.start();
     F.stepWith(0.5);
 
-    // ---- ACT 0: bedroom ------------------------------------------------
+    // ---- ACT 0: bedroom — THE NEW OPENING ------------------------------
+    // Alex: "window is originally strong glass that can't be broken. (the
+    // player has to look around the room...) Eventually you find a bell you
+    // can activate ... the skull bursts through the window, shattering it,
+    // and landing in your hands. ... Then you can throw it to get the key.
+    // Make sure it doesn't get the key on the way in." The bot lives the
+    // whole beat through the real input path: nine E-searches, the two-step
+    // bell find, the ring, the arrival, the settle — then the key.
     snap('00-wake');
-    walkTo(7.2, 4.6, 10);                          // step to the open window first
+    {
+      const A = g.bedroomArrival;
+      beat('wakes-empty-handed',
+        g.skull.mode === 'gone' && g.skull.root.parent === null
+        && !g.flags.has('skullArrived') && A.state === 'searching'
+        && !!g.skull._handPose && g.skull._handPose.g > 0.5,
+        { mode: g.skull.mode, state: A.state,
+          hands: g.skull._handPose ? +g.skull._handPose.g.toFixed(2) : null });
+
+      // A search is played like a player plays it: walk to the prop, put the
+      // crosshair on it, press E, let the small animation finish. A miss is
+      // re-aimed exactly as a player would; the assertions stay strict.
+      const search = (id, sx, sz, ax, ay, az, settle = 1.4) => {
+        const rec = g.bedroomSearch[id];
+        for (let tries = 0; tries < 3 && !rec.done; tries++) {
+          walkTo(sx, sz, 8);
+          useAt(ax, ay, az);
+          F.stepWith(0.05);
+        }
+        F.stepWith(settle);
+        return rec.done;
+      };
+      // west along the foot of the bed, then the room in a walking order
+      walkTo(8.8, 2.6, 8); walkTo(6.4, 2.8, 8);
+      search('curtains', 6.0, 4.6, 5.99, 5.2, 5.84);      // S6 sightline first
+      walkTo(8.2, 4.6, 8);
+      search('dresser', 9.35, 4.1, 9.35, 4.12, 5.2, 1.2); // S1 the leash
+      search('nightstand', 8.66, 5.15, 8.66, 4.14, 4.26, 1.0); // S7 matches roll
+      search('covers', 9.15, 4.1, 10.15, 4.25, 3.75);     // S3 the imprint
+      walkTo(8.6, 2.7, 8); walkTo(6.0, 2.9, 8);
+      search('wardrobe', 5.15, 3.2, 5.15, 4.7, 4.55);     // S2 hangers swing
+      search('art', 5.6, 2.35, 4.19, 5.08, 2.35, 2.2);    // S8 the missing mirror
+      search('latch', 5.5, 1.45, 4.09, 5.17, 1.45, 1.6);  // S9 door still holds
+
+      // Before the bell exists to the world, E at its exact hiding place
+      // reaches everything BUT it: the floor answers, the bell does not.
+      walkTo(10.0, 1.5, 8);
+      useAt(10.42, 3.7, 2.16);
+      F.stepWith(0.3);
+      beat('bell-hidden-until-found',
+        !A.bellFound && !A.bellRung && A.state === 'searching'
+        && !g.bedroomProps.bell.group.visible && g.skull.mode === 'gone',
+        { state: A.state, bellFound: A.bellFound, bellRung: A.bellRung });
+
+      // z 2.02, not 2.35: E respects occlusion now, and the bed's south rail
+      // overhangs the rug notch from z 2.23 — the old aim point reached the
+      // flap THROUGH the bed, which a player never could.
+      search('rug', 10.4, 1.25, 10.65, 3.64, 2.02);       // S4 gouges + the board
+      search('floorboard', 10.3, 1.35, 10.6, 3.64, 2.16); // S5 the bell
+      beat('the-room-answers-search',
+        A.searchedCount === 9
+        && Object.values(g.bedroomSearch).every((r) => r.done)
+        && A.bellFound && A.state === 'bellFound',
+        { searched: A.searchedCount, state: A.state,
+          done: Object.fromEntries(Object.entries(g.bedroomSearch).map(([k, v]) => [k, v.done])) });
+
+      // ring it where it lies
+      for (let tries = 0; tries < 3 && !A.bellRung; tries++) {
+        walkTo(10.0, 1.5, 8);
+        useAt(10.42, 3.7, 2.16);
+        F.stepWith(0.1);
+      }
+      beat('bell-rung', A.bellRung && A.state === 'called', A.state);
+
+      // the answer: bones in the distance from the window's direction,
+      // closer and closer, until —
+      let t = 0;
+      for (; t < 16 && !g.bedroomGlass.broken; t += 0.1) F.stepWith(0.1);
+      beat('the-window-broke-inward',
+        g.bedroomGlass.broken
+        && g.bedroomGlass.collider.max.y === g.bedroomGlass.collider.min.y
+        && g.bedroomGlass.pane.parent === null
+        && g.bedroomGlass.shards.visible,
+        { afterS: +t.toFixed(1), state: A.state });
+      for (t = 0; t < 4 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1);
+      beat('it-landed-in-your-hands', g.skull.mode === 'held', g.skull.getState());
+      const treeKey = g.world.fetchTargets.find((tt) => tt.id === 'treeKey');
+      beat('it-did-not-take-the-key',
+        g.skull.carry === null && !g.flags.has('gotBedroomKey')
+        && !!treeKey && treeKey.enabled === true
+        && treeKey.object.parent === g.scene,
+        { carry: g.skull.carry ? g.skull.carry.id : null,
+          treeKeyEnabled: treeKey ? treeKey.enabled : null });
+
+      // "Then you can throw it": while it flickers and chatters, the press
+      // does nothing; when it settles into the skull we know, the same press
+      // throws. Aim at the near wall — never the window — so this scratch
+      // throw cannot reach the tree.
+      const flickerLive = !!g.skull.introFlicker;
+      aimAt(9.0, 4.6, 0.4);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+      const heldThroughFlicker = g.skull.mode === 'held';
+      F.stepWith(1 / 120, { throwReleased: true });
+      for (t = 0; t < 6 && g.skull.introFlicker; t += 0.1) F.stepWith(0.1);
+      for (t = 0; t < 2 && !g.flags.has('skullArrived'); t += 0.1) F.stepWith(0.1);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+      const throwsAfterSettle = g.skull.mode === 'outbound';   // sampled on the press step: the near wall poises it within 0.25s
+      F.stepWith(0.25, { throwHeld: true });
+      F.stepWith(1 / 120, { throwReleased: true });
+      waitHeld();
+      beat('throws-wait-for-the-settle',
+        flickerLive && heldThroughFlicker && !g.skull.introFlicker
+        && throwsAfterSettle && g.flags.has('skullArrived') && A.state === 'done',
+        { flickerLive, heldThroughFlicker, throwsAfterSettle, state: A.state });
+    }
+
+    // ---- and only now, the room it always was: the key in the tree -----
+    walkTo(7.2, 4.6, 10);                          // step to the window aperture
     throwAt(7.2, 5.7, 8.2, 0.75);                 // the key in the tree
     let ok = false;
     for (let t = 0; t < 4 && !ok; t += 0.1) { F.stepWith(0.1); ok = !!(g.skull.carry && g.skull.carry.id === 'bedroomKey'); }
@@ -126,6 +274,9 @@ try {
     walkTo(1, -9.3, 12);                           // down the flight to ground
     walkTo(1, -11, 6); walkTo(-1, -11, 7); walkTo(-1, -9, 6); // entry -> foyer
     walkTo(-4.8, -9, 8); walkTo(-10.3, -9, 12);    // living-room aperture
+    // The relay is ~10 s of held anchor with the skull away — the one window
+    // where the bot cannot defend itself. Put the Resident down first.
+    fendOff(12);
     g.player.yaw = Math.PI / 2;
     g.player.pitch = -0.015;
     g.player._sync(0);
@@ -141,21 +292,25 @@ try {
     F.stepWith(1.82, { moveZ: 1, run: true, throwHeld: true });
     F.stepWith(1.15, { throwHeld: true });
     F.stepWith(1 / 120, { throwReleased: true });
-    for (let t = 0; t < 4 && !g.flags.has('windowRelaySolved'); t += 0.05) F.stepWith(0.05);
+    for (let t = 0; t < 5 && !(g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpen')); t += 0.05) F.stepWith(0.05);
     waitHeld();
     beat('window-return-bell-opens-void-door',
       g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpenedByRelay')
       && g.flags.has('voidDoorOpen'));
 
     walkTo(-4.8, 1, 10); walkTo(-3.2, 1, 6); walkTo(-1, 1, 7);
+    fendOff();
     walkTo(-1, -3, 8); walkTo(-1, -11, 12); walkTo(1, -11, 7); walkTo(1, -8.8, 7);
+    fendOff();
     throwAt(5.3, 4.95, -7, 0.6);
     for (let t = 0; t < 4 && !g.flags.has('ateFlame'); t += 0.1) F.stepWith(0.1);
     waitHeld();
     beat('the-skull-ate-a-flame', g.flags.has('ateFlame'), g.skull.getState());
     walkTo(1, -10.8, 6); walkTo(2.5, -11.5, 8);    // entry
+    fendOff();
     walkTo(3.4, -11, 6); walkTo(4.8, -11, 6);      // dining door
     walkTo(7, -10, 8); walkTo(7, -6.7, 8); walkTo(7, -5.2, 6);   // kitchen door
+    fendOff();
     walkTo(9, -2, 8); walkTo(9, 0.5, 8);           // kitchen
     beat('reached-kitchen', Math.abs(g.player.pos.x - 9.5) < 2 && g.player.pos.y < 0.5, [g.player.pos.x, g.player.pos.y, g.player.pos.z]);
     snap('01-kitchen');
@@ -196,6 +351,20 @@ try {
     beat('in-the-basement', g.act === 'basement' && !g.director.resident, { act: g.act });
     snap('02-basement');
 
+    // Fire has one home now: the pilot is COLD until the guest flame's embers
+    // are carried down and offered to it, and the furnace refuses to wake
+    // until the pilot burns. This is the leg that makes the void-door beat
+    // necessary instead of skippable. The fixture now stands on clear floor
+    // against the south wall west of the return-stair foot (wick at
+    // 3.35,-2.12,5.55), no longer buried in the stair wedge.
+    walkTo(8.2, 5.2, 8);
+    walkTo(5.0, 5.3, 8);
+    throwAt(3.35, -2.12, 5.55, 0.35);
+    for (let t = 0; t < 4 && !g.flags.has('pilotLit'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('carried-the-fire-down-and-lit-the-pilot', g.flags.has('pilotLit'),
+      { pilotLit: g.flags.has('pilotLit'), ateFlame: g.flags.has('ateFlame') });
+
     // ---- ACT 2: basement -----------------------------------------------
     walkTo(5, 4, 10); walkTo(-0.6, 3.6, 12);         // west along the webs
     walkTo(-1, 2.8, 6); walkTo(-1, 1.2, 6);          // storeroom door
@@ -207,6 +376,25 @@ try {
     // pressure line into the western works, pay out the bridge under a held
     // skull, cross under player control, and drop the far pawl.
     walkTo(-4.8, -3, 8); walkTo(-9.8, -3, 10);       // crawl-room pump doorway
+
+    // THE DRIVE WEIGHT, on the way past. The cage in the crawl wing is the
+    // counterweight the pump winch pulls against, and the winch refuses the
+    // skull until it hangs — "one of the basement contraptions in the picture
+    // is still not required for the puzzle for some reason."
+    walkTo(-9.5, -6.2, 10);
+    const crawlAim = g.crawlSecret.cradle.getWorldPosition(g.player.pos.clone());
+    aimAt(crawlAim.x, crawlAim.y, crawlAim.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    const crawlAnchored = g.skull.mode === 'anchored'
+      && g.skull.anchor?.puzzleId === 'crawlCounterweight';
+    F.stepWith(1.9, { throwHeld: true });             // requiredHold is 1.25
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false });
+    waitHeld(3);
+    beat('the-crawl-cage-hangs-the-pump-works-weight',
+      crawlAnchored && g.flags.has('crawlSecretSolved') && g.crawlSecret.solved === true,
+      { anchored: crawlAnchored, solved: g.crawlSecret.solved });
+
     walkTo(-12.62, -6.8, 12);
     const pumpAim = g.pumpGallery.cradle.getWorldPosition(g.player.pos.clone());
     aimAt(pumpAim.x, pumpAim.y, pumpAim.z);
@@ -227,6 +415,22 @@ try {
       && g.flags.has('pumpGalleryLatched') && g.pumpGallery.gateOpen,
     { anchored: pumpAnchored, progress: g.pumpGallery.progress,
       latched: g.pumpGallery.latched, player: g.player.pos.toArray() });
+    // the draft has two halves: the crossing, then the archive collar at the
+    // end of the same ceiling line — the back room is necessary now
+    walkTo(-18.9, 0.6, 10);
+    walkTo(-18.9, 3.4, 8);
+    walkTo(-16.3, 4.15, 8);
+    // land the skull on the cradle lamp and hold: the room revs, the draft
+    // opens (draftHold.required is 2.6s now — a watchable rev, so hold the
+    // input past the commit; the park would finish it either way)
+    aimAt(-16.25, -0.88, 4.72);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(3.2, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
+    beat('archive-lamp-hold-opens-the-draft', g.flags.has('archiveDraftOpened'),
+      { player: g.player.pos.toArray() });
+    walkTo(-18.9, 3.2, 8); walkTo(-18.9, 0.4, 8);
     walkTo(-12.6, -3, 14, true); walkTo(-9.2, -3, 8, true);
     walkTo(-4.8, -3, 8, true); walkTo(-1.5, -1.5, 10, true);
 
@@ -236,14 +440,8 @@ try {
     walkTo(5, -3, 6); walkTo(9.8, -1.7, 10);         // boiler room; the one warm thing in it
     useAt(10.71, -2.1, -1.52);                       // open the incinerator's mouth
     F.stepWith(0.7);
-    // Try to burn it—and keep holding the same physical throw while the fire
-    // burns, chokes, and backdrafts. Releasing early now correctly cancels.
-    aimAt(11.0, -2.1, -1.5);
-    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
-    for (let t = 0; t < 2.4 && !g.flags.has('fireRefused'); t += 0.05) {
-      F.stepWith(0.05, { throwHeld: true });
-    }
-    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false });
+    throwAt(11.0, -2.1, -1.5, 0.35);                 // try to burn it. try.
+    for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1);
     waitHeld(5);
     beat('fire-refused-the-skull', g.flags.has('fireRefused') && g.skull.mode === 'held', g.skull.getState());
     throwAt(10.5, -2.65, -1.5, 0.35);                // the key was in the ash all along
@@ -405,15 +603,29 @@ try {
     walkTo(-4.0, 23.5, 22);
     walkTo(-11.5, 25.0, 18);
     walkTo(-14.6, 31.6, 35);
-    const entranceConnector = g.ossuary.entranceConnector;
-    walkTo(-14.6, entranceConnector.z0 - 0.22, 12);
-    // Walk the opened floor all the way down.  The old bot aimed at z=34.8,
-    // which happened to cross the retired flat trigger but did not describe
-    // the new physical stair or prove that a player could reach its seam.
-    for (let t = 0; t < 6 && !g.flags.has('ossuaryEntered'); t += 0.1) {
-      const dx = -14.6 - g.player.pos.x;
-      const dz = entranceConnector.z1 + 0.25 - g.player.pos.z;
+    walkTo(-14.6, 33.4, 12);
+    // THE STONE COMES OFF FIRST. Alex: "you shouldn't just walk into it and be
+    // teleported. a hatch should open with e." Look at the throat, press E once
+    // to slide the slab, wait for it, then cross. The walk-over still works —
+    // it just cannot fire through a closed lid, so the bot has to open it.
+    const throatAim = () => {
+      const dx = -14.6 - g.player.pos.x, dz = 34.8 - g.player.pos.z;
       g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(0.07 - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+    };
+    throatAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.2, {});
+    beat('the-entry-hatch-answers-the-verb', g.ossuary.entryLid.moving === true,
+      { t: +g.ossuary.entryLid.t.toFixed(2) });
+    for (let t = 0; t < 6 && !g.ossuary.entryLid.open; t += 0.1) F.stepWith(0.1, {});
+    beat('the-stone-slides-off-the-throat', g.ossuary.entryLid.open === true,
+      { t: +g.ossuary.entryLid.t.toFixed(2) });
+    for (let t = 0; t < 3 && !g.flags.has('ossuaryEntered'); t += 0.1) {
+      throatAim();
+      g.player.pitch = 0;
+      g.player._sync(0);
       F.stepWith(0.1, { moveZ: 1 });
     }
     beat('mausoleum-opens-required-ossuary',
@@ -422,6 +634,24 @@ try {
     walkTo(-68.0, -1.2, 8);
     walkTo(-72.0, 3.4, 18);
     walkTo(-72.0, 5.6, 8);
+    // ROUND NINE: the weighted basket in the kennel ARMS the counterweight.
+    // His note: it "does nothing in terms of gameplay. maybe it should be the
+    // thing that turns on that wheel." So the wheel refuses out loud until the
+    // cradle has been paid, and the walk-through has to pay it — the kennel
+    // scare is on the critical path now, which is the point of the change.
+    walkTo(-72.6, 2.0, 16);
+    aimAt(-74.75, -3.18, 2.0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    beat('the-kennel-cradle-takes-the-weight',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryKennel',
+      { mode: g.skull.mode, puzzle: g.skull.anchor?.puzzleId ?? null });
+    F.stepWith(1.5, { throwHeld: true });
+    beat('the-weighted-basket-arms-the-wheel',
+      g.ossuaryKennel.solved === true && g.ossuary.armed === true,
+      { solved: g.ossuaryKennel.solved, armed: g.ossuary.armed });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
     walkTo(-68.0, 10.8, 18);
     walkTo(-68.0, 12.9, 8);
     walkTo(-70.0, 15.0, 10);
@@ -431,26 +661,228 @@ try {
     beat('ossuary-counterweight-catches-the-skull',
       g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryCounterweight');
     F.stepWith(1.9, { throwHeld: true });
-    beat('held-counterweight-opens-gate-and-exit',
-      g.flags.has('graveyardCleared') && g.flags.has('ossuaryCleared')
-      && g.graveyardGate.opening && g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
+    // The exit collider now tracks the sinking slab instead of collapsing on
+    // the solve frame — the old assertion here (collider open at solve time)
+    // asserted a walk-through-visible-stone bug as if it were correct. The
+    // behavioural truths: the solve happens, AND the way is still shut while
+    // the stone still fills the corridor, AND it opens within a bounded time.
+    // The counterweight no longer opens the surface gate. It pays out the
+    // FIRST OF THREE KEYS, and the way out of the under-yard is the way in.
+    beat('counterweight-pays-out-the-first-key',
+      g.flags.has('ossuaryCleared') && !g.flags.has('graveyardCleared')
+      && !g.graveyardGate.opening && g.gateKeys.list[0].revealed,
+      { cleared: g.flags.has('graveyardCleared'), revealed: g.gateKeys.list[0].revealed });
     F.stepWith(1 / 120, { throwReleased: true });
     waitHeld();
-    const farConnector = g.ossuary.farConnector;
-    walkTo(g.ossuary.origin.x, farConnector.z0 - 0.22, 12);
-    // The chapter handoff now sits above a real 4.1m rise.  Keep steering up
-    // its authored axis until the surface seam is crossed; no direct threshold
-    // placement and no three-second assumption from the former flat floor.
-    for (let t = 0; t < 8 && !g.flags.has('ossuaryExited'); t += 0.1) {
-      const dx = g.ossuary.origin.x - g.player.pos.x;
-      const dz = farConnector.z1 + 0.35 - g.player.pos.z;
+    for (let t = 0; t < 4 && g.ossuary.exitCollider.max.y > g.ossuary.exitCollider.min.y; t += 0.1) {
+      F.stepWith(0.1, {}, false);
+    }
+    beat('exit-slab-sank-and-opened-the-way',
+      g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y);
+    // The stair top is plain ceiling now — the unopenable lid and its padlock
+    // are gone, and so is the verb that could never be live.
+    const deadClimbOut = g.world.interactables
+      .map((o) => o.userData.inter).find((it) => it && it.id === 'ossuaryClimbOut');
+    beat('the-dead-far-hatch-is-gone', deadClimbOut === undefined,
+      { found: deadClimbOut ? 'still registered' : 'gone' });
+
+    // THE KEY IS AT THE TOP OF THE STAIRS. It used to hang 2.75 m in FRONT of
+    // the wall the counterweight lowers, which is why the weight read as doing
+    // nothing: walk through the gate it opened, up both flights, and take it.
+    // through the gate the weight opened, up flight A, round the turn, up
+    // flight B — the same six waypoints the ossuary-climb regression walks
+    walkTo(-68.2, 13.2, 14);
+    walkTo(-68.25, 20.2, 18);
+    walkTo(-68.25, 23.6, 14);
+    walkTo(-72.45, 24.65, 14);
+    beat('climbed-to-the-stair-top', g.player.pos.y > -1.4,
+      { y: +g.player.pos.y.toFixed(2) });
+    throwAt(-72.45, 0.25, 24.7, 0.5);
+    for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey1'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('first-key-rides-the-jaw', g.skull.carry?.id === 'gateKey1',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
+
+    // back down both flights, down the baffled corridor, and OUT THROUGH A
+    // HATCH — Alex: "have a similar hatch to come out." The near end used to be
+    // a hole in the model you walked into and got teleported out of in silence.
+    walkTo(-68.25, 23.6, 16); walkTo(-68.25, 20.2, 16); walkTo(-70.0, 15.0, 16);
+    walkTo(-68.0, 10.8, 16); walkTo(-72.0, 5.6, 16); walkTo(-72.0, 3.4, 10);
+    walkTo(-68.0, -1.2, 16); walkTo(-70.0, -8.8, 12);
+    const hatchAim = () => {
+      const dx = -70 - g.player.pos.x, dz = -9.9 - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2((-3.2) - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+    };
+    hatchAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.2, {});
+    for (let t = 0; t < 6 && !g.ossuary.exitLid.open; t += 0.1) F.stepWith(0.1, {});
+    beat('the-way-out-is-a-hatch-too', g.ossuary.exitLid.open === true,
+      { t: +g.ossuary.exitLid.t.toFixed(2) });
+    hatchAim();
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.3, {});
+    beat('walked-back-out-the-way-you-came', !g.ossuary.inOssuary && g.act === 'graveyard',
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    // ---- BANK ONE: the lock-stone west of the forest gate ---------------
+    const SOCK_X = 2 - 2.35, SOCK_Z = 41.72;
+    const bankKey = () => {
+      const s = g.gateKeys.sockets.find((so) => !so.filled);
+      walkTo(SOCK_X, SOCK_Z - 1.5, 45);
+      walkTo(SOCK_X, SOCK_Z - 0.95, 8);
+      const dz = (SOCK_Z - 0.42) - g.player.pos.z;
+      const dx = SOCK_X - g.player.pos.x;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(s.at.y - (g.player.pos.y + 1.62), Math.hypot(dx, dz) || 0.001);
+      g.player._sync(0);
+      F.stepWith(1 / 120, { interactPressed: true });
+      F.stepWith(0.3, {});
+      return s.filled;
+    };
+    // SOUTH out of the mausoleum first: its walk-over throat is at the BACK
+    // (z 34.08..35.4, x within 0.58 of the door line) and the way out drops
+    // you a metre and a bit south of it. Walking north from there walks
+    // straight back down the stairs.
+    walkTo(-14.6, 30.8, 14);
+    walkTo(-8.0, 33.0, 25);
+    beat('first-key-banked', bankKey() && g.gateKeys.banked() === 1,
+      { banked: g.gateKeys.banked() });
+
+    // ---- KEY TWO: the marrow, under the sealed mausoleum -----------------
+    // around the east side: the mausoleum's own walls are solid and its only
+    // gap is the doorway in the south face
+    const MOUTH = g.marrowPit;
+    walkTo(8.0, 36.0, 30);
+    walkTo(18.6, 34.0, 25);
+    walkTo(18.6, 28.4, 20);
+    walkTo(MOUTH.x, 28.4, 16);
+    walkTo(MOUTH.x, MOUTH.z - 1.35, 12);
+    {
+      const dz = MOUTH.z - g.player.pos.z;
+      g.player.yaw = Math.atan2(0, -dz);
+      g.player.pitch = Math.atan2(0.02 - (g.player.pos.y + 1.62), Math.abs(dz) || 0.001);
+      g.player._sync(0);
+      F.stepWith(1 / 120, { interactPressed: true });
+      F.stepWith(0.3, {});
+    }
+    const M = g.marrow;
+    beat('the-mausoleum-floor-is-the-way-down', M.inMarrow === true && g.flags.has('marrow:entered'),
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    F.stepWith(8.0, {});                       // the introduction: it claws up, stares, folds
+    const P = M.presence.group;
+    // MARROW's way past a guardian is to walk into it until it yields
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 17);
+    g.player._sync(0);
+    for (let t = 0; t < 9 && !M.yielded; t += 0.1) {
+      const dx = P.position.x - g.player.pos.x, dz = P.position.z - g.player.pos.z;
       g.player.yaw = Math.atan2(-dx, -dz);
       F.stepWith(0.1, { moveZ: 1 });
     }
-    beat('ossuary-exits-outside-the-surface-gate',
-      g.flags.has('ossuaryExited') && !g.ossuary.inOssuary,
-      { player: g.player.pos.toArray(), gateOpening: g.graveyardGate.opening });
-    walkTo(2, 45, 10);
+    F.stepWith(2.0, {});
+    beat('the-guardian-yields-to-a-body-not-a-throw', M.yielded === true);
+
+    // THE KEY, alone on the altar now — the relic went up to the yard's hero
+    // grave, so there is one throw here and no second aimed one to make while
+    // the mourners are already coming.
+    const key2 = g.gateKeys.list[1];
+    // the relic still exists — it moved up to the yard's hero grave beside the
+    // canine — it is just not standing on top of the key any more
+    const relicMesh = g.scene.getObjectByName('the relic');
+    beat('the-altar-holds-the-key-and-nothing-else',
+      key2.revealed === true && key2.key.visible === true && key2.target.enabled === true
+      && (!relicMesh || Math.abs(relicMesh.position.z - (M.origin.z + 23.8)) > 20),
+      { revealed: key2.revealed, fetchable: key2.target.enabled,
+        relicAt: relicMesh ? relicMesh.position.toArray().map((v) => +v.toFixed(1)) : null });
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
+    const keyY = M.origin.floor + 1.24, keyZ = M.origin.z + 26 - 2.2;
+    aimAt(M.origin.x, keyY, keyZ);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.3, { throwHeld: true });          // 2.4 m at launch speed: it is already there
+    F.stepWith(1 / 120, { throwReleased: true });
+    // TURN. A mourning statue is frozen for exactly as long as you are looking
+    // at it, and the theft starts the hunt on the frame it lands — so the beat
+    // after the throw is not "watch it come home", it is "turn around".
+    g.player.yaw = 0;                              // south, back down the hall, into their faces
+    g.player.pitch = 0;
+    g.player._sync(0);
+    F.stepWith(0.2, {});
+    beat('second-key-rides-the-jaw', g.skull.carry?.id === 'gateKey2',
+      { carry: g.skull.carry ? g.skull.carry.id : null, dead: g.dead });
+    beat('taking-it-breaks-the-truce', g.flags.has('gotgateKey2') && M.escorted === true,
+      { escorted: M.escorted });
+    // and OUT, at a run, WITHOUT waiting for the skull — the mourners begin
+    // hunting on the frame the key leaves the altar, and standing still to
+    // watch your own throw come home is how you die here. The skull catches up
+    // on its own; that is the whole point of it.
+    for (let t = 0; t < 12 && M.inMarrow; t += 0.1) {
+      if (g.player.pos.z > M.origin.z + 2.4) {
+        const dz = (M.origin.z + 1.0) - g.player.pos.z;
+        const dx = M.origin.x - g.player.pos.x;
+        g.player.yaw = Math.atan2(-dx, -dz);
+        F.stepWith(0.1, { moveZ: 1, run: true });
+      } else {
+        aimAt(M.origin.x, M.origin.floor + 1.55, M.origin.z + 1.0);
+        F.stepWith(1 / 120, { interactPressed: true });
+        F.stepWith(0.2, {});
+      }
+    }
+    beat('climbed-back-out-of-the-marrow', !M.inMarrow && g.act === 'graveyard' && !g.dead,
+      { dead: g.dead, pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    walkTo(MOUTH.x, 28.4, 12);
+    walkTo(12.0, 26.5, 16);
+    beat('second-key-banked', bankKey() && g.gateKeys.banked() === 2,
+      { banked: g.gateKeys.banked() });
+
+    // ---- KEY THREE: the branch the tree let down -------------------------
+    // One large limb, hung at throwing height, with the key up near the leaves
+    // and a body draped across its middle. ONE hit brings all of it down.
+    const climb = g.keyTreeClimb;
+    const key3 = g.gateKeys.list[2];
+    walkTo(5.5, 22.0, 40);
+    walkTo(7.6, 18.4, 25);
+    beat('the-tree-let-a-branch-down',
+      climb.dropped === true && climb.arm.visible === true
+      && climb.branchTarget.enabled === true,
+      { dropped: climb.dropped, hangY: +climb.branchTarget.pos.y.toFixed(2) });
+    // the key is visible up in the tree and NOT yet takeable: that is the
+    // whole invitation, and the reason the branch is worth hitting
+    beat('the-key-is-in-the-tree-and-out-of-reach',
+      key3.key.visible === true && key3.target.enabled === false && key3.home.y > 3.0,
+      { visible: key3.key.visible, enabled: key3.target.enabled, y: +key3.home.y.toFixed(2) });
+
+    const hang = climb.branchTarget.pos;
+    throwAt(hang.x, hang.y, hang.z, 0.3);
+    for (let t = 0; t < 4 && !climb.hit; t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('one-hit-tears-the-branch-down',
+      climb.hit === true && g.flags.has('keyTreeFelled'), { hit: climb.hit });
+
+    // key and bones land in the grass — the key becomes fetchable only there
+    for (let t = 0; t < 4.5; t += 0.1) F.stepWith(0.1);
+    beat('the-key-and-the-bones-came-down',
+      key3.home.y < 1.2 && climb.bones.position.y < 0.9 && key3.target.enabled === true,
+      { keyY: +key3.home.y.toFixed(2), boneY: +climb.bones.position.y.toFixed(2),
+        enabled: key3.target.enabled });
+
+    walkTo(key3.home.x + 0.4, key3.home.z + 3.0, 25);
+    throwAt(key3.home.x, key3.home.y, key3.home.z, 0.35);
+    for (let t = 0; t < 4 && !(g.skull.carry && g.skull.carry.id === 'gateKey3'); t += 0.1) F.stepWith(0.1);
+    waitHeld();
+    beat('third-key-rides-the-jaw', g.skull.carry?.id === 'gateKey3',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
+    walkTo(5.5, 18.0, 30);
+
+    // ---- THE GATE TAKES THE THIRD ---------------------------------------
+    beat('third-key-banked-and-the-gate-gives',
+      bankKey() && g.gateKeys.banked() === 3 && g.flags.has('graveyardCleared'),
+      { banked: g.gateKeys.banked() });
+    for (let t = 0; t < 4 && !g.graveyardGate.opening; t += 0.1) F.stepWith(0.1);
+    beat('the-iron-gate-opens-on-three', g.graveyardGate.opening === true);
+    for (let t = 0; t < 4 && !g.graveyardGate.open; t += 0.1) F.stepWith(0.1);
+    walkTo(2, 45, 14);
     F.stepWith(0.5);
     beat('entered-the-forest', g.act === 'forest', g.act);   // the sealed-path beat proves 'forestEntered' later
 
@@ -532,13 +964,60 @@ try {
     { const pr2 = f.project(g.player.pos.x, g.player.pos.z); beat('reached-the-clearing', g.act === 'clearing', { act: g.act, pos: [+g.player.pos.x.toFixed(1), +g.player.pos.z.toFixed(1)], s: pr2 && pr2.s, len: f.length, dead: g.dead, enemies: g.enemies.list.map(e=>e.kind+':'+e.state+'@'+Math.round(e.pos.x)+','+Math.round(e.pos.z)), spawnLog: (g.spawnLog||[]).slice(-14) }); }
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
 
-    // ---- ACT 5: the waterfall ------------------------------------------
+    // ---- ACT 5: the frozen falls, then the waterfall ---------------------
     for (let t = 0; t < 5 && g.skull.mode !== 'held'; t += 0.2) F.stepWith(0.2);   // hands full? wait
+    const CC = g.clearingCenter, FF = g.frozenFalls;
+    const wfTarget = () => g.world.fetchTargets.find((t) => t.id === 'waterfall');
+    beat('the-falls-arrive-frozen',
+      !!FF && FF.thawed === false && FF.ice.visible === true
+      && wfTarget().enabled === false,
+      { thawed: FF && FF.thawed, armed: wfTarget().enabled });
+
+    // WEST: the wheel takes the skull's weight, the ossuary's own grammar
+    walkTo(CC.x - 13.5, CC.z + 9.6, 40);
+    aimAt(FF.wheelAnchor.x, FF.wheelAnchor.y, FF.wheelAnchor.z);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    beat('the-wheel-catches-the-skull',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'fallsWheel',
+      { mode: g.skull.mode, dead: g.dead,
+        player: g.player.pos.toArray().map((v) => +v.toFixed(1)),
+        want: FF.wheelAnchor.toArray().map((v) => +v.toFixed(1)),
+        skull: g.skull.pos.toArray().map((v) => +v.toFixed(1)) });
+    F.stepWith(2.1, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
+    beat('the-west-fire-runs-the-line', FF.west.lit === true && g.flags.has('fallsFireWest'));
+
+    // EAST: three tolls on the iron plate, the resonant graves' own grammar.
+    // AROUND the basin's south rim — the pool's outer radius reaches z+7.0 and
+    // a straight line between the two machines walks into deep water.
+    walkTo(CC.x - 11.0, CC.z + 4.0, 25);
+    walkTo(CC.x + 11.0, CC.z + 4.0, 35);
+    walkTo(CC.x + 13.5, CC.z + 9.4, 25);
+    for (let n = 0; n < 3 && !FF.east.lit; n++) {
+      throwAt(FF.plateHome.x, FF.plateHome.y, FF.plateHome.z, 0.4);
+      F.stepWith(1.0);
+      waitHeld();
+    }
+    beat('the-east-fire-answers-on-the-third-toll',
+      FF.east.lit === true && FF.tolls >= 3 && g.flags.has('fallsFireEast'),
+      { tolls: FF.tolls, dead: g.dead, mode: g.skull.mode,
+        player: g.player.pos.toArray().map((v) => +v.toFixed(1)),
+        want: FF.plateHome.toArray().map((v) => +v.toFixed(1)),
+        skull: g.skull.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    for (let t = 0; t < 8 && !FF.thawed; t += 0.2) F.stepWith(0.2);
+    beat('both-fires-thaw-the-falls',
+      FF.thawed === true && g.flags.has('fallsThawed')
+      && FF.ice.visible === false && wfTarget().enabled === true,
+      { thawed: FF.thawed, armed: wfTarget().enabled });
+
     walkTo(g.clearingCenter.x, g.clearingCenter.z + 6, 30);
     throwAt(g.clearingCenter.x, 8, g.clearingCenter.z + 20.5, 0.9);
     for (let t = 0; t < 5 && !g.flags.has('waterfallTaken'); t += 0.1) F.stepWith(0.1);
     beat('skull-given-to-the-waterfall', g.flags.has('waterfallTaken') && g.skull.mode === 'gone', g.skull.mode);
-    F.stepWith(8);                                   // the bridge rises
+    F.stepWith(10.5);                                // the bridge rises — ten stones now
     beat('bridge-rose', g.bridgeStones.every((s) => s.position.y > 0.05));
 
     // the falls kept the skull but not the keepsake — it's on the shore.
@@ -568,12 +1047,34 @@ try {
       && underfallsLayout.mainLength > 110
       && underfallsLayout.chambers?.length >= 5;
     const underfallsLegs = [];
+    let choirSeen = null;
     if (underfallsRouteReady) {
       for (const node of underfallsMain.slice(2)) {
         underfallsLegs.push(walkTo(node.x, node.z, 20));
+        // "I still do not see any of those old enemies that used to be unique
+        // to the area under the waterfall." It used to arm at the lower
+        // sluice, spawn behind you and chase your footprints, so a walking
+        // player never met it and a running one never could. Record the best
+        // look the walk ever gets: how close it came, and how much of it was
+        // actually on screen when it did.
+        for (let t = 0; t < 4; t++) {
+          const st = g.enemies.getDrownedChoirState?.();
+          if (!st) break;
+          const dx = st.pos[0] - g.player.pos.x, dz = st.pos[2] - g.player.pos.z;
+          const d = Math.hypot(dx, dz);
+          const fx = -Math.sin(g.player.yaw), fz = -Math.cos(g.player.yaw);
+          const facing = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
+          const seen = { d: +d.toFixed(2), facing: +facing.toFixed(2), state: st.state,
+            reveal: +Math.max(st.revealT / 1.35, st.wetT / 1.15).toFixed(2) };
+          if (!choirSeen || (seen.facing > 0.2 && seen.d < choirSeen.d)) choirSeen = seen;
+          break;
+        }
         if (g.dead) break;
       }
     }
+    beat('the-drowned-choir-comes-where-you-can-see-it',
+      !!choirSeen && choirSeen.d < 22 && !g.dead,
+      { best: choirSeen, spawns: (g.spawnLog || []).filter((s) => s[0] === 'choir').length });
     beat('crossed-the-underfalls', underfallsRouteReady
       && underfallsLegs.length === underfallsMain.length - 2
       && underfallsLegs.every(Boolean) && !g.dead,
@@ -593,14 +1094,35 @@ try {
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
 
     // ---- ACT 6: the walls ----------------------------------------------
+    // "have the player raise their hands earlier." They come up at the beat
+    // the mirrors wake and the walls start in — not two seconds before black.
     let closed = false;
+    let raisedAtClosing = null;
     for (let t = 0; t < 90; t += 1) {
       F.stepWith(1, { moveX: (t % 4 < 2 ? 0.4 : -0.4), moveZ: 0.2 });   // squirm like a person
+      if (raisedAtClosing === null && g.finale.phase === 'closing') {
+        raisedAtClosing = {
+          raise: g.skull._handRaise, bone: g.skull._handsBone === true,
+          visible: (g.skull._handPose?.hands || []).some((h) => h.visible),
+          boneParts: (g.skull._handBone || []).filter((m) => m.visible).length,
+          half: +g.finale.half.toFixed(2),
+        };
+      }
       if (g.finale.phase === 'end') { closed = true; break; }
     }
+    beat('the-hands-come-up-when-the-mirrors-wake',
+      !!raisedAtClosing && raisedAtClosing.raise > 0 && raisedAtClosing.bone === true,
+      raisedAtClosing);
     F.stepWith(7);                                    // the slow fade + showEnd
     // snap removed: sync canvas readback wedges headless GPU after long render-free stretches
     beat('the-walls-did-not-stop', closed && g.finale.half <= 0.38, +g.finale.half.toFixed(2));
+    // and the hands you have watched for the whole game turn out to be bone
+    const hs = g.skull._handSkin;
+    beat('the-hands-were-bone-all-along',
+      !!hs && g.skull._handsBone === true
+      && hs.skin.color.getHex() === g.mats.bone.color.getHex(),
+      { skin: hs ? hs.skin.color.getHexString() : null,
+        bone: g.mats.bone.color.getHexString() });
     beat('ended', g.flags.has('ended'));
 
     return { log, shots, dead: g.dead };

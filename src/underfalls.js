@@ -113,6 +113,20 @@ export function createUnderfallsLayout(center) {
       radius: 5.25,
       strength: 1.08,
     },
+    // the new route-spanning curtains get their own crossing pulses: the
+    // first veil just inside the falls, and the last one before the hatch
+    {
+      name: 'entry-veil',
+      pos: new THREE.Vector3((main[0].x + main[1].x) / 2, 1.3, (main[0].z + main[1].z) / 2),
+      radius: 4.2,
+      strength: 0.7,
+    },
+    {
+      name: 'hatch-veil',
+      pos: new THREE.Vector3((main[11].x + main[12].x) / 2, 1.3, (main[11].z + main[12].z) / 2),
+      radius: 4.2,
+      strength: 0.72,
+    },
   ];
   const bounds = {
     minX: C.x - 10,
@@ -166,6 +180,44 @@ function chamberProjection(chamber, x, z) {
     cx: chamber.x, cz: chamber.z, d, w: chamber.r, y: chamber.y,
     clearance: d - chamber.r,
     routeDistance: null,
+  };
+}
+
+// The same projection, but over the MAIN route only, plus its inverse. The
+// Choir's surfacings are placed with these (round six, his note 3: "make that
+// enemy teleport in front of you, a few times"), and the union projection
+// above cannot do it: it can answer with a SECRET segment, whose distances are
+// measured along its own path, so "twelve metres ahead" would mean twelve
+// metres along a corridor the player is not walking.
+export function projectUnderfallsMain(layout, x, z) {
+  let best = null;
+  for (const seg of layout.mainSegments) {
+    const p = segmentProjection(seg, x, z);
+    if (!best || p.clearance < best.clearance) best = p;
+  }
+  return best;
+}
+
+// The world point a given distance along the main route, with the corridor
+// half-width there — a body wider than the corridor would plug it, and running
+// past this thing is the whole escape.
+export function underfallsMainPointAt(layout, routeDistance) {
+  const segs = layout?.mainSegments;
+  if (!segs?.length) return null;
+  const last = segs[segs.length - 1];
+  const total = last.distance + last.length;
+  const d = clamp(routeDistance, 0, total);
+  let seg = last;
+  for (const s of segs) {
+    if (d <= s.distance + s.length) { seg = s; break; }
+  }
+  const t = clamp((d - seg.distance) / (seg.length || 1), 0, 1);
+  return {
+    x: seg.a.x + seg.dx * t,
+    z: seg.a.z + seg.dz * t,
+    y: lerp(seg.a.y, seg.b.y, t),
+    w: lerp(seg.a.w, seg.b.w, t),
+    index: seg.index, t, routeDistance: d, remaining: total - d, total,
   };
 }
 
@@ -437,9 +489,8 @@ export function sampleUnderfallsPath(path, spacing = 0.75) {
   return samples;
 }
 
-function addFloorAndShell(game, layout, state) {
-  const { world } = game;
-  const rock = state.shellMaterial;
+function addFloorAndShell(game, layout) {
+  const { world, mats: M } = game;
   let routeRoofs = 0;
   let chamberCaps = 0;
   // The tread cadence makes the changing elevation visible while collision
@@ -456,7 +507,7 @@ function addFloorAndShell(game, layout, state) {
       const z = lerp(seg.a.z, seg.b.z, t);
       const y = lerp(seg.a.y, seg.b.y, t);
       const w = lerp(seg.a.w, seg.b.w, t);
-      world.box(rock, x, y - 0.11, z, w * 2.0, 0.22, seg.length / n + 0.08, yaw);
+      world.box(M.rock, x, y - 0.11, z, w * 2.0, 0.22, seg.length / n + 0.08, yaw);
     }
     const opensIntoChamber = layout.chambers.some((chamber) =>
       Math.hypot(seg.a.x - chamber.x, seg.a.z - chamber.z) < chamber.r * 0.94
@@ -467,7 +518,7 @@ function addFloorAndShell(game, layout, state) {
     // whose endpoints open into chambers. Previously those whole joins skipped
     // their roof along with their side walls, leaving strips of moon and stars
     // visible between the decorative chamber caps.
-    world.box(rock,
+    world.box(M.rock,
       (seg.a.x + seg.b.x) * 0.5, avgY + 4.86,
       (seg.a.z + seg.b.z) * 0.5,
       avgW * 2 + 1.25, 0.46, seg.length + 1.4, yaw);
@@ -479,31 +530,196 @@ function addFloorAndShell(game, layout, state) {
     if (opensIntoChamber) continue;
     // Structural backing behind the later low-poly rock skin. It is deliberately
     // not an AABB collider: diagonal wall boxes were the old forest trap bug.
-    world.box(rock,
+    world.box(M.rock,
       (seg.a.x + seg.b.x) * 0.5 + nx * (avgW + 0.42), avgY + 2.35,
       (seg.a.z + seg.b.z) * 0.5 + nz * (avgW + 0.42),
       0.54, 5.15, seg.length + 1.1, yaw);
-    world.box(rock,
+    world.box(M.rock,
       (seg.a.x + seg.b.x) * 0.5 - nx * (avgW + 0.42), avgY + 2.35,
       (seg.a.z + seg.b.z) * 0.5 - nz * (avgW + 0.42),
       0.54, 5.15, seg.length + 1.1, yaw);
   }
 
-  // Chamber floors are broad and honest. The clamp's matching discs are the
-  // only boundary; low visual rings outside them make the silhouette legible.
+  // THE WET LINE. One pale, slightly raised ribbon runs the whole MAIN route
+  // and none of the culvert: the way forward is the wet way, told in value
+  // and geometry, never in hue. This is the single strongest answer to
+  // Alex's "just has you walking through rocks and random things" — the
+  // route now draws itself on the floor. One cloned material = one draw
+  // call for the entire ribbon (world.box merges by material).
+  const wetStone = M.headstone.clone();
+  wetStone.userData.underfalls = true;   // cave visibility keeps tagged materials
+  // This must survive the stretches between fixtures: it is reflected wet
+  // stone, not a coloured breadcrumb. A higher value, wider shoulder and a
+  // restrained emissive floor keep the next physical tread present in every
+  // vista while the unmarked culvert remains genuinely dark.
+  wetStone.color.setHex(0xbcc8ca);
+  if ('roughness' in wetStone) wetStone.roughness = 0.16;
+  if ('emissive' in wetStone) {
+    wetStone.emissive = new THREE.Color(0x394548);
+    wetStone.emissiveIntensity = 0.72;
+  }
+  for (const seg of layout.mainSegments) {
+    const n = Math.max(2, Math.ceil(seg.length / 0.9));
+    const yaw = Math.atan2(seg.dx, seg.dz);
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const w = lerp(seg.a.w, seg.b.w, t);
+      world.box(wetStone,
+        lerp(seg.a.x, seg.b.x, t), lerp(seg.a.y, seg.b.y, t) + 0.012,
+        lerp(seg.a.z, seg.b.z, t),
+        2 * clamp(w * 0.46, 0.94, 1.72), 0.06, (seg.length / n + 0.08) * 0.98, yaw);
+    }
+  }
+
+  // Chamber floors are broad and honest. Each used to be one big SQUARE slab
+  // at r*1.72 while the walkable clamp is a DISC of radius r: at the chapel
+  // that meant over two metres of visible floor you could not walk on at the
+  // corners, and rim gaps of invisible floor at the edge midpoints — "random
+  // things" in floor form. One instanced sixteen-gon disc per chamber now
+  // matches the clamp within 2%, with no coplanar overlaps to shimmer.
+  {
+    const discGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
+    const discs = new THREE.InstancedMesh(discGeo, M.rock, layout.chambers.length);
+    const m4 = new THREE.Matrix4();
+    const q0 = new THREE.Quaternion();
+    const sc = new THREE.Vector3();
+    layout.chambers.forEach((chamber, i) => {
+      m4.compose(
+        new THREE.Vector3(chamber.x, chamber.y - 0.14, chamber.z),
+        q0, sc.set(chamber.r * 1.02, 0.28, chamber.r * 1.02));
+      discs.setMatrixAt(i, m4);
+    });
+    discs.instanceMatrix.needsUpdate = true;
+    discs.receiveShadow = true;
+    discs.name = 'underfalls chamber floor discs';
+    discs.userData.underfalls = true;
+    discs.frustumCulled = false;   // unit-geometry bounds sit at the origin
+    game.scene.add(discs);
+  }
   for (const chamber of layout.chambers) {
-    world.box(rock, chamber.x, chamber.y - 0.14, chamber.z,
-      chamber.r * 1.72, 0.28, chamber.r * 1.72);
     // The atmosphere layer adds an irregular low-poly vault for appearance;
     // this square backing is the light-tight structural shell beneath it. Its
     // overlap reaches beyond the wall ring, so no camera angle can expose the
     // outdoor dome through the cap's former annulus.
     const backingY = chamber.name === 'drowned pump chapel' ? 6.08 : 5.68;
-    world.box(rock, chamber.x, chamber.y + backingY, chamber.z,
+    world.box(M.rock, chamber.x, chamber.y + backingY, chamber.z,
       chamber.r * 2 + 2.5, 0.52, chamber.r * 2 + 2.5);
     chamberCaps++;
   }
   layout.shell = { routeRoofs, chamberCaps };
+
+  // ---- wayfinding tier -----------------------------------------------------
+  // Alex's "rocks and random things" is a hierarchy problem: nothing in the
+  // district said THIS way. Three additions, all pale (value, not hue), all
+  // instanced, none collidable.
+  const paleMark = M.headstone.clone();
+  paleMark.color.setHex(0xc8d1d2);
+  if ('emissive' in paleMark) {
+    paleMark.emissive = new THREE.Color(0x3a4547);
+    paleMark.emissiveIntensity = 0.58;
+  }
+
+  // 1. A pale stalagmite marker on the OUTSIDE of every hard turn (>45°), so
+  //    the route's four real decisions each own a landmark. The 135° hairpin
+  //    at the east ambulatory — the darkest, most-missed turn in the district
+  //    — gets the tallest.
+  {
+    const marks = [];
+    const main = layout.main;
+    for (let i = 1; i < main.length - 1; i++) {
+      const a = main[i - 1], b = main[i], c = main[i + 1];
+      const inD = new THREE.Vector2(b.x - a.x, b.z - a.z).normalize();
+      const outD = new THREE.Vector2(c.x - b.x, c.z - b.z).normalize();
+      const turn = Math.acos(clamp(inD.dot(outD), -1, 1)) * 180 / Math.PI;
+      if (turn < 45) continue;
+      // outside-of-turn bisector: away from where the route bends
+      const bis = new THREE.Vector2(inD.x - outD.x, inD.y - outD.y);
+      if (bis.lengthSq() < 1e-6) continue;
+      bis.normalize();
+      const off = b.w + 1.1;
+      marks.push({
+        x: b.x + bis.x * off, y: b.y, z: b.z + bis.y * off,
+        h: 4.2 + Math.min(1.0, (turn - 45) / 90),
+      });
+    }
+    if (marks.length) {
+      const geo = new THREE.ConeGeometry(0.34, 1, 6);
+      geo.translate(0, 0.5, 0);
+      const mesh = new THREE.InstancedMesh(geo, paleMark, marks.length);
+      const m4 = new THREE.Matrix4();
+      const q0 = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      marks.forEach((p, i) => {
+        m4.compose(new THREE.Vector3(p.x, p.y, p.z), q0, sc.set(1, p.h, 1));
+        mesh.setMatrixAt(i, m4);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.name = 'underfalls turn markers';
+      mesh.userData.underfalls = true;
+      mesh.frustumCulled = false;
+      game.scene.add(mesh);
+    }
+  }
+
+  // 2. Paired pale jambs where the main route crosses a chamber rim: rooms
+  //    get doorways, so entering and leaving one reads as an event.
+  {
+    const jambs = [];
+    for (const seg of layout.mainSegments) {
+      for (const chamber of layout.chambers) {
+        // segment param t where |seg(t) - centre| = r
+        const fx = seg.a.x - chamber.x, fz = seg.a.z - chamber.z;
+        const A = seg.dx * seg.dx + seg.dz * seg.dz;
+        const Bq = 2 * (fx * seg.dx + fz * seg.dz);
+        const Cq = fx * fx + fz * fz - chamber.r * chamber.r;
+        const disc = Bq * Bq - 4 * A * Cq;
+        if (disc <= 0) continue;
+        const sq = Math.sqrt(disc);
+        for (const t of [(-Bq - sq) / (2 * A), (-Bq + sq) / (2 * A)]) {
+          if (t <= 0.02 || t >= 0.98) continue;
+          const x = seg.a.x + seg.dx * t, z = seg.a.z + seg.dz * t;
+          const y = lerp(seg.a.y, seg.b.y, t);
+          const w = lerp(seg.a.w, seg.b.w, t);
+          const nx = seg.dz / seg.length, nz = -seg.dx / seg.length;
+          for (const side of [-1, 1]) {
+            jambs.push({ x: x + nx * side * (w + 0.55), y, z: z + nz * side * (w + 0.55) });
+          }
+        }
+      }
+    }
+    if (jambs.length) {
+      const geo = new THREE.BoxGeometry(0.3, 1, 0.3);
+      geo.translate(0, 0.5, 0);
+      const mesh = new THREE.InstancedMesh(geo, paleMark, jambs.length);
+      const m4 = new THREE.Matrix4();
+      const q0 = new THREE.Quaternion();
+      const sc = new THREE.Vector3();
+      jambs.forEach((p, i) => {
+        m4.compose(new THREE.Vector3(p.x, p.y, p.z), q0, sc.set(1, 2.6, 1));
+        mesh.setMatrixAt(i, m4);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.name = 'underfalls chamber doorjambs';
+      mesh.userData.underfalls = true;
+      mesh.frustumCulled = false;
+      game.scene.add(mesh);
+    }
+  }
+
+  // 3. The fork reads without moving a node: the wet ribbon already runs only
+  //    the main way, and the optional culvert now wears a dry, DARK lintel
+  //    low across its mouth — clearly a place, clearly not the way onward.
+  {
+    const mouth = layout.secret[0];
+    const next = layout.secret[1];
+    if (mouth && next) {
+      const yaw = Math.atan2(next.x - mouth.x, next.z - mouth.z);
+      const dryDark = M.rock.clone();
+      dryDark.userData.underfalls = true;
+      dryDark.color.multiplyScalar(0.42);
+      world.box(dryDark, mouth.x, mouth.y + 2.24, mouth.z, 3.1, 0.34, 0.5, yaw);
+    }
+  }
 }
 
 function addColliderCylinder(world, x, z, r, y0, y1, role) {
@@ -541,214 +757,16 @@ function addInstances(parent, geometry, material, matrices, {
 
 function buildRouteLights(game, layout, state) {
   const lights = [
-    [layout.entrance.x + 0.8, 2.45, layout.entrance.z + 3.2, 0x7f9ca5, 28, 14],
-    [layout.named['intake apse'].x, 2.75, layout.named['intake apse'].z, 0x91b2b8, 38, 16],
-    [layout.named['pump approach'].x, 2.55, layout.named['pump approach'].z, 0x64777e, 20, 12],
+    [layout.entrance.x + 0.8, 2.45, layout.entrance.z + 3.2, 0x7f9ca5, 13.5, 20],
+    [layout.named['intake apse'].x, 2.75, layout.named['intake apse'].z, 0x91b2b8, 18, 22],
+    [layout.named['pump approach'].x, 2.55, layout.named['pump approach'].z, 0x64777e, 9.5, 18],
   ];
   for (const [x, y, z, color, intensity, distance] of lights) {
-    const light = markUnderfalls(new THREE.PointLight(color, intensity, distance, 1.82));
+    const light = markUnderfalls(new THREE.PointLight(color, intensity, distance, 1.15));
     light.position.set(x, y, z);
     game.scene.add(light);
     state.lights.push(light);
   }
-}
-
-function makeCurrentMarkerGeometry() {
-  // A shallow three-sided calcite flake: its point owns +Z, so every instance
-  // can physically hand the eye toward the next bend without becoming a UI
-  // arrow painted over the world.
-  const w = 0.18, back = -0.29, tip = 0.48, top = 0.028, bottom = -0.018;
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
-    -w, top, back, w, top, back, 0, top, tip,
-    -w, bottom, back, 0, bottom, tip, w, bottom, back,
-  ], 3));
-  geometry.setIndex([
-    0, 1, 2,
-    3, 5, 4,
-    0, 3, 1, 1, 3, 5,
-    1, 5, 2, 2, 5, 4,
-    2, 4, 0, 0, 4, 3,
-  ]);
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
-function mainProjection(layout, x, z, out = {}) {
-  let best = null;
-  let bestT = 0;
-  let bestCx = 0;
-  let bestCz = 0;
-  let bestD = Infinity;
-  for (const segment of layout.mainSegments) {
-    const t = clamp(
-      ((x - segment.a.x) * segment.dx + (z - segment.a.z) * segment.dz)
-        / (segment.length2 || 1),
-      0, 1,
-    );
-    const cx = segment.a.x + segment.dx * t;
-    const cz = segment.a.z + segment.dz * t;
-    const d = Math.hypot(x - cx, z - cz);
-    if (d >= bestD) continue;
-    best = segment;
-    bestT = t;
-    bestCx = cx;
-    bestCz = cz;
-    bestD = d;
-  }
-  if (!best) return null;
-  out.type = 'segment';
-  out.kind = best.kind;
-  out.index = best.index;
-  out.t = bestT;
-  out.cx = bestCx;
-  out.cz = bestCz;
-  out.d = bestD;
-  out.w = lerp(best.a.w, best.b.w, bestT);
-  out.y = lerp(best.a.y, best.b.y, bestT);
-  out.clearance = bestD - out.w;
-  out.routeDistance = best.distance + best.length * bestT;
-  return out;
-}
-
-function buildRouteGuidance(game, layout, state) {
-  const { scene, mats: M } = game;
-  const samples = sampleUnderfallsPath(layout.main, 2.15);
-  const markerData = [];
-  const markerMatrices = [];
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i];
-    const segment = layout.mainSegments[Math.min(sample.segment, layout.mainSegments.length - 1)];
-    const next = layout.main[Math.min(layout.main.length - 1, sample.segment + 1)];
-    const forwardX = sample.t >= 0.999 ? segment.dx : next.x - sample.x;
-    const forwardZ = sample.t >= 0.999 ? segment.dz : next.z - sample.z;
-    const forwardLength = Math.hypot(forwardX, forwardZ) || 1;
-    const yaw = Math.atan2(forwardX, forwardZ);
-    const routeDistance = segment.distance + segment.length * sample.t;
-    const atNode = sample.t < 0.08 || sample.t > 0.92;
-    const scale = atNode ? 1.22 : 0.9 + (i % 3) * 0.07;
-    markerMatrices.push(transformMatrix(
-      sample.x, sample.y + 0.035, sample.z,
-      0, yaw, 0,
-      scale, 1, scale,
-    ));
-    markerData.push({
-      routeDistance,
-      atNode,
-      x: sample.x,
-      y: sample.y,
-      z: sample.z,
-      forwardX: forwardX / forwardLength,
-      forwardZ: forwardZ / forwardLength,
-    });
-  }
-  const markerMat = new THREE.MeshBasicMaterial({
-    color: 0xd5dbd7,
-    transparent: true,
-    opacity: 0.78,
-    depthWrite: false,
-    fog: true,
-  });
-  const markers = addInstances(scene, makeCurrentMarkerGeometry(), markerMat, markerMatrices, {
-    name: 'required route calcite current',
-  });
-  markUnderfalls(markers);
-  markers.renderOrder = 1;
-  const markerColor = new THREE.Color();
-  for (let i = 0; i < markerData.length; i++) {
-    markerColor.setScalar(markerData[i].atNode ? 0.34 : 0.2);
-    markers.setColorAt(i, markerColor);
-  }
-  markers.instanceColor.setUsage(THREE.DynamicDrawUsage);
-  markers.instanceColor.needsUpdate = true;
-
-  // The optional culvert deliberately rejects the animated/high-value current.
-  // Crosswise dry slates make it a discoverable side mouth, but its inert,
-  // matte cadence cannot masquerade as the route the district is handing on.
-  const dryMat = M.woodDark.clone();
-  if (dryMat.color) dryMat.color.setHex(0x171715);
-  if ('roughness' in dryMat) dryMat.roughness = 1;
-  const culvertA = layout.secret[0], culvertB = layout.secret[1];
-  const cdx = culvertB.x - culvertA.x, cdz = culvertB.z - culvertA.z;
-  const clen = Math.hypot(cdx, cdz) || 1;
-  const ctx = cdx / clen, ctz = cdz / clen;
-  const culvertYaw = Math.atan2(cdx, cdz) + Math.PI / 2;
-  const dryMatrices = [];
-  for (let i = 0; i < 5; i++) {
-    const distance = 1.05 + i * 0.82;
-    dryMatrices.push(transformMatrix(
-      culvertA.x + ctx * distance,
-      culvertA.y + 0.045 + (i & 1) * 0.012,
-      culvertA.z + ctz * distance,
-      0, culvertYaw, (i - 2) * 0.025,
-      1.22 - i * 0.06, 0.045, 0.13,
-    ));
-  }
-  const drySlates = addInstances(scene, new THREE.BoxGeometry(1, 1, 1), dryMat, dryMatrices, {
-    name: 'optional dry culvert broken slates',
-  });
-  markUnderfalls(drySlates);
-
-  // The last room announces itself before interaction range: a narrow shaft
-  // catches the mismatched pull chains and a pale ceiling ring breathes at the
-  // exact hatch. It is brightness + vertical silhouette + motion, never hue.
-  const hatch = layout.hatch;
-  const hatchSignalMat = new THREE.MeshBasicMaterial({
-    color: 0xe2e6df,
-    transparent: true,
-    opacity: 0.28,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    fog: true,
-  });
-  const hatchSignal = new THREE.Group();
-  hatchSignal.name = 'hatch distant value signal';
-  markUnderfalls(hatchSignal);
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.62, 3.45, 9, 1, true), hatchSignalMat);
-  shaft.position.set(hatch.x, hatch.y + 1.86, hatch.z);
-  shaft.name = 'hatch light shaft';
-  hatchSignal.add(shaft);
-  const halo = new THREE.Mesh(new THREE.RingGeometry(0.72, 0.96, 12), hatchSignalMat);
-  halo.rotation.x = Math.PI / 2;
-  halo.position.set(hatch.x, hatch.y + 3.61, hatch.z);
-  halo.name = 'hatch ceiling halo';
-  hatchSignal.add(halo);
-  scene.add(hatchSignal);
-
-  const majorNodes = layout.main.slice(2).map((node) => {
-    const index = layout.main.indexOf(node);
-    const segment = layout.mainSegments[Math.max(0, index - 1)];
-    return {
-      index,
-      distance: segment.distance + segment.length,
-      pos: new THREE.Vector3(node.x, node.y + 3.15, node.z),
-      name: node.name,
-      announced: false,
-    };
-  });
-  state.routeGuide = {
-    markers,
-    markerMat,
-    markerData,
-    markerColor,
-    drySlates,
-    hatchSignal,
-    hatchSignalMat,
-    majorNodes,
-    lastPaintAt: -Infinity,
-    furthestDistance: 0,
-    nextAudioAt: 0,
-    wasInCave: false,
-    wasDead: false,
-    announced: [],
-    metrics: {
-      requiredMarkers: markerData.length,
-      requiredDraws: 1,
-      optionalDrySlates: dryMatrices.length,
-      mainRouteMeters: layout.mainLength,
-    },
-  };
 }
 
 function buildPumpChapel(game, layout, state) {
@@ -896,12 +914,12 @@ function buildPumpChapel(game, layout, state) {
   }
   world.candles.push({ x: altarX, y: 1.05, z: altarZ, intensity: 1.6, r: 5.2 });
 
-  const light = new THREE.PointLight(0xa8ccd4, 68, 19, 1.8);
+  const light = new THREE.PointLight(0xa8ccd4, 32.5, 26, 1.15);
   markUnderfalls(light);
   light.position.set(altarX, 2.5, altarZ);
   scene.add(light);
   state.lights.push(light);
-  const naveLight = new THREE.PointLight(0x718c96, 27, 16, 1.65);
+  const naveLight = new THREE.PointLight(0x718c96, 13, 24, 1.15);
   markUnderfalls(naveLight);
   naveLight.position.set(C.x, C.y + 3.25, C.z);
   scene.add(naveLight);
@@ -986,8 +1004,10 @@ function buildSluice(game, layout, state) {
     const yaw = Math.atan2(next.x - prev.x, next.z - prev.z);
     const gateMatrix = transformMatrix(p.x, p.y, p.z, 0, yaw, 0);
     for (const side of [-1, 1]) {
+      // posts stood at w-0.455 to their inner face — inside the clamp, so
+      // the player brushed through iron. They frame the lane now, not block it.
       postMatrices.push(gateMatrix.clone().multiply(transformMatrix(
-        side * (p.w - 0.34), 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
+        side * (p.w + 0.12), 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
     }
     topMatrices.push(gateMatrix.clone().multiply(transformMatrix(
       0, 3.72, 0, 0, 0, 0, p.w * 2.1, 0.25, 0.36)));
@@ -1003,17 +1023,17 @@ function buildSluice(game, layout, state) {
     { name: 'sluice gate teeth', castShadow: true, receiveShadow: true });
 
   const high = layout.overflow;
-  const highLight = new THREE.PointLight(0xd6eef0, 48, 16, 1.9);
+  const highLight = new THREE.PointLight(0xd6eef0, 23, 26, 1.15);
   markUnderfalls(highLight);
   highLight.position.set(high.x, high.y + 2.1, high.z);
   scene.add(highLight);
   state.lights.push(highLight);
-  const midLight = new THREE.PointLight(0x9fbec4, 34, 13, 1.82);
+  const midLight = new THREE.PointLight(0x9fbec4, 16, 22, 1.15);
   markUnderfalls(midLight);
   midLight.position.set(layout.upperSluice.x, layout.upperSluice.y + 2.15, layout.upperSluice.z);
   scene.add(midLight);
   state.lights.push(midLight);
-  const lowerLight = new THREE.PointLight(0x8aa9b1, 32, 14, 1.8);
+  const lowerLight = new THREE.PointLight(0x8aa9b1, 15.5, 26, 1.15);
   markUnderfalls(lowerLight);
   lowerLight.position.set(layout.lowerSluice.x, layout.lowerSluice.y + 2.35, layout.lowerSluice.z);
   scene.add(lowerLight);
@@ -1094,7 +1114,7 @@ function buildBellCistern(game, layout, state) {
   dryRing.position.set(C.x, C.y + 0.025, C.z);
   group.add(dryRing);
   world.candles.push({ x: C.x - 2.4, y: C.y + 1.05, z: C.z + 1.8, intensity: 1.25, r: 4.5 });
-  const bellLight = new THREE.PointLight(0xd7a468, 28, 8.5, 1.9);
+  const bellLight = new THREE.PointLight(0xd7a468, 13.5, 12, 1.15);
   markUnderfalls(bellLight);
   bellLight.position.set(C.x - 0.6, C.y + 2.25, C.z + 0.5);
   scene.add(bellLight);
@@ -1146,34 +1166,49 @@ function buildHatchCistern(game, layout, state) {
   const H = layout.hatch;
   const y = H.y;
   const r = 4.0;
-  world.box(state.shellMaterial, H.x, y - 0.15, H.z, r * 2, 0.3, r * 2);
-  world.box(state.shellMaterial, H.x + r, y + 2.0, H.z, 0.8, 4.5, r * 2);
-  // The required route enters through the southwest corner. A full west wall
-  // crossed that diagonal chord at its exact corner, visually hiding the hatch
-  // even though route/collision math said the chamber was open. Start this
-  // wall north of the approach aperture so geometry, sightline and legal floor
-  // all tell the same story.
-  const westWallSouth = H.z - 0.65;
-  const westWallLength = H.z + r - westWallSouth;
-  world.box(state.shellMaterial, H.x - r, y + 2.0,
-    westWallSouth + westWallLength * 0.5, 0.8, 4.5, westWallLength);
-  world.box(state.shellMaterial, H.x, y + 2.0, H.z + r, r * 2, 4.5, 0.8);
-  world.box(state.shellMaterial, H.x, y + 4.15, H.z, r * 2 + 0.4, 0.5, r * 2 + 0.4);
+  world.box(M.rock, H.x, y - 0.15, H.z, r * 2, 0.3, r * 2);
+  world.box(M.rock, H.x + r, y + 2.0, H.z, 0.8, 4.5, r * 2);
+  // West shell is a north-only segment: the full-length slab used to cross the
+  // authored entry diagonal as ghost geometry. What remains is visually AND
+  // physically a wall (matching collider below); the southwest quadrant is
+  // genuinely open both ways.
+  world.box(M.rock, H.x - r, y + 2.0, H.z + (r - 0.6) / 2, 0.8, 4.5, r + 0.6);
+  world.box(M.rock, H.x, y + 2.0, H.z + r, r * 2, 4.5, 0.8);
+  world.box(M.rock, H.x, y + 4.15, H.z, r * 2 + 0.4, 0.5, r * 2 + 0.4);
   world.addCollider(H.x + r - 0.4, y - 1, H.z - r, H.x + r + 0.4, y + 4, H.z + r,
     { underfalls: true, role: 'hatch chamber wall' });
   // Southwest stays open: the descending spill arrives diagonally through that
-  // corner. The route union is already the reliable outer boundary, so an AABB
-  // here would only counterfeit a wall across the authored entrance.
+  // corner. The west collider must not reach south of H.z-0.6 or it would
+  // counterfeit a wall across that entrance (and into the choir's routing).
+  world.addCollider(H.x - r - 0.4, y - 1, H.z - 0.6, H.x - r + 0.4, y + 4, H.z + r,
+    { underfalls: true, role: 'hatch chamber wall' });
   world.addCollider(H.x - r, y - 1, H.z + r - 0.4, H.x + r, y + 4, H.z + r + 0.4,
     { underfalls: true, role: 'hatch chamber wall' });
 
   const hatch = new THREE.Group();
   hatch.name = 'cave ceiling hatch';
   markUnderfalls(hatch);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 1.2), M.woodDark);
+  // The player approaches without the skull and must look almost straight up.
+  // Ordinary dark wood/iron vanished against the sealed ceiling even when the
+  // floor was readable. These are still physical materials, but their value and
+  // restrained emissive response preserve the hatch square, frame and chains
+  // between local fixtures without adding another light.
+  const hatchWood = M.woodDark.clone();
+  hatchWood.color.setHex(0x596365);
+  if ('emissive' in hatchWood) {
+    hatchWood.emissive = new THREE.Color(0x182022);
+    hatchWood.emissiveIntensity = 0.58;
+  }
+  const hatchMetal = M.metal.clone();
+  hatchMetal.color.setHex(0x8a9697);
+  if ('emissive' in hatchMetal) {
+    hatchMetal.emissive = new THREE.Color(0x20292b);
+    hatchMetal.emissiveIntensity = 0.68;
+  }
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.16, 1.2), hatchWood);
   door.position.y = 3.78;
   hatch.add(door);
-  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.11, 6, 4), M.metal);
+  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.82, 0.11, 6, 4), hatchMetal);
   frame.rotation.x = Math.PI / 2;
   frame.rotation.z = Math.PI / 4;
   frame.position.y = 3.68;
@@ -1190,21 +1225,28 @@ function buildHatchCistern(game, layout, state) {
         0, (i & 1) * Math.PI / 2, 0, 0.72, 0.72, 0.72));
     }
   }
-  addInstances(hatch, new THREE.TorusGeometry(0.12, 0.022, 5, 10), M.metal, chainMatrices,
+  addInstances(hatch, new THREE.TorusGeometry(0.12, 0.022, 5, 10), hatchMetal, chainMatrices,
     { name: 'mismatched hatch pull chains' });
+  // "the thing at the end should be more visible with a handle" — the same
+  // handle language as every other thing you can open: a bar and brackets
+  // on the door's underside, facing the upturned player.
+  const hatchHandleMat = new THREE.MeshStandardMaterial({
+    // pale diffuse + dark emissive, exactly the basement hatch's handle
+    // language (house.js) — value contrast against the darker door, not hue
+    color: 0x8f9694, roughness: 0.4, metalness: 0.7,
+    emissive: 0x22282a, emissiveIntensity: 0.85,
+  });
+  const hatchHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.56, 8), hatchHandleMat);
+  hatchHandle.rotation.z = Math.PI / 2;
+  hatchHandle.position.set(0, 3.56, 0);
+  hatch.add(hatchHandle);
+  for (const side of [-1, 1]) {
+    const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.16, 0.06), hatchHandleMat);
+    bracket.position.set(side * 0.24, 3.64, 0);
+    hatch.add(bracket);
+  }
   hatch.position.set(H.x, y, H.z);
   scene.add(hatch);
-
-  // Global candle slots are deliberately culled below ground, so the last
-  // room needs one district-owned source of value. It grazes the mismatched
-  // chains and the square hatch from the player's approach side; the pale
-  // shaft now resolves into a physical destination well before interact range
-  // instead of floating over an unreadable black ceiling.
-  const hatchLight = markUnderfalls(new THREE.PointLight(0xcbd9d8, 52, 14.5, 1.78));
-  hatchLight.name = 'hatch shaft destination light';
-  hatchLight.position.set(H.x, y + 2.72, H.z - 0.72);
-  scene.add(hatchLight);
-  state.lights.push(hatchLight);
 
   const post = new THREE.Mesh(new THREE.BoxGeometry(1.65, 1.95, 1.65),
     new THREE.MeshBasicMaterial({ visible: false }));
@@ -1274,21 +1316,6 @@ function installCaveVisibility(game, state) {
   const saved = new Map();
   let active = false;
   let sky = null;
-  const dynamicEnemyRoots = new Set();
-  const allowedCaveLights = new Set();
-  let enemyCount = -1;
-  let enemySpawnSerial = -1;
-  let choirRoot = null;
-  const metrics = {
-    entries: 0,
-    exits: 0,
-    staticWrites: 0,
-    atmosphereWrites: 0,
-    enemySyncs: 0,
-    steadyTicks: 0,
-    steadyWrites: 0,
-    allowedLights: 0,
-  };
   const caveAtmosphereNames = new Set([
     'cave broken wall skin',
     'underfalls chamber ceiling vaults',
@@ -1302,63 +1329,41 @@ function installCaveVisibility(game, state) {
     for (const [child, visible] of saved) child.visible = visible;
     saved.clear();
     active = false;
-    metrics.exits++;
   };
-  const syncEnemyRoots = () => {
-    const enemies = game.enemies?.list || [];
-    const spawnSerial = game.enemies?._spawnSerial ?? 0;
-    const nextChoirRoot = game.enemies?.choir?.mesh || null;
-    if (enemies.length === enemyCount
-        && spawnSerial === enemySpawnSerial
-        && nextChoirRoot === choirRoot) return false;
-
-    dynamicEnemyRoots.clear();
-    for (const enemy of enemies) {
-      if (enemy?.mesh) dynamicEnemyRoots.add(enemy.mesh);
-    }
-    enemyCount = enemies.length;
-    enemySpawnSerial = spawnSerial;
-    choirRoot = nextChoirRoot;
-    metrics.enemySyncs++;
-    return true;
-  };
-  const refreshAllowedCaveLights = () => {
-    allowedCaveLights.clear();
-    for (const light of [
-      game.world?.ambient,
-      game.world?.hemi,
-      game._impactLight,
-      ...(state.lights || []),
-      ...(game._shaderBallast?.caveLights || []),
-    ]) {
-      if (light) allowedCaveLights.add(light);
-    }
-    metrics.allowedLights = allowedCaveLights.size;
-  };
-  const keep = (child) => child === game.camera
+  const keep = (child, enemyRoots) => child === game.camera
     || child === game.atmosphere?.group
     || child === game.skull?.root
+    || child === game.clearingPool
     || child.userData?.underfalls
-    || allowedCaveLights.has(child)
+    // The pinned census rides in ONE group (World.pinLightCensus lifts every
+    // boot light into world.lightRoot). `child.isLight` was written before
+    // that lift and no longer matches anything at scene level — hiding the
+    // group un-lights the entire district. Every seal spares lightRoot.
+    || child === game.world.lightRoot
+    || child.isLight
     || child === game.world.moon?.target
-    || dynamicEnemyRoots.has(child);
+    || enemyRoots.has(child)
+    // Underfalls floors and structural backing are compiled into the world's
+    // shared rock batch at boot. Keeping that one batch costs one call; the
+    // hundreds of distant house/basement prop meshes do not belong in a cave
+    // render merely because the camera happens to face southwest.
+    || (child.isMesh && child.material === game.mats.rock)
+    // materials the district authored for itself (wet ribbon, dry lintel)
+    || (child.isMesh && child.material?.userData?.underfalls);
 
-  const enter = () => {
-    if (active) return;
-    // World/global lights are constructed after buildOutside returns, so bind
-    // the allowlist on the actual district edge rather than capturing an
-    // incomplete boot-time set in this closure.
-    refreshAllowedCaveLights();
-    syncEnemyRoots();
+  game.tickers.push(() => {
+    const inCave = game.act === 'cave';
+    if (!inCave && active) {
+      restore();
+      return;
+    }
+    if (!inCave) return;
     active = true;
-    metrics.entries++;
+    const enemyRoots = new Set((game.enemies?.list || []).map((e) => e.mesh));
     for (const child of game.scene.children) {
-      if (keep(child)) continue;
+      if (keep(child, enemyRoots)) continue;
       if (!saved.has(child)) saved.set(child, child.visible);
-      if (child.visible) {
-        child.visible = false;
-        metrics.staticWrites++;
-      }
+      child.visible = false;
     }
     // The atmosphere root contains both cave dressing and every exterior
     // stratum. Keep its six named cave batches and hide the outdoor siblings;
@@ -1369,37 +1374,12 @@ function installCaveVisibility(game, state) {
     for (const child of atmosphereRoot?.children || []) {
       if (caveAtmosphereNames.has(child.name)) continue;
       if (!saved.has(child)) saved.set(child, child.visible);
-      if (child.visible) {
-        child.visible = false;
-        metrics.atmosphereWrites++;
-      }
+      child.visible = false;
     }
-  };
-
-  game.tickers.push(() => {
-    const inCave = game.act === 'cave';
-    if (!inCave) {
-      if (active) restore();
-      return;
-    }
-    if (!active) {
-      enter();
-      return;
-    }
-    // Choir ownership can change while the player is in Underfalls. Check the
-    // enemy manager's stable count/serial/Choir identities and rebuild only on
-    // that edge. Newly spawned roots enter the scene visible and never require
-    // another full-world walk or a visibility write in the 120 Hz hot loop.
-    metrics.steadyTicks++;
-    syncEnemyRoots();
   });
   state.visibility = {
     saved,
-    enter,
     restore,
-    allowedCaveLights,
-    dynamicEnemyRoots,
-    metrics,
     get active() { return active; },
     get sky() { return sky; },
   };
@@ -1408,12 +1388,28 @@ function installCaveVisibility(game, state) {
 function installBeats(game, layout, state) {
   const cameraPos = new THREE.Vector3();
   const cameraDir = new THREE.Vector3();
-  const displacementTo = new THREE.Vector3();
-  const routeProjection = {};
+  const entrance = layout.entrance;
   game.tickers.push((dt, t) => {
     const inCave = game.act === 'cave';
-    if (state.renderActive !== inCave) {
-      if (inCave) {
+    // DRESSED BEFORE YOU CAN SEE IN. His note: the entrance "loads 2 distinct
+    // things, one before the other". It does, and the first of them is a bare
+    // slab: the cave's structural rock is compiled into the world's shared
+    // batch and is therefore ALWAYS drawn, while the skin that breaks it into
+    // rock — and the stalactites, the mica, the cataracts — only appear when
+    // the act flips. From the last stones the mouth was one flat untextured
+    // face several metres wide (raycast: the shared rock batch at the mouth,
+    // south-facing, nothing in front of it). Wake the district a few metres
+    // early, once the bargain is struck, so the inside is already dressed the
+    // first time it is visible. The act line still owns everything else.
+    const nearMouth = !inCave
+      && game.flags.has('waterfallTaken')
+      && game.act === 'clearing'
+      && Math.abs(game.player.pos.x - entrance.x) < 13
+      && game.player.pos.z > entrance.z - 19
+      && game.player.pos.z < entrance.z + 5;
+    const dressed = inCave || nearMouth;
+    if (state.renderActive !== dressed) {
+      if (dressed) {
         for (const root of state.renderRoots || []) {
           root.visible = state.renderVisibility?.get(root) !== false;
         }
@@ -1423,123 +1419,17 @@ function installBeats(game, layout, state) {
           root.visible = false;
         }
       }
-      state.renderActive = inCave;
+      state.renderActive = dressed;
     }
-    if (state.lightsActive !== inCave) {
-      state.lightsActive = inCave;
-      for (const light of state.lights) light.visible = inCave;
+    if (state.lightsActive !== dressed) {
+      state.lightsActive = dressed;
+      for (const light of state.lights) light.visible = dressed;
     }
     // Underfalls is a sealed district, not nine global point lights and a set
     // of machines animating beneath every other act. Pause all of its visual
     // work while the player is elsewhere; the cave resumes from monotonic game
     // time on entry without advancing hidden per-frame state.
-    if (!inCave) {
-      if (state.routeGuide) state.routeGuide.wasInCave = false;
-      return;
-    }
-
-    const liveCave = !game.dead;
-    const guide = state.routeGuide;
-    if (guide) {
-      const projection = mainProjection(
-        layout, game.player.pos.x, game.player.pos.z, routeProjection,
-      );
-      const routeDistance = projection?.routeDistance || 0;
-      if (!liveCave) guide.wasDead = true;
-      if (liveCave) {
-        if (guide.wasDead) {
-          // Cave death returns to the entrance checkpoint without leaving the
-          // act. Reconcile the per-life cue ledger at the restored pose: cues
-          // actually behind that checkpoint stay retired, while destinations
-          // the dead life reached farther ahead become earnable again.
-          guide.wasDead = false;
-          guide.wasInCave = false;
-          guide.furthestDistance = routeDistance;
-          guide.announced.length = 0;
-          for (const node of guide.majorNodes) {
-            const behindCheckpoint = node.distance <= routeDistance + 0.75;
-            node.announced = behindCheckpoint;
-            node.skipped = behindCheckpoint;
-          }
-          guide.nextAudioAt = t + 0.32;
-        }
-        const enteredHere = !guide.wasInCave;
-        guide.wasInCave = true;
-        if (enteredHere) {
-          // A cave checkpoint can restore halfway through the route. Nodes at or
-          // behind that pose are already history; silently retire their cues so
-          // a respawn never makes a drip call backwards through several walls.
-          for (const node of guide.majorNodes) {
-            if (node.distance > routeDistance + 0.75) continue;
-            node.announced = true;
-            node.skipped = true;
-          }
-          guide.nextAudioAt = Math.max(guide.nextAudioAt, t + 0.32);
-        }
-        guide.furthestDistance = Math.max(guide.furthestDistance, routeDistance);
-      }
-      // Instance brightness advances in a single forward wave. Markers behind
-      // the player settle to a dim mineral seam; the next twenty metres answer
-      // in sequence, so a bend never strands the eye at the current landmark.
-      if (t >= guide.lastPaintAt + 0.075) {
-        guide.lastPaintAt = t;
-        for (let i = 0; i < guide.markerData.length; i++) {
-          const marker = guide.markerData[i];
-          const ahead = marker.routeDistance - routeDistance;
-          const inHandoff = ahead >= -1.5 && ahead <= 22;
-          const phase = ((t * 0.43 - marker.routeDistance * 0.032) % 1 + 1) % 1;
-          const pulse = Math.exp(-(((phase - 0.18) / 0.105) ** 2));
-          const value = inHandoff
-            ? 0.26 + pulse * 0.72 + (marker.atNode ? 0.08 : 0)
-            : 0.105 + (marker.atNode ? 0.035 : 0);
-          guide.markerColor.setScalar(clamp(value, 0.08, 1));
-          guide.markers.setColorAt(i, guide.markerColor);
-        }
-        guide.markers.instanceColor.needsUpdate = true;
-      }
-      const hatchDistance = Math.hypot(
-        game.player.pos.x - layout.hatch.x,
-        game.player.pos.z - layout.hatch.z,
-      );
-      const hatchPulse = 0.18 + (0.5 + 0.5 * Math.sin(t * 1.55)) * 0.15;
-      guide.hatchSignalMat.opacity = Math.min(0.52,
-        hatchPulse * (hatchDistance < 32 ? 1.35 : 1));
-
-      // Each major leg answers from the next destination before the player is
-      // standing on it. The drip is positional and finite; walking backwards
-      // does not chatter or turn the route into an audio waypoint HUD.
-      if (liveCave) for (const node of guide.majorNodes) {
-        if (!node.announced && node.distance <= routeDistance + 0.75) {
-          // Fast movement/debug travel may cross a node while the previous
-          // cue's cooldown is still live. Retire it silently at the crossing;
-          // it must never become a behind-the-player announcement later.
-          node.announced = true;
-          node.skipped = true;
-        }
-        // The approach window belongs to the player's current projection, not
-        // their historical high-water mark. A checkpoint restore or genuine
-        // backtrack can leave furthestDistance far ahead; using it here made a
-        // still-unvisited destination call through several bends from 20-30m
-        // away. `announced` already prevents repeats when retracing progress.
-        if (node.announced || routeDistance < node.distance - 10 || t < guide.nextAudioAt) continue;
-        node.announced = true;
-        guide.announced.push(node.name);
-        guide.nextAudioAt = t + 2.6;
-        game.audio.caveDrip({
-          pos: node.pos,
-          gain: node.index === layout.main.length - 1 ? 0.52 : 0.32,
-          rate: 0.92 + (node.index % 3) * 0.08,
-          verb: 0.92,
-        });
-        break;
-      }
-    }
-
-    // Game.step deliberately keeps district tickers alive under the death
-    // overlay. That is useful for visibility, but a dead body must not spend an
-    // authored route cue, discover the culvert, trip a spray edge, or consume a
-    // one-shot machine/figure beat before the checkpoint has returned control.
-    if (!liveCave) return;
+    if (!inCave) return;
 
     if (state.pump) {
       const p = state.pump;
@@ -1563,6 +1453,7 @@ function installBeats(game, layout, state) {
       }
     }
     const player = game.player.pos;
+    const choir = game.enemies?.choir;
     for (let i = 0; i < state.sprayZones.length; i++) {
       const zone = state.sprayZones[i];
       const pulse = state.sprayPulse[i];
@@ -1572,12 +1463,33 @@ function installBeats(game, layout, state) {
       // A water volume is an authored beat, not an every-frame damage aura.
       // Crossing its edge fires one spatial pulse; leaving rearms it, while the
       // cooldown protects the Choir's localized reveal one-shot from chatter.
+      let sprayed = false;
       if (inside && !pulse.inside && t >= pulse.nextAt) {
         game.enemies?.caveSpray?.(zone.pos, zone.radius, zone.strength);
         pulse.nextAt = t + 0.8;
+        sprayed = true;
         if (state.sluice) state.sluice.sprayKick = 1;
       }
       pulse.inside = inside;
+      // The Choir walks the player's own breadcrumbs through the same
+      // curtains: its OWN crossing lights it (reveal + audio only — no slow,
+      // no wash, no strike-cancel, so pursuit is bit-identical). A caveSpray
+      // pulse this frame already revealed and voiced it; don't double-fire.
+      const c = state.choirPulse[i];
+      if (choir && choir.state !== 'spent') {
+        const cdx = choir.pos.x - zone.pos.x;
+        const cdz = choir.pos.z - zone.pos.z;
+        const choirInside = cdx * cdx + cdz * cdz <= zone.radius * zone.radius;
+        if (choirInside && !c.inside && t >= c.nextAt && !sprayed) {
+          game.enemies?.drownedChoirDrench?.();
+          c.nextAt = t + 0.8;
+        }
+        c.inside = choirInside;
+      } else {
+        // no choir (or spent): stay armed-as-inside so a source spawned inside
+        // a curtain cannot self-reveal at birth — the warning stays audio-only
+        c.inside = true;
+      }
     }
     if (!state.beats.pump && player.distanceToSquared(state.pump.position) < 11.5 * 11.5) {
       state.beats.pump = true;
@@ -1622,9 +1534,7 @@ function installBeats(game, layout, state) {
     if (D.revealed) {
       game.camera.getWorldPosition(cameraPos);
       game.camera.getWorldDirection(cameraDir);
-      const to = displacementTo.copy(D.root.position);
-      to.y += 1.6;
-      to.sub(cameraPos);
+      const to = D.root.position.clone().add(new THREE.Vector3(0, 1.6, 0)).sub(cameraPos);
       const d = to.length();
       const seen = d > 0.01 && to.multiplyScalar(1 / d).dot(cameraDir) > 0.76;
       const nearHigh = player.y > 2.25 || player.z > layout.upperSluice.z - 2;
@@ -1652,19 +1562,17 @@ export function buildUnderfalls(game) {
     beats: { pump: false, high: false },
     sprayZones: layout.sprayZones,
     sprayPulse: layout.sprayZones.map(() => ({ inside: false, nextAt: 0 })),
-    // World.finishStatic merges by material identity. A dedicated but visually
-    // identical material makes the cave's structural floor/shell one owned
-    // batch instead of welding it into the whole exterior rock mesh. The cave
-    // culler can now retire the clearing cliff and every distant rock vertex
-    // while keeping the exact Underfalls enclosure.
-    shellMaterial: game.mats.rock.clone(),
+    // the CHOIR's own zone edges, tracked separately: its crossings reveal it
+    // without touching the player-pulse semantics above
+    choirPulse: layout.sprayZones.map(() => ({ inside: false, nextAt: 0 })),
     groundAt(x, z) { return underfallsGroundAt(layout, x, z); },
     contains(x, z, pad = 0) { return underfallsContains(layout, x, z, pad); },
     project(x, z) { return projectUnderfalls(layout, x, z); },
+    projectMain(x, z) { return projectUnderfallsMain(layout, x, z); },
+    mainPointAt(d) { return underfallsMainPointAt(layout, d); },
     lineOfSight(a, b, options) { return underfallsLineOfSight(layout, a, b, options); },
     route(a, b, options) { return findUnderfallsRoute(layout, a, b, options); },
   };
-  state.shellMaterial.name = 'underfalls structural rock material';
   game.underfalls = state;
 
   const b = layout.bounds;
@@ -1672,9 +1580,8 @@ export function buildUnderfalls(game) {
   game.caveZone.enabled = game.flags.has('waterfallTaken');
   world.addSurface('stone', b.minX, b.minZ, b.maxX, b.maxZ, -4, 14);
 
-  addFloorAndShell(game, layout, state);
+  addFloorAndShell(game, layout);
   buildRouteLights(game, layout, state);
-  buildRouteGuidance(game, layout, state);
   buildPumpChapel(game, layout, state);
   buildSluice(game, layout, state);
   buildBellCistern(game, layout, state);
@@ -1684,28 +1591,17 @@ export function buildUnderfalls(game) {
   // chapel, sluice, hatch or spray geometry belongs in an exterior render.
   // Remember each root's live visibility so one-shot cave beats survive a
   // leave/re-entry, then remove the whole district until the cave act begins.
-  state.renderRoots = scene.children.slice(renderStart);
+  // Lights are excluded: they are already owned by state.lights below, and
+  // they are the one kind of child whose scene-graph visibility is not a
+  // rendering decision. The shader light census is pinned (see
+  // World.pinLightCensus), so a district light sleeps by going black and stays
+  // resident — leaving it in a list called renderRoots would both
+  // double-manage it and make "how much of the cave is drawn" uncountable.
+  state.renderRoots = scene.children.slice(renderStart).filter((root) => !root.isLight);
   state.renderVisibility = new Map(state.renderRoots.map((root) => [root, root.visible]));
   state.renderActive = false;
   for (const root of state.renderRoots) root.visible = false;
   for (const light of state.lights) light.visible = false;
-  // Static world batches do not exist until Game calls world.finishStatic just
-  // after the outside builder returns. Main invokes this bounded binder at
-  // that exact seam, giving the late merged shell the same district lifecycle
-  // and warmup ownership as the roots created directly above.
-  state.bindStaticShell = () => {
-    if (state.shellRoot) return state.shellRoot;
-    const root = scene.children.find((child) =>
-      child.isMesh && child.material === state.shellMaterial) || null;
-    if (!root) return null;
-    root.name = 'underfalls merged structural shell';
-    markUnderfalls(root);
-    state.shellRoot = root;
-    state.renderRoots.push(root);
-    state.renderVisibility.set(root, true);
-    root.visible = state.renderActive;
-    return root;
-  };
   installClamp(game, layout, state);
   installCaveVisibility(game, state);
   installBeats(game, layout, state);

@@ -16,7 +16,7 @@ const KIND = {
     hit: { y0: 0.24, y1: 2.02, r: 0.46, shoulderY: 1.72, shoulderR: 0.62, headY: 2.14, headR: 0.3 },
   },
   kneeler: {
-    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 2.65, scale: 2.4,
+    h: 4.4, r: 0.9, chase: 6.2, stalk: 0, hp: Infinity, stun: 0.4, scale: 2.4,
     windup: 2.2, strike: 1.02, strikeRadius: 1.48, recovery: 0.9, lunge: 1.16,
     hit: { y0: 0.22, y1: 3.58, r: 0.9, shoulderY: 3.12, shoulderR: 1.15, headY: 3.38, headR: 0.68 },
   },
@@ -26,26 +26,70 @@ const KIND = {
 // the cave threat has to be escaped, misdirected, or washed back by pressure.
 // It follows the last sound it was given, commits attacks to a fixed point,
 // and runs slower than a committed sprint. Those are its three fairness rails.
+// Alex: "The enemy inside the waterfall should be more difficult and should
+// spawn way in front of you."
+//
+// THE ONE NUMBER THAT MAY NOT MOVE IS heardSpeed. It sits under RUN (4.7), and
+// that inequality is the entire escape: running away from this thing has to
+// work, or the chapter stops being a chase and becomes a coin flip. Everything
+// else got harder. The contract the walking bot proves every playthrough:
+// WALK (2.7) x attackCommit (0.92) = 2.48 m of travel inside the commit window
+// against a 1.30 m strike radius — a margin of 1.9x. A player who keeps walking
+// still always escapes; a player who stops still dies. That is the design.
 const DROWNED_CHOIR = Object.freeze({
   h: 2.75,
   r: 0.42,
-  warning: 2.65,
-  drySpeed: 1.55,
-  heardSpeed: 4.35,
-  attackRange: 1.85,
-  attackCommit: 1.05,
-  attackRadius: 1.18,
-  recovery: 1.25,
+  warning: 2.20,          // 2.65 — shorter fuse, only safe with the far spawn
+  drySpeed: 2.60,         // 1.55 — unheard pursuit +45%, still under a walk
+  heardSpeed: 4.35,       // UNTOUCHED. Under RUN. This is the escape rail.
+  attackRange: 2.30,      // 1.85 — it commits from further out
+  attackCommit: 0.92,     // 1.05 — and gets there sooner
+  attackRadius: 1.30,     // 1.18
+  recovery: 0.95,         // 1.25 — a miss costs it less
 });
 
-const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x24262b };
-// A high-value bone burden is the Kneeler's wordless affordance.  It is not a
-// health-bar weak point—the creature remains unkillable—but it gives the eye a
-// throw-sized target and collapses with the body for a long, visible passage
-// window.  Brightness and shape carry the rule; hue never has to.
-const KNEELER_MARK_MAT = new THREE.MeshLambertMaterial({
-  color: 0xb6ad96, emissive: 0x39362c, emissiveIntensity: 0.42,
+// HIS NOTE, ROUND SIX: "in the under waterfall cave area make that enemy
+// teleport in front of you, a few times. but not so close that it instantly
+// gets you."
+//
+// This is the SECOND asking. The comment at the top of this file already
+// carries the first — "should spawn way in front of you" — and that was built
+// as one far spawn at the start of the act. He is asking for it to happen
+// again, during the run. It is placement, not lethality: not one number in
+// DROWNED_CHOIR moves, and the fairness proof the walking bot re-runs every
+// playthrough is untouched.
+//
+// The guards are what keep "in front of you" from becoming "on top of you":
+// it only ever surfaces while it is genuinely BEHIND and you are walking away
+// from it, never nearer than ten metres, never in a corridor narrow enough for
+// its body to plug (running past it IS the escape), and never on the last
+// stretch before the hatch, where a body across the way out is not a scare but
+// a wall. It arrives in a fresh warning, so the 2.2 s fuse has to burn before it can
+// move at all.
+const CHOIR_SURFACE = Object.freeze({
+  max: 3,             // "a few times"
+  firstDelay: 12,     // the act opens with its own far spawn; let that land first
+  cooldown: 25,
+  ahead: [10.5, 11.5, 12.5, 13.5],   // metres further along the main route
+  minStraight: 10.0,  // "not so close that it instantly gets you"
+  // MEASURED, not guessed. The first build asked for twelve metres of gap
+  // behind before it would surface, and probe-choir-surfacing walked the whole
+  // 125 m route without one firing: this thing does not trail you by twelve
+  // metres, it trails you by three to seven, all chapter. The number that
+  // matters is only that a surfacing must never cancel a strike that was about
+  // to land — so: outside attackRange (2.30) with margin, and 'stalk' only.
+  minBehind: 4.5,
+  minWidth: 1.05,     // half-width: body r is 0.42, so this always leaves a way past
+  keepClear: 6.0,     // never surface inside this much of the hatch
+  hush: 1.15,         // the loop goes out first. the SILENCE is the tell.
 });
+
+// Kneeler crosses the player in the forest's darkest value range. Its old
+// near-black violet body merged with trunks even inside the skull's 11.5 m
+// lantern, leaving only two eyes and a pale jaw. Lift the neutral surface just
+// enough for the malformed silhouette and planted limbs to exist; eye motion
+// and the long windup still carry state, so no meaning depends on this value.
+const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x2b2930 };
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 // More than the whole authored graveyard fight, with room for the house and
@@ -68,8 +112,41 @@ const FIGURE_GEO = {
   coat: new THREE.CylinderGeometry(0.46, 0.7, 1, 7),
   slab: new THREE.BoxGeometry(1, 1, 1),
   spike: new THREE.ConeGeometry(0.5, 1, 5),
-  ring: new THREE.TorusGeometry(0.5, 0.09, 6, 16),
 };
+
+// A one-time shared warp pass keeps the low-poly bodies from resolving into
+// clean capsules and spheres under the skull light. These buffers are built
+// once, then reused by every Resident and Kneeler; no spawn-time geometry and
+// no per-frame vertex work. The deformation is deliberately modest because
+// silhouette and pose do the heavy lifting, while collision remains authored.
+function malformShared(source, amount, seed) {
+  const geometry = source.clone();
+  const p = geometry.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const ripple = Math.sin(x * 8.7 + seed * 1.3)
+      * Math.cos(y * 6.1 - seed * 0.7)
+      * Math.sin(z * 9.3 + seed * 2.1);
+    const crooked = Math.sin(y * 4.9 + seed) * 0.55
+      + Math.sin((x - z) * 7.4 + seed * 0.37) * 0.3;
+    const radial = 1 + amount * (ripple + crooked);
+    p.setXYZ(
+      i,
+      x * radial + Math.sin(y * 5.3 + seed) * amount * 0.035,
+      y * (1 + ripple * amount * 0.22),
+      z * (1 + amount * (ripple - crooked * 0.45)),
+    );
+  }
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+FIGURE_GEO.malformedCapsule = malformShared(FIGURE_GEO.capsule, 0.14, 3.1);
+FIGURE_GEO.malformedLimb = malformShared(FIGURE_GEO.limb, 0.19, 7.7);
+FIGURE_GEO.malformedSphere = malformShared(FIGURE_GEO.sphere, 0.17, 12.4);
+FIGURE_GEO.malformedSlab = malformShared(FIGURE_GEO.slab, 0.12, 18.2);
 {
   // One shared pall gives the walker a corpse under cloth, not a tombstone.
   // The shoulder line breaks twice, the waist caves inward, and the hem forks
@@ -380,6 +457,14 @@ function addEyes(head, spread, y, z, sx = 0.025, sy = 0.018) {
   return eyes;
 }
 
+// Deterministic held noise: a secondary bone snaps to a slightly wrong pose,
+// holds it, then snaps again. Root movement and attack clocks never see this.
+function steppedJerk(time, serial, rate, channel = 0) {
+  const step = Math.floor(time * rate + serial * 0.731 + channel * 3.17);
+  const n = Math.sin(step * 12.9898 + serial * 78.233 + channel * 37.719) * 43758.5453;
+  return (n - Math.floor(n)) * 2 - 1;
+}
+
 function pointSegmentDistanceSq(px, py, pz, a, b) {
   const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
   const len2 = abx * abx + aby * aby + abz * abz;
@@ -508,7 +593,10 @@ function buildWalker(g, mat, limbs) {
   jaw.userData.basePosition = jaw.position.clone();
   jaw.userData.baseRotation = jaw.rotation.clone();
   for (const eye of eyes) eye.userData.baseScale = eye.scale.clone();
-  for (const shoulder of shoulders) shoulder.userData.baseScale = shoulder.scale.clone();
+  for (const shoulder of shoulders) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
   head.userData.walker = {
     head, shroud, shoulders, mouth, jaw, eyes,
     headBase: head.position.clone(),
@@ -518,107 +606,158 @@ function buildWalker(g, mat, limbs) {
 }
 
 function buildResident(g, mat, limbs) {
-  // The house's owner fills a doorway before it enters: a sloped coat, a high
-  // back, and wall-reaching hands around a small, almost buried face.
-  addPart(g, FIGURE_GEO.coat, mat, 0, 0.78, -0.02, 0.72, 1.4, 0.55);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.3, -0.12, 0.48, 0.52, 0.34, -0.18);
-  addPart(g, FIGURE_GEO.capsule, mat, 0, 1.53, -0.04, 0.28, 0.72, 0.28, 0, 0, Math.PI / 2);
-  addPart(g, FIGURE_GEO.sphere, mat, 0, 1.55, -0.25, 0.58, 0.4, 0.32);
+  // The house's owner is built like a doorway that learned to walk: an uneven
+  // lintel of shoulders, one wall-reaching arm, one shortened arm, and a face
+  // wedged under the high side rather than centred on a mannequin torso.
+  addPart(g, FIGURE_GEO.coat, mat, 0, 0.78, -0.02, 0.74, 1.4, 0.57, 0, 0, -0.035);
+  addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.04, 1.3, -0.12, 0.5, 0.54, 0.35, -0.2, 0, 0.055);
+  const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.035, 1.54, -0.055, 0.29, 0.78, 0.29, 0, 0, Math.PI / 2 + 0.055);
+  const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
+    -0.18, 1.59, -0.24, 0.7, 0.43, 0.35, -0.12, 0.04, 0.11);
+
+  // At range this is only a coat seam. The skull light finds that the seam has
+  // depth and a crooked hard latch inside it; attack posture parts it slightly.
+  // Two shared meshes buy the close-range horror without adding glow or a cue.
+  const seam = addPart(g, FIGURE_GEO.slab, WALKER_VOID_MAT,
+    0.055, 1.03, 0.36, 0.09, 0.48, 0.018, 0, 0, -0.075);
+  const latch = addPart(g, FIGURE_GEO.malformedLimb, WALKER_BONE_MAT,
+    0.075, 1.04, 0.382, 0.042, 0.14, 0.035, 0, 0, Math.PI / 2 - 0.19);
 
   const head = new THREE.Group();
-  head.position.set(-0.03, 1.76, 0.075);
-  head.rotation.set(-0.16, 0, -0.12);
-  addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.23, 0.27, 0.2);
-  addPart(head, FIGURE_GEO.slab, mat, 0, -0.2, 0.035, 0.2, 0.13, 0.15);
-  addEyes(head, 0.07, 0.015, 0.19, 0.032, 0.014);
+  head.position.set(0.09, 1.77, 0.09);
+  head.rotation.set(-0.18, 0.06, -0.2);
+  addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.23, 0.28, 0.2, 0.02);
+  addPart(head, FIGURE_GEO.malformedSlab, mat, 0.015, -0.2, 0.045, 0.2, 0.13, 0.15, -0.04, 0, 0.08);
+  addEyes(head, 0.07, 0.015, 0.19, 0.028, 0.012);
   g.add(head);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * 0.43, 1.5, 0.025);
-    armP.rotation.z = s * -0.18;
-    addPart(armP, FIGURE_GEO.limb, mat, 0, -0.56, 0.06, 0.13, 0.58, 0.11);
-    addPart(armP, FIGURE_GEO.sphere, mat, 0, -1.12, 0.1, 0.19, 0.22, 0.1);
+    const longSide = s < 0;
+    armP.position.set(s * (longSide ? 0.48 : 0.43), longSide ? 1.56 : 1.47, 0.025);
+    armP.rotation.z = longSide ? 0.11 : -0.27;
+    addPart(armP, FIGURE_GEO.malformedLimb, mat,
+      0, longSide ? -0.61 : -0.49, 0.065,
+      longSide ? 0.12 : 0.15, longSide ? 0.66 : 0.53, longSide ? 0.1 : 0.13,
+      s * 0.04);
+    const handY = longSide ? -1.2 : -0.98;
+    addPart(armP, FIGURE_GEO.malformedSphere, mat,
+      0, handY, 0.11, longSide ? 0.18 : 0.22, longSide ? 0.22 : 0.19, 0.11);
     for (let i = -1; i <= 1; i++) {
-      addPart(armP, FIGURE_GEO.spike, mat, i * 0.085, -1.36, 0.14,
-        0.045, 0.3 + (i === 0 ? 0.05 : 0), 0.045, 0, 0, Math.PI);
+      addPart(armP, FIGURE_GEO.spike, WALKER_BONE_MAT,
+        i * (longSide ? 0.075 : 0.09), handY - (longSide ? 0.24 : 0.22), 0.145,
+        0.038, (longSide ? 0.29 : 0.25) + (i === 0 ? 0.055 : 0), 0.038,
+        0, 0, Math.PI + i * 0.08);
     }
     limbs.arms.push(armP);
     g.add(armP);
 
     const legP = new THREE.Group();
     legP.position.set(s * 0.2, 0.58, -0.05);
-    addPart(legP, FIGURE_GEO.limb, mat, 0, -0.32, 0, 0.16, 0.36, 0.14);
-    addPart(legP, FIGURE_GEO.slab, mat, 0, -0.68, 0.13, 0.22, 0.1, 0.34, -0.08);
+    addPart(legP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.32, 0, s < 0 ? 0.14 : 0.18, 0.36, s < 0 ? 0.16 : 0.13, s * 0.055);
+    addPart(legP, FIGURE_GEO.malformedSlab, mat,
+      s * 0.025, -0.68, 0.13, s < 0 ? 0.19 : 0.24, 0.1, s < 0 ? 0.37 : 0.31,
+      -0.08, s * 0.05, s * -0.04);
     limbs.legs.push(legP);
     g.add(legP);
   }
+
+  for (const shoulder of [yoke, hump]) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
+  seam.userData.baseScale = seam.scale.clone();
+  latch.userData.baseRotation = latch.rotation.clone();
+  latch.userData.basePosition = latch.position.clone();
+  head.userData.anatomy = {
+    kind: 'resident', head, yoke, hump, seam, latch,
+    headBase: head.position.clone(), headRot: head.rotation.clone(),
+  };
   return head;
 }
 
 function buildKneeler(g, mat, limbs) {
-  // A load-bearing animal silhouette rather than a scaled walker: enormous
-  // shoulder shelf, bowed spine, low forward face, and forelimbs made to plant.
-  // Keep the loaded shoulders, head and planted arms under one articulation.
-  // A successful throw can therefore make the whole readable mass bow instead
-  // of merely flashing a marker while the four-metre body stays upright.
-  const upper = new THREE.Group();
-  g.add(upper);
-  addPart(upper, FIGURE_GEO.capsule, mat, 0, 1.08, -0.12, 0.46, 0.52, 0.4, -0.32);
-  addPart(upper, FIGURE_GEO.sphere, mat, 0, 1.47, -0.25, 0.54, 0.47, 0.42);
-  addPart(upper, FIGURE_GEO.capsule, mat, 0, 1.38, -0.04, 0.28, 0.78, 0.3, 0, 0, Math.PI / 2);
-  for (let i = -1; i <= 1; i++) {
-    addPart(upper, FIGURE_GEO.spike, mat, i * 0.16, 1.79 - Math.abs(i) * 0.08, -0.28,
-      0.1, 0.42 - Math.abs(i) * 0.08, 0.1, -0.35);
+  // A load-bearing animal silhouette rather than a scaled walker. Its weight
+  // has collapsed to one side, the shoulder yoke is broader than its pelvis,
+  // and two crooked forelimb joints plant ahead of a face hung underneath it.
+  addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    -0.04, 1.07, -0.12, 0.48, 0.54, 0.42, -0.34, 0, -0.05);
+  const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
+    -0.09, 1.48, -0.25, 0.66, 0.52, 0.46, -0.08, 0.03, 0.1);
+  const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
+    0.035, 1.39, -0.035, 0.3, 0.82, 0.32, 0.02, 0.04, Math.PI / 2 - 0.08);
+  const spineDefs = [
+    [-0.29, 1.72, 0.1, 0.36, -0.48],
+    [0.015, 1.87, 0.115, 0.5, -0.29],
+    [0.31, 1.69, 0.09, 0.32, -0.12],
+  ];
+  for (const [x, y, width, height, lean] of spineDefs) {
+    addPart(g, FIGURE_GEO.spike, WALKER_BONE_MAT,
+      x, y, -0.3, width, height, width, lean, 0, x * -0.24);
   }
 
   const head = new THREE.Group();
-  head.position.set(0, 1.38, 0.36);
-  head.rotation.x = -0.22;
-  addPart(head, FIGURE_GEO.sphere, mat, 0, 0, 0, 0.3, 0.25, 0.31);
-  addPart(head, FIGURE_GEO.slab, mat, 0, -0.17, 0.17, 0.27, 0.14, 0.32, -0.18);
-  addEyes(head, 0.095, 0.025, 0.29, 0.04, 0.018);
-  upper.add(head);
+  head.position.set(0.1, 1.32, 0.38);
+  head.rotation.set(-0.28, 0.07, 0.24);
+  addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.31, 0.25, 0.32, 0.03);
+  addPart(head, FIGURE_GEO.malformedSlab, mat,
+    0.015, -0.15, 0.17, 0.27, 0.13, 0.32, -0.2, 0, 0.08);
+  const mouth = addPart(head, FIGURE_GEO.slab, WALKER_VOID_MAT,
+    0.015, -0.18, 0.345, 0.18, 0.055, 0.016, -0.08, 0, 0.06);
+  const jaw = addPart(head, FIGURE_GEO.malformedSlab, WALKER_BONE_MAT,
+    0.045, -0.255, 0.32, 0.25, 0.08, 0.13, -0.13, 0.04, 0.14);
+  addPart(head, FIGURE_GEO.spike, WALKER_BONE_MAT,
+    -0.07, -0.19, 0.375, 0.024, 0.105, 0.024, 0, 0, Math.PI + 0.12);
+  addEyes(head, 0.095, 0.025, 0.29, 0.035, 0.015);
+  g.add(head);
 
-  // The pale load-ring sits between the enormous shoulders where it can be
-  // read on approach and struck from either the ground lane or the first rope.
-  // Three broken prongs turn its collapse into a silhouette change, not merely
-  // a shader flash.
-  const burden = new THREE.Group();
-  burden.position.set(0, 1.62, 0.18);
-  const ring = addPart(burden, FIGURE_GEO.ring, KNEELER_MARK_MAT,
-    0, 0, 0, 0.42, 0.5, 0.22, 0, 0, 0.08);
-  const prongs = [];
-  for (const i of [-1, 0, 1]) {
-    prongs.push(addPart(burden, FIGURE_GEO.spike, KNEELER_MARK_MAT,
-      i * 0.18, 0.38 - Math.abs(i) * 0.06, -0.02,
-      0.07, 0.3 - Math.abs(i) * 0.04, 0.07, i * 0.12));
-  }
-  upper.add(burden);
-
+  const forearms = [];
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * 0.38, 1.32, 0.06);
-    armP.rotation.z = s * -0.15;
-    addPart(armP, FIGURE_GEO.limb, mat, 0, -0.52, 0.16, 0.18, 0.56, 0.16, -0.12);
-    addPart(armP, FIGURE_GEO.sphere, mat, 0, -1.04, 0.27, 0.28, 0.17, 0.34);
+    armP.position.set(s * (s < 0 ? 0.43 : 0.37), s < 0 ? 1.35 : 1.29, 0.045);
+    armP.rotation.z = s < 0 ? 0.13 : -0.25;
+    addPart(armP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.32, 0.1, s < 0 ? 0.17 : 0.2, 0.37, 0.16, -0.28, 0, s * 0.05);
+    const elbow = new THREE.Group();
+    elbow.position.set(s * 0.035, -0.62, 0.2);
+    elbow.rotation.set(-0.46, s * 0.08, s * 0.22);
+    armP.add(elbow);
+    addPart(elbow, FIGURE_GEO.malformedLimb, mat,
+      0, -0.27, 0.11, 0.15, 0.34, 0.14, -0.22, 0, s * -0.09);
+    addPart(elbow, FIGURE_GEO.malformedSphere, mat,
+      s * 0.025, -0.56, 0.25, s < 0 ? 0.27 : 0.31, 0.16, s < 0 ? 0.35 : 0.31,
+      0, s * 0.06, s * 0.08);
+    elbow.userData.baseRotation = elbow.rotation.clone();
+    forearms.push(elbow);
     limbs.arms.push(armP);
-    upper.add(armP);
+    g.add(armP);
 
     const legP = new THREE.Group();
     legP.position.set(s * 0.25, 0.72, -0.28);
     legP.rotation.z = s * 0.2;
-    addPart(legP, FIGURE_GEO.limb, mat, 0, -0.3, -0.08, 0.2, 0.34, 0.18, 0.42);
-    addPart(legP, FIGURE_GEO.slab, mat, 0, -0.62, 0.18, 0.28, 0.11, 0.42, -0.08);
+    addPart(legP, FIGURE_GEO.malformedLimb, mat,
+      0, -0.3, -0.08, s < 0 ? 0.22 : 0.18, 0.34, s < 0 ? 0.17 : 0.21,
+      0.42, s * 0.06);
+    addPart(legP, FIGURE_GEO.malformedSlab, mat,
+      s * 0.035, -0.62, 0.18, s < 0 ? 0.31 : 0.26, 0.11, s < 0 ? 0.39 : 0.45,
+      -0.08, s * 0.05, s * -0.06);
     limbs.legs.push(legP);
     g.add(legP);
   }
-  head.userData.kneeler = {
-    upper, head, burden, ring, prongs,
-    basePosition: burden.position.clone(),
-    headBase: head.position.clone(),
-    headRotation: head.rotation.clone(),
-    armBaseZ: limbs.arms.map((arm) => arm.rotation.z),
+
+  for (const shoulder of [yoke, hump]) {
+    shoulder.userData.baseScale = shoulder.scale.clone();
+    shoulder.userData.baseRotation = shoulder.rotation.clone();
+  }
+  mouth.userData.baseScale = mouth.scale.clone();
+  jaw.userData.basePosition = jaw.position.clone();
+  jaw.userData.baseRotation = jaw.rotation.clone();
+  head.userData.anatomy = {
+    kind: 'kneeler', head, yoke, hump, mouth, jaw, forearms,
+    headBase: head.position.clone(), headRot: head.rotation.clone(),
   };
   return head;
 }
@@ -635,15 +774,11 @@ function makeFigure(kind) {
       : buildWalker(g, mat, limbs);
   g.scale.setScalar(spec.scale);
   // Contract consumed by gait and stun code: keep these exact keys stable.
-  g.userData = {
-    mat, head, limbs,
-    walker: head.userData.walker || null,
-    kneeler: head.userData.kneeler || null,
-  };
+  g.userData = { mat, head, limbs, walker: head.userData.walker || null };
   return g;
 }
 
-function makeDrownedChoir() {
+function makeDrownedChoir(world) {
   const g = new THREE.Group();
   const voidMat = new THREE.MeshLambertMaterial({
     color: 0x010305, transparent: true, opacity: 0.015, depthWrite: false,
@@ -789,9 +924,15 @@ function makeDrownedChoir() {
   const droplets = new THREE.Points(CHOIR_GEO.drops, dropMat);
   droplets.frustumCulled = false;
   g.add(droplets);
-  const light = new THREE.PointLight(0xddecef, 0, 6, 1.8);
-  light.position.set(0, 1.45, 0.2);
-  g.add(light);
+  // Borrowed, never built. A lamp that arrives with the creature and leaves
+  // with it moves the shader light census twice, and every move recompiles
+  // every lit material in the game — a multi-second freeze landing exactly on
+  // the reveal this creature exists to deliver. world.loanLight() reparents a
+  // light that has been in the scene since boot, which the census cannot see.
+  // If the reserve is somehow empty the Choir simply has no lamp; it must not
+  // fall back to constructing one.
+  const light = world?.loanLight?.(g, { colour: 0xddecef, distance: 6, decay: 1.8 }) || null;
+  if (light) light.position.set(0, 1.45, 0.2);
   g.userData = {
     drownedChoir: true,
     voidMat, skinMat, wetMat, rimMat, mouthVoidMat, dropMat,
@@ -807,30 +948,6 @@ export class Enemies {
     this.list = [];
     this._spawnSerial = 0;
     this._graveClaimRecovery = 0;
-
-    // Gameplay creates these actors at authored reveal edges. Their geometry
-    // kit is shared, but a shader-only synthetic compile does not upload that
-    // geometry or build the geometry/program binding state used by the first
-    // real draw. Keep one inert, never-parented representative of each family
-    // for the transition residency system to submit under its bounded current,
-    // future-district and reflection-target transactions. Spawned actors remain
-    // ordinary independent entities; the representatives only retain their
-    // shared buffers/programs and are never updated, heard or made visible.
-    this._gpuResidencyRoots = new Map();
-    for (const kind of ['walker', 'resident', 'kneeler', 'choir']) {
-      const root = kind === 'choir' ? makeDrownedChoir() : makeFigure(kind);
-      root.name = `future ${kind} GPU residency prototype`;
-      root.userData.fetchGpuResidencyPrototype = kind;
-      let renderableIndex = 0;
-      root.traverse((object) => {
-        if ((!object.isMesh && !object.isLine && !object.isPoints)
-            || !object.geometry || !object.material) return;
-        object.name ||= `future ${kind} ${object.type.toLowerCase()} ${renderableIndex}`;
-        renderableIndex++;
-      });
-      root.updateMatrixWorld(true);
-      this._gpuResidencyRoots.set(kind, root);
-    }
 
     // One dynamic instance pool owns every pop stain for this game lifecycle.
     // It deliberately survives ordinary death/respawn so the graveyard keeps
@@ -850,24 +967,6 @@ export class Enemies {
     this._stainQuaternion = new THREE.Quaternion();
     this._stainScale = new THREE.Vector3();
     this._stainEuler = new THREE.Euler();
-  }
-
-  gpuResidencyRoots(kinds = []) {
-    return [...new Set(kinds
-      .map((kind) => this._gpuResidencyRoots.get(kind))
-      .filter(Boolean))];
-  }
-
-  disposeGpuResidencyRoots() {
-    for (const [kind, root] of this._gpuResidencyRoots) {
-      if (kind === 'choir') {
-        for (const material of root.userData.ownedMaterials || []) material.dispose();
-      } else {
-        root.userData.mat?.dispose?.();
-      }
-      root.removeFromParent();
-    }
-    this._gpuResidencyRoots.clear();
   }
 
   stainState() {
@@ -929,6 +1028,22 @@ export class Enemies {
     this.game.scene.add(mesh);
     this.list.push(e);
     (this.game.spawnLog ||= []).push([kind, state, Math.round(x), Math.round(z), +this.game.time.toFixed(1)]);
+    // EVERY active body arrives by dragging itself out of the ground. Alex's
+    // two favourite enemy moments are both partial bodies — hands through a
+    // wall, "slowly coming up from the floor... that was cool" — and his
+    // verdict on the fully-revealed shape is that it isn't scary. So the
+    // reveal is now the default entrance, not a graveyard special case:
+    // popped into existence at full height is the one thing a body never
+    // does. Dormant spawns skip it (they are furniture until noticed), and
+    // callers that stage their own arrival (the arena's waves, the nursery's
+    // slow rise) override the fields after spawn returns.
+    if (state !== 'dormant' && state !== 'standing') {
+      e.graveRiseDur = 1.15;
+      e.graveRiseT = e.graveRiseDur;
+      if (this.game.act !== 'graveyard' && this.game.audio.ready) {
+        this.game.audio.walkerRise({ pos: e.pos, gain: 0.3, rate: 0.86, verb: 0.5 });
+      }
+    }
     return e;
   }
 
@@ -943,7 +1058,7 @@ export class Enemies {
     const y = source.y != null
       ? source.y
       : game.world.groundHeightAt(source.x, source.z, game.player.pos.y + 2);
-    const mesh = makeDrownedChoir();
+    const mesh = makeDrownedChoir(game.world);
     const e = {
       kind: 'choir',
       spec: DROWNED_CHOIR,
@@ -967,6 +1082,9 @@ export class Enemies {
       warned: false,
       loop: null,
       nav: null,
+      surfacings: 0,
+      surfaceCd: CHOIR_SURFACE.firstDelay,
+      hushT: 0,
     };
     const underfalls = game.underfalls;
     if (underfalls) {
@@ -1028,7 +1146,7 @@ export class Enemies {
       const d = Math.hypot(dx, dz);
       if (d > radius) continue;
       const exposure = clamp(1 - d / Math.max(0.01, radius), 0, 1) * clamp(strength, 0.1, 2);
-      e.wetT = Math.max(e.wetT, 0.9 + exposure * 1.7);
+      e.wetT = Math.max(e.wetT, 0.55 + exposure * 0.85);
       e.revealT = Math.max(e.revealT, 1.4 + exposure * 1.8);
       e.warned = false;
       let awayX = d > 0.04 ? dx / d : e.pos.x - this.game.player.pos.x;
@@ -1041,8 +1159,8 @@ export class Enemies {
         awayZ = Math.cos(e.phase * 0.73 + 0.91);
         al = 1;
       }
-      e.washV.x += awayX / al * (2.8 + exposure * 5.2);
-      e.washV.z += awayZ / al * (2.8 + exposure * 5.2);
+      e.washV.x += awayX / al * (2.2 + exposure * 3.6);
+      e.washV.z += awayZ / al * (2.2 + exposure * 3.6);
       if (e.state !== 'warning') {
         e.state = 'recoil';
         e.stateT = 0;
@@ -1052,6 +1170,18 @@ export class Enemies {
       caught++;
     }
     return caught;
+  }
+
+  // The Choir crossing a spray curtain on its OWN pursuit line (underfalls
+  // installBeats owns the edge detection). Reveal + positional audio only:
+  // unlike caveSpray there is no wetT slow, no wash push, and no
+  // strike-cancel, so pursuit behavior is bit-identical to a dry walk.
+  drownedChoirDrench() {
+    const e = this.choir;
+    if (!e || e.state === 'spent') return null;
+    e.revealT = Math.max(e.revealT, 1.6);
+    this.game.audio.sprayReveal({ pos: e.pos, gain: 0.5 });
+    return e;
   }
 
   getDrownedChoirState() {
@@ -1083,6 +1213,10 @@ export class Enemies {
     // The Choir owns five per-lifecycle transparent materials. Dispose only
     // what the entity owns so three-wave retries do not grow GPU memory.
     if (e.kind === 'choir') {
+      // Hand the lamp back before the body goes. Removing the mesh with the
+      // light still parented to it would take the light out of the scene and
+      // move the census, which is the whole thing loaning exists to prevent.
+      this.game.world.returnLight?.(e.mesh.userData.light);
       for (const material of e.mesh.userData.ownedMaterials || []) material.dispose();
     } else if (e.mesh.userData.mat) {
       e.mesh.userData.mat.dispose();
@@ -1200,10 +1334,41 @@ export class Enemies {
       // no hunting through floors: a storey of separation makes you unreachable
       const sameLevel = Math.abs(player.pos.y - e.pos.y) < 1.8;
 
+      // The Resident YIELDS while the skull is anchored in a puzzle. The
+      // house's required verbs include long anchored commitments (the window
+      // relay is ~10 s of held walking with the light and the weapon both
+      // away), and a hunter that presses during them turns a required verb
+      // into a death sentence. So while the house's own machinery is working
+      // it watches instead: it holds a ring outside arm's reach, backing off
+      // if you carry the anchor toward it, and the chatter never stops. The
+      // moment the anchor releases, it presses again — the pressure is real,
+      // the sentence is not.
+      if (e.kind === 'resident' && e.state !== 'stunned' && e.state !== 'dying'
+        && game.skull.mode === 'anchored' && game.skull.anchor?.puzzleId) {
+        if (sameLevel && dist < 4.4) {
+          toP.normalize();
+          this._moveWithPush(e, -toP.x * e.spec.stalk * 0.85 * dt, -toP.z * e.spec.stalk * 0.85 * dt);
+        }
+        e.phase += dt * 2.2;
+        e.stepT -= dt;
+        if (e.stepT <= 0) {
+          e.stepT = 0.7 + Math.random() * 0.12;
+          game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.4, rate: 0.72 });
+        }
+        if (sameLevel && dist < 8) {
+          const level = 0.55 + (1 - dist / 8) * 0.3;
+          if (level > maxThreat) { maxThreat = level; threatDir = toP.clone().normalize(); }
+        }
+        continue;
+      }
+
       // ---- state machine ----
       switch (e.state) {
         case 'dormant':
-          // statue-still until you have PASSED it, or it hears you
+          // statue-still until you have PASSED it, or it hears you.
+          // A body whose rise an author is pacing (riseFrozen) cannot be
+          // startled awake half out of the floor.
+          if (e.riseFrozen) break;
           if (sameLevel && dist < 3.2 && player.noise > 0.5) { e.state = 'wind'; e.windT = 0; }
           break;
         case 'standing': {
@@ -1227,27 +1392,16 @@ export class Enemies {
           // the whole game and arrive three acts later as phantom stragglers.
           if (!e.home) e.home = { x: e.pos.x, z: e.pos.z };
           if (Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z) > 24) break;
-          const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
-          const d2 = toE.length();
-          const inView = d2 < 42 && camFwd.dot(toE.divideScalar(Math.max(d2, 0.001))) > 0.28;
-          let observed = false;
-          if (inView) {
-            e._losT = (e._losT || 0) - dt;
-            if (e._losT <= 0) {
-              // Sight is structural, not psychic: shut doors and walls freeze it;
-              // an open door (collapsed collider) or open window does not.
-              e._losT = 0.08;
-              const lookY = e.pos.y + Math.min(e.spec.h * 0.72, e.spec.h - 0.2);
-              e._losClear = !this._segmentBlocked(
-                camPos.x, camPos.y, camPos.z, e.pos.x, lookY, e.pos.z,
-              );
-            }
-            observed = !!e._losClear;
-          } else {
-            e._losT = 0;
-            e._losClear = false;
-          }
-          if (!observed && d2 < 30 && dist > 0.9) {
+          const d2 = Math.hypot(e.pos.x - camPos.x, e.pos.z - camPos.z);
+          const observed = this._isObserved(e, dt, camPos, camFwd);
+          // e.tether (opt-in, metres from e.home) bounds the unobserved creep:
+          // a tethered Standing One closes while your back is turned but never
+          // leaves its post. The ossuary resident uses it — the corridor's
+          // baffles break line of sight constantly, and an unbounded creep
+          // would convert every look-away into a corridor-length pursuit.
+          const tethered = e.tether
+            && Math.hypot(e.pos.x - e.home.x, e.pos.z - e.home.z) >= e.tether;
+          if (!observed && d2 < 30 && dist > 0.9 && !tethered) {
             toP.normalize();
             this._moveWithPush(e, toP.x * 0.85 * dt, toP.z * 0.85 * dt);
             e.phase += dt * 2.2;                 // silent gait — no footsteps. worse.
@@ -1265,8 +1419,54 @@ export class Enemies {
         }
         case 'stalk': {
           if (dist > 1 && sameLevel) {
+            if (e._stalkVia) {
+              // back on your storey: pure pursuit again, drop the climb plan
+              e._stalkVia = false;
+              e._via = null;
+              e._route = null;
+            }
             toP.normalize();
             this._moveWithPush(e, toP.x * e.spec.stalk * dt, toP.z * e.spec.stalk * dt);
+            // A body that now inhabits the whole act must be audible while it
+            // paces: slower and softer than the chase cadence, but there. The
+            // law is "you hear things before you see them", and the skull's
+            // chatter radar keys off the same presence.
+            e.stepT -= dt;
+            if (e.stepT <= 0) {
+              e.stepT = 0.62 + Math.random() * 0.1;
+              game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
+            }
+          } else if (dist > 1 && !sameLevel
+            && (game.act === 'house' || game.act === 'bedroom')) {
+            // The stalk climbs now — quietly. Stalk pace, stalk cadence, the
+            // stairs' own wood underfoot as the tell; the wind-up mercy-tell
+            // below still cannot begin until it shares your storey.
+            e._navT = (e._navT || 0) - dt;
+            if (e._navT <= 0) {
+              e._navT = 0.9;
+              let route = this._houseRoute(e, { exclude: e._viaLast });
+              if (!route && e._viaLast) route = this._houseRoute(e);
+              if (route?.length) { e._route = route; e._via = route[0]; e._stalkVia = true; }
+              else { e._route = null; e._via = null; }
+            }
+            if (this._viaReached(e)) {
+              e._viaLast = e._via.door || e._viaLast;
+              e._route?.shift();
+              e._via = e._route?.[0] || null;
+            }
+            if (e._via) {
+              const dl = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z) || 1;
+              this._moveWithPush(e, (e._via.x - e.pos.x) / dl * e.spec.stalk * dt,
+                (e._via.z - e.pos.z) / dl * e.spec.stalk * dt);
+              e.stepT -= dt;
+              if (e.stepT <= 0) {
+                e.stepT = 0.62 + Math.random() * 0.1;
+                game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
+              }
+              // a stalking Resident still works a knob the same way it always
+              // has — the rattle-tell precedes the panel, unchanged grammar
+              if (e.kind === 'resident') this._tryOpenDoor(e, dt);
+            }
           }
           if (sameLevel && dist < 9 && (player.noise > 0.3 || dist < 5)) { e.state = 'wind'; e.windT = 0; }
           break;
@@ -1274,13 +1474,25 @@ export class Enemies {
         case 'wind': {
           // the wind-up IS the mercy: sound tells you it's coming before it moves
           e.windT += dt;
-          if (e.windT === dt) game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
+          // seed the chase acceleration clock: windT and the ramp used to be
+          // one number; in the house windT now means "seconds of genuinely
+          // failing", so the speed curve rides _chaseT from the same start
+          e._chaseT = e.windT;
+          if (e.windT === dt && !game.audio.enemyTell?.(e.kind, { pos: e.pos })) {
+            game.audio.whisper({ pos: e.pos, gain: 0.7, rate: 0.6 });
+          }
           e.mesh.userData.limbs.arms.forEach((a) => { a.rotation.x = -1.08 * Math.min(1, e.windT / e.spec.windup); });
           if (e.windT >= e.spec.windup) e.state = 'chase';
           break;
         }
         case 'chase': {
-          if (!sameLevel) { e.windT += dt; break; }   // it waits below. it hears you.
+          // Storeys used to be a hard wall for the AI, which in the house
+          // meant a statue at the foot of the stairs — or worse, ON them —
+          // whenever you climbed. Indoors the graph now spans the storeys,
+          // so only the outdoor acts keep the patient wait.
+          const inHouse = game.act === 'house' || game.act === 'bedroom';
+          if (!sameLevel && !inHouse) { e.windT += dt; break; }   // it waits below. it hears you.
+          e._besiegeHold = false;
           if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
             const angle = e.orbitAngle + game.time * e.orbitSign * 0.22;
             const ring = 3.3 + (e.orbitAngle % 1.4);
@@ -1303,30 +1515,127 @@ export class Enemies {
             // walking player but just slower than a committed run, so spatial
             // mastery and a clean throw can actually create breathing room.
             const arenaPace = (e.graveArena || e.gravePressure) ? 0.8 : 1;
-            const sp = e.spec.chase * arenaPace * Math.min(1, 0.35 + e.windT * 0.4);
-            e.windT += dt;
+            // The acceleration ramp and the lose-interest clock used to be
+            // one number (windT). Split: _chaseT carries the ramp, seeded in
+            // the wind-up so the old curve is preserved; in the house windT
+            // now accrues ONLY while genuinely failing to progress, so the
+            // director's windT>9 beat reads "nine seconds of getting
+            // nowhere", never "nine seconds of you being upstairs".
+            // Outdoors both tick together, exactly as they always did.
+            const sp = e.spec.chase * arenaPace
+              * Math.min(1, 0.35 + Math.max(e.windT, e._chaseT || 0) * 0.4);
+            e._chaseT = (e._chaseT || 0) + dt;
+            if (!inHouse) e.windT += dt;
             // door-node steering: straight lines end at shut doors. When
             // progress stalls, route through the doorway that best closes on
             // the player. The Resident goes further: it does doors (below).
             let tx = player.pos.x, tz = player.pos.z;
+            let holding = false;
             const graveExit = (e.graveArena || e.gravePressure)
               ? this._graveEscapeTarget(e, player.pos)
               : null;
             if (graveExit) {
               tx = graveExit.x;
               tz = graveExit.z;
+            } else if (e._besiege) {
+              // THE BESIEGE: the graph proved the player sealed away behind a
+              // door this body cannot work. Grinding the panel forever looked
+              // exactly like the bug it was. Now it holds just off the door
+              // and paws it on a slow cadence — audible, answerable, and
+              // still only one opened door away from a real chase.
+              const bd = e._besiege.door;
+              e._navT = (e._navT || 0) - dt;
+              if (bd.open) {
+                e._besiege = null;
+                e._navT = 0;
+              } else if (e._navT <= 0) {
+                e._navT = 0.9;
+                const route = this._houseRoute(e, { exclude: e._viaLast });
+                if (route?.length) { e._route = route; e._via = route[0]; e._besiege = null; }
+              }
+              if (e._besiege) {
+                tx = e._besiege.x; tz = e._besiege.z;
+                if (Math.hypot(tx - e.pos.x, tz - e.pos.z) < 0.35) {
+                  holding = true;
+                  e._pawT = (e._pawT ?? 1.1) - dt;
+                  if (e._pawT <= 0) {
+                    e._pawT = 2.4 + Math.random() * 0.7;
+                    bd.rattleT = Math.max(bd.rattleT || 0, 0.5);
+                    game.audio.lockedRattle({ pos: bd.group.position, gain: 0.32, rate: 0.62 });
+                  }
+                }
+              } else if (e._via) { tx = e._via.x; tz = e._via.z; }
             } else if (e._via) {
-              const vd = Math.hypot(e._via.x - e.pos.x, e._via.z - e.pos.z);
-              if (vd < 0.9) e._via = null;
-              else { tx = e._via.x; tz = e._via.z; }
+              if (this._viaReached(e)) {
+                // waypoint consumed: remember its door (the one-entry
+                // exclusion that prevents oscillating straight back through
+                // it) and SHIFT to the next leg instead of beelining
+                e._viaLast = e._via.door || e._viaLast;
+                e._route?.shift();
+                e._via = e._route?.[0] || null;
+              }
+              if (e._via) { tx = e._via.x; tz = e._via.z; }
+            } else if (!e.graveArena && !e.gravePressure) {
+              // In the house, plan proactively rather than only after 0.8 s of
+              // grinding into a shut door. Throttled; BFS on the cell graph.
+              e._navT = (e._navT || 0) - dt;
+              if (e._navT <= 0) {
+                e._navT = 0.9;
+                let route = this._houseRoute(e, { exclude: e._viaLast });
+                // cross-storey the exclusion can wall off the ONLY path (one
+                // door guards the stairbay) — waiting politely there is the
+                // freeze Alex reported. Same-storey keeps the 0.8 s stall
+                // damping before the exclusion is dropped.
+                if (!route && !sameLevel && e._viaLast) route = this._houseRoute(e);
+                if (route?.length) { e._route = route; e._via = route[0]; }
+                else if (route) { e._route = null; e._via = null; }   // same room: beeline
+                else if (inHouse && e.kind !== 'resident') this._besiegeSetup(e);
+              }
+              if (e._via) { tx = e._via.x; tz = e._via.z; }
             }
-            const dl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
-            const dirX = (tx - e.pos.x) / dl, dirZ = (tz - e.pos.z) / dl;
+            if (inHouse && !sameLevel && !e._via && !e._besiege) {
+              // a storey away with no route to it (the cellar flights are
+              // authored off-graph): genuine failure. The lose-interest
+              // clock runs; the body does not grind at the ceiling.
+              e.windT += dt;
+              break;
+            }
             const preX = e.pos.x, preZ = e.pos.z;
-            this._moveWithPush(e, dirX * sp * dt, dirZ * sp * dt);
+            if (!holding) {
+              const dl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
+              const dirX = (tx - e.pos.x) / dl, dirZ = (tz - e.pos.z) / dl;
+              this._moveWithPush(e, dirX * sp * dt, dirZ * sp * dt);
+            }
             const moved = Math.hypot(e.pos.x - preX, e.pos.z - preZ);
-            if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
+            if (inHouse) {
+              // Marrow's best-approach rule: progress means closing on the
+              // CURRENT steering target. Corner-jitter (pushed out, walks
+              // back in, never past the corner) now reads as the stall it
+              // is, and an honest slow grind past furniture does not.
+              const tKey = e._via ? (e._via.x + '|' + e._via.z)
+                : (e._besiege ? 'besiege' : 'player');
+              const approach = Math.hypot(tx - e.pos.x, tz - e.pos.z);
+              if (e._bestKey !== tKey) {
+                e._bestKey = tKey; e._bestApproach = approach; e._noGainT = 0;
+              } else if (approach < (e._bestApproach ?? Infinity) - 0.005) {
+                e._bestApproach = approach; e._noGainT = 0;
+              } else {
+                e._noGainT = (e._noGainT || 0) + dt;
+              }
+              if (holding) {
+                e._stallT = 0; e._noGainT = 0;   // the besiege stands still on purpose
+              } else if (e._noGainT > 0.25) {
+                e._stallT = (e._stallT || 0) + dt;
+                e.windT += dt;
+              } else {
+                e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
+                e.windT = Math.max(0, e.windT - dt * 2);
+              }
+            } else if (moved < sp * dt * 0.35) e._stallT = (e._stallT || 0) + dt;
             else e._stallT = Math.max(0, (e._stallT || 0) - dt * 2);
+            if (e._stallT <= 0 && (e._unstuck1 || e._unstuck2)) {
+              e._unstuck1 = false; e._unstuck2 = false;
+            }
             if (e._stallT > 0.8) {
               if (e.graveArena || e.gravePressure) {
                 // House doorway nodes are poison for outdoor enemies: a risen
@@ -1345,16 +1654,72 @@ export class Enemies {
                     z: clamp(e.pos.z + px / pl * e._avoidSign * 3.5, 8.2, 40.2),
                   };
                 }
-              } else {
-                e._via = this._bestDoorNode(e);
+                e._stallT = 0;
+              } else if (!inHouse) {
+                // Stalled anyway (furniture, another body): re-plan on the
+                // graph, dropping the exclusion if it is all that blocks us.
+                const route = this._houseRoute(e, { exclude: e._viaLast })
+                  || this._houseRoute(e)
+                  || null;
+                if (route?.length) { e._route = route; e._via = route[0]; }
+                else e._via = this._bestDoorNode(e);   // outside the graph
+                e._stallT = 0;
+              } else if (!holding) {
+                // The house's escalating unstick ladder (Marrow's watchdog):
+                // re-plan, then ONE in-room side-step, then — only unseen,
+                // only onto ground the graph already proved walkable, and
+                // always announced by a footstep from the new spot —
+                // relocate. An observed stall keeps straining instead: a
+                // body fighting the house, never a teleport in view.
+                if (!e._unstuck1) {
+                  e._unstuck1 = true;
+                  const route = this._houseRoute(e, { exclude: e._viaLast })
+                    || this._houseRoute(e)
+                    || null;
+                  if (route?.length) { e._route = route; e._via = route[0]; }
+                  else if (!e._via) e._via = this._bestDoorNode(e);
+                }
+                if (e._stallT > 2.5 && !e._unstuck2) {
+                  e._unstuck2 = true;
+                  const room = game.world.rooms.find((r) =>
+                    Math.abs(r.floorY - e.pos.y) < 1.2
+                    && e.pos.x >= r.x0 && e.pos.x <= r.x1
+                    && e.pos.z >= r.z0 && e.pos.z <= r.z1);
+                  if (room) {
+                    const pl = Math.hypot(tx - e.pos.x, tz - e.pos.z) || 1;
+                    e._avoidSign = -(e._avoidSign || 1);
+                    const side = {
+                      x: clamp(e.pos.x - (tz - e.pos.z) / pl * e._avoidSign * 1.6,
+                        room.x0 + 0.4, room.x1 - 0.4),
+                      z: clamp(e.pos.z + (tx - e.pos.x) / pl * e._avoidSign * 1.6,
+                        room.z0 + 0.4, room.z1 - 0.4),
+                    };
+                    e._route = [side, ...(e._route || [])];
+                    e._via = e._route[0];
+                    e._bestKey = null;
+                  }
+                }
+                if (e._stallT > 6 && e._via && (e._via.door || e._via.stair)
+                  && game.time - (e._lastReloc ?? -99) > 8
+                  && !this._isObserved(e, dt, camPos, camFwd)) {
+                  e._lastReloc = game.time;
+                  e.pos.x = e._via.x; e.pos.z = e._via.z;
+                  const floorHint = e._via.y ?? (e._via.door ? e._via.door.floor : e.pos.y);
+                  e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, floorHint + 1);
+                  game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.7, rate: 0.9 });
+                  e._stallT = 0; e._noGainT = 0; e._bestKey = null;
+                  e._unstuck1 = false; e._unstuck2 = false;
+                }
               }
-              e._stallT = 0;
             }
+            e._besiegeHold = holding;
             if (e.kind === 'resident') this._tryOpenDoor(e, dt);
-            e.stepT -= dt;
-            if (e.stepT <= 0) {
-              e.stepT = 0.26 + Math.random() * 0.06;
-              game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
+            if (!holding) {
+              e.stepT -= dt;
+              if (e.stepT <= 0) {
+                e.stepT = 0.26 + Math.random() * 0.06;
+                game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.85, rate: 1.25 });
+              }
             }
           } else if (!game.dead) {
             // Every body obeys the same contact law: contact begins a readable,
@@ -1464,12 +1829,7 @@ export class Enemies {
           // convulsion + dimming — never a hue change
           const k = Math.sin(e.stunT * 34) * 0.12;
           e.mesh.rotation.z = k;
-          // The ordinary bodies can carry this whole-material pulse. On the
-          // four-metre Kneeler it blew every primitive to featureless white at
-          // passage distance, so its pale burden owns the short flash while
-          // the articulated bow supplies the readable state change.
-          if (e.kind === 'kneeler') e.mesh.userData.mat.color.setHex(BASE_COLOR.kneeler);
-          else e.mesh.userData.mat.color.setScalar(0.06 + Math.abs(k));
+          e.mesh.userData.mat.color.setScalar(0.06 + Math.abs(k));
           if (e.stunT <= 0) {
             e.mesh.rotation.z = 0;
             e.mesh.rotation.x = 0;
@@ -1506,7 +1866,9 @@ export class Enemies {
       }
 
       // ---- gait ----
-      if (e.state === 'chase' || e.state === 'stalk') {
+      // a besieging body holds STILL at the door — pumping legs on a planted
+      // figure read as the grind it replaced. The paw cadence is its motion.
+      if ((e.state === 'chase' && !e._besiegeHold) || e.state === 'stalk') {
         const rate = e.state === 'chase' ? 11 : 3.5;
         e.phase += dt * rate;
         const L = e.mesh.userData.limbs;
@@ -1521,16 +1883,40 @@ export class Enemies {
         }
       }
       if (e.kind === 'walker') this._poseWalker(e, dt, graveClaims.has(e));
-      if (e.kind === 'kneeler') this._poseKneeler(e, dt);
+      else this._poseMalformed(e);
       if (e.state !== 'dying') e.pos.y = game.world.groundHeightAt(e.pos.x, e.pos.z, e.pos.y + 1);
       e.mesh.position.copy(e.pos);
       if (e.graveRiseT > 0 && e.state !== 'dying') {
-        e.graveRiseT = Math.max(0, e.graveRiseT - dt);
+        // The emerge, not an elevator. Position alone read as riding a
+        // platform; a body dragging itself out of the ground is compressed
+        // and fighting: it starts squashed and unfolds, it shudders
+        // laterally with the effort, and the jaw hangs open until it is out.
+        // riseFrozen lets an author (the nursery) own the clock.
+        if (!e.riseFrozen) e.graveRiseT = Math.max(0, e.graveRiseT - dt);
         const remaining = e.graveRiseT / Math.max(0.001, e.graveRiseDur || 1.1);
-        e.mesh.position.y -= remaining * remaining * 1.35;
+        const up = 1 - remaining;
+        // squash-only bodies (the nursery: its floor is someone's ceiling)
+        // grow from a crouch instead of sinking through the storey below
+        if (!e.riseSquashOnly) e.mesh.position.y -= remaining * remaining * 1.35;
+        e.mesh.scale.y = e.spec.scale * ((e.riseSquashOnly ? 0.06 : 0.34) + (e.riseSquashOnly ? 0.94 : 0.66) * up);
+        e.mesh.position.x = e.pos.x + Math.sin(up * 31 + e.serial) * 0.055 * remaining;
+        e.mesh.position.z = e.pos.z + Math.cos(up * 24 + e.serial) * 0.04 * remaining;
+        const w = e.mesh.userData.walker;
+        if (w?.jaw) w.jaw.rotation.x = w.jaw.userData.baseRotation.x + 0.5 * remaining;
+      } else if (e.mesh.scale.y !== e.spec.scale) {
+        e.mesh.scale.y = e.spec.scale;
       }
       if (e.state !== 'dormant' && e.state !== 'dying' && dist > 0.1) {
-        e.mesh.rotation.y = Math.atan2(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
+        // Face of travel: a routed body walking a doorway or a flight looks
+        // where it is going (Marrow's rule) — hard-facing the player through
+        // a floor while marching the other way read as broken. Near the
+        // player, or unrouted, it locks eyes exactly as before.
+        const via = (e.state === 'chase' || e.state === 'stalk') && dist > 2 ? e._via : null;
+        const fx = via ? via.x : player.pos.x;
+        const fz = via ? via.z : player.pos.z;
+        if (Math.hypot(fx - e.pos.x, fz - e.pos.z) > 0.1) {
+          e.mesh.rotation.y = Math.atan2(fx - e.pos.x, fz - e.pos.z);
+        }
       }
       // a stunned Standing One resumes standing, not chasing
       if (e.state === 'wind' && e.kind === 'walker' && e.standing) { e.state = 'standing'; }
@@ -1540,7 +1926,14 @@ export class Enemies {
       // just stunned and auto-pops it — making the quiet option impossible.
       // A hit grants 0.6s immunity; popping takes a deliberate second THROW.
       e.iframes = Math.max(0, (e.iframes || 0) - dt);
-      if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8) {
+      // game.skullPower (the iron canine, the optional graveyard pickup)
+      // sharpens the bite: slower contacts still count, stuns hold longer,
+      // blows land harder — and at power 2 an ORDINARY body is PIERCED. The
+      // stun-then-deliberate-second-throw grammar is still the game's law at
+      // power 1, and still the only way anything unkillable is ever handled;
+      // the fang is what buying out of it costs, and it is optional.
+      const power = game.skullPower || 1;
+      if (e.state !== 'dying' && e.iframes <= 0 && (skull.mode === 'outbound' || skull.mode === 'returning') && skull.vel.length() > 8 / power) {
         if (this._skullIntersects(e, skull.prevPos, skull.pos)) {
           e.iframes = 0.6;
           const speed = skull.vel.length();
@@ -1551,7 +1944,18 @@ export class Enemies {
           const away = V.d.set(skull.pos.x - e.pos.x, (skull.pos.y - (e.pos.y + 1.2)) * 0.3, skull.pos.z - e.pos.z).normalize();
           const travX = skull.pos.x - skull.prevPos.x, travZ = skull.pos.z - skull.prevPos.z;
           const travL = Math.hypot(travX, travZ) || 1;
-          if (e.state === 'stunned' && e.spec.hp !== Infinity) {
+          if (power >= 2 && e.spec.hp !== Infinity) {
+            // PIERCE. The fang goes THROUGH: the body drops on the first
+            // contact and the skull is neither deflected nor sent home, so one
+            // throw can take the body standing behind this one, and the one
+            // behind that. Speed is bled, never zeroed — it drags, it does not
+            // stop. No flight clock is touched and no FEEL constant is read;
+            // this is a hit-resolution branch, exactly like the two below it.
+            this._pop(e, travX / travL, travZ / travL, speed);
+            skull.vel.multiplyScalar(0.86);
+            skull.jaw.rotation.x = 0.72;             // it does not even close its mouth
+            skull._flourishT = 0.5;
+          } else if (e.state === 'stunned' && e.spec.hp !== Infinity) {
             this._pop(e, travX / travL, travZ / travL, speed);
             skull.vel.copy(away).multiplyScalar(speed * 0.5);
             skull.jaw.rotation.x = 0.65;             // it comes back grinning
@@ -1560,24 +1964,15 @@ export class Enemies {
             // QUIET tier: it staggers, gives ground, and its voice gasps
             this._releaseGraveClaim(e, 0.65);
             e.state = 'stunned';
-            e.stunT = e.spec.stun;
+            e.stunT = e.spec.stun * power;
             e.recoilT = 0.12;
-            if (e.kind === 'kneeler') {
-              e.yieldCount = (e.yieldCount || 0) + 1;
-              game.flag('kneelerYielded');
-              // The impact is a temporary structural surrender, not damage:
-              // stone-and-wood weight drops, the pale burden folds, and the
-              // resulting 2.65-second bow is long enough to sprint through.
-              game.audio.stoneGrind({ pos: e.pos, gain: 0.58, rate: 0.52, verb: 0.72 });
-              game.audio.creak({ pos: e.pos, gain: 0.46, rate: 0.58, verb: 0.62 });
-            }
             if (!e.knockV) e.knockV = new THREE.Vector3();
             e.knockV.set(travX / travL, 0, travZ / travL)
-              .multiplyScalar(clamp(speed * 0.03, 0.45, 0.9));
+              .multiplyScalar(clamp(speed * 0.03 * power, 0.45, 0.9 * power));
             game.impact('hurt', skull.pos);
             game.audio.thud({ pos: e.pos, gain: 0.55 + hitInt * 0.35, rate: 0.9 + hitInt * 0.3, intensity: hitInt, crack: true });
             if (e.loop && e.loop.choke) e.loop.choke();
-            skull._flourishT = 0.3;                  // the tooth CLACK is the hit marker
+            skull._flourishT = 0.3 + (power - 1) * 0.2;   // the tooth CLACK is the hit marker
             game.audio.catchThud({ pos: skull.pos, gain: 0.35, rate: 1.8 });
             skull.vel.copy(away).multiplyScalar(speed * 0.35);
             skull.beginReturn('hit');
@@ -1781,6 +2176,112 @@ export class Enemies {
     return e.acousticNav.route;
   }
 
+  // It comes up in front of you. See CHOIR_SURFACE for why each guard is here.
+  _maybeSurfaceChoir(e, dt) {
+    const game = this.game;
+    const underfalls = game.underfalls;
+    if (!underfalls?.projectMain) return;
+    if (e.hushT > 0) {
+      e.hushT -= dt;
+      if (e.hushT <= 0) this._surfaceChoirAt(e);
+      return;
+    }
+    e.surfaceCd -= dt;
+    if (e.surfacings >= CHOIR_SURFACE.max || e.surfaceCd > 0) return;
+    // never out of a committed strike or a recoil: those beats are the
+    // contract the player is currently reading
+    if (e.state !== 'stalk') return;
+    const player = game.player;
+    const here = underfalls.projectMain(player.pos.x, player.pos.z);
+    const there = underfalls.projectMain(e.pos.x, e.pos.z);
+    if (!here || !there) return;
+    if (here.routeDistance - there.routeDistance < CHOIR_SURFACE.minBehind) return;
+    // and you have to be WALKING AWAY from it. Surfacing ahead of a player who
+    // has turned round to face it is just a spawn in the face.
+    const vx = player.vel?.x || 0, vz = player.vel?.z || 0;
+    const vl = Math.hypot(vx, vz);
+    if (vl < 0.8) return;
+    const probe = underfalls.projectMain(player.pos.x + vx / vl * 0.8, player.pos.z + vz / vl * 0.8);
+    if (!probe || probe.routeDistance <= here.routeDistance) return;
+
+    if (!this._choirSurfacePoint()) return;
+    e.hushT = CHOIR_SURFACE.hush;
+  }
+
+  // WHERE it comes up is decided when it comes up, not when the hush starts.
+  // The first build chose the point at trigger time and the probe caught it:
+  // the player walks three metres during the beat of silence, so a surfacing
+  // measured at ten metres arrived at 7.4. Everything here is re-asked against
+  // the live player. (What is NOT re-asked is whether they are still walking —
+  // the silence is designed to stop them, and aborting on that would mean the
+  // better the tell works, the less often the beat fires.)
+  _choirSurfacePoint() {
+    const game = this.game;
+    const underfalls = game.underfalls;
+    const player = game.player;
+    const here = underfalls?.projectMain?.(player.pos.x, player.pos.z);
+    if (!here) return null;
+    // Two passes. The first will only take a point you cannot currently see,
+    // so the thing is THERE when the corridor opens rather than appearing in
+    // front of your eyes — a hard cut you are watching is the cheapest version
+    // of this beat. If the whole reach ahead is visible, the second pass takes
+    // it anyway: the silence and the call have already announced it, and a
+    // surfacing that never fires is worth less than one you half-see.
+    let fallback = null;
+    for (const hidden of [true, false]) {
+      for (const ahead of CHOIR_SURFACE.ahead) {
+        const p = underfalls.mainPointAt(here.routeDistance + ahead);
+        if (!p || p.remaining < CHOIR_SURFACE.keepClear) continue;
+        if (p.w < CHOIR_SURFACE.minWidth) continue;
+        if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) < CHOIR_SURFACE.minStraight) continue;
+        const candidate = { x: p.x, z: p.z, w: p.w, ahead };
+        if (!hidden) { fallback ||= candidate; continue; }
+        const seen = underfalls.lineOfSight?.(
+          { x: player.pos.x, y: player.pos.y + 1.5, z: player.pos.z },
+          { x: p.x, y: p.y + 1.4, z: p.z }, { pad: 0.2 });
+        if (!seen) return candidate;
+      }
+    }
+    return fallback;
+  }
+
+  _surfaceChoirAt(e) {
+    const target = this._choirSurfacePoint();
+    // The corridor moved under the beat: hold the counter, try again shortly.
+    if (!target) { e.surfaceCd = 4; return; }
+    const game = this.game;
+    const underfalls = game.underfalls;
+    e.pos.set(target.x, e.pos.y, target.z);
+    underfalls?.clamp?.(e.pos, 0);
+    if (underfalls) e.pos.y = underfalls.groundAt(e.pos.x, e.pos.z);
+    e.mesh.position.copy(e.pos);
+    // every cached route through the old position is now a lie
+    e.nav = null;
+    e.acousticNav = null;
+    e.washV.set(0, 0, 0);
+    e.wetT = 0;
+    // It surfaces and STARTS AGAIN: the warning fuse has to burn before it can
+    // move, which is what makes ten metres ahead a scare instead of a death.
+    e.state = 'warning';
+    e.stateT = 0;
+    e.memoryT = 3.5;
+    e.heardStrength = 0.35;
+    e.surfacings++;
+    e.surfaceCd = CHOIR_SURFACE.cooldown;
+    if (e.loop) e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
+    // and it announces itself as it comes up, at the sound you just made
+    this.drownedChoirHear(game.player.pos, 0.5, 'call');
+    e.revealT = Math.max(e.revealT, 2.6);
+    (game.spawnLog ||= []).push(['choir', 'surface', Math.round(e.pos.x), Math.round(e.pos.z), +game.time.toFixed(1)]);
+    (this.choirSurfaceLog ||= []).push({
+      n: e.surfacings,
+      x: +e.pos.x.toFixed(2), z: +e.pos.z.toFixed(2),
+      w: +(target.w ?? 0).toFixed(2), ahead: target.ahead ?? null,
+      playerDist: +Math.hypot(e.pos.x - game.player.pos.x, e.pos.z - game.player.pos.z).toFixed(2),
+      t: +game.time.toFixed(1),
+    });
+  }
+
   _updateDrownedChoir(e, dt, camPos, camFwd) {
     const game = this.game;
     const player = game.player;
@@ -1792,7 +2293,9 @@ export class Enemies {
     e.age += dt;
     e.stateT += dt;
     e.phase += dt;
-    e.revealT = Math.max(0, e.revealT - dt);
+    // reveals decay slower than they used to: a sighting that lasts a second
+    // and a third is a sighting you can miss by blinking
+    e.revealT = Math.max(0, e.revealT - dt * 0.62);
     e.wetT = Math.max(0, e.wetT - dt);
     e.memoryT = Math.max(0, e.memoryT - dt);
     e.heardStrength = Math.max(0, e.heardStrength - dt * 0.24);
@@ -1805,6 +2308,9 @@ export class Enemies {
       e.washV.multiplyScalar(Math.exp(-4.2 * dt));
     }
 
+    // before anything reads its position this frame
+    this._maybeSurfaceChoir(e, dt);
+
     let dx = player.pos.x - e.pos.x;
     let dz = player.pos.z - e.pos.z;
     let dist = Math.hypot(dx, dz);
@@ -1816,7 +2322,9 @@ export class Enemies {
         if (e.stateT >= DROWNED_CHOIR.warning) {
           e.state = 'stalk';
           e.stateT = 0;
-          e.revealT = Math.max(e.revealT, 1.35);
+          // the moment it starts to move is the one sighting the whole rest of
+          // the district is built on — make it long enough to turn toward
+          e.revealT = Math.max(e.revealT, 2.4);
           game.audio.drownedSurge({ pos: e.pos, gain: 0.58, rate: 0.82 });
         }
         break;
@@ -1834,15 +2342,22 @@ export class Enemies {
         const hd = Math.hypot(hx, hz);
         if (hd > 0.12) {
           const heard = clamp(e.heardStrength, 0, 1);
+          // A player-thrown curtain of spray used to cut it to 8% — a
+          // ninety-two per cent stop, on a thing that already trails you by
+          // design. The counterplay survives at a third; being un-catchable
+          // does not, because a predator you can never meet is scenery.
           const speed = lerp(DROWNED_CHOIR.drySpeed, DROWNED_CHOIR.heardSpeed, heard)
-            * (e.wetT > 0 ? 0.08 : 1);
+            * (e.wetT > 0 ? 0.55 : 1);
           this._moveWithPush(e, hx / hd * speed * dt, hz / hd * speed * dt);
           game.underfalls?.clamp?.(e.pos, dt);
         }
-        const sameReachableSpace = Math.abs(player.pos.y - e.pos.y) < 0.72
+        // 0.72 -> 1.05: the vertical gallery was a free zone you could stand in
+        // and watch it fail to reach you. lineOfSight still vetoes genuinely
+        // different storeys (the real gaps are 1.25 and 1.60).
+        const sameReachableSpace = Math.abs(player.pos.y - e.pos.y) < 1.05
           && this._choirLineClear(e.pos, player.pos);
         if (dist < DROWNED_CHOIR.attackRange && sameReachableSpace
-          && e.stateT > 0.22 && e.wetT <= 0) {
+          && e.stateT > 0.22 && e.wetT <= 0.4) {
           e.state = 'pressure';
           e.stateT = 0;
           e.strikePos.copy(player.pos); // commitment: this point never tracks after the warning begins
@@ -1856,7 +2371,7 @@ export class Enemies {
         if (e.stateT >= DROWNED_CHOIR.attackCommit) {
           const miss = Math.hypot(player.pos.x - e.strikePos.x, player.pos.z - e.strikePos.z)
             > DROWNED_CHOIR.attackRadius
-            || Math.abs(player.pos.y - e.strikePos.y) > 0.72
+            || Math.abs(player.pos.y - e.strikePos.y) > 1.05
             || !this._choirLineClear(e.pos, player.pos);
           if (!miss && !e.warned) {
             // The first caught wave teaches the consequence without killing.
@@ -1914,8 +2429,10 @@ export class Enemies {
     dist = Math.hypot(dx, dz);
     if (dist > 0.05) e.mesh.rotation.y = Math.atan2(dx, dz);
 
-    // Visibility is a pressure event, not a hue swap. Dry stalking is almost a
-    // hole in the cave; spray and attack reveal cheek planes, socket depth,
+    // Visibility is a pressure event, not a hue swap. Dry stalking keeps the
+    // shroud almost a hole in the cave, but the displaced-water glints hold a
+    // permanent faint floor — the one honest standing tell that something is
+    // moving the water; spray and attack reveal cheek planes, socket depth,
     // broken ribs, displaced water and the one continuous burial silhouette.
     const pressure = e.state === 'pressure'
       ? smoothstep(0, 1, clamp(e.stateT / DROWNED_CHOIR.attackCommit, 0, 1))
@@ -1928,15 +2445,22 @@ export class Enemies {
       recoil,
     ), 0, 1);
     const U = e.mesh.userData;
-    U.voidMat.opacity = 0.02 + reveal * 0.8;
-    U.skinMat.opacity = 0.001 + reveal * 0.43;
-    U.wetMat.opacity = 0.001 + reveal * 0.25;
-    U.rimMat.opacity = 0.001 + reveal * 0.2;
-    U.mouthVoidMat.opacity = 0.001 + reveal * 0.92;
-    U.dropMat.uniforms.uOpacity.value = 0.001 + reveal * 0.72;
-    U.dropMat.uniforms.uSize.value = 0.032 + reveal * 0.052;
-    U.light.intensity = reveal * (2.5 + pressure * 5.6);
-    U.light.distance = 4.2 + reveal * 2.3;
+    // THE DRY FLOORS WERE THE BUG. At 0.001-0.02 a standing Choir is not dim,
+    // it is absent — a walking player heard ambience and saw nothing, which is
+    // the whole of "I still do not see any of those old enemies". The floors
+    // carry a real silhouette now: a hole in the cave with wet glints on it,
+    // still far below a revealed one, and still value and motion only.
+    U.voidMat.opacity = 0.075 + reveal * 0.75;
+    U.skinMat.opacity = 0.018 + reveal * 0.42;
+    U.wetMat.opacity = 0.012 + reveal * 0.24;
+    U.rimMat.opacity = 0.014 + reveal * 0.19;
+    U.mouthVoidMat.opacity = 0.05 + reveal * 0.88;
+    U.dropMat.uniforms.uOpacity.value = 0.19 + reveal * 0.56;
+    U.dropMat.uniforms.uSize.value = 0.062 + reveal * 0.03;
+    if (U.light) {
+      U.light.intensity = reveal * (2.5 + pressure * 5.6);
+      U.light.distance = 4.2 + reveal * 2.3;
+    }
     U.droplets.rotation.y = e.phase * (0.22 + pressure * 0.9);
     U.droplets.position.y = Math.sin(e.phase * 2.7) * 0.055;
 
@@ -2056,7 +2580,13 @@ export class Enemies {
       : 0;
     if (e.loop) {
       e.loop.setPos(e.pos.x, e.pos.y + 1.4, e.pos.z);
-      e.loop.setState(level, reveal, pressure, rear);
+      // THE SILENCE IS THE TELL. No new sound announces a surfacing — the loop
+      // that has followed you the whole chapter simply stops, and when it comes
+      // back it is in front of you. (Adding a cue here would be the third time
+      // this project answered a state change with more noise instead of a
+      // legible one.)
+      const hush = e.hushT > 0 ? 0 : 1;
+      e.loop.setState(level * hush, reveal * hush, pressure * hush, rear * hush);
     }
     return { level, dir: toE.clone() };
   }
@@ -2103,6 +2633,209 @@ export class Enemies {
     return true;
   }
 
+  // Real routing over the house's own cell graph (world.houseNav), replacing
+  // blind steering toward whichever door happened to be open. BFS on a grid
+  // this small (a few hundred cells) costs nothing, runs only on re-plan, and
+  // returns the first few DOORWAYS along the path — the only waypoints a
+  // straight-line steerer needs. The storeys are one graph now: a registered
+  // stair link is one extra passable edge, and crossing it emits BOTH of the
+  // flight's centreline waypoints so the body walks the axis of the run while
+  // groundHeightAt carries its y — the same ground-height walk the player
+  // uses. `exclude` is the one-entry memory that stops a body oscillating
+  // back through the door it just used; stair edges never carry doors, so the
+  // exclusion passes through them untouched.
+  _houseRoute(e, { exclude = null } = {}) {
+    const world = this.game.world;
+    const player = this.game.player;
+    const from = world.houseCellAt(e.pos.x, e.pos.z, e.pos.y);
+    const to = world.houseCellAt(player.pos.x, player.pos.z, player.pos.y);
+    if (!from || !to) return null;
+    const nav = world.houseNav;
+    const canOpen = e.kind === 'resident';
+    const start = from.lv + '|' + from.cx + ',' + from.cz;
+    const goal = to.lv + '|' + to.cx + ',' + to.cz;
+    if (start === goal) return [];
+    const prev = new Map([[start, null]]);
+    const queue = [start];
+    const DIRS = [['N', 0, -1], ['S', 0, 1], ['W', -1, 0], ['E', 1, 0]];
+    let found = false;
+    while (queue.length && !found) {
+      const key = queue.shift();
+      const [lv, cell] = key.split('|');
+      const [cx, cz] = cell.split(',').map(Number);
+      for (const [dir, dx, dz] of DIRS) {
+        if (!world.housePassable(lv, cx, cz, dir, canOpen, exclude)) continue;
+        const nk = lv + '|' + (cx + dx) + ',' + (cz + dz);
+        if (prev.has(nk)) continue;
+        prev.set(nk, key);
+        if (nk === goal) { found = true; break; }
+        queue.push(nk);
+      }
+      if (found) break;
+      // the stair edge: when this cell is a registered flight end, the far
+      // end of the flight is one more neighbour
+      const links = nav.levels[lv]?.stairAt?.get(cell);
+      if (!links) continue;
+      for (const link of links) {
+        const here = link.lo.lv === lv && link.lo.cx + ',' + link.lo.cz === cell;
+        const other = here ? link.hi : link.lo;
+        const nk = other.lv + '|' + other.cx + ',' + other.cz;
+        if (prev.has(nk)) continue;
+        prev.set(nk, key);
+        if (nk === goal) { found = true; break; }
+        queue.push(nk);
+      }
+    }
+    if (!found) return null;
+    // walk the path back and collect the doorways and flights it crosses,
+    // nearest first
+    const path = [];
+    for (let k = goal; k; k = prev.get(k)) path.push(k);
+    path.reverse();
+    const waypoints = [];
+    for (let i = 1; i < path.length && waypoints.length < 4; i++) {
+      const [alv, acell] = path[i - 1].split('|');
+      const [blv, bcell] = path[i].split('|');
+      if (alv !== blv) {
+        // a stair hop: emit both centreline waypoints in traversal order —
+        // unless the body is ALREADY on this flight, in which case only the
+        // far end matters (walking back to the near end first read as the
+        // dithering it was)
+        const link = (nav.levels[alv].stairAt.get(acell) || []).find((l) =>
+          (l.lo.lv === alv && l.lo.cx + ',' + l.lo.cz === acell && l.hi.lv === blv && l.hi.cx + ',' + l.hi.cz === bcell)
+          || (l.hi.lv === alv && l.hi.cx + ',' + l.hi.cz === acell && l.lo.lv === blv && l.lo.cx + ',' + l.lo.cz === bcell));
+        if (!link) continue;
+        const ascending = link.lo.lv === alv && link.lo.cx + ',' + link.lo.cz === acell;
+        const near = ascending ? link.lo : link.hi;
+        const far = ascending ? link.hi : link.lo;
+        const onThisFlight = i === 1 && from.stair === link.id;
+        if (!onThisFlight) {
+          waypoints.push({ x: near.pos.x, z: near.pos.z, y: near.y, stair: link.id });
+        }
+        if (waypoints.length < 4) {
+          waypoints.push({ x: far.pos.x, z: far.pos.z, y: far.y, stair: link.id });
+        }
+        continue;
+      }
+      const [ax, az] = acell.split(',').map(Number);
+      const [bx, bz] = bcell.split(',').map(Number);
+      const o = az === bz ? 'V' : 'H';
+      const ex = o === 'V' ? Math.max(ax, bx) : ax;
+      const ez = o === 'H' ? Math.max(az, bz) : az;
+      const door = nav.levels[alv].doorAt.get(o + '|' + ex + ',' + ez);
+      if (door) {
+        waypoints.push({ x: door.center.x, z: door.center.z, door });
+        if (waypoints.length < 4) {
+          // the punch-through point: 0.7 m past the plane on the exit side.
+          // The 0.9 m consume radius can claim a door's centre from the
+          // WRONG side of the wall; without this the next leg aimed
+          // diagonally through the plaster beside the aperture and the body
+          // pinned there, replanned around, and orbited the room forever —
+          // Alex's "can't find his way to you", reproduced verbatim.
+          waypoints.push({
+            x: door.center.x + (o === 'V' ? Math.sign(bx - ax) * 0.7 : 0),
+            z: door.center.z + (o === 'H' ? Math.sign(bz - az) * 0.7 : 0),
+            door, exit: true,
+            nx: o === 'V' ? Math.sign(bx - ax) : 0,
+            nz: o === 'H' ? Math.sign(bz - az) : 0,
+          });
+        }
+      }
+    }
+    return waypoints;
+  }
+
+  // A door closed in a pursuer's face is a purchase, not a wall. Clear the
+  // route (it was planned through a doorway that no longer passes) and put
+  // the knob-turn on a stagger so the slam visibly bought time.
+  onDoorClosed(door) {
+    for (const e of this.list) {
+      if (e.state !== 'chase' && e.state !== 'stalk') continue;
+      if (Math.abs(door.floor - e.pos.y) > 1.8) continue;
+      if (Math.hypot(door.center.x - e.pos.x, door.center.z - e.pos.z) > 2.2) continue;
+      e._doorT = -0.6;
+      e._doorTold = false;
+      e._route = null;
+      e._via = null;
+      e._viaLast = door;
+    }
+  }
+
+  // Has the body reached its current steering waypoint? Plain waypoints use
+  // the 0.9 m radius. Door EXIT points are directional: they count only once
+  // the body is genuinely THROUGH the plane — a radius that large can claim
+  // a point on the far side of a wall from the near side, and a door marked
+  // "crossed" while the body still stands outside it poisons both the next
+  // leg and the one-entry exclusion memory.
+  _viaReached(e) {
+    const via = e._via;
+    if (!via) return false;
+    if (via.exit && via.door) {
+      return (e.pos.x - via.door.center.x) * (via.nx || 0)
+        + (e.pos.z - via.door.center.z) * (via.nz || 0) >= 0.35;
+    }
+    return Math.hypot(via.x - e.pos.x, via.z - e.pos.z) < 0.9;
+  }
+
+  // The Standing Kind's observed test, shared: the view cone, then a
+  // throttled structural line-of-sight (shut doors and walls freeze sight;
+  // an open door's collapsed collider or an open window does not), with the
+  // per-enemy hysteresis fields. The house watchdog's unseen-only relocate
+  // uses this SAME machinery — one law for "it never moves while seen".
+  _isObserved(e, dt, camPos, camFwd) {
+    const toE = V.d.set(e.pos.x - camPos.x, 0, e.pos.z - camPos.z);
+    const d2 = toE.length();
+    const inView = d2 < 42 && camFwd.dot(toE.divideScalar(Math.max(d2, 0.001))) > 0.28;
+    if (!inView) {
+      e._losT = 0;
+      e._losClear = false;
+      return false;
+    }
+    e._losT = (e._losT || 0) - dt;
+    if (e._losT <= 0) {
+      // Sight is structural, not psychic: shut doors and walls freeze it;
+      // an open door (collapsed collider) or open window does not.
+      e._losT = 0.08;
+      const lookY = e.pos.y + Math.min(e.spec.h * 0.72, e.spec.h - 0.2);
+      e._losClear = !this._segmentBlocked(
+        camPos.x, camPos.y, camPos.z, e.pos.x, lookY, e.pos.z,
+      );
+    }
+    return !!e._losClear;
+  }
+
+  // A walker whose route to the player is provably sealed (every path ends
+  // at a door it cannot work) stops grinding the panel and besieges instead:
+  // it will hold just off the nearest shut door and paw it on a slow cadence.
+  // Only called when _houseRoute returned null; only arms when both bodies
+  // actually resolve on the graph — outside the house nothing changes.
+  _besiegeSetup(e) {
+    const world = this.game.world;
+    const player = this.game.player;
+    if (!world.houseCellAt(e.pos.x, e.pos.z, e.pos.y)) return;
+    if (!world.houseCellAt(player.pos.x, player.pos.z, player.pos.y)) return;
+    let best = null, bestD = 4;
+    for (const d of world.doors) {
+      if (d.open) continue;
+      if (Math.abs(d.floor - e.pos.y) > 1.8) continue;
+      const dd = Math.hypot(d.center.x - e.pos.x, d.center.z - e.pos.z);
+      if (dd < bestD) { bestD = dd; best = d; }
+    }
+    if (!best) return;
+    // hold 0.6 m off the panel, on this body's own side of the wall
+    const H = best.edge?.orient === 'H';
+    const side = H
+      ? Math.sign(e.pos.z - best.center.z) || 1
+      : Math.sign(e.pos.x - best.center.x) || 1;
+    e._besiege = {
+      door: best,
+      x: best.center.x + (H ? 0 : side * 0.6),
+      z: best.center.z + (H ? side * 0.6 : 0),
+    };
+    e._route = null;
+    e._via = null;
+  }
+
   _bestDoorNode(e) {
     // nearest useful doorway: passable (open — or merely unlocked, if you are
     // the Resident) on this storey, scoring approach + remaining distance
@@ -2131,14 +2864,26 @@ export class Enemies {
       if (Math.hypot(d.center.x - e.pos.x, d.center.z - e.pos.z) < 1.25) { door = d; break; }
     }
     if (door) {
+      // A slam in its face sets _doorT negative (onDoorClosed): the shut is a
+      // purchased delay, so the commitment restarts from further back.
       e._doorT = (e._doorT || 0) + dt;
+      // The tell Alex asked for and only half received (playtest 2: "you shut
+      // the door, silence, then the knob turns"): silence, THEN the knob
+      // visibly works before the panel moves. Motion + sound, no words.
+      if (e._doorT > 0.55 && !e._doorTold) {
+        e._doorTold = true;
+        door.rattleT = Math.max(door.rattleT || 0, 0.5);
+        this.game.audio.lockedRattle({ pos: door.group.position, gain: 0.6, rate: 0.7 });
+      }
       if (e._doorT > 1.15) {
         e._doorT = 0;
+        e._doorTold = false;
         door.setOpen(true);
         this.game.audio.doorOpen(true, { pos: door.group.position });
       }
     } else {
-      e._doorT = 0;
+      e._doorT = Math.min(e._doorT || 0, 0);   // keep a slam's stagger ticking down
+      e._doorTold = false;
     }
   }
 
@@ -2154,7 +2899,10 @@ export class Enemies {
     const stunned = e.state === 'stunned' ? 1 : 0;
     const awake = e.state !== 'dormant' && e.state !== 'dying' ? 1 : 0;
     const attacker = claimed && awake ? 1 : 0;
-    const twitch = Math.sin(e.phase * 1.73 + e.serial * 0.91);
+    const twitchRate = e.state === 'strike' ? 14 : e.state === 'chase' ? 10 : e.state === 'wind' ? 6 : 3.5;
+    const twitch = awake ? steppedJerk(this.game.time, e.serial, twitchRate, 0) : 0;
+    const shoulderJerk = awake ? steppedJerk(this.game.time, e.serial, twitchRate * 0.72, 1) : 0;
+    const sway = Math.sin(e.phase * 1.73 + e.serial * 0.91);
     const chatter = awake * Math.max(0, Math.sin(e.phase * 3.1 + e.serial)) ** 5;
 
     // An assigned attacker uncocks its mask and broadens the corpse's two
@@ -2200,6 +2948,12 @@ export class Enemies {
         shoulder.userData.baseScale.y * (1 + attacker * 0.06),
         shoulder.userData.baseScale.z,
       );
+      const base = shoulder.userData.baseRotation;
+      shoulder.rotation.set(
+        base.x + shoulderJerk * (0.012 + attacker * 0.014),
+        base.y,
+        base.z + shoulderJerk * (index ? -0.026 : 0.036) * (1 + attacker * 0.5),
+      );
     }
     // Pressure bodies keep their forearms below and outside the pall. Only the
     // committed strike snaps them fully at the camera; the hooks are therefore
@@ -2213,66 +2967,163 @@ export class Enemies {
       arms[0].rotation.x = -0.32 - winding * 0.22;
       arms[1].rotation.x = -0.42 - winding * 0.2;
     }
-    W.shroud.rotation.z = twitch * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
+    // Cloth keeps a slow secondary sway; only the head and shoulder bones use
+    // held stop-motion snaps, so locomotion never inherits fake frame drops.
+    W.shroud.rotation.z = sway * (0.018 + (e.state === 'chase' ? 0.04 : 0.012));
     W.shroud.rotation.x = -0.08 - striking * 0.1;
   }
 
-  _poseKneeler(e, dt) {
-    const K = e.mesh.userData.kneeler;
-    if (!K) return;
-    const yielded = e.state === 'stunned' ? 1 : 0;
-    const waking = e.state === 'wind'
+  _poseMalformed(e) {
+    const A = e.mesh.userData.head?.userData.anatomy;
+    if (!A) return;
+    const striking = e.state === 'strike'
+      ? smoothstep(0, 1, clamp((e.strikeT || 0) / (e.spec.strike || 0.66), 0, 1))
+      : 0;
+    const winding = e.state === 'wind'
       ? clamp((e.windT || 0) / Math.max(0.001, e.spec.windup), 0, 1)
-      : (e.state === 'chase' || e.state === 'strike' ? 1 : 0);
-    const pulse = 0.5 + 0.5 * Math.sin(this.game.time * (yielded ? 3.2 : 1.35));
-    const impactFlash = yielded ? clamp((e.recoilT || 0) / 0.12, 0, 1) : 0;
-    K.burden.position.set(
-      K.basePosition.x,
-      K.basePosition.y - yielded * 0.46 + waking * 0.06,
-      K.basePosition.z + yielded * 0.18,
-    );
-    K.burden.rotation.set(yielded * 0.88, 0, Math.sin(this.game.time * 2.1) * 0.025);
-    K.burden.scale.set(
-      1 + waking * 0.08 + impactFlash * 0.13,
-      1 - yielded * 0.38 + impactFlash * 0.05,
-      1 + yielded * 0.12 + impactFlash * 0.13,
-    );
-    // This is the actual passage affordance: the shoulder shelf folds forward,
-    // the face drops below its old line, and both forelimbs splay into the
-    // ground.  It resolves by motion and silhouette even in monochrome.
-    K.upper.position.y = damp(K.upper.position.y, yielded ? -0.16 : 0, yielded ? 16 : 7, dt);
-    K.upper.position.z = damp(K.upper.position.z, yielded ? 0.2 : 0, yielded ? 16 : 7, dt);
-    K.upper.rotation.x = damp(K.upper.rotation.x, yielded ? 0.62 : 0, yielded ? 18 : 6, dt);
-    K.head.position.y = damp(K.head.position.y,
-      K.headBase.y - yielded * 0.24, yielded ? 18 : 7, dt);
-    K.head.position.z = damp(K.head.position.z,
-      K.headBase.z + yielded * 0.16, yielded ? 18 : 7, dt);
-    K.head.rotation.x = damp(K.head.rotation.x,
-      K.headRotation.x - yielded * 0.48, yielded ? 18 : 7, dt);
-    for (const [i, arm] of e.mesh.userData.limbs.arms.entries()) {
-      if (yielded) {
-        arm.rotation.x = damp(arm.rotation.x, -0.92, 18, dt);
-        arm.rotation.z = damp(arm.rotation.z,
-          K.armBaseZ[i] + (i ? 0.34 : -0.34), 18, dt);
-      } else if (e.state !== 'strike' && e.state !== 'chase') {
-        arm.rotation.x = damp(arm.rotation.x, 0, 6, dt);
-        arm.rotation.z = damp(arm.rotation.z, K.armBaseZ[i], 6, dt);
-      }
+      : 0;
+    const stunned = e.state === 'stunned' ? 1 : 0;
+    const awake = e.state !== 'dormant' && e.state !== 'dying' ? 1 : 0;
+    const aggressive = e.state === 'chase' || e.state === 'wind' || e.state === 'strike' ? 1 : 0;
+    const rate = e.state === 'strike' ? 13 : e.state === 'chase' ? 8.5 : e.state === 'wind' ? 5.5 : 3;
+    const headJerk = awake ? steppedJerk(this.game.time, e.serial, rate, 2) : 0;
+    const shoulderJerk = awake ? steppedJerk(this.game.time, e.serial, rate * 0.68, 3) : 0;
+
+    if (A.kind === 'resident') {
+      // The face remains trapped under the high shoulder until commitment,
+      // when it pushes forward and the apparently ordinary coat seam parts.
+      A.head.position.set(
+        A.headBase.x + headJerk * 0.012,
+        A.headBase.y - stunned * 0.1 + striking * 0.025,
+        A.headBase.z + winding * 0.045 + striking * 0.115,
+      );
+      A.head.rotation.set(
+        A.headRot.x - winding * 0.055 - striking * 0.16 + stunned * 0.2,
+        A.headRot.y + headJerk * (0.025 + aggressive * 0.022),
+        A.headRot.z + headJerk * 0.038 + stunned * 0.16,
+      );
+
+      const yokeScale = A.yoke.userData.baseScale;
+      A.yoke.scale.set(
+        yokeScale.x * (1 + winding * 0.04 + striking * 0.09),
+        yokeScale.y * (1 + striking * 0.08),
+        yokeScale.z,
+      );
+      const yokeRot = A.yoke.userData.baseRotation;
+      A.yoke.rotation.set(
+        yokeRot.x + shoulderJerk * 0.016,
+        yokeRot.y,
+        yokeRot.z + shoulderJerk * 0.025 - striking * 0.08,
+      );
+      const humpScale = A.hump.userData.baseScale;
+      A.hump.scale.set(
+        humpScale.x * (1 + winding * 0.05 + striking * 0.12),
+        humpScale.y * (1 + striking * 0.07),
+        humpScale.z,
+      );
+      const humpRot = A.hump.userData.baseRotation;
+      A.hump.rotation.set(
+        humpRot.x + shoulderJerk * 0.02,
+        humpRot.y,
+        humpRot.z - shoulderJerk * 0.03 + striking * 0.06,
+      );
+
+      const open = winding * 0.24 + striking;
+      const seamScale = A.seam.userData.baseScale;
+      A.seam.scale.set(
+        seamScale.x * (1 + open * 0.95),
+        seamScale.y * (1 + open * 0.28),
+        seamScale.z,
+      );
+      const latchBase = A.latch.userData.basePosition;
+      A.latch.position.set(
+        latchBase.x + open * 0.025,
+        latchBase.y - open * 0.018,
+        latchBase.z + open * 0.006,
+      );
+      const latchRot = A.latch.userData.baseRotation;
+      A.latch.rotation.set(latchRot.x, latchRot.y, latchRot.z - open * 0.62);
+      return;
     }
-    KNEELER_MARK_MAT.emissiveIntensity = 0.32 + waking * 0.24
-      + pulse * (yielded ? 0.08 : 0.05) + impactFlash * 0.9;
-    for (const [i, prong] of K.prongs.entries()) {
-      prong.rotation.z = (i - 1) * 0.12 + (i - 1) * yielded * 0.58;
-      prong.scale.y = (0.3 - Math.abs(i - 1) * 0.04) * (1 - yielded * 0.22);
+
+    if (A.kind === 'kneeler') {
+      // The Kneeler does not become a faster animation when angry. Its hanging
+      // head advances, its shoulder burden torques, and the sideways jaw opens;
+      // the lethal root lunge remains wholly owned by the existing state machine.
+      A.head.position.set(
+        A.headBase.x + headJerk * 0.01,
+        A.headBase.y - stunned * 0.075 - winding * 0.025 + striking * 0.025,
+        A.headBase.z + winding * 0.05 + striking * 0.13,
+      );
+      A.head.rotation.set(
+        A.headRot.x - winding * 0.08 - striking * 0.21 + stunned * 0.16,
+        A.headRot.y + headJerk * (0.02 + aggressive * 0.025),
+        A.headRot.z + headJerk * 0.045 + stunned * 0.11,
+      );
+
+      const yokeScale = A.yoke.userData.baseScale;
+      A.yoke.scale.set(
+        yokeScale.x * (1 + winding * 0.05 + striking * 0.1),
+        yokeScale.y * (1 + striking * 0.07),
+        yokeScale.z,
+      );
+      const yokeRot = A.yoke.userData.baseRotation;
+      A.yoke.rotation.set(
+        yokeRot.x + shoulderJerk * 0.018,
+        yokeRot.y,
+        yokeRot.z + shoulderJerk * 0.028 - striking * 0.07,
+      );
+      const humpScale = A.hump.userData.baseScale;
+      A.hump.scale.set(
+        humpScale.x * (1 + winding * 0.04 + striking * 0.1),
+        humpScale.y * (1 + striking * 0.09),
+        humpScale.z,
+      );
+      const humpRot = A.hump.userData.baseRotation;
+      A.hump.rotation.set(
+        humpRot.x - shoulderJerk * 0.018,
+        humpRot.y,
+        humpRot.z - shoulderJerk * 0.024 + striking * 0.055,
+      );
+
+      const open = winding * 0.22 + striking;
+      const mouthScale = A.mouth.userData.baseScale;
+      A.mouth.scale.set(
+        mouthScale.x * (1 + open * 0.42),
+        mouthScale.y * (1 + open * 1.35),
+        mouthScale.z,
+      );
+      const jawBase = A.jaw.userData.basePosition;
+      A.jaw.position.set(
+        jawBase.x + open * 0.018,
+        jawBase.y - open * 0.055,
+        jawBase.z + open * 0.018,
+      );
+      const jawRot = A.jaw.userData.baseRotation;
+      A.jaw.rotation.set(
+        jawRot.x + open * 0.2,
+        jawRot.y,
+        jawRot.z + open * 0.18,
+      );
+      for (const [index, forearm] of A.forearms.entries()) {
+        const base = forearm.userData.baseRotation;
+        forearm.rotation.set(
+          base.x - open * (index ? 0.22 : 0.29),
+          base.y,
+          base.z + (index ? -1 : 1) * open * 0.1,
+        );
+      }
     }
   }
 
   _graveMausoleumAt(pos) {
     // outside.js exposes the authored landmark groups. Identify the two hollow
-    // groups structurally instead of duplicating their coordinates here; pits
-    // are meshes and therefore cannot be mistaken for rooms.
+    // groups by the flag it sets on them instead of duplicating their
+    // coordinates here; pits are meshes and therefore cannot be mistaken for
+    // rooms. (The flag replaced a child count, which stopped telling the truth
+    // once the pair were batched down to two meshes each.)
     for (const landmark of this.game.graveLandmarks || []) {
-      if (!landmark.isGroup || landmark.children.length < 6) continue;
+      if (!landmark.isGroup || !landmark.userData.mausoleumRoom) continue;
       if (Math.abs(pos.x - landmark.position.x) < 1.38
         && pos.z > landmark.position.z - 1.34
         && pos.z < landmark.position.z + 1.38) return landmark;

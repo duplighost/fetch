@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
 import { LAYER_HELD } from './mirrors.js';
+import { handSkinTexture } from './textures.js';
 
 const _anchorLook = new THREE.Vector3();
 import { buildSkullMesh as buildVariantA } from './skull-variant-a.js';
@@ -109,6 +110,14 @@ export class Skull {
     this._idleT = 0;
     this._jawSnapT = 2.5;
     this._spin = 0;
+
+    // bedroom-arrival state. _absentLights records where the parked lights
+    // live (bootAbsent/arriveRestore); introFlicker is the human-head strobe
+    // that runs in the hands right after the window catch (beginIntroFlicker,
+    // driven in _updateHeld). Both presentation-side: no FEEL constant reads
+    // or writes either.
+    this._absentLights = null;
+    this.introFlicker = null;
 
     this._buildMesh();
     this._buildViewmodel();
@@ -300,68 +309,392 @@ export class Skull {
     // A physically lit, very rough surface gives the joints their volume; the
     // viewmodel key in main.js is deliberately far enough away that it cannot
     // clip the skin to white at point-blank range.
-    const skin = new THREE.MeshStandardMaterial({ color: 0x684238, roughness: 0.97, metalness: 0 });
-    const crease = new THREE.MeshStandardMaterial({ color: 0x57372f, roughness: 1.0, metalness: 0 });
-    const nailMat = new THREE.MeshStandardMaterial({ color: 0x7c5a4e, roughness: 0.82, metalness: 0 });
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
+    // Slightly off the old orange-red: under the warm viewmodel key a saturated
+    // albedo came back as salmon plastic. These sit a step darker and a step
+    // less saturated so the key can do the warming.
+    // Darker than they were (0x5d3f36 / 0x4b3029 / 0x6b5046). In the reference
+    // image the skull is the pale thing in the frame and the hands are
+    // weathered mid-dark; here both were sitting near the top of the range,
+    // because the viewmodel light is most of what either of them is lit by and
+    // a lit MeshStandard compresses albedo differences as it saturates. The
+    // albedo cut does not buy a proportional pixel cut (the shore lip measured
+    // 5x albedo for 1.4x pixels), but it is free, and it puts the skull back on
+    // top of the value order where it belongs.
+    // ...and then round eight gave them a SURFACE. These were the last flat
+    // materials in the game: one value, one hue, smooth shading over a shape,
+    // on the object the player looks at in every frame from the first to the
+    // last. Every wall, coffin, headstone and car in FETCH is a canvas painted
+    // at boot; the hands were plastic.
+    //
+    // The map multiplies rather than replaces, so the value work survives: it
+    // is authored around white, pulled to a mean of 0.85 (textures.js
+    // skinPaint), and these two colours are lifted by the reciprocal — same
+    // hands, same place in the value order, every pixel of them different.
+    // It is the bumpMap as well, which is most of the point: the light the
+    // player carries moves, and a hand it cannot rake across is a shape.
+    const skinTex = handSkinTexture();
+    // vertexColors carries what geometry used to: the darkened folds at the
+    // finger hinges and the contact shadow on the fingertip pads are painted
+    // into the skinned mesh's colour attribute, exactly at the joints.
+    const skin = new THREE.MeshStandardMaterial({
+      color: 0x51362f, roughness: 0.97, metalness: 0, vertexColors: true,
+      map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
+    });
+    // No flesh uses `crease` since the skinned rebuild (hinge shadow moved to
+    // vertex colour), but it stays: _handSkin's shape is load-bearing —
+    // becomeBone retints it and the playthrough's ending beat reads _handSkin.
+    const crease = new THREE.MeshStandardMaterial({
+      color: 0x3f2822, roughness: 1.0, metalness: 0,
+      map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
+    });
+    // Nails now face the camera (they used to sit on the palm side, unseen), so
+    // their roughness is suddenly load-bearing: at 0.82 under a lamp this close
+    // they came back as pale chips of wood glued to the fingertips. A nail is
+    // only a shade lighter than the finger it caps, and barely glossier.
+    const nailMat = new THREE.MeshStandardMaterial({ color: 0x4a352e, roughness: 0.93, metalness: 0 });
+    // held so the last room can change what they are made of
+    this._handSkin = { skin, crease, nail: nailMat };
+    // The sleeves are load-bearing story (playtest 2: without arms rooted off
+    // the bottom of the frame, the hands read as the SKULL's — "hands making
+    // glasses around its eyes"), but at 0x090b0e with no map they photographed
+    // as featureless black boxes — his exact question. Cloth needs folds:
+    // borrow the curtain sheet the game already paints (vertical fold strokes
+    // that wrap a cylinder as creases running down the sleeve), lift the base
+    // a step so the folds can shade, and let the multiply keep it well under
+    // the skin in the value order.
+    const curtainTex = this.mats?.curtain?.map || null;
+    const sleeveMat = new THREE.MeshStandardMaterial({
+      color: 0x2c3036, roughness: 1.0, metalness: 0,
+      map: curtainTex, bumpMap: curtainTex, bumpScale: 0.22,
+      // open-ended tubes: a capped cylinder shows its end disc when the
+      // camera looks down the arm, and a flat dark polygon under the wrist
+      // was his "black boxes" read. DoubleSide so the cuff opening shows
+      // cloth lining instead of a see-through hole.
+      side: THREE.DoubleSide,
+    });
+    // The forearms are the same cloth but OUTSIDE the cradle lamps' reach
+    // (probe-black-quad.mjs: hiding them, not the sleeves, removed the black
+    // wedge he asked about) — inverse-square leaves them several times dimmer
+    // than the wrists, so their curvature never shaded and they stayed flat
+    // black at any sleeve value. The lamps cannot be moved (calibrated), so
+    // the value is baked into a lifted clone instead, with the folds tiled to
+    // arm scale. Material clone = same program; texture clone = one more 256
+    // canvas upload at boot, warmed with everything else.
+    const foreTex = curtainTex ? curtainTex.clone() : null;
+    if (foreTex) { foreTex.repeat.set(2, 3); foreTex.needsUpdate = true; }
+    const foreMat = new THREE.MeshStandardMaterial({
+      color: 0x41464e, roughness: 1.0, metalness: 0,
+      map: foreTex, bumpMap: foreTex, bumpScale: 0.22,
+      side: THREE.DoubleSide,
+    });
 
-    const mkFinger = (parent, x, y, z, scale, yaw) => {
-      const k1 = new THREE.Group();
+    // "they must be actually bones like a skeleton. right now they don't look
+    // like that." They did not, and no recolour could make them: becomeBone
+    // used to retint the SAME fat capsules, webbing and fingernails, which is
+    // a bone-coloured glove. So the whole rig exists twice — flesh, and a real
+    // hand of phalanx shafts and condyles built INSIDE the same k1/k2 groups,
+    // hidden until the last room. The animation contract never notices.
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xbcb2a0, roughness: 0.62, metalness: 0 });
+    const jointMat = new THREE.MeshStandardMaterial({ color: 0xa89d8b, roughness: 0.7, metalness: 0 });
+    this._handBoneMat = boneMat;
+    this._handJointMat = jointMat;
+    const flesh = this._handFlesh = [];
+    const bones = this._handBone = [];
+    const fleshy = (m) => { flesh.push(m); return m; };
+    const bony = (m) => { m.visible = false; bones.push(m); return m; };
+    // THREE shared geometries for eighty bones. Building one per bone put the
+    // mirror act at 1515 geometries against a 1500 gate; a capsule scaled
+    // unevenly is an ellipsoid-capped shaft, which is what a phalanx is.
+    const SHAFT = new THREE.CapsuleGeometry(0.006, 0.03, 3, 7);
+    const JOINT = new THREE.SphereGeometry(0.01, 8, 6);
+    const BLOCK = new THREE.BoxGeometry(1, 1, 1);
+    // The FLESH used to be assembled from shared primitives too — one capsule
+    // and one ball scaled into every segment, knuckle and pad. Round eight
+    // retired the idea entirely, on his exact words: "we keep just making
+    // hands that have all these weird giant joints and balls that don't look
+    // like hands." That was structural, not a tuning miss: an assembly of
+    // solids cannot stop reading as an assembly of solids, because every
+    // capsule shades as its own tube with its own terminator, and every
+    // knuckle ball exists to hide the seam between two capsules — the balls
+    // ARE the seam-hiding, so the joints inflate. The flesh is now ONE skinned
+    // surface per hand (buildHandFlesh below); only the bone twin and the
+    // nails are still primitives, because bones and nails really are separate
+    // hard parts.
+    const shaft = (parent, r, len, z, s, mat = boneMat, droop = 0) => {
+      const m = bony(new THREE.Mesh(SHAFT, mat));
+      m.rotation.x = Math.PI / 2 + droop;
+      m.position.z = z * s;
+      m.scale.set((r / 0.006) * s, (len / 0.03) * s, (r / 0.006) * s);
+      parent.add(m);
+      return m;
+    };
+    const condyle = (parent, r, z, s) => {
+      const m = bony(new THREE.Mesh(JOINT, jointMat));
+      m.position.z = z * s;
+      const k = (r / 0.01) * s;
+      m.scale.set(k * 1.3, k * 1.05, k * 0.95);
+      parent.add(m);
+      return m;
+    };
+
+    // The finger is a BONE CHAIN now, not a stack of capsules. THREE.Bone is a
+    // plain Object3D, so k1/k2 keep the exact animation contract — update()
+    // ASSIGNS k1.rotation.x / k2.rotation.x every frame, the pose blends move
+    // the hand roots, raiseHands and the sink still work, and the finale still
+    // captures hold.children[0]/[1] — while the flesh becomes vertices these
+    // bones DRIVE instead of solids they carry. The distal bend stays baked on
+    // d (update never touches it), the nail stays a plain mesh child of d, and
+    // the bone twin hangs off the same chain unchanged, hidden until
+    // becomeBone. Proportions carried from round eight: proximal 0.0100 with a
+    // 24-34% taper, lengths untouched.
+    const mkFinger = (parent, skBones, x, y, z, scale, yaw, droop = 0, knuckle = 1) => {
+      const k1 = new THREE.Bone();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
-      // proximal: fattest, sunk into the palm so no gap shows
-      const s1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0145 * scale, 0.03 * scale, 4, 10), skin);
-      s1.rotation.x = Math.PI / 2;
-      s1.position.z = 0.02 * scale;
-      k1.add(s1);
-      const kn = new THREE.Mesh(new THREE.SphereGeometry(0.0122 * scale, 10, 8), crease);
-      kn.position.z = 0.046 * scale;
-      kn.scale.set(1, 0.9, 0.85);
-      k1.add(kn);
-      const k2 = new THREE.Group();
-      k2.position.set(0, 0, 0.048 * scale);
-      // middle phalanx
-      const s2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.0125 * scale, 0.024 * scale, 4, 10), skin);
-      s2.rotation.x = Math.PI / 2;
-      s2.position.z = 0.018 * scale;
-      k2.add(s2);
-      // distal: a static curl off k2 — pad, slight inward bend, nail on top
-      const d = new THREE.Group();
-      d.position.set(0, -0.001, 0.0335 * scale);
+      const k2 = new THREE.Bone();
+      k2.position.set(0, 0, 0.042 * scale);
+      const d = new THREE.Bone();
+      d.position.set(0, -0.001, 0.034 * scale);
       d.rotation.x = -0.35;
-      const s3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.011 * scale, 0.016 * scale, 4, 10), skin);
-      s3.rotation.x = Math.PI / 2;
-      s3.position.z = 0.012 * scale;
-      d.add(s3);
-      const pad = new THREE.Mesh(new THREE.SphereGeometry(0.0105 * scale, 10, 8), skin);
-      pad.position.set(0, -0.002, 0.024 * scale);
-      pad.scale.set(1, 0.85, 1);
-      d.add(pad);
-      const nail = new THREE.Mesh(new THREE.BoxGeometry(0.0115 * scale, 0.0022, 0.014 * scale), nailMat);
-      nail.position.set(0, 0.0085 * scale, 0.02 * scale);
-      nail.rotation.x = 0.18;
-      d.add(nail);
+      const i1 = skBones.push(k1) - 1;
+      const i2 = skBones.push(k2) - 1;
+      const i3 = skBones.push(d) - 1;
+      // NO NAILS. They were flat BLOCK chips sized for the old capsule
+      // fingertips, and on the curved skinned tube their corners stood off the
+      // surface — his read of the result: "an odd little square thing sticking
+      // out... they're not part of the hands." He is right twice over: at
+      // cradle distance a nail is four pixels, and a box on a curved surface
+      // can only ever be a box. If nails ever come back they are a painted
+      // patch in the skin sheet, not geometry. (nailMat itself survives in
+      // _handSkin — becomeBone retints it and the shape of that object is
+      // load-bearing.)
       k2.add(d);
       k1.add(k2);
       parent.add(k1);
-      return { k1, k2 };
+      // the same finger in bone: three shafts, a knuckle and a joint, and a
+      // flared tuft where a fingertip has no pad to hide behind. The shaft
+      // radii were already under the OLD flesh; they have to stay under the
+      // new, thinner flesh too, so they come in with it — and they take the
+      // same droop, or the bone hand walks out of the skin at the knuckles.
+      shaft(k1, 0.0050, 0.032, 0.021, scale, boneMat, droop);
+      condyle(k1, 0.0078, 0.047, scale);
+      shaft(k2, 0.0042, 0.025, 0.015, scale, boneMat, droop * 0.6);
+      condyle(k2, 0.0064, 0.0335, scale);
+      shaft(d, 0.0034, 0.015, 0.012, scale, boneMat);
+      const tuft = bony(new THREE.Mesh(JOINT, boneMat));
+      tuft.position.set(0, 0, 0.0245 * scale);
+      const tk = 0.62 * scale;
+      tuft.scale.set(tk * 1.25, tk * 0.72, tk * 1.15);
+      d.add(tuft);
+      return { k1, k2, d, i1, i2, i3, s: scale, kn: knuckle };
+    };
+
+    // ---- the flesh, as ONE surface --------------------------------------
+    // A tapered elliptical tube per finger and a sculpted blob for the palm,
+    // all in one BufferGeometry, skinned to the bones above. Joints become
+    // half-weighted rings — a bend folds the surface into a crease instead of
+    // breaking it between two solids — and knuckles become millimetre swells
+    // on the dorsal side of a continuous tube. The hinge rings are darkened in
+    // vertex colour (a fold is in its own shadow), the distal palm side
+    // carries the contact darkening the pads used to, and the whole flesh of
+    // a hand is TWO draw calls instead of fifty-six.
+    const RN = 12; // segments around a finger
+    const buildHandFlesh = (hand, skBones, handFingers) => {
+      const P = [], NM = [], UVA = [], CL = [], SI = [], SW = [], IX = [];
+      const M = new THREE.Matrix4();
+      const bx = new THREE.Vector3(), by = new THREE.Vector3(), bz = new THREE.Vector3();
+      const c = new THREE.Vector3(), p = new THREE.Vector3(), n = new THREE.Vector3();
+      const push = (nx, ny, nz, u, v, col, ia, wa, ib, wb) => {
+        P.push(p.x, p.y, p.z); NM.push(nx, ny, nz); UVA.push(u, v);
+        CL.push(col, col, col); SI.push(ia, ib, 0, 0); SW.push(wa, wb, 0, 0);
+        return P.length / 3 - 1;
+      };
+      // One elliptical ring in `bone`'s frame at local z. `swell` fattens the
+      // dorsal (-y) half only — a knuckle is a bump on the BACK of a finger —
+      // and `dark` multiplies the palm-side vertex colour: the fingertip pad
+      // pressed on bone is in its own shadow.
+      const ring = (bone, z, r, rf, v, col, ia, wa, ib, wb, swell, dark) => {
+        M.copy(bone.matrixWorld);
+        bx.setFromMatrixColumn(M, 0).normalize();
+        by.setFromMatrixColumn(M, 1).normalize();
+        c.set(0, 0, z).applyMatrix4(M);
+        const rx = r * 1.06 * rf, ry0 = r * 0.85 * rf;
+        const first = P.length / 3;
+        for (let k = 0; k <= RN; k++) {
+          const th = (k / RN) * TAU;
+          const co = Math.cos(th), si = Math.sin(th);
+          const ry = ry0 * (1 + (swell || 0) * Math.max(0, -si));
+          p.copy(c).addScaledVector(bx, co * rx).addScaledVector(by, si * ry);
+          n.copy(bx).multiplyScalar(co / rx).addScaledVector(by, si / ry).normalize();
+          const cc = col * ((dark && si > 0.25) ? 0.78 : 1);
+          push(n.x, n.y, n.z, k / RN, v, cc, ia, wa, ib, wb);
+        }
+        return first;
+      };
+      const weld = (a, b) => {
+        for (let k = 0; k < RN; k++) {
+          IX.push(a + k, a + k + 1, b + k, a + k + 1, b + k + 1, b + k);
+        }
+      };
+      const pole = (bone, z, v, col, ia, flip) => {
+        M.copy(bone.matrixWorld);
+        bz.setFromMatrixColumn(M, 2).normalize();
+        if (flip) bz.negate();
+        p.set(0, 0, z).applyMatrix4(M);
+        return push(bz.x, bz.y, bz.z, 0.5, v, col, ia, 1, 0, 0);
+      };
+      const cap = (ringStart, poleIdx, flip) => {
+        for (let k = 0; k < RN; k++) {
+          if (flip) IX.push(ringStart + k + 1, ringStart + k, poleIdx);
+          else IX.push(ringStart + k, ringStart + k + 1, poleIdx);
+        }
+      };
+      // Station rows: [bone, localZ, radius, boneA, wA, boneB, wB, swell,
+      // colour, dark]. Hinge rings sit AT the next bone's origin weighted
+      // half-and-half — that is what turns a bend into a crease instead of a
+      // break — and are darkened, because a crease is a fold in shadow.
+      for (let fi = 0; fi < handFingers.length; fi++) {
+        const f = handFingers[fi];
+        const s = f.s, kn = f.kn, rf = f.rf || 1;
+        // The v column is authored so the sheet's dense crease bands (skinPaint
+        // paints them at v 0.13 and 0.87, tiling every 1.0) land ON the two
+        // hinges — the first shot let v run free and every finger came back
+        // wrapped in seven bands like a bandaged hand.
+        const st = [
+          [f.k1, -0.008 * s, 0.0100, 0.00, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.006 * s, 0.0104, 0.22, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.018 * s, 0.0100, 0.45, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.030 * s, 0.0097, 0.68, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.038 * s, 0.0096, 0.80, f.i1, 0.8, f.i2, 0.2, 0.10 * kn, 0.92, 0],
+          [f.k1, 0.042 * s, 0.0090, 0.87, f.i1, 0.5, f.i2, 0.5, 0, 0.80, 0],
+          [f.k2, 0.005 * s, 0.0088, 0.94, f.i2, 0.8, f.i1, 0.2, 0, 0.92, 0],
+          [f.k2, 0.016 * s, 0.0085, 1.02, f.i2, 1, 0, 0, 0, 1, 0],
+          [f.k2, 0.028 * s, 0.0084, 1.09, f.i2, 0.8, f.i3, 0.2, 0.08 * kn, 0.93, 0],
+          [f.k2, 0.034 * s, 0.0078, 1.13, f.i2, 0.5, f.i3, 0.5, 0, 0.82, 0],
+          [f.d, 0.004 * s, 0.0074, 1.20, f.i3, 0.8, f.i2, 0.2, 0, 0.93, 0],
+          [f.d, 0.012 * s, 0.0070, 1.32, f.i3, 1, 0, 0, 0, 1, 1],
+          [f.d, 0.019 * s, 0.0063, 1.44, f.i3, 1, 0, 0, 0, 1, 1],
+          [f.d, 0.024 * s, 0.0048, 1.54, f.i3, 1, 0, 0, 0, 0.96, 1],
+        ];
+        let prev = -1, firstRing = -1;
+        for (let idx = 0; idx < st.length; idx++) {
+          const [bone, z, r, v, ia, wa, ib, wb, swell, col, dark] = st[idx];
+          const start = ring(bone, z, r * s, rf, v, col, ia, wa, ib, wb, swell, dark);
+          if (prev >= 0) weld(prev, start);
+          if (idx === 0) firstRing = start;
+          prev = start;
+        }
+        // root cap hidden inside the palm; a rounded pad at the fingertip
+        cap(firstRing, pole(f.k1, -0.014 * s, 0, 1, f.i1, true), true);
+        cap(prev, pole(f.d, 0.0285 * s, 1.62, 0.9, f.i3, false), false);
+      }
+      // The palm and the wrist heel: sculpted lat-long blobs. A plain
+      // flattened sphere came back as "a flat circle instead of the palm part
+      // of a hand" — his words, and right: a real hand-back is not a disc. So
+      // the blob dooms toward the knuckles (both faces deepen with +z, the
+      // pads on the palm side and the metacarpal rise on the back), tapers in
+      // width toward the wrist, and stays flatter on the palm (+y) side.
+      // Round-eight dimensions still hold: ~90 x 33 x 111 mm at the knuckles.
+      const blob = (cx, cy, cz, ra, rb, rc, flatten, tiles, sculpt) => {
+        const W = 20, H = 14;
+        const rows = [];
+        for (let iy = 0; iy <= H; iy++) {
+          const vphi = iy / H, phi = vphi * Math.PI;
+          const row = [];
+          for (let ix = 0; ix <= W; ix++) {
+            const u = ix / W, th = u * TAU;
+            const ux = -Math.cos(th) * Math.sin(phi);
+            const uy = Math.cos(phi);
+            const uz = Math.sin(th) * Math.sin(phi);
+            // dome toward the knuckles, pinch toward the wrist
+            const depth = sculpt ? 1 + 0.38 * Math.max(0, uz) : 1;
+            const width = sculpt ? 1 - 0.26 * Math.max(0, -uz) : 1;
+            const be = (uy > 0 ? rb * flatten : rb) * depth;
+            p.set(cx + ux * ra * width, cy + uy * be, cz + uz * rc);
+            n.set(ux / (ra * width), uy / be, uz / rc).normalize();
+            row.push(push(n.x, n.y, n.z, u * tiles, vphi * tiles, 1, 0, 1, 0, 0));
+          }
+          rows.push(row);
+        }
+        for (let iy = 0; iy < H; iy++) for (let ix = 0; ix < W; ix++) {
+          const a = rows[iy][ix + 1], b = rows[iy][ix], c2 = rows[iy + 1][ix], d2 = rows[iy + 1][ix + 1];
+          if (iy !== 0) IX.push(a, b, d2);
+          if (iy !== H - 1) IX.push(b, c2, d2);
+        }
+      };
+      // tiles 3 on the palm: at 2 the sheet's crease bands appeared as eight
+      // broad latitude rings and the heel read as wrapped in bandages; finer
+      // tiling turns the same bands into skin-scale wrinkle texture
+      blob(0, 0.002, 0.004, 0.0500, 0.0165, 0.0620, 0.8, 3, true);
+      blob(0, -0.004, -0.040, 0.0350, 0.0150, 0.0310, 0.9, 2.2, false);
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(NM, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(UVA, 2));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(CL, 3));
+      geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4));
+      geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SW, 4));
+      geo.setIndex(IX);
+      const mesh = new THREE.SkinnedMesh(geo, skin);
+      // the held pass never culls, and a posed skeleton walks outside the
+      // bind-pose bounding sphere
+      mesh.frustumCulled = false;
+      hand.add(mesh);
+      hand.updateMatrixWorld(true);
+      mesh.bind(new THREE.Skeleton(skBones.slice()));
+      // which finger each bone drives — the measurement tools group skinned
+      // vertices by dominant bone to answer per-finger questions
+      const fingerOfBone = new Array(skBones.length).fill(-1);
+      handFingers.forEach((f, fi) => {
+        fingerOfBone[f.i1] = fi; fingerOfBone[f.i2] = fi; fingerOfBone[f.i3] = fi;
+      });
+      mesh.userData.fingerOfBone = fingerOfBone;
+      fleshy(mesh);
+      return mesh;
     };
 
     this._fingers = [];
     const mkHand = (side) => {
+      // Round eight first measured the mitten (palm 116 x 52 mm against a real
+      // 90 x 28 — thickness is what decides hand vs sock), then replaced the
+      // assembly outright: palm, heel and fingers are ONE skinned surface,
+      // built in buildHandFlesh above with the corrected dimensions.
       const hand = new THREE.Group();
-      const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 14, 10), skin);
-      palm.scale.set(1.28, 0.58, 1.35);
-      hand.add(palm);
-      const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 8), skin);
-      heel.position.set(0, -0.004, -0.04);
-      heel.scale.set(1.3, 0.65, 0.9);
-      hand.add(heel);
-      // webbing: flesh across the finger bases so they grow FROM the hand
-      const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), skin);
-      web.position.set(0, 0.004, 0.058);
-      web.scale.set(2.05, 0.62, 0.7);
-      hand.add(web);
+      // the skeleton root — every vertex that is not on a finger weights here
+      const palmBone = new THREE.Bone();
+      hand.add(palmBone);
+      const skBones = [palmBone];
+      const handFingers = [];
+      // and the hand under the hand: a carpal block and a fan of four
+      // metacarpals reaching out to the finger roots. No palm sphere, no
+      // webbing — the gaps between the bones ARE the read.
+      const carpal = bony(new THREE.Mesh(BLOCK, jointMat));
+      carpal.position.set(0, 0.001, -0.026);
+      carpal.rotation.x = 0.1;
+      carpal.scale.set(0.062, 0.019, 0.036);
+      hand.add(carpal);
+      for (let i = 0; i < 4; i++) {
+        // the metacarpal fan follows the finger roots to their new spacing,
+        // or the bone hand reaches out to where the fingers used to be
+        const tipX = [-0.0355, -0.0120, 0.0125, 0.0355][i], tipZ = 0.062;
+        const rootX = (i - 1.5) * 0.0125, rootZ = -0.014;
+        const mc = bony(new THREE.Mesh(SHAFT, boneMat));
+        mc.position.set((tipX + rootX) / 2, 0.003, (tipZ + rootZ) / 2);
+        mc.rotation.x = Math.PI / 2;
+        mc.rotation.z = -Math.atan2(tipX - rootX, tipZ - rootZ);
+        mc.scale.set(1.03, 1.93, 1.03);
+        hand.add(mc);
+        const head = bony(new THREE.Mesh(JOINT, jointMat));
+        head.position.set(tipX * 0.94, 0.004, tipZ - 0.008);
+        head.scale.set(1.06, 0.87, 0.92);
+        hand.add(head);
+      }
+      const thumbMc = bony(new THREE.Mesh(SHAFT, boneMat));
+      thumbMc.position.set(side * -0.032, 0.017, -0.008);
+      thumbMc.rotation.set(Math.PI / 2, 0, side * 0.85);
+      thumbMc.scale.set(1.2, 1.4, 1.2);
+      hand.add(thumbMc);
       // Human fingers terminate at meaningfully different heights.  The old
       // near-flat profile made each hand read as four identical organ pipes,
       // especially while empty.  Mirror the hierarchy so the index remains
@@ -373,39 +706,215 @@ export class Skull {
       const rootArc = side < 0
         ? [-0.004, 0.001, 0.003, 0.0]
         : [0.0, 0.003, 0.001, -0.004];
+      // EVENNESS IS THE OTHER HALF OF "SAUSAGES". Four digits at one spacing,
+      // one yaw step and one girth read as a row of organ pipes however well
+      // each is modelled — so nothing below is a multiple of anything.
+      //
+      // Roots: a uniform 0.028 step spanned 84 mm, which was already wide and
+      // reads splayed once the fingers are thin. These are accumulated from
+      // uneven gaps and span 71.
+      const rootX = [-0.0355, -0.0120, 0.0125, 0.0355];
+      // Yaw: was (i-1.5) x 0.105, a perfect fan. The pinky splays, the ring is
+      // nearly straight, the index comes out a touch. Mirrored the same way the
+      // scales are, so the index stays nearest each thumb.
+      // ...but the SPREAD came down by a third in round eight. Four fingers at
+      // 19 degrees of fan, laid on a skull, let the room show through between
+      // every pair, and four separated tubes with daylight between them read as
+      // a rake. Fingers on bone lie close enough to touch each other. The
+      // unevenness is what round seven was after and it is all still here.
+      const yawFan = side < 0
+        ? [-0.112, -0.034, 0.019, 0.084]     // pinky, ring, middle, index
+        : [-0.084, -0.019, 0.034, 0.112];    // index, middle, ring, pinky
+      // Droop: a few degrees of tilt baked into the meshes inside k1/k2 (never
+      // the groups — update() assigns their rotation.x outright).
+      const droopSet = side < 0
+        ? [0.085, 0.032, 0.048, 0.06]
+        : [0.06, 0.048, 0.032, 0.085];
+      // and which knuckle sits proudest. The spread used to be 0.78 to 1.15,
+      // which was a third of a finger's width and read as four different-sized
+      // beads; now it modulates a 12% swelling, so it varies the knuckle line
+      // by a millimetre or two the way real ones do.
+      const knuckleSet = side < 0
+        ? [0.94, 1.0, 1.08, 1.03]
+        : [1.03, 1.08, 1.0, 0.94];
       for (let i = 0; i < 4; i++) {
         const f = mkFinger(
-          hand,
-          (i - 1.5) * 0.028,
-          0.006,
+          palmBone, skBones,
+          rootX[i],
+          0.006 + (i & 1 ? 0.0012 : -0.0009),
           0.062 + rootArc[i],
           fingerScale[i],
-          (i - 1.5) * 0.075,
+          yawFan[i],
+          droopSet[i],
+          knuckleSet[i],
         );
         f.phase = i * 0.9;
         this._fingers.push(f);
+        handFingers.push(f);
       }
-      const thumb = mkFinger(hand, side * -0.055, 0.012, 0.013, 1.12, side * -0.95);
-      // A thumb is a short, thick opposing mass, not a fifth long finger.
-      // Scaling its existing rig preserves the animation contract while making
-      // the cradle silhouette unmistakably human.
+      // The thumb is the single strongest "this is a hand" cue, and it used to
+      // point straight into the gap between the two hands, where the other
+      // hand's fingers hid it completely. Raised onto the top of the palm and
+      // swung further across so it breaks the finger line in silhouette.
+      // Tucked back and swung less far across than round seven left it. That
+      // thumb was aimed at a cradle 32 mm wider than this one; with the hands
+      // seated where they can actually touch the skull, the two thumbs met in
+      // the middle and crossed the jaw as a pair of blobs under the chin. In
+      // the reference the thumbs are behind the bone, not in front of it.
+      const thumb = mkFinger(palmBone, skBones, side * -0.056, 0.022, -0.012, 1.12, side * -0.60);
+      // A thumb is a short, thick opposing mass, not a fifth long finger. The
+      // bone scale is part of the BIND pose, so skinning cancels it for the
+      // flesh — the thumb tube gets its girth from rf instead — while the nail
+      // and the bone twin, plain children of the bone, inherit the scale
+      // exactly the way the old rig's meshes did.
       thumb.k1.scale.set(1.22, 1.12, 0.72);
+      thumb.rf = 1.18;
       thumb.phase = 4.2;
       thumb.thumb = true;
       this._fingers.push(thumb);
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.068, 0.24, 12), sleeveMat);
+      handFingers.push(thumb);
+      // bind pose is final: one surface over the whole skeleton
+      hand.updateMatrixWorld(true);
+      buildHandFlesh(hand, skBones, handFingers);
+      // and the cuff comes in with the wrist it sits on: a 91 mm sleeve mouth
+      // on a 63 mm wrist was most of what made the bottom of the frame a sock
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.062, 0.24, 16, 1, true), sleeveMat);
       sleeve.position.set(0, -0.03, -0.15);
       sleeve.rotation.x = 1.3;
       hand.add(sleeve);
       return hand;
     };
 
+    // Framing, which is the whole of Alex's "these do not look like human
+    // hands". The palm, the thumb, the knuckle line and the wrist are the four
+    // things that say HAND, and every one of them used to sit below the bottom
+    // of the screen: the frame cut at the first knuckle, so all the player ever
+    // saw was eight parallel tubes. The geometry was already right — it was
+    // never on camera. Raised into frame, turned out of the edge-on yaw that
+    // hid the backs of the hands, and separated so they read as two hands
+    // rather than one mass.
+    // TWO POSES, not one compromise. Cradling and empty want opposite things
+    // from the camera and the old single pose served only the first:
+    //
+    //   CRADLE - the hands come in behind and under the skull to hold it, so
+    //     most of each hand is hidden by the thing it is holding. Correct.
+    //   EMPTY  - nothing is hiding them any more and they are the only thing
+    //     on screen. Held in the cradle pose they read as eight parallel
+    //     tubes: the frame cuts at the first knuckle, the palms and thumbs are
+    //     below the bottom of the screen, and the fingers point at the camera
+    //     end-on. That is Alex's "these do not look like human hands".
+    //
+    // So the hands turn over when the skull leaves: they drop, open outward,
+    // and roll until the backs, the knuckle line and both thumbs are in frame.
+    // It costs nothing and it reads as relief — the grip letting go — which is
+    // the state the player is in anyway.
     const L = mkHand(-1);
-    L.position.set(-0.118, -0.2, 0.035);
-    L.rotation.set(-0.7, 0.78, 0.3);
     const R = mkHand(1);
-    R.position.set(0.118, -0.2, 0.035);
-    R.rotation.set(-0.7, -0.78, -0.3);
+    // TRAP: these rotations do NOT reach the mirror room. finale.js's
+    // _updatePressure rewrites both hand rotations every frame, after
+    // skull.update in the loop order, from its own RAISED_L/RAISED_R — so a
+    // pose change here moves every act EXCEPT the one with the raised hands,
+    // and a pose fix aimed at the finale passes its probe and changes nothing
+    // on screen. Edit finale.js for that beat.
+    this._handPose = {
+      hands: [L, R],
+      // THE GRIP. "in this whole game, the hands are facing so the palm side
+      // is against the skull, so it doesn't look like he's holding the skull.
+      // its fine after the skull goes and we got it right in the last room of
+      // the game." He is right about both halves of that: EMPTY already turns
+      // over (see below) and finale.js's RAISED_L/R already read as hands.
+      //
+      // The old cradle was rx -0.58, ry 0.71, rz 0.27, and what that produced
+      // was two upturned palms with the fingers pointing back at the camera —
+      // the skull presented on them rather than held. mkHand grows the fingers
+      // along local +Z and curls them toward local +Y, so +Y is the palm
+      // normal: pointing +Y at the CAMERA is the whole bug.
+      //
+      // These numbers are not hand-guessed. tools/shot-grip-sweep.mjs aims the
+      // hand instead — finger axis up and a little forward, palm INWARD at the
+      // skull — and reads the Euler back off the basis, which works because
+      // _applyHandPose applies (rx, -side*ry, -side*rz), so the stored numbers
+      // ARE the applied angles for the left hand. Palm inward puts the backs
+      // and the knuckle line toward the camera and wraps the fingers round the
+      // cheek, which is the grip in the reference image he posted.
+      //
+      // NOTE the half-turn alone is not the fix, though it is where this
+      // started (finale.js documents +-PI about the finger axis as the way to
+      // turn a hand over without mirroring it). Rolling PI and changing
+      // nothing else inverts the CURL as well, and the shot came back with
+      // both hands folded down out of the bottom of the frame.
+      //
+      // SECOND PASS, from his screenshot: "those hands look nasty. and clip
+      // through. we need to have actual human hands holding a skull." Both
+      // halves of that were true and they had different causes.
+      //
+      // CLIPPING was measurable and is now measured. probe-grip-clip.mjs puts
+      // each hand's box at 0.355 x 0.365 x 0.296 in hold space against a skull
+      // of 0.212 x 0.257 x 0.29 — the hands are as big as the thing they hold —
+      // and the palm-inward pass seated them at |x| 0.115 when the skull's own
+      // half-width is 0.106. They were inside it. shot-grip-sweep.mjs now
+      // samples every hand vertex against the skull's ellipsoid and reports the
+      // percentage buried; this seat measures ZERO, deepest zero.
+      //
+      // NASTY was the finger direction. Fingers pointing up and curling round
+      // the far side show the camera four proximal lumps and no hand at all.
+      //
+      // THEN HE POSTED THE REFERENCE IMAGE, and it settled it. What it shows:
+      // wrists at the very bottom edge, fingers pointing UP the sides of the
+      // cranium and nearly straight, laid ON the bone and following its curve;
+      // backs of the hands and backs of the fingers to the camera; thumbs
+      // hidden behind; fingertips at about eye-socket height. Not curled round
+      // anything, and not laid across the face either.
+      //
+      // Two things had to be true at once for that to work. The fingers must
+      // rise near-VERTICALLY: angled inward they converge into the cranium
+      // exactly as they pass its widest point (measured, 7-13% buried). And
+      // they must be much straighter while held, which is what the finger
+      // constants in _updateHands now do.
+      //
+      // ROUND EIGHT MEASURED IT, and the answer was not an angle. He has said
+      // twice that they do not look like hands, and the number nobody had
+      // taken is the one tools/probe-grip-contact.mjs prints: how far each
+      // finger is from the nearest bone. At this seat it was 12 to 70 mm,
+      // MEAN 38 -- a finger's length of air between the hands and the thing
+      // they are holding. Of course it did not look like he was holding it.
+      //
+      // The old sweep could not see that, because it scored candidates on how
+      // much of the hand was INSIDE an ellipsoid inscribed in the skull's
+      // AABB, and that box is tall (the jaw hangs off the bottom) so the
+      // ellipsoid it inscribes pinches in exactly where the fingers pass.
+      // Zero buried against it meant nothing. sweep-grip-contact scores the
+      // gap and the burial against the skull's OWN surface instead, at both
+      // growth stages, and it says the gap was mostly in Z: seated at z 0.122
+      // against a skull whose front face is at 0.117, the hands were never
+      // beside the skull at all. They were in front of it, reaching back.
+      //
+      // Two more things the sweep settled. The fingers must SPLAY very
+      // slightly outward as they rise, not lean in: the cranium widens toward
+      // the brow, so the aim that hugs it is the one that opens with it, and
+      // every inward lean drove the fingertips through the eye sockets
+      // (10-20% buried, 20 mm deep) on the way to closing the gap. And the
+      // curl stays where round seven put it -- more curl hooks the tips over
+      // the cheekbone, which reads as clutching a face, not cradling a skull.
+      //
+      // 38 mm mean gap -> 11. The fingers touch the bone.
+      cradle: { x: 0.124, y: -0.118, z: 0.100, rx: -1.691, ry: -0.060, rz: -1.343 },
+      // Untouched. "its fine after the skull goes": the hands drop, open
+      // outward and roll until the backs, the knuckle line and both thumbs are
+      // in frame, and they have read as hands since round two. The cradle now
+      // starts from a turned-over pose too, so the release is a smaller
+      // gesture than it was, not a bigger one.
+      empty: { x: 0.133, y: -0.147, z: 0.043, rx: -0.33, ry: 0.50, rz: 0.15 },
+      // After the waterfall bargain the skull is GONE — nothing is coming
+      // back to these hands, so they stop waiting for it. Mostly out of
+      // frame, arms at rest. ("I do not even think the player needs their
+      // hands up after the skull is gone.") Hands only — hold itself never
+      // moves, so the kept locket and the finale's pose capture are safe.
+      lowered: { x: 0.152, y: -0.56, z: 0.028, rx: -0.06, ry: 0.34, rz: 0.05 },
+      t: 0,   // 0 = cradle, 1 = empty
+      g: 0,   // 0 = waiting poses above, 1 = lowered (skull permanently gone)
+    };
+    this._applyHandPose(0);
     hold.add(L, R);
 
     // forearms: sleeves running off the bottom corners of the frame — the
@@ -416,13 +925,16 @@ export class Skull {
       const b = new THREE.Vector3(side * 0.3, -0.62, 0.34);
       const dir = b.clone().sub(a);
       const len = dir.length();
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 10), sleeveMat);
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 14, 1, true), foreMat);
       fore.position.copy(a).addScaledVector(dir, 0.5);
       fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+      fore.userData.baseY = fore.position.y;
       hold.add(fore);
+      return fore;
     };
-    mkForearm(-1);
-    mkForearm(1);
+    // the sleeves must sink WITH the lowered hands after the bargain — left
+    // behind, they read as a black outline at the bottom of the frame
+    this._handPose.forearms = [mkForearm(-1), mkForearm(1)];
 
     this._grip = 0.55;
     this.hold = hold;
@@ -500,6 +1012,33 @@ export class Skull {
       * stateGain;
   }
 
+  // Blend the two authored hand poses. side = -1 mirrors in x and in both of
+  // the rotations that carry handedness.
+  _applyHandPose(t, g = this._handPose?.g || 0) {
+    const P = this._handPose;
+    if (!P) return;
+    const c = P.cradle, e = P.empty, l = P.lowered;
+    let x = lerp(c.x, e.x, t), y = lerp(c.y, e.y, t), z = lerp(c.z, e.z, t);
+    let rx = lerp(c.rx, e.rx, t), ry = lerp(c.ry, e.ry, t), rz = lerp(c.rz, e.rz, t);
+    if (g > 0) {
+      x = lerp(x, l.x, g); y = lerp(y, l.y, g); z = lerp(z, l.z, g);
+      rx = lerp(rx, l.rx, g); ry = lerp(ry, l.ry, g); rz = lerp(rz, l.rz, g);
+    }
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      P.hands[i].position.set(side * x, y, z);
+      P.hands[i].rotation.set(rx, -side * ry, -side * rz);
+      // fully sunk = fully gone: no aspect ratio may catch a knuckle
+      P.hands[i].visible = g < 0.985;
+    }
+    for (const fore of P.forearms || []) {
+      fore.position.y = fore.userData.baseY - g * 0.5;
+      fore.visible = g < 0.985;
+    }
+    P.t = t;
+    P.g = g;
+  }
+
   _updateHands(dt) {
     // grip target: cradling when held, tightening with threat, open when empty
     const held = this.mode === 'held';
@@ -508,13 +1047,36 @@ export class Skull {
       : 1;
     const target = held ? (0.5 + this.threat * 0.42) * catchClose : 0.08;
     this._grip = damp(this._grip, target, held ? 6 : 3, dt);
+    // The hands turn over on the same signal as the grip, so opening and
+    // rolling over are one gesture rather than two. Closing is quicker than
+    // opening: a catch should feel caught, a throw should feel let go of.
+    // 'gone' is permanent (the waterfall keeps what it takes): the hands
+    // sink out of frame instead of waiting forever for a catch.
+    if (this._handRaise > 0) this._handRaise -= dt;
+    const goneBlend = damp(this._handPose ? this._handPose.g : 0,
+      (this.mode === 'gone' && !(this._handRaise > 0)) ? 1 : 0, 2.2, dt);
+    this._applyHandPose(damp(this._handPose ? this._handPose.t : 0, held ? 0 : 1, held ? 7 : 3.4, dt), goneBlend);
     this._handT = (this._handT || 0) + dt;
     const tremble = held && this.threat > 0.05 ? Math.sin(this._handT * (10 + this.threat * 18)) * 0.05 * this.threat : 0;
     for (const f of this._fingers) {
       const wave = Math.sin(this._handT * 0.7 + f.phase) * 0.03;   // idle micro-life
       const curl = this._grip * (f.thumb ? 0.9 : 1.25) + wave + tremble;
-      f.k1.rotation.x = -(0.35 + curl * 0.75);
-      f.k2.rotation.x = -(0.3 + curl * 0.95);
+      // Fingers wrapped round a skull are not fingers closed on nothing. The
+      // held pose rests them FLATTER so they drape over the bone instead of
+      // curling into the air in front of it — which is what let the seat come
+      // close enough to read as a grip while still measuring zero buried.
+      // The amount is driven by the pose's own blend, so the empty hand keeps
+      // exactly the curl it was tuned with (it is the pose he says already
+      // works), and `_grip` — with its threat tightening and its catch feel —
+      // is not touched at all.
+      // Both the rest bend AND the grip's contribution shrink while holding.
+      // The reference image's fingers are nearly straight, laid flat along the
+      // cranium; a 37-degree first joint reads as a fist closed on air no
+      // matter where the hand is seated. Threat still tightens them, the
+      // tremble is untouched, and `_grip` itself is never written here.
+      const held01 = 1 - (this._handPose ? this._handPose.t : 1);
+      f.k1.rotation.x = -(0.35 - 0.20 * held01 + curl * (0.75 - 0.30 * held01));
+      f.k2.rotation.x = -(0.3 - 0.16 * held01 + curl * (0.95 - 0.38 * held01));
     }
   }
 
@@ -546,6 +1108,10 @@ export class Skull {
   }
 
   _applyPendingStageIfUnseen() {
+    // The arrival flicker owns the stage machinery outright for its 3.6s —
+    // no growth request may interleave with the strobe. It ends by settling
+    // to setStage(0), which also zeroes pendingStage (boot state).
+    if (this.introFlicker) return;
     if (this.pendingStage <= this.stage) return;
     if (this.mode === 'gone') { this.setStage(this.pendingStage); return; }
     if (this.mode === 'held') return;              // guaranteed foreground view
@@ -559,6 +1125,49 @@ export class Skull {
   }
 
   // ---------------------------------------------------------------- state
+  // THE LAST ROOM. The hands you have watched all game are bone, and always
+  // were — and Alex: "they must be actually bones like a skeleton. right now
+  // they don't look like that." They didn't, because this used to be a
+  // material swap: the same fat capsules, the same webbing between the finger
+  // roots, the same fingernails, painted bone. A glove.
+  // The flesh goes out and the skeleton underneath comes on: phalanx shafts
+  // and condyles inside the same k1/k2 groups, four metacarpals and a carpal
+  // block where the palm sphere was. Same rig, same authored poses, and the
+  // gaps between the bones are the read. Colour and surface are taken off the
+  // SKULL's own bone so the two are one body, which is the whole point — and
+  // _handSkin.skin keeps its identity and its copied colour, because that is
+  // the thing the playthrough compares.
+  becomeBone(boneMat) {
+    if (this._handsBone || !this._handSkin || !boneMat) return false;
+    this._handsBone = true;
+    const { skin, crease, nail } = this._handSkin;
+    skin.color.copy(boneMat.color);
+    skin.roughness = boneMat.roughness ?? 0.9;
+    crease.color.copy(boneMat.color).multiplyScalar(0.55);
+    crease.roughness = 1.0;
+    nail.color.copy(boneMat.color).multiplyScalar(0.82);
+    if (this._handBoneMat) {
+      for (const [mat, k] of [[this._handBoneMat, 1], [this._handJointMat, 0.84]]) {
+        mat.color.copy(boneMat.color).multiplyScalar(k);
+        mat.map = boneMat.map || null;
+        mat.bumpMap = boneMat.bumpMap || null;
+        mat.bumpScale = boneMat.bumpScale ?? 1;
+        mat.roughness = boneMat.roughness ?? 0.62;
+        mat.needsUpdate = true;
+      }
+    }
+    for (const m of (this._handFlesh || [])) m.visible = false;
+    for (const m of (this._handBone || [])) m.visible = true;
+    return true;
+  }
+
+  // Bring the sunken hands back up for a beat. 'gone' is permanent and the
+  // hands stopped waiting for a catch long ago; this is not a catch, it is
+  // being shown something. Camera and movement stay live throughout.
+  raiseHands(seconds = 6) {
+    this._handRaise = Math.max(this._handRaise || 0, seconds);
+  }
+
   holdNow() {
     this.mode = 'held';
     this.anchor = null;
@@ -679,9 +1288,100 @@ export class Skull {
   vanish() {
     // the waterfall. it does not come back.
     this.mode = 'gone';
+    // Its LIGHTS must not leave with it, though. skull.root carries the
+    // carried lantern and the ember socket light, and pulling that subtree out
+    // of the scene drops two point lights out of the shader light census --
+    // which makes three.js recompile every lit material in the game. Measured
+    // at four to seven seconds of hard freeze landing precisely on the one
+    // beat the whole act is built to deliver. Park them in the pinned census
+    // root instead, muted: no pixel changes, the count never moves.
+    const lightRoot = this.world?.lightRoot;
+    if (lightRoot) {
+      const carried = [];
+      this.root.traverse((o) => { if (o.isLight) carried.push(o); });
+      for (const light of carried) {
+        lightRoot.attach(light);
+        light.visible = false;   // World.pinLight mutes to black, never hides
+      }
+    }
     if (this.root.parent) this.root.parent.remove(this.root);
     this.tether.visible = false;
     this.audio.skullMoanStop();
+  }
+
+  bootAbsent() {
+    // THE NEW OPENING: a fresh run wakes empty-handed — the skull is not in
+    // the world yet; it arrives later by shattering the bedroom window.
+    // This is exactly vanish()'s proven census-safe parking pattern (root
+    // removed, every light in the subtree parked in the pinned census root
+    // and muted) minus the waterfall connotations — and, unlike vanish(),
+    // recoverable: each light's home parent and local transform is recorded
+    // so arriveRestore() can put everything back. Must only run AFTER
+    // World.pinLightCensus (the pin counts these lights with skull.root as a
+    // carrier FIRST; parking via lightRoot keeps the census constant).
+    this.mode = 'gone';
+    this.anchor = null;
+    this._catchFx = null;
+    this.introFlicker = null;
+    const lightRoot = this.world?.lightRoot;
+    if (lightRoot) {
+      this._absentLights = this._absentLights || [];
+      const carried = [];
+      this.root.traverse((o) => { if (o.isLight) carried.push(o); });
+      for (const light of carried) {
+        if (!this._absentLights.some((r) => r.light === light)) {
+          this._absentLights.push({
+            light,
+            parent: light.parent,
+            position: light.position.clone(),
+            quaternion: light.quaternion.clone(),
+            scale: light.scale.clone(),
+          });
+        }
+        lightRoot.attach(light);
+        light.visible = false;   // World.pinLight mutes to black, never hides
+      }
+    }
+    if (this.root.parent) this.root.parent.remove(this.root);
+    this.tether.visible = false;
+    this.audio.skullMoanStop();
+  }
+
+  arriveRestore() {
+    // The restore half of bootAbsent(): root back under the scene, lights back
+    // in their home sockets, unmuted. Mode STAYS 'gone' — the bedroom arrival
+    // script owns the scripted inbound flight (in 'gone' no _collide and no
+    // _checkTargets can ever run, which is the key guard) and calls holdNow()
+    // itself at the catch. Teleport's instant completion calls this too, then
+    // holdNow() immediately. Order matters: the root joins the scene BEFORE
+    // the lights re-enter it, so no light ever sits in a detached subtree
+    // (which would drop it from the census and recompile every lit material).
+    if (!this.root.parent) this.scene.add(this.root);
+    this.root.traverse((o) => { if (!o.isLight) o.layers.set(0); });
+    this.root.position.copy(this.pos);
+    this.root.scale.setScalar(1);
+    for (const r of this._absentLights || []) {
+      r.parent.add(r.light);
+      r.light.position.copy(r.position);
+      r.light.quaternion.copy(r.quaternion);
+      r.light.scale.copy(r.scale);
+      r.light.visible = true;   // the pinLight setter unmutes colour; the count never moves
+    }
+    this._absentLights = null;
+  }
+
+  beginIntroFlicker() {
+    // The arrival script calls this right after holdNow(): for ~3.6s the
+    // caught thing strobes human head <-> bone before settling as the skull
+    // we know. Opens ON the head — the shock lands the same frame as the
+    // catch. Driven per-frame in _updateHeld; presentation only.
+    this.introFlicker = {
+      t: 0, dur: 3.6,
+      next: 0.09 + Math.random() * 0.1,
+      showHead: true,
+      snapT: 0.3, snapHold: 0,
+    };
+    this.setStage(5);
   }
 
   setThreat(level, dir) {
@@ -770,23 +1470,58 @@ export class Skull {
     this.camera.getWorldPosition(V.f);
     if (V.e.distanceToSquared(V.f) > 1e-6) this.root.lookAt(V.f);
 
-    // jaw: slow drift open, then SNAP shut. while charging it opens wide.
-    this._jawSnapT -= dt;
-    if (c > 0.05) {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.5 + c * 0.25, 8, dt);
-    } else if (this.threat > 0.02) {
-      // chatter: rate and bite scale with threat — this is the radar
-      const rate = 6 + this.threat * 20;
-      this.jaw.rotation.x = Math.max(0, Math.sin(t * rate * TAU * 0.5)) * (0.05 + this.threat * 0.14);
-      this.audio.skullChatter(this.threat, this.root.getWorldPosition(V.c));
-    } else if (this._jawSnapT < 0.35 && this._jawSnapT > 0) {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.4, 3, dt);   // slow creep open
-    } else if (this._jawSnapT <= 0) {
-      this.jaw.rotation.x = 0;                                       // SNAP
-      this._jawSnapT = 3 + Math.random() * 6;
-      this.audio.skullChatter(0.25, this.root.getWorldPosition(V.c));
+    // THE FLICKER (bedroom arrival): for ~3.6s after the window catch the
+    // thing in your hands strobes human head <-> bone. Irregular 80-220ms
+    // swaps — shape/brightness/timing carry the read, never hue — with the
+    // intervals lengthening over the last 1.2s so the head visibly LOSES and
+    // it settles as the skull. While it runs, the jaw mashes (~11 Hz) with
+    // hard bite snaps and the radar voice plays at maximum from the hold pos:
+    // the loudest chatter in the game, in your own hands, teaching the threat
+    // sound in the same stroke. Presentation plus one input gate in main.js;
+    // every FEEL constant untouched.
+    if (this.introFlicker) {
+      const f = this.introFlicker;
+      f.t += dt;
+      if (f.t >= f.dur) {
+        this.setStage(0);      // it becomes the skull we know; pendingStage 0 = boot state
+        this.jaw.rotation.x = 0;
+        this.introFlicker = null;
+      } else {
+        if (f.t >= f.next) {
+          f.showHead = !f.showHead;
+          this.setStage(f.showHead ? 5 : 0);
+          let interval = 0.08 + Math.random() * 0.14;          // irregular strobe
+          const settle = smoothstep(f.dur - 1.2, f.dur, f.t);  // the last 1.2s
+          interval *= 1 + settle * 2.2;                        // it slows...
+          if (!f.showHead) interval *= 1 + settle * 0.8;       // ...and bone holds longest
+          f.next = f.t + interval;
+        }
+        // menacing jaw mash with irregular hard bite snaps
+        f.snapT -= dt;
+        if (f.snapT <= 0) { f.snapT = 0.26 + Math.random() * 0.42; f.snapHold = 0.055; }
+        if (f.snapHold > 0) { f.snapHold -= dt; this.jaw.rotation.x = 0; }
+        else this.jaw.rotation.x = Math.max(0, Math.sin(f.t * 11 * TAU)) * 0.34;
+        this.audio.skullChatter(1.0, this.root.getWorldPosition(V.c));
+      }
     } else {
-      this.jaw.rotation.x = damp(this.jaw.rotation.x, 0, 6, dt);
+      // jaw: slow drift open, then SNAP shut. while charging it opens wide.
+      this._jawSnapT -= dt;
+      if (c > 0.05) {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.5 + c * 0.25, 8, dt);
+      } else if (this.threat > 0.02) {
+        // chatter: rate and bite scale with threat — this is the radar
+        const rate = 6 + this.threat * 20;
+        this.jaw.rotation.x = Math.max(0, Math.sin(t * rate * TAU * 0.5)) * (0.05 + this.threat * 0.14);
+        this.audio.skullChatter(this.threat, this.root.getWorldPosition(V.c));
+      } else if (this._jawSnapT < 0.35 && this._jawSnapT > 0) {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0.4, 3, dt);   // slow creep open
+      } else if (this._jawSnapT <= 0) {
+        this.jaw.rotation.x = 0;                                       // SNAP
+        this._jawSnapT = 3 + Math.random() * 6;
+        this.audio.skullChatter(0.25, this.root.getWorldPosition(V.c));
+      } else {
+        this.jaw.rotation.x = damp(this.jaw.rotation.x, 0, 6, dt);
+      }
     }
     if (this.carry) {
       // An occupied mouth never seals the objective behind its own teeth.
@@ -1002,16 +1737,13 @@ export class Skull {
       // grammar as every other throw. It also keeps facing you while it holds,
       // because it is still your light and you are still going to need it.
       this.root.lookAt(this.camera.getWorldPosition(_anchorLook));
+      if (!ctx.throwHeld && a.t > 0.06) {
+        this.anchor = null;
+        this.beginReturn('snap');
+        return;
+      }
     } else {
       this.root.rotation.y += dt * 0.4;
-    }
-    // Physical puzzle clamps may opt into the same press/hold/release promise
-    // as rope anchors without also turning the player into a swing. A quick
-    // tap therefore recalls the skull instead of silently waiting out maxHold.
-    if ((a.swing || a.releaseable) && !ctx.throwHeld && a.t > 0.06) {
-      this.anchor = null;
-      this.beginReturn('snap');
-      return;
     }
     // failsafe: never hang forever
     if (a.t > (a.maxHold || 3.5)) {
@@ -1034,6 +1766,21 @@ export class Skull {
         this.vel.y *= -0.62;
         this.vel.x *= 0.96; this.vel.z *= 0.96;
         this._bounceFx(Math.abs(this.vel.y));
+      }
+    }
+
+    // ceiling — the same contract as the ground, at the other end. Without it
+    // a throw at the roof left the house entirely and the room answered with
+    // nothing at all, which is the one thing a gameplay surface may never do.
+    if (w.ceilingHeightAt) {
+      const ch = w.ceilingHeightAt(this.pos.x, this.pos.z, this.pos.y);
+      if (ch < Infinity && this.pos.y + r > ch) {
+        this.pos.y = ch - r;
+        if (this.vel.y > 0) {
+          this.vel.y *= -0.62;
+          this.vel.x *= 0.96; this.vel.z *= 0.96;
+          this._bounceFx(Math.abs(this.vel.y));
+        }
       }
     }
 
@@ -1090,12 +1837,6 @@ export class Skull {
   }
 
   _checkTargets(ctx) {
-    // Flight and return animation continue beneath the death veil so the skull
-    // never freezes in mid-air. Interactions do not. A target hit is an authored
-    // state commit (keys, boards, flames, ropes, exits), and an already-flying
-    // skull must not spend one after the player has died or control has passed
-    // into a terminal/transition state.
-    if (ctx?.interactionsLive === false) return;
     // swept segment prevPos→pos vs target spheres
     const seg = W.a.copy(this.pos).sub(this.prevPos);
     const segLen = seg.length();

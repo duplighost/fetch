@@ -45,11 +45,8 @@ async function runSeed(seed) {
     let maxSimultaneousStrikes = 0;
     let unclaimedStrikes = 0;
     let pops = 0;
-    let arenaPops = 0;
     let quietStuns = 0;
     let resonancePulses = 0;
-    let resonanceRests = 0;
-    let insideResonance = false;
     let minThreatDistance = Infinity;
     const stateBefore = new WeakMap();
 
@@ -104,24 +101,13 @@ async function runSeed(seed) {
     const originalOnPop = g.director.onPop.bind(g.director);
     g.director.onPop = (enemy) => {
       pops++;
-      if (enemy?.graveArena) arenaPops++;
       return originalOnPop(enemy);
     };
 
-    const originalLayToRest = g.enemies._layToRest.bind(g.enemies);
-    g.enemies._layToRest = (enemy) => {
-      if (insideResonance && enemy?.graveArena && enemy.state !== 'dying') resonanceRests++;
-      return originalLayToRest(enemy);
-    };
     const originalPulse = g.enemies.resonancePulse.bind(g.enemies);
     g.enemies.resonancePulse = (...args) => {
       resonancePulses++;
-      insideResonance = true;
-      try {
-        return originalPulse(...args);
-      } finally {
-        insideResonance = false;
-      }
+      return originalPulse(...args);
     };
 
     const aimAt = (x, y, z) => {
@@ -264,10 +250,8 @@ async function runSeed(seed) {
       strikes,
       deaths,
       pops,
-      arenaPops,
       quietStuns,
       resonancePulses,
-      resonanceRests,
       minThreatDistance: Number.isFinite(minThreatDistance) ? +minThreatDistance.toFixed(3) : null,
       trace,
       remaining: g.enemies.list.filter((enemy) => enemy.graveArena && enemy.state !== 'dying')
@@ -351,13 +335,9 @@ try {
     report.seeds.every((seed) => seed.clear && !seed.dead && seed.wave === 3),
     report.seeds.map((seed) => ({ seed: seed.seed, clear: seed.clear, dead: seed.dead,
       wave: seed.wave, guard: seed.guard, deaths: seed.deaths })));
-  check('every fight uses quiet stuns and deliberate loud pops, with all sixteen bodies accounted for',
-    report.seeds.every((seed) => seed.arenaPops > 0
-      && seed.quietStuns >= seed.arenaPops
-      && seed.arenaPops + seed.resonanceRests >= 16
-      && seed.skullMode === 'held'),
+  check('every fight uses quiet stuns and deliberate loud pops',
+    report.seeds.every((seed) => seed.pops >= 16 && seed.quietStuns >= seed.pops && seed.skullMode === 'held'),
     report.seeds.map((seed) => ({ seed: seed.seed, pops: seed.pops,
-      arenaPops: seed.arenaPops, resonanceRests: seed.resonanceRests,
       quietStuns: seed.quietStuns, pulses: seed.resonancePulses, skull: seed.skullMode })));
   check('only claimed walkers enter a graveyard strike',
     report.seeds.every((seed) => seed.unclaimedStrikes === 0),

@@ -35,7 +35,7 @@ try {
       poolLength: g.gorePool.length,
       poolMeshes: g.scene.children.filter((o) => o.userData?.fetchGorePool).length,
       sceneChildren: g.scene.children.length,
-      caveLights: g.underfalls.lights.map((light) => light.visible),
+      caveLights: g.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
       candles: g.world.candlePool.map((light) => ({ visible: light.visible, intensity: light.intensity })),
       enemyTrace: {
         enemies: g.enemies.list.length,
@@ -51,7 +51,7 @@ try {
   check(initial.pool.capacity === 64 && initial.poolLength === 64,
     'impact fragment storage is a fixed 64-slot pool');
   check(initial.poolMeshes === 1, 'one resident InstancedMesh owns every impact fragment');
-  check(initial.caveLights.every((visible) => visible === false),
+  check(initial.caveLights.every((emitting) => emitting === false),
     'Underfalls lights are restored before the page becomes ready');
   check(initial.candles.every((light) => light.visible),
     'all candle-pool lights remain resident');
@@ -77,110 +77,54 @@ try {
       preStartTrace,
       elapsedMs: performance.now() - before,
       started: g.started,
+      acknowledged: g.el.title.classList.contains('waking'),
+      buttonDisabled: !!g.el.title.querySelector('[data-action="start"]')?.disabled,
       titleHidden: g.el.title.classList.contains('hidden'),
-      caveLights: g.underfalls.lights.map((light) => light.visible),
+      caveLights: g.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
     };
   });
-  check(start.started && start.titleHidden,
-    'start remains synchronous while scheduled shader work settles',
-    `${start.warmupStatus}; ${start.elapsedMs.toFixed(3)}ms`);
+  // ROUND FIVE INVERTED THIS CONTRACT ON PURPOSE. Start used to return
+  // instantly by CANCELLING the warm work, which is how ~230 programs ended up
+  // being paid for mid-play, one district at a time. Now the press is answered
+  // instantly (the title takes its pressed state and stops accepting clicks)
+  // and the game enters when the world is warm. What must stay true is that the
+  // press is never SILENT: no frame may pass with an unanswered click.
+  check((start.acknowledged || start.started) && start.buttonDisabled && start.elapsedMs < 60,
+    'the title answers the press in the same frame: it enters, or it holds the press',
+    `${start.warmupStatus}; ${start.elapsedMs.toFixed(3)}ms; acknowledged=${start.acknowledged}; started=${start.started}`);
+  await page.waitForFunction(() => window.__game.started === true, null, { timeout: 90000, polling: 50 });
+  const entered = await page.evaluate(() => ({
+    started: window.__game.started,
+    titleHidden: window.__game.el.title.classList.contains('hidden'),
+    waking: window.__game.el.title.classList.contains('waking'),
+    warmSettled: window.__FETCH.warm().settled,
+    programsAtEntry: window.__FETCH.warm().programsAtEntry,
+    programsNow: window.__FETCH.warm().programsNow,
+  }));
+  check(entered.started && entered.titleHidden && !entered.waking && entered.warmSettled,
+    'the game enters warm, and the title lets go of its pressed state',
+    JSON.stringify(entered));
+  check(entered.programsAtEntry === entered.programsNow,
+    'entry happens after the last program links, not before',
+    `${entered.programsAtEntry} -> ${entered.programsNow}`);
   check(start.preStartTrace.enemies === initial.enemyTrace.enemies
       && start.preStartTrace.choir === initial.enemyTrace.choir
       && start.preStartTrace.spawnSerial === initial.enemyTrace.spawnSerial
       && start.preStartTrace.spawnLog === initial.enemyTrace.spawnLog,
     'warm-up restores enemy, Choir, serial, and spawn-log gameplay state',
     `${JSON.stringify(initial.enemyTrace)} -> ${JSON.stringify(start.preStartTrace)}`);
-  check(start.caveLights.every((visible) => visible === false),
+  check(start.caveLights.every((emitting) => emitting === false),
     'starting from the title does not activate cave lights');
 
-  await page.evaluate(async () => {
-    const g = window.__game;
-    const generation = g._webglGeneration;
-    const snapshot = () => {
-      const shader = g.shaderWarmup;
-      const residency = g.currentGpuResidency;
-      const progress = residency?.progressive;
-      const lastJob = shader?.compileJobs?.at(-1);
-      const finaleTarget = g.finale?._targetWarmState;
-      return {
-        generation: g._webglGeneration,
-        shaderGeneration: shader?.generation ?? null,
-        status: shader?.status || null,
-        reason: shader?.reason || null,
-        recoveryRound: shader?.recoveryRound ?? null,
-        recoveryScheduled: !!shader?.recoveryScheduled,
-        setupSlices: shader?.setupSlices?.length || 0,
-        compileSlices: shader?.compileSlices?.length || 0,
-        textureSlices: shader?.textureSlices?.length || 0,
-        compileJobs: shader?.compileJobs?.length || 0,
-        compileJobsInFlight: shader?.compileJobsInFlight || 0,
-        compileInFlightLabel: shader?.compileInFlightLabel || null,
-        pendingTextures: shader?.pendingTextures || 0,
-        texturesDiscovered: shader?.texturesDiscovered ?? null,
-        texturesWarmed: shader?.texturesWarmed ?? null,
-        currentExactKey: shader?.currentExactKey || null,
-        currentExactRevision: shader?.currentExactRevision ?? null,
-        currentExactStatus: shader?.currentExactStatus || null,
-        currentExactSignatureSlices: shader?.currentExactSignatureSlices ?? null,
-        currentExactLiveSignatureSlices: shader?.currentExactLiveSignatureSlices ?? null,
-        readyVariants: shader?.readyVariants?.length || 0,
-        lastReadyVariant: shader?.readyVariants?.at(-1) || null,
-        lastJob: lastJob ? {
-          label: lastJob.label || null,
-          settledMs: lastJob.settledMs ?? null,
-          error: lastJob.error || null,
-        } : null,
-        residencyGeneration: residency?.generation ?? null,
-        activeKey: residency?.activeKey || null,
-        progressKey: progress?.key || null,
-        physical: !!(residency?.activeKey && residency.physical?.has(residency.activeKey)),
-        snapshotPhase: progress?.snapshotPhase || null,
-        snapshotSlices: progress?.snapshotSlices ?? null,
-        batches: progress?.batches ?? null,
-        queue: progress?.queue?.length || 0,
-        processed: progress?.processed?.size ?? null,
-        exactQueue: progress?.exactQueue?.length || 0,
-        exactCovered: progress?.exactCovered?.size || 0,
-        exactUniverse: progress?.exactUniverse?.size || 0,
-        exactShaderRevision: progress?.exactShaderRevision ?? null,
-        reducedPasses: residency?.reducedPasses?.length ?? null,
-        exactPreloadPasses: residency?.exactPreloadPasses?.length || 0,
-        finaleTarget: finaleTarget ? {
-          generation: finaleTarget.generation ?? null,
-          status: finaleTarget.status || null,
-          index: finaleTarget.index ?? null,
-          warmed: finaleTarget.warmed ?? null,
-          failedCount: finaleTarget.failedTargets?.length || 0,
-          recoveryScheduled: !!finaleTarget.recoveryScheduled,
-        } : null,
-        errorCount: shader?.errors?.length || 0,
-        lastError: shader?.errors?.at(-1) || null,
-      };
-    };
-    const signature = () => JSON.stringify(snapshot());
-    const hardDeadline = performance.now() + 240000;
-    let progressDeadline = performance.now() + 30000;
-    let previous = signature();
-    while (performance.now() < hardDeadline) {
-      const shader = g.shaderWarmup;
-      if (!shader || g._webglGeneration !== generation
-          || shader.generation !== generation || shader.status === 'invalidated'
-          || shader.status === 'skipped'
-          || (shader.status === 'degraded' && !shader.recoveryScheduled)) {
-        throw new Error(`performance-pool warmup entered a terminal state: ${signature()}`);
-      }
-      if (shader.status === 'ready') return;
-      const next = signature();
-      if (next !== previous) {
-        previous = next;
-        progressDeadline = performance.now() + 30000;
-      } else if (performance.now() >= progressDeadline) {
-        throw new Error(`performance-pool warmup made no progress: ${next}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`performance-pool warmup exceeded 240s: ${signature()}`);
-  });
+  // 'created' (every program handed to the driver) is not the end of the
+  // warm-up: 'ready' is the driver reporting its background compile finished.
+  // The game enters at 'created' on purpose; this suite waits for the whole
+  // thing before it audits what the pass left behind.
+  await page.waitForFunction(
+    () => ['ready', 'degraded', 'skipped'].includes(window.__game.shaderWarmup.status),
+    null,
+    { timeout: 120000, polling: 100 },
+  );
   await page.evaluate(() => {
     // Settle ordinary lazy WebGL uploads before attributing memory movement to
     // the fragment pool itself.
@@ -334,57 +278,26 @@ try {
   const warmup = await page.evaluate(() => ({
     ...window.__game.shaderWarmup,
     retainedMaterials: window.__game._shaderWarmMaterials?.length || 0,
-    caveLights: window.__game.underfalls.lights.map((light) => light.visible),
+    caveLights: window.__game.underfalls.lights.map((light) => light.color.getHex() !== 0 && light.intensity > 0),
   }));
   check(warmup.status === 'ready',
     'ordinary, hidden-threat/cave, and grain shader variants finish warming',
     `${warmup.mode}; errors=${warmup.errors.join(' | ') || 'none'}`);
-  check(warmup.caveLights.every((visible) => visible === false),
+  check(warmup.caveLights.every((emitting) => emitting === false),
     'async completion leaves the Underfalls light rig inactive');
   check(warmup.retainedMaterials === 9,
     'warm-up retains only the nine on-demand threat materials',
     `${warmup.retainedMaterials}`);
-  const fallback = await page.evaluate(async () => {
+  // The warm pass never awaits the driver. compileAsync() polls isReady() every
+  // 10 ms and, on ANGLE/D3D11, that poll blocks: it turned the warm pass into a
+  // single ten-second frame (10052 ms measured, against 599 ms for the same
+  // work compiled synchronously). Nothing here may quietly go back to awaiting.
+  const fallback = await page.evaluate(() => {
     const g = window.__game;
-    const compileAsync = g.renderer.compileAsync;
-    g.renderer.compileAsync = undefined;
-    let result;
-    try {
-      const job = g._compileWarmVariant(g.grainScene, g.grainCam);
-      const detail = await job;
-      result = {
-        returnedPromise: !!job && typeof job.then === 'function',
-        generation: detail?.generation ?? null,
-        currentGeneration: g._webglGeneration,
-        invalidated: detail?.invalidated === true,
-        programs: detail?.programs ?? null,
-        identities: detail?.identities?.length ?? null,
-        submitDurationMs: detail?.submitDurationMs ?? null,
-        readinessPolls: detail?.readinessPolls ?? null,
-        maxSynchronousSliceMs: detail?.maxSynchronousSliceMs ?? null,
-      };
-    } finally {
-      g.renderer.compileAsync = compileAsync;
-    }
-    return {
-      ...result,
-      compileAsyncRestored: g.renderer.compileAsync === compileAsync,
-    };
+    return g._compileWarmVariant(g.grainScene, g.grainCam) === null
+      && g.shaderWarmup.mode === 'sync';
   });
-  check(fallback.returnedPromise
-      && fallback.generation === fallback.currentGeneration
-      && fallback.invalidated === false
-      && fallback.programs > 0
-      && fallback.identities === fallback.programs
-      && Number.isFinite(fallback.submitDurationMs)
-      && fallback.submitDurationMs >= 0
-      && Number.isFinite(fallback.readinessPolls)
-      && fallback.readinessPolls > 0
-      && Number.isFinite(fallback.maxSynchronousSliceMs)
-      && fallback.maxSynchronousSliceMs >= 0
-      && fallback.compileAsyncRestored,
-  'sync renderer.compile fallback returns an awaited same-generation readiness certificate',
-  JSON.stringify(fallback));
+  check(fallback, 'the warm pass compiles synchronously and returns nothing to await');
   check(errors.length === 0, 'browser emitted no page or console errors', errors.join(' | '));
 } finally {
   await browser.close();

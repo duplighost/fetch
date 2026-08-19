@@ -33,7 +33,9 @@ try {
       F.start();
       F.teleport('basement');
       g.flag('ateFlame');
+      g.flag('pilotLit');
       g.flag('pumpGalleryLatched');
+      g.flag('archiveDraftOpened');   // the draft's second half: the archive collar
       const fireDoor = g.world.interactables.find((o) => o.userData.inter?.id === 'incineratorDoor');
       fireDoor.userData.inter.action();
       F.stepWith(0.2, {}, false);
@@ -45,40 +47,13 @@ try {
       g.director.death(null);
       F.stepWith(0.35, {}, false);
       g.director.respawn();
-      F.stepWith(1.7, {}, false);
+      F.stepWith(3.1, {}, false);
       const key = g.world.fetchTargets.find((t) => t.id === 'hatchKey');
-      const abortedState = {
+      const offerState = {
         offer,
         offered: g.incinerator.offered,
         refused: g.incinerator.refused,
         fireRefused: g.flags.has('fireRefused'),
-        keyEnabled: key.enabled,
-        keyVisible: key.object.visible,
-        fireboxEnabled: firebox.enabled,
-        act: g.act,
-      };
-
-      // The unfinished hold must be retryable. Once a later continuous hold
-      // reaches the physical backdraft, that committed key must then survive a
-      // separate death/respawn without duplicating or disappearing.
-      g.skull.holdNow();
-      g.skull.mode = 'outbound';
-      const retry = firebox.onHit.call(firebox, g.skull);
-      F.stepWith(1.5, { throwHeld: true }, false);
-      const committedBeforeDeath = {
-        retry,
-        offered: g.incinerator.offered,
-        refused: g.incinerator.refused,
-        fireRefused: g.flags.has('fireRefused'),
-        keyEnabled: key.enabled,
-        keyVisible: key.object.visible,
-      };
-      g.director.death(null);
-      F.stepWith(0.35, { throwHeld: true }, false);
-      g.director.respawn();
-      F.stepWith(0.2, {}, false);
-      const committedAfterRespawn = {
-        refused: g.incinerator.refused,
         keyEnabled: key.enabled,
         keyVisible: key.object.visible,
         act: g.act,
@@ -95,9 +70,7 @@ try {
       const actAfterQuickRespawn = g.act;
       F.stepWith(1.25, {}, false);
       return {
-        abortedState,
-        committedBeforeDeath,
-        committedAfterRespawn,
+        offerState,
         hatchOpen: g.hatch.open,
         hatchFlag: g.flags.has('hatchOpen'),
         actAfterQuickRespawn,
@@ -105,21 +78,12 @@ try {
         transitionPending: !!g._basementExit,
       };
     });
-    check('death during an unfinished furnace hold cancels cleanly and rearms the firebox',
-      house.abortedState.offer === 'anchor'
-        && !house.abortedState.offered && !house.abortedState.refused
-        && !house.abortedState.fireRefused && !house.abortedState.keyEnabled
-        && !house.abortedState.keyVisible && house.abortedState.fireboxEnabled,
-    house.abortedState);
-    check('a completed retry commits the ash key once and death cannot hide it afterward',
-      house.committedBeforeDeath.retry === 'anchor'
-        && house.committedBeforeDeath.offered && house.committedBeforeDeath.refused
-        && house.committedBeforeDeath.fireRefused
-        && house.committedBeforeDeath.keyEnabled && house.committedBeforeDeath.keyVisible
-        && house.committedAfterRespawn.refused
-        && house.committedAfterRespawn.keyEnabled && house.committedAfterRespawn.keyVisible
-        && house.committedAfterRespawn.act === 'basement',
-    { before: house.committedBeforeDeath, after: house.committedAfterRespawn });
+    check('death during the incinerator refusal cannot hide or disable the hatch key',
+      house.offerState.offer === 'anchor'
+        && house.offerState.offered && house.offerState.refused
+        && house.offerState.fireRefused && house.offerState.keyEnabled
+        && house.offerState.keyVisible,
+    house.offerState);
     check('a quick death/respawn cannot cancel an already-open basement hatch exit',
       house.hatchOpen && house.hatchFlag
         && house.actAfterQuickRespawn === 'basement'
@@ -433,24 +397,19 @@ try {
       g.skull.holdNow();
       g.ossuary.unlock('ritual');
       const state = g.ossuary;
-      // The counterweight lives in the sealed under-yard district now. Walk
-      // the authored entrance instead of exercising it from the graveyard
-      // surface, where its target is deliberately disabled and culled.
-      const entrance = state.entranceConnector;
-      const mausoleum = g.ritualMausoleum;
-      const entryZ = entrance.z0 - 0.18;
-      g.player.pos.set(mausoleum.x, g.world.groundHeightAt(mausoleum.x, entryZ, 2), entryZ);
-      g.player.vel.set(0, 0, 0);
-      g.player.fallV = 0;
-      g.player.grounded = true;
-      g.player.yaw = Math.PI;
-      g.player._sync(0);
-      let entryElapsed = 0;
-      while (!state.inOssuary && entryElapsed < 6) {
-        F.stepWith(0.05, { moveZ: 1 }, false);
-        entryElapsed += 0.05;
-      }
       const target = state.target;
+      // ROUND NINE: the counterweight is DEAD until the kennel cradle arms it
+      // (his note: "there is a weighted basket thing you can use that does
+      // nothing in terms of gameplay"). This page is about hold commitment, not
+      // about the arming, so it takes the same silent restore a respawn takes —
+      // but it asserts the locked answer first, because a locked mechanism that
+      // says nothing is the failure this game keeps having.
+      g.skull.mode = 'outbound';
+      const lockedDirective = target.onHit.call(target, g.skull, target.object.position);
+      const lockedState = { directive: lockedDirective, pulling: state.pulling,
+        progress: state.progress, armed: state.armed };
+      g.skull.holdNow();
+      state.restoreArm();
       const shortPull = () => {
         g.skull.mode = 'outbound';
         const directive = target.onHit.call(target, g.skull, target.object.position);
@@ -473,8 +432,7 @@ try {
           after: ritualCreditsAfter,
         },
         ossuary: {
-          entryElapsed,
-          inOssuary: state.inOssuary,
+          lockedState,
           firstShort,
           secondShort,
           committedDirective,
@@ -496,6 +454,12 @@ try {
         && commitments.tree.collidersCleared
         && commitments.tree.activeLogColliders === 0,
     commitments.tree);
+    check('an unarmed counterweight sends the skull home instead of anchoring',
+      commitments.ossuary.lockedState.directive === 'return'
+        && commitments.ossuary.lockedState.pulling === false
+        && commitments.ossuary.lockedState.progress === 0
+        && commitments.ossuary.lockedState.armed === false,
+    commitments.ossuary.lockedState);
     check('short ossuary pulls decay instead of banking progress between retries',
       commitments.ossuary.firstShort.directive === 'anchor'
         && commitments.ossuary.firstShort.peak > 0.15

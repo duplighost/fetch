@@ -60,27 +60,23 @@ export async function ensureServer() {
   throw new Error(`server failed to start on ${PORT}: ${output.trim()}`);
 }
 
-export async function launchBrowser({ allowAutoplay = true } = {}) {
-  const args = [
-    '--no-first-run', '--no-default-browser-check',
-    '--enable-webgl', '--ignore-gpu-blocklist',
-    '--enable-gpu-rasterization', '--use-angle=d3d11',
-    '--mute-audio',
-  ];
-  if (allowAutoplay) args.push('--autoplay-policy=no-user-gesture-required');
+export async function launchBrowser() {
   return chromium().launch({
     executablePath: CHROME,
     headless: true,
-    args,
+    args: [
+      '--no-first-run', '--no-default-browser-check',
+      '--enable-webgl', '--ignore-gpu-blocklist',
+      '--enable-gpu-rasterization', '--use-angle=d3d11',
+      '--mute-audio', '--autoplay-policy=no-user-gesture-required',
+    ],
   });
 }
 
 export async function openPage(browser, url, { width = 1280, height = 800, quiet = true } = {}) {
   const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
   const errors = [];
-  page.on('pageerror', e => {
-    errors.push('pageerror: ' + (e?.stack || e?.message || e));
-  });
+  page.on('pageerror', e => { errors.push('pageerror: ' + (e && e.message || e)); });
   page.on('console', m => {
     if (/favicon/i.test(m.text())) return;
     if (m.type() === 'error') errors.push('console.error: ' + m.text());

@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { RNG, TAU } from './util.js';
 import { CLEARING_BASIN } from './outside.js';
+import { projectUnderfalls } from './underfalls.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -21,7 +22,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 export function buildAtmosphere(game) {
   const scene = game && game.scene;
   const stats = { drawCalls: 0, triangles: 0, instances: 0, points: 0 };
-  if (!scene) return { group: null, districtRoots: {}, stats, dispose() {} };
+  if (!scene) return { group: null, stats, dispose() {} };
 
   const root = new THREE.Group();
   root.name = 'FETCH atmosphere';
@@ -46,22 +47,11 @@ export function buildAtmosphere(game) {
   const own = (material) => { ownedMaterials.add(material); return material; };
   const ownTexture = (texture) => { ownedTextures.add(texture); return texture; };
 
-  const districtRoots = {};
-  let districtStart = root.children.length;
   buildNightSky(game, root, track, own, tickers);
-  districtRoots.sky = root.children.slice(districtStart);
-  districtStart = root.children.length;
   buildGraveyardDress(game, track, own, ownTexture);
-  districtRoots.graveyard = root.children.slice(districtStart);
-  districtStart = root.children.length;
   buildForestDress(game, track, own, tickers);
-  districtRoots.forest = root.children.slice(districtStart);
-  districtStart = root.children.length;
   buildClearingDress(game, track, own, tickers);
-  districtRoots.clearing = root.children.slice(districtStart);
-  districtStart = root.children.length;
   buildCaveDress(game, track, own, tickers);
-  districtRoots.cave = root.children.slice(districtStart);
 
   // Cave dressing shares the decorative root with the exterior for batching,
   // but it must not leak draw calls (or stars through a shell gap) into the
@@ -106,7 +96,6 @@ export function buildAtmosphere(game) {
   root.userData.stats = stats;
   return {
     group: root,
-    districtRoots,
     stats,
     dispose() {
       if (Array.isArray(game.tickers)) {
@@ -124,6 +113,10 @@ export function buildAtmosphere(game) {
 }
 
 // --------------------------------------------------------------------- sky
+// One moon, agreed on by the disc, its halo and the sky it hangs in.
+const MOON_POS = new THREE.Vector3(-74, 54, -144);
+const MOON_DIR = MOON_POS.clone().normalize();
+
 function buildNightSky(game, root, track, own, tickers) {
   const camera = game.camera;
   if (!camera) return;
@@ -132,26 +125,60 @@ function buildNightSky(game, root, track, own, tickers) {
   sky.name = 'moon sky';
   root.add(sky);
 
+  // The sky was an honest vertical gradient and nothing else: every outdoor
+  // frame in the game — the graveyard, the whole forest looking up, the
+  // clearing the waterfall stands in — ended in the same flat navy wash, so
+  // every silhouette the act builds had nothing to be a silhouette AGAINST.
+  // Three things fix that and all three are pixels, not objects: weather
+  // (drifting cloud, so the sky has form and the tree line has an edge), a moon
+  // that actually lights the air around it, and a horizon a shade warmer than
+  // the zenith so up feels like up. The moon disc below already sits at
+  // MOON_DIR; the sky now agrees with it.
   const domeMat = own(new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
-    uniforms: {},
+    uniforms: { uTime: { value: 0 }, uMoon: { value: MOON_DIR.clone() } },
     vertexShader: `
-      varying float vHeight;
+      varying vec3 vDir;
       void main() {
-        vHeight = normalize(position).y;
+        vDir = normalize(position);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
-      varying float vHeight;
+      varying vec3 vDir;
+      uniform float uTime;
+      uniform vec3 uMoon;
+      float hash21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float vnoise(vec2 p){
+        vec2 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+                   mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+      }
       void main() {
-        float h = clamp(vHeight * 0.5 + 0.5, 0.0, 1.0);
-        vec3 horizon = vec3(0.030, 0.047, 0.078);
-        vec3 zenith = vec3(0.006, 0.009, 0.027);
+        float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
+        vec3 horizon = vec3(0.034, 0.050, 0.082);
+        vec3 zenith = vec3(0.005, 0.008, 0.024);
         vec3 col = mix(horizon, zenith, smoothstep(0.10, 0.92, h));
-        col += vec3(0.018, 0.026, 0.050) * pow(max(vHeight, 0.0), 5.0);
+        col += vec3(0.018, 0.026, 0.050) * pow(max(vDir.y, 0.0), 5.0);
+
+        // the moon owns the air: one tight corona, one broad wash across its
+        // whole quarter of the sky
+        float md = max(0.0, dot(vDir, uMoon));
+        col += vec3(0.085, 0.125, 0.185) * pow(md, 30.0);
+        col += vec3(0.020, 0.030, 0.048) * pow(md, 3.2);
+
+        // cloud, on a plane overhead so it foreshortens toward the horizon
+        // the way real overcast does. Drifting, never repeating on screen.
+        vec2 cp = vDir.xz / max(0.10, vDir.y + 0.24);
+        float n = vnoise(cp * 0.85 + vec2(uTime * 0.0042, uTime * 0.0022)) * 0.56
+                + vnoise(cp * 2.10 - vec2(uTime * 0.0075, 0.0)) * 0.30
+                + vnoise(cp * 4.90) * 0.14;
+        float cloud = smoothstep(0.44, 0.88, n) * smoothstep(-0.03, 0.26, vDir.y);
+        vec3 lit = mix(vec3(0.016, 0.021, 0.034), vec3(0.115, 0.145, 0.195), pow(md, 1.9));
+        col = mix(col, lit, cloud * 0.82);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -213,7 +240,7 @@ function buildNightSky(game, root, track, own, tickers) {
   sky.add(stars);
   noteObject(statsProxy(track), stars, 1);
 
-  const moonPos = new THREE.Vector3(-74, 54, -144);
+  const moonPos = MOON_POS.clone();
   const moon = new THREE.Mesh(
     new THREE.CircleGeometry(5.8, 48),
     own(new THREE.MeshBasicMaterial({ color: 0xe6f2f2, depthWrite: false, fog: false, side: THREE.DoubleSide })),
@@ -257,6 +284,8 @@ function buildNightSky(game, root, track, own, tickers) {
     sky.position.copy(camera.position);
     stars.rotation.y = t * 0.00035;
     halo.scale.setScalar(1 + Math.sin(t * 0.19) * 0.025);
+    // Weather moves. Slowly — this is one still night, not a time-lapse.
+    domeMat.uniforms.uTime.value = t % 100000;
   });
 }
 
@@ -295,6 +324,10 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     [-9, 14, 4.25], [15.6, 31.5, 3.5], [-14.6, 34.2, 3.5],
     [-7.2, 27, 1.9], [9.2, 23, 1.9], [-14.2, 18.4, 1.9], [11.8, 36.2, 1.9],
     [-15.2, 27.2, 1.9], [14.5, 19.4, 1.9], [7.4, 35, 1.9],
+    // the key tree and the staircase of lights that comes down out of it, and
+    // the lock-stone west of the forest gate — a new landmark without a
+    // reservation gets instanced headstones driven through it
+    [5.5, 12.8, 3.4], [-0.35, 41.72, 1.35],
   ];
   const stones = [];
   for (let row = 0; row < 9; row++) {
@@ -332,9 +365,18 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     // their shoulders reads as ground that has been moving for a century.
     it.sink = rng.chance(0.3) ? rng.range(-0.34, -0.12) : rng.range(-0.04, 0.02);
     it.width = rng.range(0.78, 1.2);
-    it.value = rng.range(0.36, 0.84);
     // and no two of them weathered the same. Value only — the whole yard was
     // one flat pale grey before this line.
+    //
+    // The range moves down at both ends. The stones are meant to be this
+    // district's pale landmarks and they stay that — but stoneMat measures
+    // 0.138 linear (probe-albedo), and at the top of the old range that is
+    // 0.116 against a ceiling of 0.03, so the ones you walk past clipped to
+    // featureless white and took their carving with them. A landmark you
+    // cannot read the shape of is not a landmark. Lowering the floor as well
+    // sinks more of them into the dark, which is the other half of the same
+    // job: a yard where every stone is pale has no pale thing in it.
+    it.value = rng.range(0.26, 0.62);
   });
 
   const stoneFamily = (kind, geo, name) => {
@@ -460,7 +502,20 @@ function buildGraveyardDress(game, track, own, ownTexture) {
   // Lantern cages ration pale verticals at the path bends.  They are emissive
   // silhouettes only (no extra dynamic lights), keeping both performance and
   // combat visibility predictable.
-  const lanternSites = [[-3.4, 15.6, -0.12], [0.45, 23.4, 0.08], [3.2, 32.0, -0.08]];
+  // THE ARRIVAL HAD NO FOCAL. Frame 01 is the district's first — you come out
+  // of the house and this is the graveyard's opening statement — and it was a
+  // dark nothing: seventy-five percent near-black with no warm pool and
+  // nothing to look at. The reference image's first property is black corners,
+  // one warm pool, one bright focal, and the gate lanterns at the far end
+  // already prove the recipe works here (frames 09 and 13 are the two in the
+  // set that read).
+  //
+  // So the funeral walk gains one more lantern, standing on the arrival
+  // sightline from the house door at (0,7.5) toward (0,20). No new light — the
+  // ember is unlit MeshBasic, the law about the light census is absolute — and
+  // no new draw: these are three InstancedMeshes and this is a fourth instance
+  // of each.
+  const lanternSites = [[-2.2, 12.4, -0.16], [-3.4, 15.6, -0.12], [0.45, 23.4, 0.08], [3.2, 32.0, -0.08]];
   const postMat = own(cloneTint(game.mats?.metal, 0x20262a,
     () => new THREE.MeshLambertMaterial({ color: 0x20262a })));
   if (postMat.color) postMat.color.multiplyScalar(0.38);
@@ -547,10 +602,14 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     color: 0xffffff, map: bladeTex, alphaTest: 0.45, side: THREE.DoubleSide,
   }));
   const tufts = [];
-  for (let n = 0; n < 620; n++) {
-    const x = rng.range(-19.4, 23.4), z = rng.range(7.2, 41.4);
+  for (let n = 0; n < 800; n++) {
+    // past the rails now, too: the first metres beyond the fence were bald
+    // dirt, and bald ground at the edge of frame is what "drops off onto
+    // nothing" actually looks like
+    const x = rng.range(-25.5, 29.5), z = rng.range(6.6, 46.0);
     if (Math.abs(x - 2) < 1.9 && z > 33) continue;             // keep the gate lane bare
     if (Math.abs(x) < 12 && z < 6.6) continue;                 // and the house apron
+    if (z > 42.6 && Math.abs(x - 2) < 5) continue;             // and the way into the forest
     tufts.push({ x, z, sc: rng.range(0.13, 0.34), rotY: rng.float() * TAU, tint: rng.range(0.3, 0.78) });
   }
   const tuftMesh = new THREE.InstancedMesh(tuftGeo, tuftMat, tufts.length);
@@ -617,19 +676,40 @@ function buildGraveyardDress(game, track, own, ownTexture) {
     geometry.computeVertexNormals();
     return geometry;
   })();
-  const wall = new THREE.InstancedMesh(wallGeo, wallMat, 156);
+  // The far ring at 44-70 m dissolves in 0.034 fog, and Alex looked SIDEWAYS
+  // along the fence rather than at the horizon: "it still looks like empty
+  // space that drops off onto nothing." A second, NEARER ring at 26-42 m sits
+  // inside the band that still reads (~26% transmittance at 40 m), and it is
+  // instances on the same InstancedMesh, so it costs exactly nothing.
+  const trees = [];
   for (let i = 0; i < 156; i++) {
-    const a = rng.range(-0.35, Math.PI + 0.35);
-    const r = rng.range(44, 70);
-    const h = rng.range(8, 17);
-    q.setFromEuler(e.set(0, rng.float() * TAU, 0));
-    m.compose(p.set(2 + Math.cos(a) * r, -0.4, 24 + Math.sin(a) * r * 0.85), q,
-      s.set(rng.range(2.8, 5.7), h, rng.range(2.8, 5.7)));
-    wall.setMatrixAt(i, m);
+    trees.push({ a: rng.range(-0.35, Math.PI + 0.35), r: rng.range(44, 70),
+      h: rng.range(8, 17), ry: rng.float() * TAU,
+      w: rng.range(2.8, 5.7), d: rng.range(2.8, 5.7) });
   }
+  for (let guard = 0, made = 0; guard < 400 && made < 76; guard++) {
+    const a = rng.range(-0.55, Math.PI + 0.55);
+    const r = rng.range(26, 42);
+    const x = 2 + Math.cos(a) * r, z = 24 + Math.sin(a) * r * 0.85;
+    // never in the walled yard, never in the gate's lane or the forest
+    // corridor mouth, and never close enough to hide the key tree
+    if (x > -23 && x < 27 && z > 4 && z < 43) continue;
+    if (Math.abs(x - 2) < 13 && z > 40) continue;
+    if (Math.hypot(x - 5.5, z - 13.6) < 12) continue;
+    made++;
+    trees.push({ a, r, h: rng.range(7, 14), ry: rng.float() * TAU,
+      w: rng.range(2.6, 5.0), d: rng.range(2.6, 5.0) });
+  }
+  const wall = new THREE.InstancedMesh(wallGeo, wallMat, trees.length);
+  trees.forEach((t, i) => {
+    q.setFromEuler(e.set(0, t.ry, 0));
+    m.compose(p.set(2 + Math.cos(t.a) * t.r, -0.4, 24 + Math.sin(t.a) * t.r * 0.85), q,
+      s.set(t.w, t.h, t.d));
+    wall.setMatrixAt(i, m);
+  });
   finishInstances(wall, false, false);
   wall.name = 'far treeline silhouette';
-  track(wall, 156);
+  track(wall, trees.length);
 
   // Stable inspection data for deterministic composition/clearance probes.
   // It deliberately contains no progression state and owns no collisions.
@@ -939,6 +1019,94 @@ function buildClearingDress(game, track, own, tickers) {
       rng.range(-0.3, 0.3), rng.range(0, TAU), rng.range(-0.3, 0.3), scale * 1.5, scale, scale * 1.2));
     colours.push(darkRock.clone().multiplyScalar(rng.range(0.78, 1.12)));
   }
+
+  // THE LIP, and it is SOLID. Round five: the plunge pool is the only walk-in
+  // death water in the game (director.js kills below y -1.5 in this act), and a
+  // player driven at it from 24 bearings drowned on most of them. His answer,
+  // and the right one: ring the water line with bank you cannot walk through.
+  //
+  // These are instances on the talus mesh that is already being built two
+  // dozen lines above, so the whole ring costs no draw call and no geometry —
+  // and, more to the point, it inherits the talus VALUE. The first attempt used
+  // world.box(M.rock), which is also free, and the shot showed exactly what
+  // round four learned from the falls kin: a lit MeshStandard blows to white
+  // under the lantern, and the shore came out as a run of pale slabs — his
+  // "concrete/brick" complaint moved to the water's edge. Rock has to be lit
+  // like the rock beside it.
+  //
+  // The lane (|x| < 3.05, widening to 3.4 where it passes the veil) is the one
+  // gap: the bridge stones rise through it, and outside.js bars it with a sill
+  // that sinks when they do.
+  {
+    const world = game.world;
+    const ground = game.world.terrainHeight;
+    const LIP_R = CLEARING_BASIN.outerR + 0.1;
+    const LANE = 3.05, VEIL_LANE = 3.4, VEIL_Z = 18.5;
+    const RING = 52;
+    for (let i = 0; i < RING; i++) {
+      const th = (i / RING) * TAU;                 // 0 = the near shore, PI = the falls
+      const r = LIP_R + rng.range(-0.2, 0.2);
+      const x = Math.sin(th) * r;
+      const z = CLEARING_BASIN.centerZ - Math.cos(th) * r;
+      if (Math.abs(x) < (z > VEIL_Z ? VEIL_LANE : LANE)) continue;
+      // Stop short of the Underfalls' own ground (its bounds begin at z+20.35).
+      // A collider past that line is an invisible rock INSIDE the cave, and
+      // "I walked behind the first wall" is already one of his notes — the shore
+      // must not answer it with a stone he cannot see. The water north of here
+      // is unreachable anyway: everything inside the ring is behind the ring.
+      if (z > 19.8) continue;
+      const y = ground ? ground(C.x + x, C.z + z) : 0;
+      const scale = rng.range(0.86, 1.12);
+      const w = scale * 1.55, h = scale * 1.02, d = scale * 1.2;
+      // Seated so the crown stands ~0.9 over the ground: STEP_UP is 0.5, so
+      // this is a lip you go around, not a kerb you stroll over.
+      const cy = y + h * 0.42;
+      matrices.push(compose(C.x + x, cy, C.z + z,
+        rng.range(-0.22, 0.22), rng.range(0, TAU), rng.range(-0.22, 0.22), w, h, d));
+      // Darker than the shoulders behind them BECAUSE they are the rock the
+      // player walks up to: the lantern is most of what lights anything within
+      // two metres, and at the shoulders' value this ring photographed as a run
+      // of pale slabs (near-band mean 77 against a 13-30 scene). Value is also
+      // the only channel he reads — no part of this may lean on hue.
+      colours.push(darkRock.clone().multiplyScalar(rng.range(0.34, 0.52)));
+      const half = Math.max(w, d) * 0.62;
+      world.addCollider(C.x + x - half, y - 1.4, C.z + z - half,
+        C.x + x + half, cy + h * 0.62, C.z + z + half);
+    }
+
+    // AND THE NORTH LIP, straight, because the circle cannot reach it. The
+    // ring has to stop short of the Underfalls' ground at z+20.35, which
+    // leaves the water either side of the crossing's LAST stones open — and
+    // that is where he died entering the cave: the cave's lateral clamp only
+    // engages once the act flips at z+20.35, so a step sideways at z 19-20 is
+    // still the clearing, still three metres deep, and still fatal. Two short
+    // runs close it against the falls, leaving the lane itself untouched.
+    // These stand IN the water, not on the bottom. The first attempt seated
+    // them on ground() like the ring, and ground() out here is the basin floor
+    // three to five metres down — the colliders came out with their tops at
+    // y -0.32, -1.23, -2.33, entirely below the player, and the shore probe
+    // walked over them into the deep exactly as before. One crown height for
+    // the whole run, taken from its dry end, and each stone grown downward to
+    // meet whatever is under it.
+    const shoreY = ground ? ground(C.x + 8.1, C.z + 19.75) : 0;
+    for (const side of [-1, 1]) {
+      for (let x = 3.5; x <= 7.6; x += 0.9) {
+        const bx = side * x;
+        const bz = 19.75 + (x % 1.8 < 0.9 ? 0.12 : -0.14);
+        const floor = ground ? ground(C.x + bx, C.z + bz) : 0;
+        const top = shoreY + rng.range(0.82, 0.98);
+        const scale = rng.range(0.9, 1.12);
+        const w = scale * 1.5, d = scale * 1.2;
+        const h = Math.max(1.05, top - floor + 0.4);
+        matrices.push(compose(C.x + bx, top - h * 0.5, C.z + bz,
+          rng.range(-0.16, 0.16), rng.range(0, TAU), rng.range(-0.16, 0.16), w, h, d));
+        colours.push(darkRock.clone().multiplyScalar(rng.range(0.34, 0.52)));
+        const half = Math.max(w, d) * 0.6;
+        world.addCollider(C.x + bx - half, Math.min(floor, top) - 0.5, C.z + bz - half,
+          C.x + bx + half, top, C.z + bz + half);
+      }
+    }
+  }
   const rocks = new THREE.InstancedMesh(rockGeo, rockMat, matrices.length);
   matrices.forEach((matrix, i) => { rocks.setMatrixAt(i, matrix); rocks.setColorAt(i, colours[i]); });
   finishInstances(rocks, true, true);
@@ -968,18 +1136,46 @@ function buildClearingDress(game, track, own, tickers) {
         gl_Position = projectionMatrix * modelViewMatrix * localPosition;
       }
     `,
+    // One sine at 82 cycles across the width, crossed with another at 58 down
+    // it, is a plaid — and that is exactly what the falls read as: corrugated
+    // plastic, the single least convincing surface in the game and the backdrop
+    // of its most important beat. Water does not have one frequency. This is
+    // three ribbon widths of value noise, none of them periodic on screen, all
+    // of them FALLING: packets run down the sheet and accelerate as they go,
+    // the lip stays glassy enough to see the rock through, and the whole thing
+    // breaks into foam by the time it reaches the basin.
     fragmentShader: `
       varying vec2 vUv;
       uniform float uTime;
       uniform float uSeal;
+      float h11(float n){ return fract(sin(n * 127.1) * 43758.5453); }
+      float bands(float x, float f, float s){
+        float p = x * f + s;
+        float i = floor(p), q = fract(p);
+        q = q * q * (3.0 - 2.0 * q);
+        return mix(h11(i), h11(i + 1.0), q);
+      }
       void main(){
-        float ribbons = 0.5 + 0.5 * sin(vUv.x * 82.0 + sin(vUv.y * 17.0 - uTime * 3.2) * 1.8);
-        float ripple = 0.5 + 0.5 * sin(vUv.y * 58.0 - uTime * 9.0 + vUv.x * 12.0);
-        float edge = smoothstep(0.0, 0.11, vUv.x) * smoothstep(0.0, 0.11, 1.0 - vUv.x);
-        float footFoam = 1.0 - smoothstep(0.0, 0.16, vUv.y);
-        vec3 col = mix(vec3(0.25,0.53,0.66), vec3(0.82,0.95,0.98), ribbons * 0.45 + footFoam * 0.35);
-        float alpha = edge * (0.42 + ribbons * 0.28 + ripple * 0.08 + footFoam * 0.15) * (1.0 - uSeal * 0.94);
-        gl_FragColor = vec4(col, alpha);
+        float x = vUv.x, y = vUv.y, t = uTime;
+        float w1 = bands(x + sin(y * 2.6 + t * 0.5) * 0.010, 7.0, 0.0);
+        float w2 = bands(x + sin(y * 5.1 - t * 0.8) * 0.016, 17.0, 5.1);
+        float w3 = bands(x, 41.0, 13.7);
+        float ribbon = w1 * 0.52 + w2 * 0.31 + w3 * 0.17;
+        // gravity: the run repeats faster the further it has fallen. Two runs
+        // at different rates and phases, both smeared wide — one crisp run
+        // draws a chevron front right across the sheet, which is just the
+        // barcode again lying on its side.
+        float runA = fract(y * 1.4 + t * (0.85 + 1.5 * (1.0 - y)) + w2 * 3.1 + w3 * 1.3);
+        float runB = fract(y * 2.3 - t * (1.15 + 0.9 * (1.0 - y)) + w1 * 4.7);
+        float packet = smoothstep(0.18, 1.0, runA) * 0.62 + smoothstep(0.3, 1.0, runB) * 0.38;
+        float breakUp = smoothstep(0.88, 0.12, y);        // glassy at the lip
+        float foot = 1.0 - smoothstep(0.0, 0.21, y);      // foam in the basin
+        float bright = ribbon * 0.55 + packet * breakUp * 0.5 + foot * 0.8;
+        float edge = smoothstep(0.0, 0.13, x) * smoothstep(0.0, 0.13, 1.0 - x);
+        vec3 col = mix(vec3(0.14,0.27,0.37), vec3(0.80,0.92,0.97), clamp(bright, 0.0, 1.0));
+        float alpha = edge * (0.20 + ribbon * 0.33 + packet * breakUp * 0.26 + foot * 0.32)
+                    * (1.0 - uSeal * 0.94);
+        gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
       }
     `,
   }));
@@ -1075,11 +1271,63 @@ function buildClearingDress(game, track, own, tickers) {
     color: 0xc5d9dc, transparent: true, opacity: 0.28,
     depthWrite: false, blending: THREE.AdditiveBlending,
   }));
+  // THE BAR BREAKS THE WATER. Round six, his note: "you can still fall off the
+  // sides of the rocks into the water when crossing them into the waterfall."
+  // outside.js answers it in the terrain — the bargain raises a rubble bar
+  // under the lane, so a missed step is a wet walk back instead of the death
+  // line — but a shallow you cannot SEE is still luck, and nothing below this
+  // water is ever visible: the pool has an opaque murk body filling the basin
+  // (that was the fix for "you can see under the water which is odd"). The
+  // surface is the only place a signal can live.
+  //
+  // So the bar announces itself the way a real one does: the water breaks over
+  // it. Broken water is pure value, pale on black, which is the only channel
+  // he reads. Two ragged runs mark where the shallow ends and a scatter marks
+  // the middle, so the crossing reads as a channel with sides. They are more
+  // instances on the cataract's own foam mesh: no draw call, no geometry, no
+  // new material and therefore no new shader program to go unwarmed.
+  //
+  // Parked nine metres down until the bargain lands — before it the lane is
+  // deep, the sill bars it, and a riffle there would be a lie.
+  const barRng = new RNG(0xba15ee11);
+  const barSites = [];
+  // Small and many, not big and few. The first pass used metre-wide beads and
+  // the shot came back with pale plates floating on the pool like ice — and
+  // worse, they took the eye off the stepping stones, which are the one pale
+  // thing this frame is allowed. A fret is what water does over gravel.
+  for (const side of [-1, 1]) {
+    for (let z = 8.4; z <= 19.2; z += 0.55) {
+      barSites.push({
+        x: side * (4.5 + barRng.range(-0.3, 0.3)), z: z + barRng.range(-0.16, 0.16),
+        sx: barRng.range(0.14, 0.3), sz: barRng.range(0.1, 0.2), ry: barRng.range(0, TAU),
+      });
+    }
+  }
+  for (let i = 0; i < 14; i++) {
+    barSites.push({
+      x: (i % 2 ? 1 : -1) * barRng.range(1.15, 3.7), z: barRng.range(8.6, 19.0),
+      sx: barRng.range(0.12, 0.26), sz: barRng.range(0.09, 0.18), ry: barRng.range(0, TAU),
+    });
+  }
+  const barFirst = foamMatrices.length;
+  const barMatrix = (s, y) => compose(C.x + s.x, y, C.z + s.z, 0, s.ry, 0, s.sx, 0.07, s.sz);
+  for (const s of barSites) foamMatrices.push(barMatrix(s, -9));
+
   const lips = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 4), lipMat, foamMatrices.length);
   foamMatrices.forEach((matrix, i) => lips.setMatrixAt(i, matrix));
   finishInstances(lips, false, false);
   lips.name = 'broken cataract lip foam';
   track(lips, foamMatrices.length);
+  // One write, on the first frame after the bargain, then never again — and it
+  // hangs on the FLAG rather than on the event, so a reload or a death that
+  // respawns past the bargain finds the water already broken.
+  let barBroken = false;
+  tickers.push(() => {
+    if (barBroken || !game.flags?.has('waterfallTaken')) return;
+    barBroken = true;
+    barSites.forEach((s, i) => lips.setMatrixAt(barFirst + i, barMatrix(s, 0.105)));
+    lips.instanceMatrix.needsUpdate = true;
+  });
 
   // Only after the player crosses does the promised water become a rock seal
   // behind them. It never collides or steals control; it is a silhouette and a
@@ -1353,6 +1601,32 @@ function buildCaveDress(game, track, own, tickers) {
     [C.x + 22, C.z + 42, 0, 2.2],
   ];
   const rng = new RNG(0xca9e51de);
+  // Dress rocks may thicken walls but never stand in walkable space: every
+  // wall-skin, ring, and floor-spike instance is projected against the FULL
+  // route union (main + secret corridors + chambers) and pushed outward
+  // along its radial until its footprint clears the lane;
+  // centerline-degenerate instances have no radial and are dropped. Each
+  // push re-projects, so a rock leaving one leg cannot land inside a
+  // neighbouring leg or the secret culvert. Deliberately elevation-blind:
+  // crossing corridors sit at different storeys (bell cistern vs service
+  // climb), so an "overhead" course by its own floor can be head-height in
+  // the lane it intrudes on. Only the mid-lane ceiling course and hanging
+  // teeth stay exempt — they roof the corridor by design.
+  const clearOfRoute = (x, z, half) => {
+    if (!layout) return { x, z };
+    const margin = half + 0.35;
+    let px = x, pz = z;
+    for (let guard = 0; guard < 6; guard++) {
+      const p = projectUnderfalls(layout, px, pz);
+      if (!p || p.clearance >= margin) return { x: px, z: pz };
+      if (p.d < 1e-4) return null;
+      const push = margin - p.clearance + 0.01;
+      px += (px - p.cx) / p.d * push;
+      pz += (pz - p.cz) / p.d * push;
+    }
+    const p = projectUnderfalls(layout, px, pz);
+    return p && p.clearance >= margin ? { x: px, z: pz } : null;
+  };
   const rockMat = own(cloneTint(game.mats?.rock, 0x3e4c56,
     () => new THREE.MeshStandardMaterial({ color: 0x3e4c56, roughness: 0.88, metalness: 0.03 })));
   if ('roughness' in rockMat) rockMat.roughness = 0.88;
@@ -1361,6 +1635,7 @@ function buildCaveDress(game, track, own, tickers) {
     rockMat.emissiveIntensity = 0.23;
   }
   const rockMatrices = [];
+  const rockTiers = [];   // 0 = floor course, 3 = ceiling course — the value ladder
 
   for (let leg = 0; leg < path.length - 1; leg++) {
     const [ax, az, ay = 0, aw = 2.2] = path[leg];
@@ -1380,20 +1655,34 @@ function buildCaveDress(game, track, own, tickers) {
       for (const side of [-1, 1]) {
         // Four interlocked low-poly stones turn the structural wall backing
         // into a continuous, irregular cave silhouette.  Their inner edge
-        // remains just outside the authored 1.65m movement spine.
+        // remains just outside the authored 1.65m movement spine — enforced
+        // against the whole union, not just this leg, so skin from one leg
+        // can never stand inside a crossing corridor.
         for (const layerY of [0.48, 1.38, 2.28, 3.14]) {
           const sc = rng.range(0.42, 0.64);
+          const offX = rng.range(0.92, 1.28);
+          const jitterY = rng.range(-0.16, 0.16);
+          const offZ = rng.range(0.92, 1.28);
+          const rotX = rng.range(-0.48, 0.48);
+          const rotY = rng.range(0, TAU);
+          const rotZ = rng.range(-0.48, 0.48);
+          const sx = sc * rng.range(0.82, 1.0);
+          const sy = sc * rng.range(1.02, 1.34);
+          const sz = sc * rng.range(0.92, 1.18);
+          const placed = clearOfRoute(
+            x + nx * side * (halfW + offX), z + nz * side * (halfW + offZ),
+            Math.max(sx, sz));
+          if (!placed) continue;
+          rockTiers.push([0.48, 1.38, 2.28, 3.14].indexOf(layerY));
           rockMatrices.push(compose(
-            x + nx * side * (halfW + rng.range(0.92, 1.28)),
-            floorY + layerY + rng.range(-0.16, 0.16),
-            z + nz * side * (halfW + rng.range(0.92, 1.28)),
-            rng.range(-0.48, 0.48), rng.range(0, TAU), rng.range(-0.48, 0.48),
-            sc * rng.range(0.82, 1.0), sc * rng.range(1.02, 1.34), sc * rng.range(0.92, 1.18),
+            placed.x, floorY + layerY + jitterY, placed.z,
+            rotX, rotY, rotZ, sx, sy, sz,
           ));
         }
       }
       if (i % 2 === 0) {
-        const sc = rng.range(0.44, 0.66);
+        const sc = rng.range(0.34, 0.52);
+        rockTiers.push(3);
         rockMatrices.push(compose(x + rng.range(-halfW * 0.58, halfW * 0.58), floorY + 4.62, z + rng.range(-halfW * 0.58, halfW * 0.58),
           rng.range(-0.24, 0.24), rng.range(0, TAU), rng.range(-0.24, 0.24), sc * 1.35, sc * 0.58, sc * 1.12));
       }
@@ -1404,24 +1693,62 @@ function buildCaveDress(game, track, own, tickers) {
       const n = Math.max(14, Math.round(chamber.r * 2.8));
       for (let i = 0; i < n; i++) {
         const a = i / n * TAU;
+        // The full ring never consulted the corridors crossing each rim; the
+        // union guard turns those crossings into real doorways instead of a
+        // rock fence across the walkable lane.
         for (const layerY of [0.58, 1.72, 2.86, 4.02]) {
           const scale = rng.range(0.46, 0.68);
+          const ringA = rng.range(1.02, 1.42);
+          const jitterY = rng.range(-0.14, 0.14);
+          const ringB = rng.range(1.02, 1.42);
+          const rotX = rng.range(-0.42, 0.42);
+          const rotYJ = rng.range(-0.35, 0.35);
+          const rotZ = rng.range(-0.42, 0.42);
+          const sy = scale * rng.range(1.18, 1.55);
+          const placed = clearOfRoute(
+            chamber.x + Math.cos(a) * (chamber.r + ringA),
+            chamber.z + Math.sin(a) * (chamber.r + ringB),
+            scale * 1.08);
+          if (!placed) continue;
+          rockTiers.push([0.58, 1.72, 2.86, 4.02].indexOf(layerY));
           rockMatrices.push(compose(
-            chamber.x + Math.cos(a) * (chamber.r + rng.range(1.02, 1.42)),
-            chamber.y + layerY + rng.range(-0.14, 0.14),
-            chamber.z + Math.sin(a) * (chamber.r + rng.range(1.02, 1.42)),
-            rng.range(-0.42, 0.42), a + rng.range(-0.35, 0.35), rng.range(-0.42, 0.42),
-            scale * 1.08, scale * rng.range(1.18, 1.55), scale,
+            placed.x, chamber.y + layerY + jitterY, placed.z,
+            rotX, a + rotYJ, rotZ, scale * 1.08, sy, scale,
           ));
         }
       }
     }
   }
-  const caveRocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, rockMatrices.length);
-  rockMatrices.forEach((matrix, i) => caveRocks.setMatrixAt(i, matrix));
-  finishInstances(caveRocks, true, true);
-  caveRocks.name = 'cave broken wall skin';
-  track(caveRocks, rockMatrices.length);
+  // The value ladder (textures.js's own law: pale > ceiling > walls > floors).
+  // One flat material made 1165 wall stones read as undifferentiated noise —
+  // floor course and ceiling course were the same grey, so the eye had no
+  // horizon anywhere in the district. Four courses, brightest at the floor,
+  // darkening upward; the gradient lives in BOTH diffuse and emissive so it
+  // survives the stretches no light reaches. First tier keeps the canonical
+  // name and carries the other three, so the district culler still finds one
+  // batch.
+  const rockGeoCave = new THREE.DodecahedronGeometry(1, 0);
+  const TIER_VALUE = [1.0, 0.84, 0.7, 0.56];
+  let caveRocks = null;
+  TIER_VALUE.forEach((value, tier) => {
+    const idx = [];
+    for (let i = 0; i < rockMatrices.length; i++) if (rockTiers[i] === tier) idx.push(i);
+    if (!idx.length) return;
+    const mat = own(rockMat.clone());
+    mat.color.multiplyScalar(value);
+    if ('emissiveIntensity' in mat) mat.emissiveIntensity = rockMat.emissiveIntensity * value;
+    const mesh = new THREE.InstancedMesh(rockGeoCave, mat, idx.length);
+    idx.forEach((src, k) => mesh.setMatrixAt(k, rockMatrices[src]));
+    finishInstances(mesh, true, true);
+    track(mesh, idx.length);
+    if (!caveRocks) {
+      caveRocks = mesh;
+      mesh.name = 'cave broken wall skin';
+    } else {
+      mesh.name = `cave broken wall skin course ${tier + 1}`;
+      caveRocks.add(mesh);
+    }
+  });
 
   if (layout?.chambers) {
     const capMatrices = layout.chambers.map((chamber) => compose(
@@ -1457,8 +1784,21 @@ function buildCaveDress(game, track, own, tickers) {
       toothMatrices.push(compose(x + nx * side * (halfW + 0.18), floorY + 4.24, z + nz * side * (halfW + 0.18),
         Math.PI, rng.range(0, TAU), 0, rng.range(0.65, 1.15), h, rng.range(0.65, 1.15)));
       if (rng.chance(0.58)) {
-        toothMatrices.push(compose(x - nx * side * (halfW + 0.18), floorY + h * 0.42, z - nz * side * (halfW + 0.18),
-          0, rng.range(0, TAU), 0, rng.range(0.55, 0.95), h * 0.75, rng.range(0.55, 0.95)));
+        // floor spikes used to sit at halfW+0.18 minus their own radius —
+        // INSIDE the movement clamp, so the player walked through rock,
+        // which is the exact "feeling your way through rocks" complaint.
+        // They stand clear of the lane now — clear of the whole union, not
+        // just this leg's shoulder; the walls keep their teeth.
+        const rotY = rng.range(0, TAU);
+        const spx = rng.range(0.55, 0.95);
+        const spz = rng.range(0.55, 0.95);
+        const placed = clearOfRoute(
+          x - nx * side * (halfW + 0.62), z - nz * side * (halfW + 0.62),
+          Math.max(spx, spz));
+        if (placed) {
+          toothMatrices.push(compose(placed.x, floorY + h * 0.42, placed.z,
+            0, rotY, 0, spx, h * 0.75, spz));
+        }
       }
     }
   }
@@ -1496,8 +1836,14 @@ function buildCaveDress(game, track, own, tickers) {
       const routeT = d / len;
       const floorY = ay + (by - ay) * routeT;
       const halfW = aw + (bw - aw) * routeT;
+      // 0.88 of the chamber radius used to delete the trail across every
+      // chamber -- roughly forty metres of it, including the whole chapel
+      // crossing. The trail therefore vanished at the biggest rooms, which are
+      // exactly the places the player has to choose a direction. Only the
+      // middle of a chamber is kept clear now, where the machines actually
+      // stand; the crystals continue along the route's edge past them.
       if (layout?.chambers?.some((chamber) =>
-        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.88)) continue;
+        Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.42)) continue;
       const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
       const grow = 0.52 + 0.95 * t;
       const bright = 0.38 + 0.62 * t;
@@ -1514,16 +1860,62 @@ function buildCaveDress(game, track, own, tickers) {
       }
     }
   }
-  const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, crystalMatrices.length);
+  // The brightening half of this trail was a no-op, and it is the half that
+  // was supposed to replace the illegal cyan. setColorAt writes per-instance
+  // colour into vColor, and r161's color_fragment is exactly
+  // `diffuseColor.rgb *= vColor` -- it never touches totalEmissiveRadiance.
+  // Out here the crystals sit mostly beyond the reach of any light, so
+  // EMISSIVE is the visible term and the authored 0.38 -> 1.00 gradient was
+  // modulating an albedo nobody was lighting. The size gradient worked; the
+  // brightness gradient did not exist.
+  //
+  // Per-instance emissive needs either a shader patch or separate materials.
+  // Separate materials, because they are in the scene from boot and so are
+  // covered by the boot warmup, and because nothing here should risk the
+  // pinned shader census for two extra draw calls against a 700 budget.
+  // The three tiers stay nested under ONE batch keeping the original name,
+  // because that name is how the district culler recognises cave dressing
+  // (see caveNames above) and how the culling regression counts batches.
+  // Hiding the group hides all three.
+  // The first tier keeps the canonical name and the other two hang off it,
+  // rather than a wrapper Group: buildCaveDress only receives `track`, which
+  // both parents into the atmosphere root AND counts a draw call, so a Group
+  // would bill one draw call for something that draws nothing. Children
+  // inherit visibility, so hiding tier one still sleeps the whole trail.
+  const crystalGeo = new THREE.OctahedronGeometry(1, 0);
+  let trailRoot = null;
+  const TIERS = [
+    { max: 0.34, emissive: 0.20 },
+    { max: 0.67, emissive: 0.55 },
+    { max: 1.01, emissive: 1.15 },
+  ];
   const tintCol = new THREE.Color();
-  crystalMatrices.forEach((matrix, i) => {
-    crystals.setMatrixAt(i, matrix);
-    crystals.setColorAt(i, tintCol.setScalar(crystalTints[i]));
+  TIERS.forEach((tier, ti) => {
+    const lo = ti === 0 ? -1 : TIERS[ti - 1].max;
+    const idx = [];
+    for (let i = 0; i < crystalMatrices.length; i++) {
+      const t = (crystalTints[i] - 0.38) / 0.62;          // back to 0..1 route position
+      if (t > lo && t <= tier.max) idx.push(i);
+    }
+    if (!idx.length) return;
+    const mat = own(crystalMat.clone());
+    mat.emissiveIntensity = crystalMat.emissiveIntensity * tier.emissive;
+    const mesh = new THREE.InstancedMesh(crystalGeo, mat, idx.length);
+    idx.forEach((src, k) => {
+      mesh.setMatrixAt(k, crystalMatrices[src]);
+      mesh.setColorAt(k, tintCol.setScalar(crystalTints[src]));
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    finishInstances(mesh, false, false);
+    track(mesh, idx.length);   // parents into the atmosphere root, counts the draw call
+    if (!trailRoot) {
+      trailRoot = mesh;
+      mesh.name = 'cave mica trail (grows toward the way out)';
+    } else {
+      mesh.name = `cave mica trail tier ${ti + 1} of 3`;
+      trailRoot.add(mesh);     // reparented off the root, under the named batch
+    }
   });
-  if (crystals.instanceColor) crystals.instanceColor.needsUpdate = true;
-  finishInstances(crystals, false, false);
-  crystals.name = 'cave mica trail (grows toward the way out)';
-  track(crystals, crystalMatrices.length);
 
   if (layout) {
     // The interior keeps changing its water vocabulary: wall leaks at the
@@ -1540,6 +1932,32 @@ function buildCaveDress(game, track, own, tickers) {
       [overflow.x - 3.25, overflow.y, overflow.z - 0.7, 2.45, 5.6, 0.66],
       [overflow.x + 3.05, overflow.y, overflow.z + 1.8, 1.35, 4.6, -0.52],
     ];
+    // WALK-THROUGH WATER, ACROSS the route. Alex: "if you have to walk
+    // through things, they should be waterfalls and not rocks." The sheets
+    // above hang BESIDE the lane; these span it, perpendicular to their leg,
+    // so the traverse's tight moments are curtains of falling water the
+    // player passes through — same instanced draw, no collider, no lights.
+    // A pooled candle descriptor at each curtain makes them the corridor's
+    // luminous landmarks (descriptors are census-free).
+    const curtainAt = (a, b, lift = 0) => {
+      const mx = (a.x + b.x) / 2;
+      const mz = (a.z + b.z) / 2;
+      const my = ((a.y || 0) + (b.y || 0)) / 2 + lift;
+      const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+      const width = ((a.w || 2.5) + (b.w || 2.5)) + 0.6;
+      game.world.candles.push({ x: mx, y: my + 1.35, z: mz, intensity: 0.55, r: 4.2 });
+      return [mx, my, mz, width, 4.55, yaw];
+    };
+    drops.push(
+      curtainAt(layout.main[0], layout.main[1]),
+      curtainAt(layout.main[1], layout.main[2]),
+      curtainAt(layout.main[8], layout.main[9]),
+      curtainAt(layout.main[9], layout.main[10]),
+      curtainAt(layout.main[11], layout.main[12]),
+    );
+    if (layout.secret?.[0] && layout.secret?.[1]) {
+      drops.push(curtainAt(layout.secret[0], layout.secret[1]));
+    }
     const dropMat = own(new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -1564,7 +1982,7 @@ function buildCaveDress(game, track, own, tickers) {
           float bead = 0.5 + 0.5 * sin(vUv.y * 71.0 - uTime * 8.4 + vUv.x * 17.0);
           float edge = smoothstep(0.0,0.13,vUv.x) * smoothstep(0.0,0.13,1.0-vUv.x);
           float foot = 1.0 - smoothstep(0.0,0.20,vUv.y);
-          vec3 col = mix(vec3(0.13,0.24,0.29), vec3(0.74,0.88,0.90), seam * 0.5 + foot * 0.35);
+          vec3 col = mix(vec3(0.15,0.27,0.32), vec3(0.82,0.93,0.96), seam * 0.5 + foot * 0.35);
           gl_FragColor = vec4(col, edge * (0.25 + seam * 0.24 + bead * 0.08 + foot * 0.22));
         }
       `,

@@ -1,117 +1,38 @@
-# FETCH — current state of play, 2026-08-11 first-light repair
+# FETCH — current state of play
 
-> **0.6.0-broken-promise SHIPPED BLACK.** The 2026-08-10 release passed every
-> canonical suite and still presented a black screen after Wake on the real
-> player path — two composing renderer bugs, invisible to all `?test=1`
-> gates. Read `docs/FIRST-LIGHT-POSTMORTEM.md` before touching the warmup,
-> residency, or reduced-detail systems. The repair (reduced-compositor
-> `autoClear` + re-armable current-view capture) lives on
-> `claude/first-light`, gated by the new **`node tests/first-light.mjs`** —
-> a real-pixel, real-click gate that is now the fifth mandatory gate
-> alongside smoke / autotest / regressions / playthrough. A renderer that is
-> counters-green can be pixels-black; never certify a release without it.
+> **2026-08-16 (NEWEST): ROUND THREE IS PLANNED AND WAITING TO BE BUILT.**
+> If you are Claude Opus 5 starting fresh: your worktree is
+> `C:\Users\Alex\Projects\fetch-aug16`, branch `claude/aug16-notes`. Read, in
+> order: the TOP section of `docs/HANDOFF.md` there (the build plan, written
+> for you), `docs/CHANGE-ORDER-2026-08-16.md` (Alex's playtest notes verbatim
+> — nine items: gate weights/three-key legibility, key-tree hanging branch,
+> ossuary entrance grammar, marrow key-only altar + both powerups at the
+> gravestone, basement counterweight wired required, graveyard/house perimeter
+> dressing, falls-field paths + popups + stream, Drowned Choir visibility,
+> skeletal finale hands), and per task the matching entry of
+> `docs/analysis/recon-2026-08-16.json` (file:line code maps + root-cause
+> diagnoses from eight parallel readers). Alex pre-approved this round's site
+> deploy in chat. Everything below this banner is the aug13-and-earlier story.
 
-This file is the compact engineering map. Use `docs/WALKTHROUGH.md` for the
-spoiler route, the newest `docs/HANDOFF.md` section for evidence/release work,
-and `docs/PLAYTEST-1.md` for Alex's report-to-change ledger.
+> **2026-08-13 (newest):** the Codex six-notes pass (darkness/creatures/sound)
+> is LIVE on the site via qualiacology PR #52. The ossuary under-yard now has
+> its REAL exit: a two-flight masonry climb up a shaft, a chained deck hatch
+> the counterweight unbolts, a forest-side arrival mouth, a kennel false-back
+> in the west pocket, live resonant-grave niches in the east pocket, and the
+> Standing Kind as the corridor's tethered resident. `regressions` is now
+> **64 checks** (two new ossuary scenarios); `playthrough` climbs the shaft
+> for real. Read the newest `docs/HANDOFF.md` section for exact evidence and
+> release state before touching anything.
 
-## The playable route now
+# 2026-08-10 bell/pilot/intruder recovery (HISTORICAL)
 
-The repaired basement dependency is a partial order, not a scavenger hunt among
-decorative valves:
-
-```text
-bedroom key + nursery key
-  -> servant bell
-servant bell
-  -> guest flame is available now or on a later return
-servant bell + all 3 cellar boards (either order)
-  -> open cellar -> alternate basement pilot flame
-either flame -> ateFlame
-continuous pump hold/cross -> pumpGalleryLatched
-ateFlame + pumpGalleryLatched
-  -> open furnace -> continuously held refusal -> ash key -> hatch
-```
-
-One flame source is required; neither individual source is. The archive wheels
-are locally responsive but optional. The furnace key is not awarded by the
-cage, archive, waiting, or a second throw: one qualified throw must remain held
-through the complete burn/choke/backdraft/pan-ejection sentence.
-
-The graveyard-to-ending route is now physically continuous:
-
-```text
-grave ritual or loud clear
-  -> 12-tread mausoleum descent -> ossuary counterweight
-  -> 15-tread far rise and hatch beyond the gate
-  -> forest tree + forks + required mire rope
-  -> bow the Kneeler on the ground OR take the 3-knot canopy chain
-  -> waterfall sacrifice -> 8-stone bridge
-  -> guided Underfalls route -> ceiling hatch -> mirror contact
-```
-
-The graveyard opening is a real terrain aperture with collision and vegetation
-removed from the throat; it is not a touch-trigger teleport. The Kneeler remains
-immortal: strike the bright burden once to make its whole body bow for a ground
-pass, or use the three reachable rope knots to travel over and beyond it. The
-new first waterfall stone rises near the dry shore and owns matching collision.
-
-Underfalls now separates required and optional reads without words. One animated
-high-value calcite current points forward along the main route; five dark,
-crosswise dry slates identify the optional culvert; the final hatch has a distant
-vertical shaft and ring at its real position. These cues are non-colliding,
-non-interactive, progression-neutral, and district-local.
-
-## What changed for Alex's reported failures
-
-| Report | Candidate response |
-|---|---|
-| Open cellar still looked blocked | Detached boards retire completely; the old bell guides fold into jamb sleeves; the open door collider and player throat are clear. |
-| No visible fire / key appeared randomly | Raised caged pilot, reflector and conduit; visible two-socket transfer; grounded pump/pressure response; five large furnace flames; continuous held refusal owns the only key ejection. |
-| Basement machines appeared inert | Required pump answers along one physical line; optional archive wheels answer locally without pretending to be hidden key controls. |
-| Mausoleum hole/gate crossing felt magical | Real 12-tread descent, physical return path, counterweight, 15-tread far climb, and hatch beyond the gate preserve view and control. |
-| Huge forest enemy had no readable answer | One hit to a high-value burden produces a full-body bow/pass window; a three-rope canopy chain is the alternate traversal answer. |
-| Water crossing began too far from shore | An eighth stone now begins at the dry lip and becomes collision only when visibly raised. |
-| Underfalls felt odd / directionless | Required current, separate optional-culvert cadence, and distant hatch signal establish forward structure without HUD text. |
-| New areas froze on first entry | Act-aware shader/texture/FBO preparation, current-act physical residency, and fail-closed mirror/context recovery are implemented; final serial D3D11 proof is still pending. |
-
-The existing pause system, intruder title art, and watched scullery-window figure
-remain. Escape/P and the fallback button freeze simulation and WebAudio;
-Restart from Checkpoint preserves solved state. Text is absent during active
-play, while title, pause, retry, and the returning end title remain legitimate
-non-playing overlays.
-
-## Verification boundary
-
-Focused work-in-progress runs previously accepted the physical back half at
-**39/39** and Underfalls guidance at **19/19**, with zero browser errors. Earlier
-working edits also passed **24 autotest**, **50 regressions**, **eight-act smoke**,
-and the **38-milestone playthrough**. Those results predate the final transition
-and flame-resource edits and therefore do not certify the current tree.
-
-Before calling this release-ready, freeze the source and run every focused gate
-listed in `AGENTS.md`, then the four canonical gates and final real-GPU matrix
-serially. Fresh evidence must cover the normal and context-restored guest/pilot
-flame paths; every district seam; house/cave/finale context loss and mirror
-faults; first-visible GPU deltas; cave soak; final visual plates; and zero browser
-errors. Packaging, commit/PR identities, Qualiacology preview, merge, and live
-verification are all still pending. Exact placeholders and acceptance sequence
-live in the newest `docs/HANDOFF.md` section.
-
----
-
-# FETCH — state of play, 2026-08-10 bell/pilot/intruder recovery (HISTORICAL PRODUCTION BASELINE)
-
-> **HISTORICAL `0.5.0-intruder` PRODUCTION BASELINE.** Alex's live
+> **CURRENT SOURCE TRUTH; NOT YET RELEASED AT THIS HEADING.** Alex's live
 > `0.4.0-ossuary` playtest found that the human house route was unclear and
-> could strand a player below the house without a legible flame. That release
-> repaired the route, added the exact scullery-window intrusion requested,
+> could strand a player below the house without a legible flame. The current
+> branch repairs that route, adds the exact scullery-window intrusion requested,
 > adds authoritative pause/checkpoint restart, and replaces the title/catalog
-> art. Source PR #17 merged as
-> `d66c4a682b21f02fefa6eaaaf6e2ffaa10ab406d`; Qualiacology PR #35 merged as
-> `77c24f86abc1074d71d802172021df67167a0175`; Netlify production deploy
-> `6a79a4b384c0e400081ad376` published `0.5.0-intruder` on
-> `2026-08-10T10:15:22.317Z`.
+> art. Do not call `0.5.0-intruder` live until the new source/artifact/site gates
+> in the newest `docs/HANDOFF.md` section are all recorded.
 
 The repaired house dependency is a partial order:
 
@@ -141,15 +62,9 @@ canonical **24/24 + 50/50 + eight-act smoke + 38/38 playthrough**, and zero
 browser errors. The reproducible 25-entry standalone ZIP is 578,074 bytes at
 SHA-256 `71521a2bff1f9290cd1cb39034b22e1171d786cd28993e60ae44c15ed3e89db3`;
 its unique clean extraction exact-matches current shipping source and boots with
-the decoded title art, while integrity negatives pass 7/7. Source
-[PR #17](https://github.com/duplighost/fetch/pull/17) and Qualiacology
-[PR #35](https://github.com/duplighost/qualiacology/pull/35) are merged; preview
-and production each passed **29/29 + 5/5** checks with zero browser errors.
-The public route is `https://qualiacology.com/fetch/`. Its 66,346-byte title and
-card masters exact-match SHA-256
-`5AB7C65B0E3ECC50D96454EE5F3393284D02D521ED7F1AF2DCFC2691B1CFF998`
-and return `public,max-age=31536000,immutable`; mutable `/fetch/` and
-`/fetch/src/main.js` return `public,max-age=0,must-revalidate`.
+the decoded title art, while integrity negatives pass 7/7. Commits, site
+preview/merge, and production checks remain separate pending release states at
+this heading.
 
 For the exact required-versus-optional route, use the current
 `docs/WALKTHROUGH.md`. For release status and evidence, use only the newest
@@ -355,10 +270,9 @@ Full list in `docs/BRIEFING.md`. The four that get work rejected most often:
 3. **Alex is colourblind.** No read may depend on hue — brightness, shape,
    motion, timing only. This has been violated twice by previous contributors
    (see §5) and both times it shipped and both times it was invisible to him.
-4. **No HUD or words during active play, and no control theft.** Title, pause,
-   retry, and the returning end title are non-playing overlays. State during
-   play lives in the world. The game never takes the camera or moves the player.
-   (This one was also being violated — see §5, the rope.)
+4. **No HUD, no on-screen words, and no control theft.** State lives in the
+   world. The game never takes the camera or moves the player. (This one was
+   also being violated — see §5, the rope.)
 
 ---
 
@@ -390,7 +304,8 @@ used by a different agent. Work in `fetch-claude`.
 node serve.mjs 8711          # then http://localhost:8711/
 ```
 
-**The four canonical merge gates.** All must be green before a release lands.
+**The three canonical merge gates, plus the release regression catalog.** All
+must be green before this release lands.
 
 ```sh
 node tests/smoke.mjs         # boots every act, asserts budgets, zero console errors

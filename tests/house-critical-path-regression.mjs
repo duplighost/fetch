@@ -118,14 +118,49 @@ try {
     throwAt(emptyPlate.x, emptyPlate.y, emptyPlate.z, 0.24);
     const emptySpaceMissed = !g.flags.has('windowRelaySolved') && bellRings === 0;
     F.stepWith(0.14, {}, false);
+    // THE BELL IS CAGED FROM THE ROOM: an ordinary direct throw must clang
+    // off the lattice, nudge toward the mooring, and ring NOTHING. The
+    // trolley is necessary now — this is the reversal Alex asked for.
+    const nudgeBefore = g.windowRelay?.nudgeT ?? 0;
     const bellAim = g.windowRelay?.directTarget?.pos
       || g.windowRelay?.directTarget?.object?.getWorldPosition(g.player.pos.clone())
       || { x: -10.72, y: 1.27, z: 1 };
     throwAt(bellAim.x, bellAim.y, bellAim.z, 0.3);
     F.stepWith(0.35, {}, false);
+    const directRefused = !g.flags.has('windowRelaySolved') && bellRings === 0
+      && (g.windowRelay?.nudgeT ?? 0) >= nudgeBefore && g.skull.mode === 'held';
+    // the real solution: moor at the living window, carry the trolley to the
+    // study window under a continuous hold, release into the receiver. The
+    // scripted interior walk needs the unlocked doors open, as a playing
+    // human would have left them.
+    for (const d of g.world.doors) {
+      // upstairs doors only: pre-opening the basement's boiler door made the
+      // bot's own later useAt TOGGLE it shut in its face
+      if (!d.locked && d.group.position.y > -1) { d.setOpen(true); d.update(5); }
+    }
+    g.player.pos.set(-10.3, 0, -9);
+    g.player.vel.set(0, 0, 0);
+    g.player.fallV = 0;
+    g.player.grounded = true;
+    g.player.yaw = Math.PI / 2;
+    g.player.pitch = -0.015;
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(0.45, { throwHeld: true }, false);
+    const moored = g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'windowRelay';
+    F.stepWith(3.48, { moveZ: -1, throwHeld: true }, false);
+    F.stepWith(3.72, { moveX: -1, throwHeld: true }, false);
+    F.stepWith(1.82, { moveZ: 1, run: true, throwHeld: true }, false);
+    F.stepWith(1.15, { throwHeld: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
+    for (let i = 0; i < 50 && !g.flags.has('windowRelaySolved'); i++) F.stepWith(0.05, {}, false);
+    for (let i = 0; i < 60 && g.skull.mode !== 'held'; i++) F.stepWith(0.05, {}, false);
+    for (let i = 0; i < 40 && !g.flags.has('voidDoorOpen'); i++) F.stepWith(0.05, {}, false);   // the ring travels
     const afterBell = {
       solved: g.flags.has('windowRelaySolved'),
       source: g.windowRelay?.solveSource ?? null,
+      moored,
+      directRefused,
       bellRings,
       ringT: g.windowRelay?.ringT ?? 0,
       voidDoorOpen: g.flags.has('voidDoorOpen'),
@@ -159,21 +194,27 @@ try {
     const guestAbsorbed = g.flags.has('ateFlame');
     const guestSource = g.flameCircuit?.source ?? null;
     g.flag('pumpGalleryLatched');
+    g.flag('crawlSecretSolved');    // the winch's drive weight; it has its own page too
+    g.flag('archiveDraftOpened');   // this page proves the flame; the archive gate has its own page
     F.teleport('basement');
     g.enemies.clear();
+    // The carried fire must be OFFERED to the cold pilot before the furnace
+    // will wake — this is the necessary link the duplicate source used to
+    // bypass. Real throw at the wick, same as a player.
+    const pilotColdBeforeCarry = !g.flags.has('pilotLit') && !g.basementPilot.flame.visible;
+    g.player.pos.set(7, -3, 3.55);
+    g.player.vel.set(0, 0, 0);
+    g.player._sync(0);
+    const wickPos = g.basementPilot.target.object.getWorldPosition(g.player.pos.clone());
+    throwAt(wickPos.x, wickPos.y, wickPos.z, 0.45);
+    const pilotLitByCarry = g.flags.has('pilotLit') && g.basementPilot.flame.visible;
     const fireDoor = g.world.interactables.find((object) => object.userData.inter?.id === 'incineratorDoor');
     fireDoor.userData.inter.action();
     F.stepWith(0.25, {}, false);
     g.player.pos.set(9, -3, -1.5);
     g.player.vel.set(0, 0, 0);
     g.player._sync(0);
-    aimAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z);
-    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
-    // Furnace causality is a continuous held sentence. Keep the same physical
-    // throw in its mouth through burn/choke/backdraft, then release it home.
-    F.stepWith(1.8, { throwHeld: true }, false);
-    F.stepWith(1 / 120, { throwReleased: true }, false);
-    for (let t = 0; t < 4 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {}, false);
+    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
     const guestRoute = {
       guestWasEnabled,
       guestWasFree,
@@ -181,10 +222,13 @@ try {
       guestSource,
       guestHitModes,
       allSourceTargetsDisabled: g.flameCircuit.sources.every((source) => !source.target.enabled),
-      pilotDisabled: !g.basementPilot.target.enabled && !g.basementPilot.flame.visible,
-      atomicExtinction: g.flameCircuit.sources.every((source) => source.glow.intensity === 0
-        && !g.world.candles.includes(source.glow)
-        && !g.world.candlePool.some((light) => light.userData.c === source.glow)),
+      pilotColdBeforeCarry,
+      pilotLitByCarry,
+      // the struck igniter keeps a residual burn — the candle goes ON, not
+      // out; the skull takes the heart of the flame, never the whole candle
+      residualBurn: g.flameCircuit.sources.every((source) => !source.residual
+        || (source.flame.visible && source.glow.intensity > 0
+          && g.world.candles.includes(source.glow))),
       incineratorAccepted: g.flags.has('skullOffered') && g.incinerator.offered,
     };
     return { beforeBell, afterBell, guestRoute };
@@ -203,7 +247,9 @@ try {
     'left end, right end, and centre hits each tear exactly one board; return legs cannot chain-break the stack',
     bellAndLatch.beforeBell);
   check(bellAndLatch.afterBell.solved
-      && bellAndLatch.afterBell.source === 'direct-bell'
+      && ['trolley-return', 'trolley-release'].includes(bellAndLatch.afterBell.source)
+      && bellAndLatch.afterBell.moored
+      && bellAndLatch.afterBell.directRefused
       && bellAndLatch.afterBell.bellRings === 1
       && bellAndLatch.afterBell.ringT > 0
       && bellAndLatch.afterBell.voidDoorOpen
@@ -212,7 +258,7 @@ try {
       && bellAndLatch.afterBell.latchEngaged === false
       && bellAndLatch.afterBell.skullMode === 'held'
       && bellAndLatch.afterBell.emptySpaceMissed,
-    'one ordinary throw at the visible study bell rings, swings, opens the flame room, and releases the cellar latch',
+    'the caged bell refuses a direct throw; only the carried trolley rings it, opens the flame room, and releases the latch',
     bellAndLatch.afterBell);
   check(bellAndLatch.guestRoute.guestWasEnabled
       && !bellAndLatch.guestRoute.guestWasFree
@@ -221,10 +267,11 @@ try {
       && bellAndLatch.guestRoute.guestHitModes.length === 1
       && bellAndLatch.guestRoute.guestHitModes[0] === 'outbound'
       && bellAndLatch.guestRoute.allSourceTargetsDisabled
-      && bellAndLatch.guestRoute.pilotDisabled
-      && bellAndLatch.guestRoute.atomicExtinction
+      && bellAndLatch.guestRoute.pilotColdBeforeCarry
+      && bellAndLatch.guestRoute.pilotLitByCarry
+      && bellAndLatch.guestRoute.residualBurn
       && bellAndLatch.guestRoute.incineratorAccepted,
-    'the bell exposes a non-free upstairs flame branch whose exact lower-stair throw lands outbound once and powers the drafted incinerator',
+    'the strike turns the candle ON; the skull takes its heart, lights the cold pilot, and the drafted furnace accepts',
     bellAndLatch.guestRoute);
 
   await freshPage();
@@ -254,10 +301,16 @@ try {
     F.stepWith(1 / 120, { throwReleased: true }, false);
     let t = 0;
     while (g.skull.mode !== 'held' && t < 4) { F.stepWith(0.1, {}, false); t += 0.1; }
-    const duplicateCommit = g.windowRelay.complete('trolley-release', p);
+    // the caged bell refuses even the pull handle from the room
+    const pullRefused = !g.flags.has('windowRelaySolved') && bellRings === 0;
+    // the trolley commit path still rings exactly once, and only once
+    const firstCommit = g.windowRelay.complete('trolley-release', p);
+    const duplicateCommit = g.windowRelay.complete('direct-bell', p);
     const result = {
       solved: g.flags.has('windowRelaySolved'),
       source: g.windowRelay.solveSource,
+      pullRefused,
+      firstCommit,
       bellRings,
       duplicateCommit,
       allSilhouetteTargetsDisabled: g.windowRelay.directTargets.every((target) => !target.enabled),
@@ -267,10 +320,11 @@ try {
     return result;
   });
   report.diagnostics.pullBell = pullBell;
-  check(pullBell.solved && pullBell.source === 'direct-bell'
+  check(pullBell.solved && pullBell.source === 'trolley-release'
+      && pullBell.pullRefused && pullBell.firstCommit === true
       && pullBell.bellRings === 1 && pullBell.duplicateCommit === false
       && pullBell.allSilhouetteTargetsDisabled && pullBell.skullMode === 'held',
-    'an ordinary throw at the visible pull handle rings exactly once and atomically spends every bell target',
+    'the caged pull refuses from the room; the trolley commit rings exactly once and atomically spends every bell target',
     pullBell);
 
   await freshPage();
@@ -279,6 +333,11 @@ try {
     F.start();
     F.teleport('house');
     g.enemies.clear();
+    // The pump winch will not take the skull until the crawl-wing cage hangs
+    // its drive weight. That link has its own pages (basement-foundations and
+    // the playthrough, which solves it for real on the way past); this one is
+    // about the pilot, the draft and the firebox that follow it.
+    g.flag('crawlSecretSolved');
     const aimAt = (x, y, z) => {
       const dx = x - g.player.pos.x;
       const dy = y - (g.player.pos.y + 1.62);
@@ -337,11 +396,29 @@ try {
     };
 
     // Required circuit first, then repeated real death/checkpoint boundaries.
-    g.player.pos.set(-8.65, 0, 1);
+    // The bell is caged from the room now: ring it the only way it rings —
+    // moor at the living window and carry the trolley across under a hold.
+    for (const d of g.world.doors) {
+      // upstairs doors only: pre-opening the basement's boiler door made the
+      // bot's own later useAt TOGGLE it shut in its face
+      if (!d.locked && d.group.position.y > -1) { d.setOpen(true); d.update(5); }
+    }
+    g.player.pos.set(-10.3, 0, -9);
     g.player.vel.set(0, 0, 0);
+    g.player.fallV = 0;
+    g.player.grounded = true;
+    g.player.yaw = Math.PI / 2;
+    g.player.pitch = -0.015;
     g.player._sync(0);
-    const direct = g.windowRelay.directTarget.object.getWorldPosition(g.player.pos.clone());
-    throwAt(direct.x, direct.y, direct.z, 0.3);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(0.45, { throwHeld: true }, false);
+    F.stepWith(3.48, { moveZ: -1, throwHeld: true }, false);
+    F.stepWith(3.72, { moveX: -1, throwHeld: true }, false);
+    F.stepWith(1.82, { moveZ: 1, run: true, throwHeld: true }, false);
+    F.stepWith(1.15, { throwHeld: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
+    for (let i = 0; i < 50 && !g.flags.has('windowRelaySolved'); i++) F.stepWith(0.05, {}, false);
+    for (let i = 0; i < 60 && g.skull.mode !== 'held'; i++) F.stepWith(0.05, {}, false);
     const bellSolved = g.flags.has('windowRelaySolved');
     const afterBellDeath = dieAndRetry();
 
@@ -402,21 +479,44 @@ try {
       return complete;
     };
 
+    // THE PILOT IS COLD NOW. It stopped being a second flame source (that
+    // duplicate made the void-door beat skippable, and Alex asked about that
+    // beat three separate times). A cold hit is the anti-dead-save valve —
+    // it rings the house circuit so the flame room upstairs opens — but fire
+    // itself has one home, and the pilot lights only from a skull already
+    // carrying it.
     const pilot = g.basementPilot;
-    const pilotWasEnabled = pilot?.target.enabled && pilot.flame.visible;
+    const pilotWasEnabled = pilot?.target.enabled && !pilot.flame.visible;
     F.stepWith(0.9, {}, false);
     const pilotWasFree = g.flags.has('ateFlame');
     const pilotPos = pilot.target.object.getWorldPosition(g.player.pos.clone());
     g.enemies.clear();
     const leftRespawnStairsForPilot = walkStairRoute('pilot');
-    const reachedPilotApproach = walkTo(5.2, 3.55, 6) && walkTo(7, 3.55, 8);
+    // the pilot stands against the south wall west of the stair foot now
+    const reachedPilotApproach = walkTo(5.6, 5.2, 6) && walkTo(4.9, 5.35, 6);
     const reachedPilot = leftRespawnStairsForPilot && reachedPilotApproach;
     throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
-    const pilotAbsorbed = g.flags.has('ateFlame');
-    const source = g.flameCircuit?.source ?? null;
+    waitHeld();
+    const coldRefused = !g.flags.has('ateFlame') && !g.flags.has('pilotLit');
+    const coldValve = g.flags.has('windowRelaySolved') && g.flags.has('voidDoorOpen');
     const afterFlameDeath = dieAndRetry();
-    const flamePersisted = g.flags.has('ateFlame')
-      && !pilot.target.enabled && !pilot.flame.visible;
+    const coldPersisted = !g.flags.has('ateFlame') && !g.flags.has('pilotLit')
+      && pilot.target.enabled && !pilot.flame.visible;
+
+    // Carry fire down and light it. The real guest-candle steal is the other
+    // page's subject; this page's subject is the pilot's two-state contract.
+    g.flag('ateFlame');
+    const leftRespawnStairsForRelight = walkStairRoute('relight');
+    const reachedRelight = walkTo(5.6, 5.2, 6) && walkTo(4.9, 5.35, 6);
+    throwAt(pilotPos.x, pilotPos.y, pilotPos.z, 0.52);
+    waitHeld();
+    const pilotIgnited = g.flags.has('pilotLit') && pilot.flame.visible
+      && g.flags.has('basementPilotUsed');
+    // Die once more so the works route starts from the respawn stairs the way
+    // it was choreographed — and so this page also proves the lit pilot
+    // SURVIVES death (the flame is a committed world state, not a life state).
+    const afterIgniteDeath = dieAndRetry();
+    const pilotLitPersisted = g.flags.has('pilotLit') && pilot.flame.visible;
 
     // Continue from the real basement checkpoint on foot. The lower flame must
     // feed the same physical pump, furnace, ash-key, and hatch route as the
@@ -461,6 +561,26 @@ try {
     const pumpLatched = g.flags.has('pumpGalleryLatched')
       && g.pumpGallery.latched && g.pumpGallery.gateOpen;
 
+    // THE DRAFT HAS TWO HALVES NOW: the crossing, then the archive's collar
+    // valve at the end of the same ceiling line. Walk the far bank through
+    // the ajar archive door and strike it — the furnace refuses an offering
+    // until the draft is fully open.
+    walkLeg(-18.9, 0.6, 10);
+    walkLeg(-18.9, 3.4, 8);
+    walkLeg(-16.3, 4.15, 8);
+    // the archive half of the draft: land the skull IN the cradle lamp and
+    // HOLD — the held weight revs the room until the draft commits
+    // (draftHold.required is 2.6s: hold the input past the commit)
+    aimAt(-16.25, -0.88, 4.72);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(3.2, { throwHeld: true }, false);
+    F.stepWith(1 / 120, { throwReleased: true, throwHeld: false }, false);
+    waitHeld(3);
+    const draftOpened = g.flags.has('archiveDraftOpened');
+    // leave the way you came in: back through the archive door
+    walkLeg(-18.9, 3.2, 8);
+    walkLeg(-18.9, 0.4, 8);
+
     walkLeg(-12.6, -3, 14);
     walkLeg(-9.2, -3, 8);
     walkLeg(-4.8, -3, 8);
@@ -472,17 +592,17 @@ try {
     walkLeg(9.8, -1.7, 10);
     useAt(10.71, -2.1, -1.52);
     F.stepWith(0.7, {}, false);
-    aimAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z);
-    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
-    for (let t = 0; t < 1.2 && !g.incinerator.offered; t += 1 / 120) {
-      F.stepWith(1 / 120, { throwHeld: true }, false);
-    }
+    // Pin the restored pilot gate at the real firebox: with the pilot state
+    // withdrawn (Set-level state-restore probe, no flag events re-fired), an
+    // otherwise-complete throw must refuse without offering.
+    g.flags.delete('pilotLit');
+    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
+    waitHeld(3);
+    const pilotGateRefused = !g.flags.has('skullOffered') && !g.incinerator.offered;
+    g.flags.add('pilotLit');
+    throwAt(g.incineratorPosition.x, g.incineratorPosition.y, g.incineratorPosition.z, 0.35);
     const incineratorAccepted = g.flags.has('skullOffered') && g.incinerator.offered;
-    for (let t = 0; t < 2 && !g.flags.has('fireRefused'); t += 0.05) {
-      F.stepWith(0.05, { throwHeld: true }, false);
-    }
-    F.stepWith(1 / 120, { throwReleased: true }, false);
-    waitHeld();
+    for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1, {}, false);
     const fireRefused = g.flags.has('fireRefused') && g.skull.mode === 'held';
 
     const ashKeyTarget = g.world.fetchTargets.find((target) => target.id === 'hatchKey');
@@ -540,18 +660,21 @@ try {
       reachedPilot,
       pilotWasEnabled,
       pilotWasFree,
-      pilotAbsorbed,
-      source,
-      pilotUsed: g.flags.has('basementPilotUsed'),
+      coldRefused,
+      coldValve,
       afterFlameDeath,
-      flamePersisted,
-      atomicExtinction: g.flameCircuit.sources.every((flameSource) => flameSource.glow.intensity === 0
-        && !g.world.candles.includes(flameSource.glow)
-        && !g.world.candlePool.some((light) => light.userData.c === flameSource.glow)),
+      coldPersisted,
+      leftRespawnStairsForRelight,
+      reachedRelight,
+      pilotIgnited,
+      afterIgniteDeath,
+      pilotLitPersisted,
       basementWalkLegs,
       pumpAnchored,
       pumpReturned,
       pumpLatched,
+      draftOpened,
+      pilotGateRefused,
       incineratorAccepted,
       fireRefused,
       ashKeyFetched,
@@ -568,7 +691,7 @@ try {
   });
   report.diagnostics.basementBranch = basementBranch;
   check(basementBranch.bellSolved && basementBranch.bellRings === 1
-      && basementBranch.relaySource === 'direct-bell'
+      && ['trolley-return', 'trolley-release'].includes(basementBranch.relaySource)
       && basementBranch.afterBellDeath.alive
       && basementBranch.afterBoardDeath.alive
       && basementBranch.afterBoardsDeath.alive,
@@ -586,24 +709,28 @@ try {
       && basementBranch.leftRespawnStairsForWorks
       && basementBranch.reachedPilot
       && basementBranch.pilotWasEnabled && !basementBranch.pilotWasFree
-      && basementBranch.pilotAbsorbed
-      && basementBranch.source === 'basement-pilot'
-      && basementBranch.pilotUsed
+      && basementBranch.coldRefused
+      && basementBranch.coldValve
       && basementBranch.afterFlameDeath.alive
       && basementBranch.afterFlameDeath.act === 'basement'
-      && basementBranch.flamePersisted
-      && basementBranch.atomicExtinction,
-    'the deliberate basement flame remains physical and recoverable across descent and post-flame deaths',
+      && basementBranch.coldPersisted
+      && basementBranch.leftRespawnStairsForRelight
+      && basementBranch.reachedRelight
+      && basementBranch.pilotIgnited
+      && basementBranch.afterIgniteDeath.alive
+      && basementBranch.pilotLitPersisted,
+    'the cold pilot refuses fire but rings the circuit, survives death cold, and lights only from a carried flame',
     basementBranch);
-  check(basementBranch.incineratorAccepted,
-    'the non-free basement flame branch independently powers the drafted incinerator',
+  check(basementBranch.pilotGateRefused && basementBranch.incineratorAccepted,
+    'the relit pilot is what powers the drafted incinerator — and without it the firebox refuses',
     basementBranch);
   check(basementBranch.basementWalkLegs.every((leg) => leg.reached)
       && basementBranch.pumpAnchored
       && basementBranch.pumpReturned
       && basementBranch.pumpLatched
+      && basementBranch.draftOpened
       && basementBranch.fireRefused,
-    'the direct-bell and pilot route walks the real pump circuit and completes the physical furnace refusal',
+    'the trolley-and-pilot route walks the pump circuit, opens the archive draft, and completes the furnace refusal',
     basementBranch);
   check(basementBranch.ashKeyFetched
       && basementBranch.ashKeyHitModes.length === 1
@@ -667,9 +794,15 @@ try {
     return result;
   });
   report.diagnostics.earlyBasement = earlyBasement;
-  check(!earlyBasement.freeBeforeThrow && earlyBasement.ateFlame
+  // The pilot no longer GRANTS the flame — it is cold, and fire lives
+  // upstairs behind the door this same throw opens. The un-strandable
+  // property survives in its new form: the cold hit rings the whole circuit
+  // (windowRelaySolved), which opens the void door and lights the guest
+  // candle, so the save always has a route to fire — one that now runs
+  // through the beat Alex asked three times to make necessary.
+  check(!earlyBasement.freeBeforeThrow && !earlyBasement.ateFlame
       && earlyBasement.relaySolved && earlyBasement.source === 'basement-pilot'
-      && earlyBasement.pilotUsed && !earlyBasement.targetEnabled
+      && !earlyBasement.pilotUsed && earlyBasement.targetEnabled
       && !earlyBasement.flameVisible && earlyBasement.bellRings === 1
       && earlyBasement.skullMode === 'held',
     'an impossible early-basement state still demands a throw, rings the circuit, and cannot strand the save',

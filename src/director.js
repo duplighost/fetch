@@ -6,9 +6,16 @@ import { clamp, lerp, damp, smoothstep } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
-  bedroom: { x: 7.2, z: 1.5, yaw: Math.PI, y: 3.6 },   // the open window and hanging key own frame one
+  // THE WAKE: STANDING on the rug beside the bed, facing the moonlit window
+  // across a dark room — the first frame resolves as dark room / glassed
+  // window / tree beyond, with the bed you did not wake IN and its thrown-back
+  // covers at your right hand. x 9.36 with the 0.34 capsule reaches 9.70 —
+  // 3.5 cm clear of the bed posts at 9.735, close enough to read as
+  // just-got-up. The camera sits above every loose cover box, and z 3.05 stays
+  // out of the nightstand's collider (z 3.665).
+  bedroom: { x: 9.36, z: 3.05, yaw: 2.47, y: 3.6 },
   house: { x: -1.5, z: 3, yaw: Math.PI, y: 3.6 },
-  basement: { x: 9, z: 4.5, yaw: 0.5, y: -3.0 },
+  basement: { x: 9, z: 4.9, yaw: 0.5, y: -3.0 },  // z >= 4.85 clears the last tread's collider — no frame-one shove
   graveyard: { x: -8, z: 8, yaw: -2.86 },       // car left, gate/bodies ahead
   forest: { x: FOREST_GATE.x, z: FOREST_GATE.z + 3, yaw: Math.PI },
   clearing: null,   // computed from forest end
@@ -17,9 +24,16 @@ const ACT_SPAWNS = {
 };
 
 const STAGE_BY_ACT = { bedroom: 0, house: 1, basement: 2, graveyard: 3, forest: 3, clearing: 5, cave: 5, mirror: 5 };
+// Seconds of house-act time before the Resident starts walking the house.
+// Long enough to learn the first room, short enough that the act is HUNTED,
+// per DESIGN.md's "it is always somewhere". Alex dials this here.
+const HOUSE_RESIDENT_DELAY = 18;
 const FOG_BY_ACT = {
   bedroom: 0.028, house: 0.03, basement: 0.06, graveyard: 0.034,
-  forest: 0.055, clearing: 0.018, cave: 0.07, mirror: 0.012,
+  // cave 0.07 was the densest fog in the game — with 0.42 ambient it read as
+  // "feel your way through rocks". 0.055 (forest-equal) lets the new water
+  // curtains be seen down a corridor while the air still hangs wet.
+  forest: 0.055, clearing: 0.018, cave: 0.055, mirror: 0.012,
 };
 const FOG_COLOR_BY_ACT = {
   // Every outdoor act's fog == its own background (eaten-path's law): when they
@@ -27,7 +41,7 @@ const FOG_COLOR_BY_ACT = {
   // horizon, and the draw distance reads as authored rather than as a budget.
   // Interiors keep a fog slightly off their background — a room SHOULD have a
   // far wall, and matching there just flattens it.
-  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x050b16,
+  bedroom: 0x07101a, house: 0x080c13, basement: 0x070b0d, graveyard: 0x0b141c,
   forest: 0x030b10, clearing: 0x071821, cave: 0x07141a, mirror: 0x111620,
 };
 // How much free light each act gets, as a scale on the house's tuning. The
@@ -38,10 +52,21 @@ const AMBIENT_BY_ACT = {
   // see now". A little — so the forest comes back up, and the carried light
   // comes up with it rather than instead of it.
   bedroom: 1.0, house: 1.0, basement: 0.9, graveyard: 0.46,
-  forest: 0.54, clearing: 0.68, cave: 0.30, mirror: 0.6,
+  // Underfalls has no carried skull-light. At 0.30 its authored wet line and
+  // far hatch disappeared between local fixtures, turning navigation into a
+  // wall-feeling exercise. 0.42 still leaves it darker than the forest while
+  // preserving enough floor/wall value for the physical route grammar to read.
+  forest: 0.54, clearing: 0.68, cave: 0.42, mirror: 0.6,
 };
+// The graveyard's haze came up from 0x050b16 to 0x0b141c (fog and background
+// together — the equality is the district's own law, and breaking it puts a
+// visible geometry horizon back). At near-black, every pale object in the yard
+// popped out of NOTHING: no depth, no layers, and the far treeline that
+// atmosphere.js instances by the hundred was invisible behind it. A readable
+// haze is what lets a silhouette be a silhouette. MARROW, which this yard came
+// from, sits at 0x14262b for exactly this reason.
 const BACKGROUND_BY_ACT = {
-  bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x050b16,
+  bedroom: 0x03060c, house: 0x03050a, basement: 0x020405, graveyard: 0x0b141c,
   forest: 0x030b10, clearing: 0x071821, cave: 0x02080b, mirror: 0x080b12,
 };
 
@@ -85,6 +110,12 @@ export class Director {
   start() {
     const g = this.game;
     this.setAct('bedroom', true);
+    // THE WAKE: the real boot comes to slower than the stock fade — four
+    // seconds of surfacing at the bed edge. startGame's fadeIn(2.4) ran one
+    // line ago; overriding before the first paint restyles the same
+    // transition. (Test teleports still zero the DOM fade; canvas capture
+    // never sees it either way.)
+    g.fadeIn(4.0);
     // the first thing you hear: your own breath, the house settling, the jaw ticks
     this.after(4, () => g.audio.creak({ pos: new THREE.Vector3(2, 3.6, 0), gain: 0.4, verb: 0.4 }));
     this.after(9, () => g.audio.knock({ pos: new THREE.Vector3(-6, 0, -6), gain: 0.3, verb: 0.5 }));
@@ -98,20 +129,22 @@ export class Director {
       this._cancelScheduledForestChasers();
       this._scope++;
     }
-    const leavingMirror = prev === 'mirror' && act !== 'mirror';
-    if (leavingMirror) g.finale?.leave?.();
     if (prev === 'cave' && act !== 'cave') this._leaveCave(act);
     g.act = act;
-    // Finale restores the visibility snapshot it inherited from the forest
-    // boundary before this assignment. Re-evaluate that boundary against the
-    // destination act now so a same-page QA/respawn transition cannot leave
-    // the completed world hidden behind the mirror room.
-    if (leavingMirror) g.forest?.syncBackDistrictCulling?.(null, { reapply: true });
     g.audio.setZone(act);
     g.fogTarget = FOG_BY_ACT[act] ?? 0.03;
     g.ambientTarget = AMBIENT_BY_ACT[act] ?? 1;
-    g.scene.fog.color.setHex(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
-    g.scene.background.setHex(BACKGROUND_BY_ACT[act] ?? 0x03050a);
+    // fog COLOUR eases like density does. Snapping it while density lagged
+    // gave every act boundary a two-stage look — a clear "better version"
+    // for a second, then the haze arriving like a second load. ("it almost
+    // seemed that way" — it literally was.) Hard act sets seed both.
+    g.fogColorTarget = new THREE.Color(FOG_COLOR_BY_ACT[act] ?? 0x070b12);
+    g.bgColorTarget = new THREE.Color(BACKGROUND_BY_ACT[act] ?? 0x03050a);
+    if (hard) {
+      g.scene.fog.color.copy(g.fogColorTarget);
+      g.scene.background.copy(g.bgColorTarget);
+      g.scene.fog.density = g.fogTarget;
+    }
     this.approach = APPROACH_BY_ACT[act] ?? this.approach;
     // The skull may look afraid; the player's calibrated throw never changes.
     g.skull.graveFear = act === 'graveyard';   // expression: the hands tremble
@@ -160,7 +193,11 @@ export class Director {
         this._removeResident();
       });
     }
-    // the storeroom shapes: two lies and a truth
+    // the storeroom shapes: two lies and a truth. The truth is SPAWNED HERE
+    // now, not at house build time -- respawn() below clears every enemy, so a
+    // boot-spawned walker was deleted by any death anywhere and never came
+    // back. Arming on entry means a cleared list costs nothing.
+    g.dropcloths?.arm();
     this._storeArmed = true;
   }
 
@@ -176,9 +213,32 @@ export class Director {
         if (g.flags.has('graveyardCleared')) g.graveyardGate.openGate();
       }
       g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
-      if (g.flags.has('graveyardCleared') && g.ossuary) {
+      g.gateKeys?.restore?.();
+      // A player who took the stone off the throat must not find it back on
+      // after a death. Both hatches are single scalars for exactly this: one
+      // assignment each, no sequence to get wrong.
+      if (g.flags.has('ossuaryEntered') && g.ossuary) {
+        g.ossuary.entryLid.moving = true;
+        g.ossuary.entryLid.t = 1;
+        g.ossuary.entryLid.open = true;
+        g.ossuary.slabT = 1;
+      }
+      // the kennel arms the counterweight (round nine). A restore has to find
+      // the pawl already dropped, and must not replay the travelling knocks.
+      if (g.flags.has('ossuaryKennelSolved')) g.ossuary?.restoreArm?.();
+      // the counterweight's own flag, not the gate's: the gate is three keys
+      // now and the under-yard is only one of them
+      if (g.flags.has('ossuaryCleared') && g.ossuary) {
         g.ossuary.solved = true;
         g.ossuary.progress = 1;
+        // exitT is the ONE number the far end derives from. Forcing only the
+        // collider left the exit re-sealing itself for a second while exitT
+        // caught up. The threshold-latched drop sounds are booleans so a forced
+        // restore seats the pose without replaying the grind.
+        g.ossuary.exitT = 1;
+        g.ossuary._slabHeard = true;
+        g.ossuary._slabHeard2 = true;
+        g.ossuary._slabSeated = true;
         g.ossuary.exitCollider.max.y = g.ossuary.exitCollider.min.y;
       }
       if (!this.graveRitual) this.graveRitual = { credits: new Set([0, 1, 2]), done: true, route: 'restored' };
@@ -227,7 +287,15 @@ export class Director {
     g.enemies.clear();
     this.kneeler = null;
     this._kneelerGrace = 0;
-    // arm the waterfall; the skull begins asking
+    // The falls arrive FROZEN. A bargain cannot be offered to something that
+    // is not moving, so the target stays cold and the skull does not start
+    // asking until the water does — buildFrozenFalls calls armWaterfall() the
+    // moment the ice lets go, and a restored save arrives already thawed.
+    if (g.flags.has('fallsThawed')) this.armWaterfall();
+  }
+
+  armWaterfall() {
+    const g = this.game;
     for (const t of g.world.fetchTargets) if (t.id === 'waterfall') t.enabled = true;
     this._gesturing = true;
   }
@@ -247,19 +315,25 @@ export class Director {
     const waterfall = new THREE.Vector3(C.x, 0.65, C.z + 20.02);
     let choirSource;
     if (layout) {
-      // Four metres back along the last dry ambulatory: close enough that a
-      // walking player eventually earns a pressure commitment, far enough that
-      // its full audio-only warning plus ordinary forward motion remain mercy.
-      const lowerI = layout.main.indexOf(layout.lowerSluice);
-      const lower = layout.lowerSluice;
-      const behind = layout.main[Math.max(0, lowerI - 1)];
-      const dx = behind.x - lower.x, dz = behind.z - lower.z;
-      const d = Math.hypot(dx, dz) || 1;
-      const k = Math.min(4, d) / d;
+      // IT USED TO BEGIN BEHIND YOU, four metres back along the ambulatory —
+      // and then chase your own footstep breadcrumbs, which keeps it in your
+      // rear 180 degrees structurally, forever. Alex: "I still do not see any
+      // of those old enemies that used to be unique to the area under the
+      // waterfall." He never saw it because it was authored where he could
+      // not look. It stands across the chapel now, off the aisle you walk and
+      // wide of the false sighting you have just been taught to read: lateral,
+      // in the light, inside the cone of a player facing their own route.
+      //
+      // 2026-08-17, Alex again: "should spawn way in front of you." Lateral in
+      // the chapel was better than behind you and still not in front. It stands
+      // across the room now — sixteen and a half metres dead ahead, nine
+      // degrees off the heading you are walking, in the chapel's own light,
+      // with the trigger moved back to the west aisle so you arrive to find it
+      // already standing there.
       choirSource = new THREE.Vector3(
-        lower.x + dx * k,
-        lower.y + (behind.y - lower.y) * k,
-        lower.z + dz * k,
+        layout.chapel.x + 7.5,
+        layout.chapel.y,
+        layout.chapel.z + 5.5,
       );
     } else {
       choirSource = new THREE.Vector3(C.x, 0, C.z + 20.68);
@@ -286,7 +360,15 @@ export class Director {
       waterfall,
       foreshadow,
       choirSource,
-      choirTriggerZ: layout ? layout.chapel.z + 7 : -Infinity,
+      // ...and it arms in the chapel rather than at the lower sluice, which is
+      // roughly 60% of the way through the district: a running player could
+      // reach the hatch before it ever closed. Still after the passive
+      // displacement has had its moment (that beat is at the west aisle, six
+      // metres short of this line) — the false sighting is still first.
+      // moved back from chapel.z + 1 to the west aisle, so the figure is already
+      // standing across the room when you come through the arch — not spawning
+      // next to you as you reach the middle of it
+      choirTriggerZ: layout ? layout.chapel.z - 4 : -Infinity,
       choirArmed: false,
     };
     // The passive displaced-spray figure in the pump chapel is the first visual
@@ -327,10 +409,7 @@ export class Director {
 
     // act detection by zone
     const zone = g.world.zoneAt(g.player.pos);
-    // Death can leave the body inside a forward zone for more than a second.
-    // A corpse is not a traversal commit: keep act, culling and checkpoint
-    // ownership frozen until respawn restores a living pose.
-    if (!g.dead && zone && zone !== g.act) {
+    if (zone && zone !== g.act) {
       // bedroom -> house only after the door opened; zones never move you backwards in the story
       const order = ['bedroom', 'house', 'basement', 'graveyard', 'forest', 'clearing', 'cave', 'mirror'];
       const next = order.indexOf(zone), current = order.indexOf(g.act);
@@ -429,10 +508,7 @@ export class Director {
   // --------------------------------------------------------------- scares
   _updateScares(dt) {
     const g = this.game;
-    // A scare is a playable pressure beat. Do not consume its timer, open a
-    // door, or queue footsteps while the death veil has removed the player's
-    // ability to answer it.
-    if (g.dead || (g.act !== 'house' && g.act !== 'basement')) return;
+    if (g.act !== 'house' && g.act !== 'basement') return;
     this.scareT -= dt;
     if (this.scareT > 0) return;
     this.scareT = (26 - this.dread * 12) + Math.random() * (20 - this.dread * 8);
@@ -471,13 +547,11 @@ export class Director {
   _paceOverhead(steps) {
     // footsteps crossing the ceiling above you (or the floor below, in the cellar)
     const g = this.game;
-    if (g.dead) return;
     const p = g.player.pos.clone();
     const above = g.act === 'basement' ? 3.2 : (p.y < 3 ? 4.6 : -2.5);
     const dir = Math.random() * Math.PI * 2;
     for (let i = 0; i < steps; i++) {
       this.after(0.42 * i, () => {
-        if (g.dead) return;
         g.audio.footstep('wood', {
           pos: new THREE.Vector3(p.x + Math.cos(dir) * i * 0.8, p.y + above, p.z + Math.sin(dir) * i * 0.8),
           gain: 0.5, verb: 0.35, rate: 0.9,
@@ -491,67 +565,106 @@ export class Director {
   _updateMusicBox(dt) {
     const g = this.game;
     const mb = g.musicBox;
-    // Winding down, growing the corner figure, and committing its walker are
-    // all authored player-facing time. Freeze them together during death so a
-    // threshold cannot be crossed invisibly behind the veil.
-    if (!mb || g.act !== 'house' || g.dead) return;
+    if (!mb || g.act !== 'house') return;
     const p = g.player.pos;
     const inNursery = p.x < -4 && p.y > 3 && p.z > -2;
     mb.wound = Math.max(0, mb.wound - dt / 55);
+    // The thing in the corner IS the creature now. It used to be a bare
+    // capsule that grew for eleven seconds and was then deleted at scale 0.96
+    // so a full-size walker could be spawned in its place — the reveal
+    // swapped objects at the punchline, which is exactly the moment Alex was
+    // watching ("i watched it before it expanded. that was cool"). The real
+    // walker now drags itself out of the nursery floor on the same slow
+    // clock, and what he watched rise is what winds up and comes.
     if (mb.wound > 0.03) {
       this._boxTh = (this._boxTh || 0) - dt;
       if (this._boxTh <= 0) {
         this._boxTh = 0.34 / (0.5 + mb.wound * 0.5);
         g.audio.glassTink({ pos: mb.mesh.position, gain: 0.12 + mb.wound * 0.15, rate: 0.9 + mb.wound * 0.3, verb: 0.6 });
       }
-      if (mb.thing) { mb.thing.scale.setScalar(Math.max(0.001, mb.thing.scale.x - dt * 0.4)); if (mb.thing.scale.x <= 0.01) { g.scene.remove(mb.thing); mb.thing = null; } }
+      // rewinding the box sends it back down
+      if (mb.walker && !mb.spawned) {
+        mb.walker.graveRiseT = Math.min(mb.walker.graveRiseDur, mb.walker.graveRiseT + dt * 2.4);
+        if (mb.walker.graveRiseT >= mb.walker.graveRiseDur) {
+          g.enemies.clear((e) => e === mb.walker);
+          mb.walker = null;
+        }
+      }
     } else if (inNursery) {
       // while the box is silent, something in the corner is taller than it was
-      if (!mb.thing) {
-        const m = mb.thingPool;
-        if (!m) return;
-        m.position.set(-11.2, 4.6, 5.3);
-        m.scale.setScalar(0.001);
-        g.scene.add(m);
-        mb.thing = m;
+      if (!mb.walker) {
+        mb.walker = g.enemies.spawn('walker', -11.2, 5.3, 'dormant', 4.6);
+        mb.walker.graveRiseDur = 11.5;
+        mb.walker.graveRiseT = 11.5;
+        mb.walker.riseFrozen = true;      // this clock belongs to the music box
+        // squash-only: the nursery floor is the ground floor's ceiling, so a
+        // sunken body would hang into the room below for eleven seconds
+        mb.walker.riseSquashOnly = true;
       }
-      mb.thing.scale.setScalar(Math.min(1, mb.thing.scale.x + dt * 0.09));
-      if (mb.thing.scale.x > 0.96 && !mb.spawned) {
+      mb.walker.graveRiseT = Math.max(0, mb.walker.graveRiseT - dt);
+      if (mb.walker.graveRiseT <= 0 && !mb.spawned) {
         mb.spawned = true;
-        g.scene.remove(mb.thing); mb.thing = null;
+        mb.walker.riseFrozen = false;
+        mb.walker.state = 'wind';
+        mb.walker.windT = 0;
+        mb.walker = null;
         g.audio.sting(0.7);
-        g.enemies.spawn('walker', -10.5, 4.8, 'wind', 4.6);   // the nursery storey
       }
     }
   }
 
   // ------------------------------------------------------------- resident
+  // The director's pointer can go stale: tests and death paths clear the
+  // enemy list without telling the director, after which residentHeard
+  // "already has" a Resident that no longer exists and the house goes
+  // permanently empty. Resolve against the live list every time.
+  _liveResident() {
+    const list = this.game.enemies.list;
+    if (this.resident && list.includes(this.resident)) return this.resident;
+    this.resident = list.find((e) => e.kind === 'resident') || null;
+    return this.resident;
+  }
+
   residentHeard(n) {
     const g = this.game;
-    if (g.dead || (g.act !== 'house' && !this.resident)) return false;
     this.residentPressure += n;
-    if (!this.resident && g.act === 'house') {
+    const live = this._liveResident();
+    if (!live && g.act === 'house') {
       this.resident = g.enemies.spawn('resident', -3, -12, 'stalk');
-      const resident = this.resident;
       g.audio.sting(0.5);
-      this.after(0.8, () => {
-        // Direct cleanup/respawn may retire the actor before this delayed step.
-        // Capture identity and require the same live resident rather than
-        // dereferencing this.resident after it has become null.
-        if (g.dead || this.resident !== resident || !g.enemies.list.includes(resident)) return;
-        g.audio.footstep('wood', { pos: resident.pos, gain: 0.9, rate: 0.7 });
-      });
-    } else if (this.resident) {
+      this.after(0.8, () => g.audio.footstep('wood', { pos: this.resident.pos, gain: 0.9, rate: 0.7 }));
+    } else if (live) {
       // it heard that too
-      this.resident.state = 'wind';
-      this.resident.windT = 0;
-    } else return false;
-    return true;
+      live.state = 'wind';
+      live.windT = 0;
+    }
   }
 
   _updateResident(dt) {
     const g = this.game;
-    if (!this.resident || g.act !== 'house' || g.dead) return;
+    // The house is no longer empty until its final gate. Alex: "the enemy in
+    // the house should come out pretty early and be a better chaser so you
+    // have to close doors to avoid it" — and DESIGN.md always said the
+    // Resident "hunts you through the gated section", which the code never
+    // delivered: it spawned only on the cellar boards, the act's last beat.
+    // It now walks the house from early in the act. One named constant so
+    // Alex can dial it.
+    if (g.act === 'house' && !g.dead && !this._liveResident()) {
+      // ONE BEAT AT A TIME. The landing window scare now runs ~9 s from the
+      // first sound to the thing skittering off into the dark, which walks
+      // straight into this timer — and a Resident arriving mid-fold does not
+      // stack, it steps on the only scare in the room. Hold the clock while
+      // the window entry is live; it is the shortest sequence in the act and
+      // it fires once. The constant stays exactly as Alex dialled it.
+      const entering = g.windowWatcher?.entry?.state;
+      const busy = entering && entering !== 'idle' && entering !== 'done';
+      if (!busy) {
+        this._houseResidentT = (this._houseResidentT ?? HOUSE_RESIDENT_DELAY) - dt;
+        if (this._houseResidentT <= 0) this.residentHeard(0);
+      }
+    }
+    if (!this._liveResident()) return;
+    if (g.act !== 'house') return;
     // the Resident loses interest if it can't reach you, returns to pacing
     const e = this.resident;
     if (e.state === 'chase' && e.windT > 9) { e.state = 'stalk'; e.windT = 0; }
@@ -566,22 +679,16 @@ export class Director {
   // ------------------------------------------------------------ storeroom
   _updateStoreroom(dt) {
     const g = this.game;
-    // These are one-shot spatial reveals. A corpse crossing their coordinates
-    // must not permanently spend either lie before the living retry sees it.
-    if (!this._storeArmed || g.act !== 'basement' || g.dead) return;
+    if (!this._storeArmed || g.act !== 'basement') return;
+    // retires the dropcloth walker only if it was actually put down
+    g.dropcloths?.watch();
     const p = g.player.pos;
     // two lies: passing the shapes plays steps behind you; nothing is there
     if (!this._lie1 && p.x < 0 && p.z < 0) {
       this._lie1 = true;
       this.after(0.9, () => {
-        if (g.dead) return;
         for (let i = 0; i < 3; i++)
-          this.after(0.3 * i, () => {
-            if (g.dead) return;
-            g.audio.footstep('dirt', {
-              pos: new THREE.Vector3(p.x + 2 + i, p.y, p.z + 2), gain: 0.5,
-            });
-          });
+          this.after(0.3 * i, () => g.audio.footstep('dirt', { pos: new THREE.Vector3(p.x + 2 + i, p.y, p.z + 2), gain: 0.5 }));
       });
     }
     // the truth: near the crawl door you understand one of the sheets was real —
@@ -596,8 +703,7 @@ export class Director {
   // ----------------------------------------------------------- graveyard
   _updateGraveyardArena(dt) {
     const g = this.game;
-    if (g.act !== 'graveyard' || g.dead
-      || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return;
+    if (g.act !== 'graveyard' || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return;
 
     // The first half of the yard is readable dread: wreck, bodies, graves, and
     // the optional locket line. Crossing the central row commits the player to
@@ -608,7 +714,6 @@ export class Director {
       g.baseTension = 0.42;
       g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 60);
       g.audio.skullScream(g.camera.getWorldPosition(new THREE.Vector3()));
-      g.audio.sting(0.72);
       g.shake(0.22);
     }
 
@@ -618,6 +723,20 @@ export class Director {
     a.t -= dt;
     if (alive > 0 || a.pending > 0) {
       a.engaged = true;
+      // STRAGGLERS. A wave that ends in hide-and-seek is not a fight. Every few
+      // seconds the survivors are re-pointed at the player, and any of them
+      // still far off answers out loud — so the last body is something you can
+      // hear coming, never something you have to go looking for.
+      a.callT = (a.callT || 0) - dt;
+      if (a.callT <= 0) {
+        a.callT = 5.5;
+        g.enemies.wakeAll(g.player.pos.x, g.player.pos.z, 70);
+        for (const e of g.enemies.list) {
+          if (!e.graveArena || e.state === 'dying') continue;
+          if (Math.hypot(e.pos.x - g.player.pos.x, e.pos.z - g.player.pos.z) < 9) continue;
+          g.audio.walkerRise({ pos: e.pos, gain: 0.34, rate: 0.86, verb: 0.7 });
+        }
+      }
       return;
     }
     if (a.engaged) {
@@ -643,16 +762,9 @@ export class Director {
       a.pending = count;
       for (let i = 0; i < count; i++) {
         const site = sites[(i + a.wave * 2) % sites.length];
-        const spawnGraveWalker = () => {
+        this.after(i * (0.58 + a.wave * 0.09), () => {
           if (!this.graveArena || this.graveArena.done || g.act !== 'graveyard') {
             if (this.graveArena) this.graveArena.pending = Math.max(0, this.graveArena.pending - 1);
-            return;
-          }
-          // Keep the reservation alive through the death veil. Consuming a
-          // zero-delay callback while dead could reduce pending to zero and
-          // resolve the loud route without ever spawning the promised threat.
-          if (g.dead) {
-            this.after(0.12, spawnGraveWalker);
             return;
           }
           const x = site[0] + Math.sin(i * 5.7 + a.wave) * 0.7;
@@ -665,8 +777,7 @@ export class Director {
           a.pending--;
           g.audio.stoneGrind({ pos: e.pos, gain: 0.28 + a.wave * 0.06, rate: 1.35 - a.wave * 0.1, verb: 0.55 });
           g.audio.walkerRise({ pos: e.pos, gain: 0.42 + a.wave * 0.06, rate: 1.08 - a.wave * 0.05, verb: 0.62 });
-        };
-        this.after(i * (0.58 + a.wave * 0.09), spawnGraveWalker);
+        });
       }
       a.t = 0;
       g.audio.sting(0.4 + a.wave * 0.14);
@@ -678,8 +789,7 @@ export class Director {
 
   onGraveResonance(index, pos) {
     const g = this.game;
-    if (g.act !== 'graveyard' || g.dead
-      || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
+    if (g.act !== 'graveyard' || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
     if (!this.graveRitual) this.graveRitual = { credits: new Set(), done: false, route: null };
     const ritual = this.graveRitual;
     if (ritual.done || ritual.credits.has(index)) return false;
@@ -694,7 +804,7 @@ export class Director {
 
   _completeGraveyard(route) {
     const g = this.game;
-    if (g.dead || g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
+    if (g.flags.has('graveyardResolved') || g.flags.has('graveyardCleared')) return false;
     const a = this.graveArena || (this.graveArena = {
       wave: 0, pending: 0, t: 0, engaged: false, done: false,
     });
@@ -712,12 +822,32 @@ export class Director {
     }
     g.ossuary?.unlock?.(route);
     g.audio.duck(0.2, 2.6);
+    this._revealGraveyardRoutes();
     // Resolution is irreversible, but its checkpoint sits at the route it
     // actually opened rather than at whichever corpse happened to die last.
     g.checkpoint('graveyard', {
       x: -14.6, y: 0.08, z: 31.2, yaw: 0, pitch: 0,
     });
     return true;
+  }
+
+  // THE THREE ROUTES. The funeral does not open the gate any more — it opens
+  // three ways to the three things the gate wants, and it says so out loud,
+  // one at a time. Sequential, not simultaneous: three state changes landing
+  // together is a flash, and three landing in order is a sentence. Each one
+  // happens AT its own object, in motion and value, never in hue.
+  _revealGraveyardRoutes() {
+    const g = this.game;
+    // 1. the west mausoleum's floor is already given (ossuary.unlock, above);
+    //    this is the beat that points at it
+    g.audio.sting(0.5);
+    g.after(0.5, () => g.audio.stoneGrind({
+      pos: new THREE.Vector3(-14.6, 0.4, 34.2), gain: 0.8, rate: 0.5, verb: 0.8,
+    }), { global: true });
+    // 2. the east mausoleum's seal gives
+    g.after(2.1, () => g.sealedMausoleumSeal?.crack?.(), { global: true });
+    // 3. and the tree lets its lights down
+    g.after(4.0, () => g.keyTreeClimb?.drop?.(), { global: true });
   }
 
   // ---------------------------------------------------------------- forest
@@ -738,15 +868,6 @@ export class Director {
     // forgives sustained quiet. The old lifetime counter never decremented.
     this._companyDebt = Math.max(0, this._companyDebt - dt * 0.12);
     this._kneelerGrace = Math.max(0, (this._kneelerGrace || 0) - dt);
-
-    // Crossing the strike corridor is irreversible spatial knowledge whether
-    // the player used the quiet ground line, bought a bow with one throw, or
-    // chained the canopy knots.  Record it before death can clear the actor;
-    // otherwise the old spawn rule rebuilt the giant at the far checkpoint as
-    // soon as its short grace expired—the exact respawn ambush Alex hit.
-    const kneelerS = f.canopyChain?.kneelerS ?? Math.floor(f.length * 0.93);
-    const playerProgress = f.project(g.player.pos.x, g.player.pos.z);
-    if (playerProgress?.s >= kneelerS + 5.5) g.flag('kneelerPassed');
 
     // The far-side checkpoint belongs to CROSSING the ravine, not to the launch
     // that got you there. It used to fire from inside the rope's arrival
@@ -793,7 +914,7 @@ export class Director {
       });
     }
     if (!this.arena && f._lastIdx > f.arenaS() - 10) this._startArena();
-    if (!this.kneeler && !g.flags.has('kneelerPassed') && this._kneelerGrace <= 0
+    if (!this.kneeler && this._kneelerGrace <= 0
       && f._lastIdx > Math.floor(f.length * 0.85)) this._placeKneeler();
   }
 
@@ -820,11 +941,6 @@ export class Director {
       this._cancelForestArena('act-left');
       return;
     }
-    // Mutual kills are legitimate, but the arena must not spend its completion
-    // checkpoint at the dead body while the death veil is up. Timers and wave
-    // callbacks resume only for a living forest context (or are discarded by
-    // respawn's scope change).
-    if (g.dead) return;
     // count only the arena's own: a dormant statue three acts away must never
     // hold the wave gate open
     a.alive = g.enemies.list.filter((e) => e.forestArena && e.state !== 'dying').length;
@@ -840,24 +956,13 @@ export class Director {
         const r = 19 + Math.random() * 4;
         // staggered arrivals: a synchronized ring is a wall no one can fight;
         // a broken rhythm of approaching footsteps is beatable AND worse to hear
-        const spawnArenaWalker = () => {
-          if (g.act !== 'forest' || this.arena !== a || a.status !== 'active') {
-            a.pending = Math.max(0, a.pending - 1);
-            return;
-          }
-          // Preserve the reservation while dead. Decrementing it first let
-          // the last callback reduce pending to zero and complete wave three
-          // even though no living player ever faced the arrival.
-          if (g.dead) {
-            this.after(0.12, spawnArenaWalker);
-            return;
-          }
+        this.after(i * (0.9 + Math.random() * 1.1), () => {
           a.pending = Math.max(0, a.pending - 1);
+          if (g.act !== 'forest' || this.arena !== a || a.status !== 'active') return;
           const e = g.enemies.spawn('walker', a.center.x + Math.cos(ang) * r,
             a.center.z + Math.sin(ang) * r, 'chase');
           e.forestArena = true;
-        };
-        this.after(i * (0.9 + Math.random() * 1.1), spawnArenaWalker);
+        });
       }
       a.t = 14;
       g.audio.sting(0.4 + a.wave * 0.1);
@@ -891,18 +996,10 @@ export class Director {
   _placeKneeler() {
     const g = this.game;
     const f = g.forest;
-    // It belongs beneath the middle canopy knot: the normal trail teaches
-    // "one throw buys a bow, then sprint," while the visible high route uses
-    // the same throw/release/catch grammar to pass over its strike corridor.
-    const authoredS = f.canopyChain?.kneelerS ?? Math.floor(f.length * 0.93);
-    // Do not slide the encounter eleven metres forward from a restored seat.
-    // That made the authored knot point at empty ground while the giant waited
-    // somewhere else.  Spawn grace owns recovery safety; position stays true.
-    const aheadS = Math.min(f.length - 4, authoredS);
-    const s = f.posAt(aheadS, f.canopyChain ? 0.48 : 2.2);
+    const authoredS = Math.floor(f.length * 0.93);
+    const aheadS = Math.min(f.length - 4, Math.max(authoredS, f._lastIdx + 11));
+    const s = f.posAt(aheadS, 2.2);
     this.kneeler = g.enemies.spawn('kneeler', s.x, s.z, 'dormant');
-    this.kneeler.authoredS = aheadS;
-    this.kneeler.canopyBypass = !!f.canopyChain;
     this.kneeler.mesh.rotation.x = 0.5;    // it kneels. do not wake it.
   }
 
@@ -914,9 +1011,6 @@ export class Director {
       this.kneeler = null;
       return;
     }
-    // Freeze the authored wake gesture and its sting during the death veil.
-    // The player cannot answer either affordance until respawn restores input.
-    if (g.dead) return;
     if (g.act !== 'forest') {
       g.enemies.clear((x) => x === e);
       this.kneeler = null;
@@ -924,20 +1018,14 @@ export class Director {
     }
     const d = Math.hypot(e.pos.x - g.player.pos.x, e.pos.z - g.player.pos.z);
     if (e.state === 'dormant') {
-      const chainDisturbed = !!g.forest?.canopyChain?.stages?.some((stage) =>
-        g.flags.has(stage.latchedFlag));
-      if (d < 16 && (g.player.noise > 0.6 || chainDisturbed)) {
-        e.state = 'wind';
-        e.windT = 0;
-        g.audio.sting(0.9);
-      }
+      if (d < 16 && g.player.noise > 0.6) { e.state = 'wind'; e.windT = 0; g.audio.sting(0.9); }
     }
   }
 
   // -------------------------------------------------- clearing + waterfall
   _updateGesture(dt) {
     const g = this.game;
-    if (g.dead || !this._gesturing || g.skull.mode !== 'held') return;
+    if (!this._gesturing || g.skull.mode !== 'held') return;
     this._gestureT -= dt;
     if (this._gestureT <= 0) {
       this._gestureT = 5 + Math.random() * 4;
@@ -956,8 +1044,9 @@ export class Director {
 
     if (!c.choirArmed && g.player.pos.z >= c.choirTriggerZ) {
       c.choirArmed = true;
-      // It begins behind, in the dark ambulatory beyond the false sighting, and
-      // is still audio-only for its own full warning cadence before it pursues.
+      // It stands across the chapel, dead ahead, and is still audio-only for
+      // its own full warning cadence before it pursues — so you hear it, then
+      // you SEE it, and only then does it start closing.
       g.enemies.beginDrownedChoir({ pos: c.choirSource, heardPos: g.player.pos });
     }
 
@@ -998,6 +1087,13 @@ export class Director {
       this.after(1.2 + i * 0.7, () => {
         st.userData.rise = 0.12;
         g.audio.stoneGrind({ pos: st.position, gain: 0.5, rate: 0.8 + i * 0.05 });
+        // The bar across the lane goes down with the first stone, not with the
+        // bargain: until something is there to stand on, the water is still
+        // the thing that kills you.
+        if (i === 0) {
+          g.dropBasinSill?.();
+          if (g.basinSill) g.audio.stoneGrind({ pos: g.basinSill.mesh.position, gain: 0.42, rate: 0.62 });
+        }
       }, { global: true });
     });
     // NOTE the skull does not come back. no failsafe fires. the one broken promise.
@@ -1063,6 +1159,13 @@ export class Director {
     this._mirrorTransition = false;
     const saved = g.checkpointPose ? { ...g.checkpointPose } : null;
     const cp = saved?.act || g.lastCheckpoint || 'bedroom';
+    // Snapshot the arrival truth BEFORE the teleport below: Game.teleport
+    // auto-completes the bedroom arrival (the debug/test contract), but a
+    // death/restart is not a debug jump — a pre-arrival life must respawn
+    // into a pre-arrival room. bedroomArrival.completeInstant checks this
+    // guard and stands down; the tail re-asserts absence.
+    const preArrival = !g.flags.has('skullArrived');
+    this._respawnPreArrival = preArrival;
     g.enemies.clear();
     this.kneeler = null;
     this.resident = null;
@@ -1083,12 +1186,14 @@ export class Director {
       if (g.graveyardGate) g.graveyardGate.reset();
       for (const grave of g.resonantGraves || []) grave.reset?.();
       for (const grave of g.destructibleGraves || []) grave.reset?.();
+      g.wreck?.reset?.();
       g.ossuary?.reset?.();
     } else if (cp === 'graveyard' && graveResolved) {
       if (this.graveArena) { this.graveArena.done = true; this.graveArena.pending = 0; }
       if (this.graveRitual) this.graveRitual.done = true;
       g.graveyardGate?.setRitualStage?.(3);
       g.ossuary?.unlock?.(this.graveRitual?.route || 'restored');
+      g.gateKeys?.restore?.();
       if (g.flags.has('graveyardCleared')) g.graveyardGate?.openGate?.();
     }
     g.teleport(cp);
@@ -1105,30 +1210,36 @@ export class Director {
     // teleport re-seated the forest on the ACT SPAWN; if a checkpoint pose then
     // moved us somewhere else, re-seat again on where we actually ended up.
     if (g.forest && g.act === 'forest') { g.forest.recentre(g.player.pos); g.player._sync(0); }
+    this._respawnPreArrival = false;
     if (g.flags.has('waterfallTaken')) {
       // The promise is already broken; death cannot un-break it or strand the
       // player with a half-raised bridge after scoped callbacks are cleared.
       for (const st of g.bridgeStones) st.userData.rise = 0.12;
       if (g.caveZone) g.caveZone.enabled = true;
       if (g.waterfallBarrier) g.waterfallBarrier.max.y = g.waterfallBarrier.min.y;
+      g.dropBasinSill?.(true);
       g.skull.vanish();
+    }
+    else if (preArrival) {
+      // THE ROOM BEFORE THE SKULL: teleport's instant-complete flagged the
+      // arrival mid-respawn (main.js half); take the flag back and re-assert
+      // absence. Search states persist — they are world truth — and the bell
+      // returns to the player's found-but-unrung state; a window already
+      // broken by a half-finished arrival stays broken.
+      g.flags.delete('skullArrived');
+      g.skull.bootAbsent();
+      g.bedroomArrival?.resetForRespawn?.();
     }
     else {
       g.skull.holdNow();
       g.skull.setStage(this.stageGrown);
     }
-    // Respawn is a scene-ownership edge: teleporting to the act spawn lets its
-    // ordinary district cullers restore their saved roots before the authored
-    // checkpoint pose is reinstated. If that pose is inside the sealed
-    // under-yard, reassert its transaction once here. Never turn this into
-    // fixed-step scene walking.
-    g.ossuary?.reassertVisibility?.();
   }
 
   forestNoise(pos, strength = 1, source = 'impact') {
     const g = this.game;
     const f = g.forest;
-    if (g.dead || g.act !== 'forest' || !f || !pos
+    if (g.act !== 'forest' || !f || !pos
       || !Number.isFinite(pos.x) || !Number.isFinite(pos.z)) return false;
 
     const loudness = clamp(strength, 0.05, 1.5);
@@ -1149,14 +1260,7 @@ export class Director {
     const heard = f.project(pos.x, pos.z);
     const heardS = heard?.s ?? f._lastIdx ?? 0;
     const delay = source === 'pop' ? 3 : 2.25;
-    const inviteCompany = () => {
-      // Keep the invitation reserved while the death veil is up. Respawn's
-      // scope change cancels this dead-life callback and resets pending; until
-      // then it may neither spawn company nor silently spend the reservation.
-      if (g.dead) {
-        this.after(0.12, inviteCompany);
-        return;
-      }
+    this.after(delay, () => {
       this._companyPending = Math.max(0, this._companyPending - 1);
       if (g.act !== 'forest' || (this.arena && !this.arena.done)) return;
       const nowActive = g.enemies.list.filter((x) => x.forestCompany && x.state !== 'dying').length;
@@ -1166,8 +1270,7 @@ export class Director {
       const invited = g.enemies.spawn('walker', at.x, at.z, 'chase');
       invited.forestCompany = true;
       invited.heardWorldPos = new THREE.Vector3(pos.x, pos.y ?? at.y, pos.z);
-    };
-    this.after(delay, inviteCompany);
+    });
     return true;
   }
 

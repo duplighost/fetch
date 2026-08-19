@@ -75,6 +75,49 @@ try {
       { highEndX, lowEndX, landingExitX },
     );
 
+    // THE PAWL IS A FLOOR PLATE. Alex: "slightly slide the spikey thing in the
+    // basement that locks the gate into place so its at the end of the walkway
+    // and either make it less veryically tall, or put it in the floor so the
+    // player walks over it automatically." It used to stand 0.69 m tall, 1.66 m
+    // north of the crossing lane behind the channel rail — so the object that
+    // locked the gate was not the object you touched. Pin the new shape, or the
+    // next refactor stands it back up and nobody notices.
+    {
+      const pawl = g.scene.getObjectByName('pump-gallery-far-pawl');
+      // highest world y any part of it reaches — walked, not climbed
+      let topY = -Infinity;
+      pawl?.traverse((o) => {
+        if (!o.isMesh) return;
+        o.updateWorldMatrix(true, false);
+        const h = (o.geometry.parameters?.height ?? 0) / 2;
+        topY = Math.max(topY, o.getWorldPosition(g.player.pos.clone()).y + h);
+      });
+      const box = topY > -Infinity ? { max: { y: topY } } : null;
+      check(
+        'the far pawl is a flush plate at the end of the walkway, on the crossing lane',
+        !!pawl
+          && Math.abs(pawl.position.z - (-3)) < 0.25          // the crossing centreline
+          && pawl.position.x < -17.4 && pawl.position.x > -18.1  // the deck's west end
+          && !!box && box.max.y < -2.85                       // under B+0.15: never a wall
+          // and it still owns no collider of its own — the player walks over it
+          && !g.world.colliders.some((c) => c.min.x < -17.3 && c.max.x > -18.1
+            && c.min.z < -2.5 && c.max.z > -3.5
+            && c.max.y > -2.95 && c.min.y < -2.5),
+        { pos: pawl ? pawl.position.toArray().map((v) => +v.toFixed(2)) : null,
+          topY: box ? +box.max.y.toFixed(3) : null },
+      );
+      // ...and the throw affordance survived the drop: the catch sphere is a
+      // fixed knee-to-waist point now, not the sunken group's own origin.
+      const pawlTarget = g.world.fetchTargets.find((t) => t.id === 'pumpFarPawl');
+      check(
+        'a thrown skull can still find the pawl after it sank into the floor',
+        !!pawlTarget && !pawlTarget.object && !!pawlTarget.pos
+          && pawlTarget.pos.y > -2.7 && pawlTarget.pos.y < -2.2,
+        { pos: pawlTarget?.pos ? pawlTarget.pos.toArray().map((v) => +v.toFixed(2)) : null,
+          hasObject: !!pawlTarget?.object },
+      );
+    }
+
     const puzzle = g.crawlSecret;
     const target = g.world.fetchTargets.find((t) => t.id === 'crawlCounterweightCradle');
     check(
@@ -111,46 +154,12 @@ try {
         },
       );
 
-      const deathPos = target.object.getWorldPosition(g.player.pos.clone());
-      F.setSkull(deathPos.x, deathPos.y, deathPos.z, 0, 0, 0, 'outbound');
-      const deathDirective = target.onHit.call(target, g.skull);
-      F.stepWith(0.58, { throwHeld: true }, false);
-      const partialBeforeDeath = puzzle.progress;
-      g.director.death(null);
-      F.stepWith(1.55, { throwHeld: true }, false);
-      const heldDeath = {
-        solved: puzzle.solved, state: puzzle.state, progress: puzzle.progress,
-        flag: g.flags.has('crawlSecretSolved'), targetEnabled: target.enabled,
-        skullMode: g.skull.mode,
-      };
-      g.director.respawn();
-      F.stepWith(0.25, {}, false);
-      const afterDeathRespawn = {
-        solved: puzzle.solved, state: puzzle.state, progress: puzzle.progress,
-        flag: g.flags.has('crawlSecretSolved'), targetEnabled: target.enabled,
-        skullMode: g.skull.mode, act: g.act,
-      };
-      check(
-        'death while the optional counterweight remains physically held cannot ghost-solve it',
-        deathDirective === 'anchor'
-          && partialBeforeDeath > 0 && partialBeforeDeath < 1
-          && !heldDeath.solved && heldDeath.progress === 0 && !heldDeath.flag
-          // Death must break the anchor immediately. Over this deliberately
-          // long dead-life sample, the ordinary return may also finish its
-          // physical catch; neither returning nor held can keep weighing.
-          && ['returning', 'held'].includes(heldDeath.skullMode)
-          && !afterDeathRespawn.solved && afterDeathRespawn.progress === 0
-          && !afterDeathRespawn.flag && afterDeathRespawn.targetEnabled
-          && afterDeathRespawn.skullMode === 'held' && afterDeathRespawn.act === 'basement',
-        { deathDirective, partialBeforeDeath, heldDeath, afterDeathRespawn },
-      );
-
       const retryPos = target.object.getWorldPosition(g.player.pos.clone());
       F.setSkull(retryPos.x, retryPos.y, retryPos.z, 0, 0, 0, 'outbound');
       const heldDirective = target.onHit.call(target, g.skull);
       F.stepWith(1.4, { throwHeld: true }, false);
       check(
-        'holding the thrown skull weighs, lifts, and permanently latches the optional reveal',
+        'holding the thrown skull weighs, lifts, and permanently latches the pump-works drive weight',
         heldDirective === 'anchor'
           && puzzle.solved
           && puzzle.state === 'latched'
@@ -165,44 +174,8 @@ try {
           flags: [...g.flags].filter((f) => f.startsWith('crawl')),
         },
       );
-      const revealAtDeath = {
-        t: puzzle.revealT,
-        ballZ: puzzle.ball.position.z,
-        punctuated: g.flags.has('crawlSecretPunctuated'),
-      };
-      g.director.death(null);
-      F.stepWith(1.35, { throwHeld: true }, false);
-      const revealWhileDead = {
-        t: puzzle.revealT,
-        ballZ: puzzle.ball.position.z,
-        punctuated: g.flags.has('crawlSecretPunctuated'),
-        skullMode: g.skull.mode,
-      };
-      g.director.respawn();
-      F.stepWith(0.12, {}, false);
-      const revealAfterRespawn = puzzle.revealT;
-      F.stepWith(1.25, {}, false);
-      const revealCompleted = {
-        t: puzzle.revealT,
-        ballZ: puzzle.ball.position.z,
-        punctuated: g.flags.has('crawlSecretPunctuated'),
-        ballKnocked: !!puzzle.ballKnocked,
-        knockPlayed: puzzle.revealKnock,
-        whisperPlayed: puzzle.revealWhisper,
-      };
-      check(
-        'death pauses the solved kennel tableau so the living re-entry receives its ball, knock and whisper',
-        revealAtDeath.t > 0 && revealAtDeath.t < 0.5 && !revealAtDeath.punctuated
-          && Math.abs(revealWhileDead.t - revealAtDeath.t) < 1e-6
-          && Math.abs(revealWhileDead.ballZ - revealAtDeath.ballZ) < 1e-6
-          && !revealWhileDead.punctuated && revealWhileDead.skullMode !== 'anchored'
-          && revealAfterRespawn > revealAtDeath.t
-          && revealCompleted.t > 1.15 && revealCompleted.ballZ > 1.2
-          && revealCompleted.punctuated && revealCompleted.ballKnocked
-          && revealCompleted.knockPlayed && revealCompleted.whisperPlayed,
-        { revealAtDeath, revealWhileDead, revealAfterRespawn, revealCompleted },
-      );
-      F.stepWith(1.2, {}, false);
+      F.stepWith(0.05, { throwHeld: false }, false);
+      F.stepWith(2.5, {}, false);
       check(
         'release after the latch returns the skull without closing the reveal',
         g.skull.mode === 'held'

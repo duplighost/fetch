@@ -52,7 +52,38 @@ the spine — when in doubt during the build, this wins.
 ## Beat sheet
 
 ### Act 0 — The bedroom
-Wake holding the skull. Extremely detailed, wrong-feeling bedroom. Door locked
+
+> **ADDENDUM 2026-08-14 — Alex's new spec, verbatim (his words are the spec;
+> this supersedes the original beat kept below):**
+>
+> "window is originally strong glass that can't be broken.
+> (the player has to look around the room. opening stuff and getting feedback
+> visually and sound effects. Make room more interesting and detailed with
+> more creepy stuff but some of it being stuff that would be a room and a lot
+> of stuff you can search and make a small change in it with an animation when
+> you search. and make the new improve room foreshadowing somehow a bit too.
+> though I'm not sure how, but you could figure something out.) Eventually you
+> find a bell you can activate (Hide it in a clever place. when you activate
+> it and in loudly dings in a realistic but kind of spooky bell sound).
+> Suddenly you hear a lot of clicking of bones in the distance in the
+> direction of the glass window. the bones sounds and soar sounds get closer
+> and closer unthil the skull bursts through the window, shattering it, and
+> landing in your hands. For a few secibds it flockers back and forth between
+> a human head while mashing and meacingly chattering its jaw bones befire it
+> becomes that skull be know and love from the rest of the game. Then you can
+> throw it to get the key. Make sure it doesn't get the key on the way in when
+> you firs meet it shattering the window."
+>
+> Shipped 2026-08-14 (branch claude/feedback-aug14-2): wake empty-handed at
+> the bed edge, nine searchables, the bell hidden under a floorboard behind
+> the rug search (it is a dog's collar-bell — leash in the dresser, claw
+> gouges under the rug: the crawl secret's animal), the bone-click approach,
+> the shatter, the catch, the flicker, throws gated until the settle, and the
+> key guard (the inbound flight runs in mode `gone`, so no fetch target can
+> fire). WALKTHROUGH.md Act 0 is the current player-facing truth.
+
+**Original beat (2026-08-06 brainstorm, superseded above):** Wake holding the skull.
+Extremely detailed, wrong-feeling bedroom. Door locked
 FROM THE INSIDE, no key. Window open onto a terrifying forest. A key hangs in the
 tree, out of reach. Teach: throw (it returns; try to throw it away — it returns).
 Throw at key → skull brings it back in its teeth. Throw at door → unlock, skull

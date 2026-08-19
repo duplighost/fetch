@@ -1,6 +1,6 @@
 {
   "name": "fetch",
-  "version": "0.6.1-first-light",
+  "version": "0.5.0-intruder",
   "private": true,
   "type": "module",
   "scripts": {

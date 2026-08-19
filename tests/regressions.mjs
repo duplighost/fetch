@@ -48,7 +48,9 @@ async function scenario(name, evaluate) {
     await page.waitForFunction(
       () => window.__FETCH && window.__FETCH.ready === true && window.__game,
       null,
-      { timeout: 60000, polling: 100 },
+      // 300s: boots take 24-45s when a concurrent agent's test battery owns
+      // the GPU (see HANDOFF 2026-08-14). Wall-clock slowness is not failure.
+      { timeout: 300000, polling: 100 },
     );
     const result = await page.evaluate(evaluate);
     for (const check of result.checks || []) record(name, check);
@@ -82,6 +84,14 @@ try {
     const FIXED_DT = 1 / 120;
 
     F.start();
+    // THE NEW OPENING: a fresh boot wakes empty-handed; the skull arrives by
+    // shattering the bedroom window only after the bell is found and rung.
+    // This scenario is about the throw/growth laws, not the arrival — jump
+    // through the canonical test contract (a hard teleport completes the
+    // arrival silently and hands over the skull) before exercising the
+    // grammar. The arrival itself is asserted by the bedroom-arrival
+    // scenarios below and by the playthrough's act-0 beats.
+    F.teleport('bedroom');
     F.stepWith(FIXED_DT, {}, false);
 
     const skull = g.skull;
@@ -394,11 +404,6 @@ try {
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
     const skip = (name, details) => checks.push({ name, skipped: true, details });
 
-    // This scenario asserts the in-play HUD, camera decay, and two-pass skull
-    // render. Title-mode renders intentionally do none of those things.
-    F.start();
-    g.render();
-
     // OUR crosshair decision: a wordless 4px dot that brightens on target —
     // the one aim affordance, state carried via dataset, no words ever.
     const crosshair = document.getElementById('crosshair');
@@ -589,6 +594,372 @@ try {
     };
   });
 
+  await scenario('ossuary-climb', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.ossuary.unlock('regression');
+    g.skull.holdNow();
+    const m = g.ritualMausoleum;
+    g.player.pos.set(m.x, 0.04, m.z + 0.4);
+    g.player._sync(0);
+    F.stepWith(0.3, {});
+    // THE STONE IS ON IT until a verb takes it off. Standing on the throat with
+    // the lid shut must do nothing at all — that is the whole of Alex's §4.
+    check('a shut throat does not swallow you',
+      g.ossuary.inOssuary === false && g.ossuary.entryLid.open === false,
+      { inOssuary: g.ossuary.inOssuary, t: +g.ossuary.entryLid.t.toFixed(2) });
+    g.ossuary.descend();
+    check('the verb starts the lid rather than the swap',
+      g.ossuary.entryLid.moving === true && g.ossuary.inOssuary === false);
+    for (let t = 0; t < 6 && !g.ossuary.entryLid.open; t += 0.1) F.stepWith(0.1, {});
+    check('the lid finishes opening on its own clock',
+      g.ossuary.entryLid.open === true, { t: +g.ossuary.entryLid.t.toFixed(2) });
+    F.stepWith(0.3, {});
+    check('the mausoleum throat swaps into the district',
+      g.ossuary.inOssuary === true, { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    check('the resident is the real Standing Kind, spared by the district seal',
+      !!g.ossuary.resident && g.enemies.list.includes(g.ossuary.resident)
+      && g.ossuary.resident.standing === true
+      && g.ossuary.resident.mesh.userData.keepInOssuary === true
+      && g.ossuary.resident.mesh.visible === true
+      && g.world.lightRoot.visible === true,
+      { state: g.ossuary.resident?.state });
+
+    // force the solve exactly the way the director restore does: exitT is
+    // the ONE number, and it must seat slab + hatch together
+    g.ossuary.solved = true;
+    g.ossuary.exitT = 1;
+    F.stepWith(0.4, {});
+    // The slab still sinks off exitT. Both dead hatches are GONE as of
+    // 2026-08-17: the stair-top lid with its brass padlock (a door whose drive
+    // was a hardcoded zero) and the forest-side arrival hatch it served (a pale
+    // slab with a body-blocking collider standing in the gate gap). Assert
+    // both stay gone; the walkway pin proves nothing takes the second's place.
+    check('a forced restore sinks the slab, and both dead hatches stay deleted',
+      g.ossuary.exitCollider.max.y === g.ossuary.exitCollider.min.y
+      && g.ossuary.lidPivot == null && g.ossuary.arrival == null,
+      { lid: g.ossuary.lidPivot == null ? 'gone' : 'PRESENT',
+        arrival: g.ossuary.arrival == null ? 'gone' : 'PRESENT' });
+
+    // the climb is driven by INPUT only; y rises through real ground contact.
+    // The corridor's three baffles alternate sides — slalom them the way the
+    // playthrough bot does, then take flight A, the turn, and flight B.
+    const OX = g.ossuary.origin.x;
+    const OZ = g.ossuary.origin.z;
+    const waypoints = [
+      [OX + 1.8, OZ + 8.6], [OX - 1.8, OZ + 15.6], [OX + 1.8, OZ + 23.2],
+      [OX + 1.75, OZ + 30.2], [OX + 1.75, OZ + 33.6], [OX - 2.45, OZ + 34.65],
+    ];
+    const samples = [];
+    let regressed = 0;
+    let wp = 0;
+    const atTop = () => g.player.pos.y > g.ossuary.origin.floor + 3.05
+      && g.player.pos.x < OX - 2.0 && g.player.pos.z > OZ + 33.9;
+    for (let t = 0; t < 40 && !atTop(); t += 0.1) {
+      const p = g.player.pos;
+      const target = waypoints[Math.min(wp, waypoints.length - 1)];
+      const dx = target[0] - p.x;
+      const dz = target[1] - p.z;
+      if (Math.hypot(dx, dz) < 0.8 && wp < waypoints.length - 1) wp++;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+      const y = g.player.pos.y;
+      if (samples.length && y < samples[samples.length - 1] - 0.3) regressed++;
+      samples.push(+y.toFixed(2));
+    }
+    // The shaft is still a real climb — the flights, the turn, the platform,
+    // all reached by ground contact — and now it PAYS: the key hangs at the
+    // top, past the wall the counterweight lowers, under plain ceiling.
+    const peak = Math.max(...samples);
+    check('the shaft is still a grounded climb, and nothing at the top is a door',
+      peak > g.ossuary.origin.floor + 3.0 && regressed === 0
+      && g.act === 'graveyard' && g.ossuary.inOssuary,
+      { peak, regressed, act: g.act });
+    const k1 = g.gateKeys.list[0];
+    check('the counterweight pays out at the head of the stairs, not in front of its own wall',
+      k1.revealed === true && k1.home.z > OZ + 33
+      && k1.home.y > g.ossuary.origin.floor + 4.0,
+      { home: [+k1.home.x.toFixed(2), +k1.home.y.toFixed(2), +k1.home.z.toFixed(2)] });
+    // and there is real headroom up there: it used to be a hole you looked
+    // through, so 1.9 m never read as low. As ceiling it does.
+    check('you can stand up at the stair top',
+      g.player.pos.y > g.ossuary.origin.floor + 3.0
+      && !g.world.colliders.some((c) => c.ossuary
+        && c.min.y < g.player.pos.y + 1.75 && c.max.y > g.player.pos.y + 1.75
+        && c.min.x < g.player.pos.x && c.max.x > g.player.pos.x
+        && c.min.z < g.player.pos.z && c.max.z > g.player.pos.z),
+      { y: +g.player.pos.y.toFixed(2) });
+
+    // THE WAY BACK OUT IS A HATCH. Walk to the near end and prove that a shut
+    // stone stops you and an opened one lets you through.
+    g.player.pos.set(OX, g.ossuary.origin.floor, OZ + 1.2);
+    g.player.yaw = 0;
+    g.player._sync(0);
+    F.stepWith(0.4, { moveZ: 1 });
+    check('a shut exit hatch does not teleport you out',
+      g.ossuary.inOssuary === true && g.ossuary.exitLid.open === false,
+      { z: +g.player.pos.z.toFixed(2) });
+    g.ossuary.climbBack();
+    for (let t = 0; t < 6 && !g.ossuary.exitLid.open; t += 0.1) F.stepWith(0.1, {});
+    check('the verb opens it, and its collider gets out of the way',
+      g.ossuary.exitLid.open === true
+      && g.ossuary.exitLidPivot.position.y < g.ossuary.origin.floor - 0.8);
+    g.ossuary.climbBack();
+    F.stepWith(0.3, {});
+    check('and then it lets you out, facing OUT of the doorway',
+      g.ossuary.inOssuary === false && g.act === 'graveyard'
+      && Math.abs(g.player.yaw) < 0.01,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)), yaw: +g.player.yaw.toFixed(2) });
+
+    return { checks, diagnostics: { climbTail: samples.slice(-10) } };
+  });
+
+  await scenario('ossuary-kennel', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.ossuary.unlock('regression');
+    g.skull.holdNow();
+    const m = g.ritualMausoleum;
+    g.player.pos.set(m.x, 0.04, m.z + 0.4);
+    g.player._sync(0);
+    F.stepWith(0.3, {});
+    const OX = g.ossuary.origin.x;
+    const OZ = g.ossuary.origin.z;
+    const FLOOR = g.ossuary.origin.floor;
+
+    // stand at the west pocket mouth and throw at the cradle behind the bars
+    g.player.pos.set(OX - 2.6, FLOOR, OZ + 12);
+    const cradleY = FLOOR + 1.02;
+    const dx = (OX - 4.75) - g.player.pos.x;
+    const dz = (OZ + 12) - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dx, -dz);
+    g.player.pitch = Math.atan2(cradleY - (g.player.pos.y + 1.62), Math.hypot(dx, dz));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    for (let k = 0; k < 150 && g.skull.mode !== 'anchored'; k++) {
+      F.stepWith(1 / 60, { throwHeld: true });
+    }
+    check('the cradle catches an outbound skull through the bars',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryKennel',
+      { mode: g.skull.mode });
+    F.stepWith(1.5, { throwHeld: true });
+    check('a held weight raises the shutter and latches the kennel',
+      g.flags.has('ossuaryKennelSolved') && g.ossuaryKennel.solved
+      && g.ossuaryKennel.shutter.position.y > FLOOR + 2.2,
+      { shutterY: +g.ossuaryKennel.shutter.position.y.toFixed(2) });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('the skull returns home through the bars', g.skull.mode === 'held',
+      { mode: g.skull.mode });
+    for (let t = 0; t < 2; t += 0.1) {
+      g.player.yaw = Math.PI / 2;
+      F.stepWith(0.1, { moveZ: 1 });
+    }
+    check('the bars still stop the player after the solve',
+      g.player.pos.x > OX - 3.8, { x: +g.player.pos.x.toFixed(2) });
+
+    return { checks, diagnostics: null };
+  });
+
+  await scenario('marrow-descent', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.flag('graveyardResolved');   // the yard's business is done; the pit wakes
+    g.skull.holdNow();
+    F.stepWith(0.3, {}, false);
+    check('the pit mouth offers its verb once the marrow is open',
+      g.marrowPit && g.marrowPit.pit.userData.inter?.enabled === true
+      && g.marrowPit.collider.max.y > g.marrowPit.collider.min.y,
+      { enabled: g.marrowPit?.pit?.userData?.inter?.enabled });
+    // descending is USED now, never walked-over: stand at the lip, look
+    // into the mouth, E
+    // the mouth moved under the sealed mausoleum, where the funeral unseals
+    // it — read it off game.marrowPit rather than pinning the old coordinates
+    const MO = g.marrowPit;
+    g.player.pos.set(MO.x, 0.05, MO.z - 1.25);
+    g.player.vel.set(0, 0, 0);
+    g.player.yaw = Math.PI;
+    g.player.pitch = Math.atan2(0.02 - (0.05 + 1.62), 1.25);
+    g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.3, {});
+    const M = g.marrow;
+    check('using the mouth descends into the marrow',
+      M.inMarrow === true && g.flags.has('marrow:entered') && g.flags.has('marrow:witnessed'),
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+    // the palette EASES in now (fog is a weather system, never a snap), so
+    // assert proximity to the crypt colour rather than exact hex equality
+    F.stepWith(2.5, {});
+    // compare in sRGB bytes (getHex), not the linear-light channel floats
+    const fogHex = g.scene.fog.color.getHex();
+    const nearCrypt = Math.abs(((fogHex >> 16) & 255) - 0x16) < 14
+      && Math.abs(((fogHex >> 8) & 255) - 0x06) < 14
+      && Math.abs((fogHex & 255) - 0x11) < 14;
+    check('the marrow wears its own palette while fetch waits above',
+      g.scene.fog && nearCrypt,
+      { fog: fogHex.toString(16) });
+    // let the introduction play out: it claws up, stares, folds away, and is
+    // already waiting at the altar
+    F.stepWith(6.0, {});
+    const P = M.presence.group;
+    check('after the introduction the presence guards the altar',
+      P.visible === true && Math.abs(P.position.z - (M.origin.z + 26 - 3.6)) < 0.5,
+      { at: P.position.toArray().map((v) => +v.toFixed(1)) });
+
+    // the skull passes THROUGH it: your verb is not from its game
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 17);
+    const dxT = P.position.x - g.player.pos.x;
+    const dzT = P.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxT, -dzT);
+    g.player.pitch = Math.atan2(1.3 - 1.62, Math.hypot(dxT, dzT));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(1.2, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('a thrown skull passes through the guardian and comes home',
+      g.skull.mode === 'held' && P.visible === true && M.yielded === false,
+      { mode: g.skull.mode, visible: P.visible });
+
+    // MARROW's way: walk into the loom until it yields
+    for (let t = 0; t < 8 && !M.yielded; t += 0.1) {
+      const dx = P.position.x - g.player.pos.x;
+      const dz = P.position.z - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      F.stepWith(0.1, { moveZ: 1 });
+    }
+    F.stepWith(2.0, {});
+    check('walking into the loom makes the guardian yield through the floor',
+      M.yielded === true && g.flags.has('marrow:guardianYielded'),
+      { dist: +M.guardianDist.toFixed(2) });
+
+    // the altar holds GATE KEY 2 and nothing else now — the relic went up to
+    // the yard's hero grave beside the canine — and one throw takes it
+    const key2 = g.gateKeys.list[1];
+    // the relic still EXISTS — it is up in the yard's hero grave now, beside
+    // the canine — it just is not on this altar any more
+    const relicMesh = g.scene.getObjectByName('the relic');
+    const altarZ = M.origin.z + 26 - 2.2;
+    check('the altar holds only the key, and the guardian was the lock',
+      key2.revealed === true && key2.target.enabled === true
+      && (!relicMesh || Math.hypot(relicMesh.position.x - M.origin.x,
+        relicMesh.position.z - altarZ) > 20),
+      { revealed: key2.revealed, fetchable: key2.target.enabled,
+        relicAt: relicMesh ? relicMesh.position.toArray().map((v) => +v.toFixed(1)) : null });
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
+    const keyY = M.origin.floor + 1.24;
+    const dz2 = (M.origin.z + 26 - 2.2) - g.player.pos.z;
+    g.player.yaw = Math.atan2(0, -dz2);
+    g.player.pitch = Math.atan2(keyY - (g.player.pos.y + 1.62), Math.abs(dz2));
+    g.player._sync(0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.8, { throwHeld: true });
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    check('the key is taken and rides in the skull jaw',
+      g.flags.has('gotgateKey2') && g.skull.carry?.id === 'gateKey2',
+      { carry: g.skull.carry ? g.skull.carry.id : null });
+
+    // the theft breaks the truce: while unobserved the mourners DASH.
+    // Hunting began the moment the key left the altar, so first re-seat
+    // every statue at its post for a known board. st0 is the subject of
+    // every check; the other three park at the far end (the player faces
+    // them while st0 works from behind) or four simultaneous hunters end
+    // the test before the throw leg.
+    const st0 = M.statues[0];
+    for (const st of M.statues) {
+      st.position.copy(st.userData.home);
+      st.userData.stagger = 0;
+    }
+    for (const st of M.statues.slice(1)) {
+      st.position.set(M.origin.x + 3.2, M.origin.floor, M.origin.z + 24.8);
+    }
+    const preDash = st0.position.clone();
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 13);
+    g.player.vel.set(0, 0, 0);
+    g.player.yaw = Math.PI;   // facing up-hall; statue 0 is behind, unseen
+    g.player.pitch = 0;
+    g.player._sync(0);
+    F.stepWith(1.0, {});
+    const advanced = preDash.distanceTo(st0.position);
+    check('after the theft an unobserved statue closes the distance fast',
+      advanced > 1.2, { advanced: +advanced.toFixed(2) });
+
+    // watched, it freezes mid-hunt
+    const preWatch = st0.position.clone();
+    const dxs = st0.position.x - g.player.pos.x;
+    const dzs = st0.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxs, -dzs);
+    g.player._sync(0);
+    F.stepWith(0.8, {});
+    check('a watched statue freezes mid-hunt',
+      preWatch.distanceTo(st0.position) < 0.05,
+      { moved: +preWatch.distanceTo(st0.position).toFixed(3) });
+
+    // the skull's hit shoves marble like any other creature
+    const preHit = st0.position.clone();
+    let minSd = 99;
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    for (let i = 0; i < 60; i++) {
+      F.step(1 / 120, 1, false);
+      minSd = Math.min(minSd,
+        Math.hypot(g.skull.pos.x - st0.position.x, g.skull.pos.z - st0.position.z));
+    }
+    F.stepWith(1 / 120, { throwReleased: true });
+    for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {});
+    const shoved = preHit.distanceTo(st0.position);
+    check('a skull hit staggers the hunter back',
+      shoved > 0.8, { shoved: +shoved.toFixed(2), minSd: +minSd.toFixed(2) });
+
+    // and you cannot let them get you
+    const dxa = st0.position.x - g.player.pos.x;
+    const dza = st0.position.z - g.player.pos.z;
+    g.player.yaw = Math.atan2(-dxa, -dza) + Math.PI;   // look away again
+    g.player._sync(0);
+    for (let t = 0; t < 6 && !g.dead; t += 0.1) F.stepWith(0.1, {});
+    check('letting a mourner reach you is the end', g.dead === true, { dead: g.dead });
+
+    g.director.respawn();
+    F.stepWith(0.5, {});
+    check('respawn stands you back up inside the marrow with the mourners reposted',
+      M.inMarrow === true && !g.dead
+      && M.statues[0].position.distanceTo(M.statues[0].userData.home) < 0.05,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    // leave: E on the hanging bone toggle; the surface takes its air back
+    g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 2.2);
+    g.player.vel.set(0, 0, 0);
+    g.player.yaw = 0;
+    g.player.pitch = -0.06;
+    g.player._sync(0);
+    F.stepWith(1 / 120, { interactPressed: true });
+    F.stepWith(0.4, {});
+    check('using the way-up toggle surfaces beside the grave and restores the fog',
+      M.inMarrow === false && g.act === 'graveyard'
+      && g.scene.fog.color.getHex() !== 0x160611,
+      { pos: g.player.pos.toArray().map((v) => +v.toFixed(1)) });
+
+    return { checks, diagnostics: { escorted: g.flags.has('marrow:escorted') } };
+  });
+
   await scenario('forest-mouth-boundary', () => {
     const F = window.__FETCH;
     const g = window.__game;
@@ -646,6 +1017,64 @@ try {
     );
 
     return { checks, diagnostics: { sideLat: sideProjection?.lat ?? null, half } };
+  });
+
+  await scenario('forest-chain', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('forest');
+    F.stepWith(1 / 120, {}, false);
+    const forest = g.forest;
+
+    // (a) THE CHAIN IS NEVER THE ONLY ROUTE. Walk the whole chain run on foot
+    // with no throws: a missed link must be a landing, never a soft-lock.
+    const startPos = forest.posAt(160, 0);
+    g.player.pos.set(startPos.x, forest.heightAt(startPos.x, startPos.z), startPos.z);
+    forest.recentre(g.player.pos);
+    g.player._sync(0);
+    for (let t = 0; t < 30; t += 0.1) {
+      const pr = forest.project(g.player.pos.x, g.player.pos.z);
+      if (!pr || pr.s > 205 || g.dead) break;
+      const ahead = forest.posAt(Math.min(forest.length - 1, (pr?.s ?? 160) + 4), 0);
+      g.player.yaw = Math.atan2(-(ahead.x - g.player.pos.x), -(ahead.z - g.player.pos.z));
+      F.stepWith(0.1, { moveZ: 1, run: true }, false);
+    }
+    const walkedS = forest.project(g.player.pos.x, g.player.pos.z)?.s ?? -1;
+    check('the chain run is walkable on foot with no throws',
+      walkedS > 205 && !g.dead, { walkedS, dead: g.dead });
+
+    // (b) the chain's anchors never retire: every knot target enabled after use
+    const knots = g.world.fetchTargets.filter((t) => String(t.id).startsWith('forestChain'));
+    check('all six chain targets exist and stay enabled',
+      knots.length === 6 && knots.every((t) => t.enabled !== false),
+      { count: knots.length, enabled: knots.map((t) => t.enabled !== false) });
+
+    // (c) DEATH MID-CHAIN RESTORES CLEAN: kill the player airborne on a link
+    // and assert the swing is gone, the respawn is grounded and on-trail.
+    const link = forest.chainLinks.find((l) => l.s === 182);
+    g.player.pos.set(link.pivot.x, forest.heightAt(link.pivot.x, link.pivot.z), link.pivot.z - 6);
+    forest.recentre(g.player.pos);
+    g.player._sync(0);
+    F.setSkull(link.pivot.x, link.pivot.y, link.pivot.z, 0, 0, 0, 'outbound');
+    const directive = link.target.onHit.call(link.target, g.skull);
+    F.stepWith(0.4, { throwHeld: true }, false);
+    const midSwing = !!g.player.swing;
+    g.director.death(null);
+    F.stepWith(1.2, {}, false);
+    g.director.respawn();
+    F.stepWith(0.2, {}, false);
+    const pr = forest.project(g.player.pos.x, g.player.pos.z);
+    check('death mid-chain drops the rope and restores a grounded on-trail pose',
+      directive === 'anchor' && midSwing
+      && g.player.swing === null && !g.dead
+      && pr && Math.abs(pr.lat) < forest.halfW[Math.round(pr.s)] + 0.5,
+      { directive, midSwing, swing: g.player.swing, dead: g.dead, s: pr?.s, lat: pr?.lat });
+
+    return { checks };
   });
 
   await scenario('forest-checkpoint', () => {
@@ -823,6 +1252,12 @@ try {
     F.start();
     F.teleport('clearing');
     F.stepWith(1 / 120, {}, false);
+    // the falls arrive FROZEN now and the bargain is not on the table until
+    // both fires are lit; this scenario is about what happens AFTER it is
+    // taken, so hand it the thawed world the two machines would have made
+    g.flag('fallsThawed');
+    g.director.armWaterfall();
+    F.stepWith(1 / 120, {}, false);
 
     const waterfall = g.world.fetchTargets.find((target) => target.id === 'waterfall');
     let directive = null;
@@ -897,6 +1332,13 @@ try {
     const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
 
     F.start();
+    // Complete the bedroom arrival FIRST (hard-teleport contract), exactly as
+    // a real run reaches the mirror room with 'skullArrived' long since
+    // flagged. Only then does the waterfall's vanish() hold: teleport's
+    // instant-completion keys on the missing flag, and simulating the
+    // bargain before the flag exists would resurrect the skull.
+    F.teleport('bedroom');
+    F.stepWith(0.2, {}, false);
     g.skull.vanish();
     const audioCalls = [];
     for (const name of ['skullMoanStart', 'skullMoanUpdate', 'skullMoanStop', 'catchThud', 'gasp']) {
@@ -1005,6 +1447,670 @@ try {
     );
 
     return { checks, diagnostics: { audioCalls, guard, half: g.finale.half } };
+  });
+
+  // ---- THE NEW OPENING: three arrival traps -------------------------------
+  // Alex: "Make sure it doesn't get the key on the way in when you first meet
+  // it shattering the window." The room boots skull-less; the bell (hidden
+  // under a floorboard, gated behind the rug search) summons the skull through
+  // the strong-glass window. These scenarios drive the real interact
+  // dispatcher — hard player placement is setup, every E press is a real
+  // input frame — then assert the three state truths restarts must preserve.
+
+  await scenario('arrival-never-takes-the-key', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.stepWith(0.5, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    // stand at a probe-verified pose, put the crosshair on the world point,
+    // press E through the real input frame
+    const useAt = (sx, sz, tx, ty, tz) => {
+      g.player.pos.set(sx, 3.6, sz);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player._sync(0);
+      const cam = g.camera.getWorldPosition(new (g.scene.position.constructor)());
+      const dx = tx - cam.x, dy = ty - cam.y, dz = tz - cam.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      g.player._sync(0);
+      F.stepWith(1 / 60, {}, false);
+      F.stepWith(0.06, { interactPressed: true }, false);
+    };
+
+    check(
+      'the room boots skull-less behind strong glass',
+      g.skull.mode === 'gone' && g.skull.root.parent === null
+        && A.state === 'searching' && !glass.broken && !!glass.pane.parent
+        && glass.collider.max.y > glass.collider.min.y,
+      { mode: g.skull.mode, state: A.state, broken: glass.broken },
+    );
+
+    // the two-step find: rug corner reveals the floorboard, floorboard the bell
+    useAt(10.4, 1.25, 10.65, 3.64, 2.02);   // S4 rug corner
+    F.stepWith(1.2, {}, false);
+    useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
+    F.stepWith(1.2, {}, false);
+    check(
+      'the rug-then-floorboard find surfaces the bell',
+      g.bedroomSearch.rug.done && g.bedroomSearch.floorboard.done
+        && A.bellFound && A.state === 'bellFound',
+      { state: A.state, bellFound: A.bellFound },
+    );
+    useAt(10.0, 1.5, 10.42, 3.7, 2.16);     // ring it where it lies
+    check('the bell answers with the summons', A.bellRung && A.state === 'called', A.state);
+
+    // run the whole arrival; sample the flight's mode/carry the entire way
+    const trace = [];
+    for (let i = 0; i < 170 && A.state !== 'done'; i++) {
+      F.stepWith(0.15, {}, false);
+      trace.push({
+        state: A.state,
+        mode: g.skull.mode,
+        carry: g.skull.carry ? g.skull.carry.id : null,
+      });
+    }
+    check(
+      'the summons runs to the settled catch',
+      A.state === 'done' && g.flags.has('skullArrived')
+        && g.skull.mode === 'held' && !g.skull.introFlicker,
+      { state: A.state, mode: g.skull.mode },
+    );
+    check(
+      'the inbound flight ran in mode gone (no target can fire)',
+      trace.some((r) => r.state === 'inbound' && r.mode === 'gone'),
+      { states: [...new Set(trace.map((r) => r.state + '/' + r.mode))] },
+    );
+    check(
+      'the window burst inward and stays burst',
+      glass.broken && glass.pane.parent === null
+        && glass.collider.max.y === glass.collider.min.y && glass.shards.visible,
+      { broken: glass.broken },
+    );
+    const treeKey = g.world.fetchTargets.find((t) => t.id === 'treeKey');
+    check(
+      'the arrival never takes the key',
+      g.skull.carry === null && trace.every((r) => r.carry === null)
+        && !g.flags.has('gotBedroomKey')
+        && !!treeKey && treeKey.enabled === true && treeKey.object.parent === g.scene,
+      {
+        carry: g.skull.carry,
+        everCarried: trace.some((r) => r.carry !== null),
+        treeKeyEnabled: treeKey?.enabled ?? null,
+        keyInScene: treeKey ? treeKey.object.parent === g.scene : null,
+      },
+    );
+
+    return { checks, diagnostics: { samples: trace.length } };
+  });
+
+  await scenario('restart-before-arrival-keeps-the-room-skull-less', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.stepWith(0.5, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    const useAt = (sx, sz, tx, ty, tz) => {
+      g.player.pos.set(sx, 3.6, sz);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player._sync(0);
+      const cam = g.camera.getWorldPosition(new (g.scene.position.constructor)());
+      const dx = tx - cam.x, dy = ty - cam.y, dz = tz - cam.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      g.player._sync(0);
+      F.stepWith(1 / 60, {}, false);
+      F.stepWith(0.06, { interactPressed: true }, false);
+    };
+
+    // two honest searches, then die-and-restart in the search phase
+    useAt(9.35, 4.1, 9.35, 4.12, 5.2);      // S1 dresser
+    F.stepWith(1.2, {}, false);
+    useAt(6.0, 4.6, 5.99, 5.2, 5.84);       // S6 curtains
+    F.stepWith(1.4, {}, false);
+    const searchedBefore = A.searchedCount;
+    F.pause('regression');
+    F.restartCheckpoint();
+    F.stepWith(0.5, {}, false);
+
+    check(
+      'restart keeps the room skull-less',
+      g.skull.mode === 'gone' && g.skull.root.parent === null
+        && !g.flags.has('skullArrived') && A.state === 'searching',
+      { mode: g.skull.mode, state: A.state },
+    );
+    check(
+      'searches persist across the restart (they are world truth)',
+      searchedBefore === 2 && A.searchedCount === 2
+        && g.bedroomSearch.dresser.done && g.bedroomSearch.curtains.done
+        && Math.abs(g.bedroomProps.dresser.group.position.z - (5.235 - 0.24)) < 0.02,
+      {
+        searched: A.searchedCount,
+        drawerZ: +g.bedroomProps.dresser.group.position.z.toFixed(3),
+      },
+    );
+    check(
+      'the glass is still whole and strong',
+      !glass.broken && !!glass.pane.parent
+        && glass.collider.max.y > glass.collider.min.y && !glass.shards.visible,
+      { broken: glass.broken },
+    );
+
+    // the bell is still findable, and still answers
+    useAt(10.4, 1.25, 10.65, 3.64, 2.02);   // S4 rug corner
+    F.stepWith(1.2, {}, false);
+    useAt(10.3, 1.35, 10.6, 3.64, 2.16);    // S5 loose floorboard
+    F.stepWith(1.2, {}, false);
+    check(
+      'the bell is still findable after the restart',
+      A.bellFound && A.state === 'bellFound' && A.searchedCount === 4,
+      { state: A.state, searched: A.searchedCount },
+    );
+    useAt(10.0, 1.5, 10.42, 3.7, 2.16);
+    check('and still re-ringable', A.bellRung && A.state === 'called', A.state);
+
+    return { checks, diagnostics: { searched: A.searchedCount } };
+  });
+
+  await scenario('restart-after-arrival-keeps-skull-and-broken-window', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('bedroom');                   // completes the arrival (test contract)
+    F.stepWith(0.3, {}, false);
+    const A = g.bedroomArrival;
+    const glass = g.bedroomGlass;
+    check(
+      'teleport hands over the post-arrival room',
+      g.flags.has('skullArrived') && g.skull.mode === 'held'
+        && A.state === 'done' && glass.broken,
+      { state: A.state, mode: g.skull.mode },
+    );
+
+    F.pause('regression');
+    F.restartCheckpoint();
+    F.stepWith(0.5, {}, false);
+
+    check(
+      'restart keeps the skull in the hands',
+      g.flags.has('skullArrived') && g.skull.mode === 'held'
+        && !g.skull.introFlicker && A.state === 'done',
+      { mode: g.skull.mode, state: A.state, flicker: !!g.skull.introFlicker },
+    );
+    check(
+      'restart keeps the broken window broken',
+      glass.broken && glass.pane.parent === null
+        && glass.collider.max.y === glass.collider.min.y && glass.shards.visible,
+      { broken: glass.broken, shards: glass.shards.visible },
+    );
+    const bellInter = g.world.interactables
+      .map((o) => o.userData.inter).find((i) => i && i.id === 'bedroomBell');
+    check(
+      'the bell verb stays spent',
+      !!bellInter && bellInter.enabled === false,
+      { found: !!bellInter, enabled: bellInter?.enabled ?? null },
+    );
+
+    return { checks, diagnostics: null };
+  });
+
+  // THE THREE-KEY GATE. Any order, and only three opens it — the sockets are
+  // the counter, so the counter has to be right.
+  await scenario('gate-takes-three-keys-in-any-order', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+
+    check('the gate is shut and every socket is empty',
+      g.gateKeys.banked() === 0 && !g.graveyardGate.opening && !g.graveyardGate.open,
+      { banked: g.gateKeys.banked() });
+    // the retired northeast pit is scenery now: no verb, ever
+    const nearOldPit = g.world.interactables.filter((o) => {
+      const w = o.getWorldPosition(new g.skull.pos.constructor());
+      return Math.hypot(w.x - 11.8, w.z - 36.2) < 2.0;
+    });
+    check('the way down is under the sealed mausoleum, and the old grave is inert',
+      !!g.marrowPit && Math.abs(g.marrowPit.x - 15.6) < 0.2 && g.marrowPit.z > 30
+      && nearOldPit.length === 0,
+      { mouth: [g.marrowPit?.x, g.marrowPit?.z], strayVerbs: nearOldPit.length });
+
+    // bank out of order: middle socket, then top, then bottom
+    const order = [1, 2, 0];
+    let opened = null;
+    for (let i = 0; i < order.length; i++) {
+      const rec = g.gateKeys.list[i];
+      rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+      rec.giveToJaw();
+      const socket = g.gateKeys.sockets[order[i]];
+      const banked = socket.bank();
+      F.stepWith(0.1, {}, false);
+      check(`key ${i + 1} banks into socket ${order[i]}`,
+        banked === true && socket.filled === true
+        && g.gateKeys.banked() === i + 1,
+        { banked: g.gateKeys.banked(), filled: socket.filled });
+      // the latch weights ARE the tally: one lets go per banked key, at the
+      // gate, two metres from the stone the player is standing at
+      const letGo = g.graveyardGate.weights
+        .filter((w) => w.position.y < w.userData.homeY - 0.005).length;
+      check(`weight ${i + 1} lets go with the key`, letGo === i + 1, { letGo });
+      if (i < 2) opened = g.graveyardGate.opening || g.graveyardGate.open;
+    }
+    check('two keys are not enough — the gate never twitched before the third',
+      opened === false, { opened });
+    F.stepWith(1.6, {}, false);
+    check('the third key gives the gate',
+      g.graveyardGate.opening === true && g.flags.has('graveyardCleared'),
+      { opening: g.graveyardGate.opening });
+    // ...and nothing is left hanging in the doorway. The weights draw up flush
+    // into the header as the leaves swing: the walk band (y 0.3..2.2) across
+    // the whole 3.2 m gap has to be empty of anything without a collider.
+    F.stepWith(3.4, {}, false);
+    const weightY = g.graveyardGate.weights.map((w) => +w.position.y.toFixed(3));
+    check('the gate is open and nothing hangs in the walkway',
+      g.graveyardGate.open === true && weightY.every((y) => y >= 2.2),
+      { open: g.graveyardGate.open, weightY });
+
+    // THE WALKWAY, PROVEN TWO WAYS. This check used to read only the three
+    // weight meshes — which is why it sat green through an entire round while
+    // a pale stone lid with a 1.36 m collider stood dead centre of the gap and
+    // Alex had to walk around it. A mesh scan would have missed it anyway (its
+    // top face was BELOW the band floor); the thing that stops a player is a
+    // COLLIDER. So: scan the volume, then actually walk it.
+    const blockers = g.world.colliders.filter((c) => c.door || c.skullPass ? false
+      : c.max.y > 0.15 && c.max.x > 0.5 && c.min.x < 3.5
+        && c.max.z > 41.4 && c.min.z < 45.5);
+    // skullPass is exempt above ONLY because a skull-permeable body blocker is
+    // still a player blocker — so it is re-tested here explicitly rather than
+    // waved through: nothing of either kind may stand in the gap.
+    const softBlockers = g.world.colliders.filter((c) => !c.door && c.skullPass
+      && c.max.y > 0.15 && c.max.x > 0.5 && c.min.x < 3.5
+      && c.max.z > 41.4 && c.min.z < 45.5);
+    check('no collider stands in the opened gate gap',
+      blockers.length === 0 && softBlockers.length === 0,
+      { solid: blockers.length, skullPass: softBlockers.length,
+        first: (blockers[0] || softBlockers[0])
+          ? [(blockers[0] || softBlockers[0]).min.x, (blockers[0] || softBlockers[0]).min.z,
+            (blockers[0] || softBlockers[0]).max.x, (blockers[0] || softBlockers[0]).max.z]
+          : null });
+
+    // and the assertion that catches ANY future object dropped in the doorway,
+    // whatever it is made of: line up on the gate's centreline and walk.
+    // forward = (-sin yaw, -cos yaw), so PI faces +z — out through the gate.
+    const GX = 2, GZ = 43;
+    g.player.pos.set(GX, g.player.pos.y, GZ - 2);
+    g.player.yaw = Math.PI;
+    g.player._sync(0);
+    F.stepWith(0.1, {}, false);
+    F.stepWith(4.0, { moveZ: 1 }, false);
+    check('you can walk straight out through the gate without steering',
+      Math.abs(g.player.pos.x - GX) < 0.35 && g.player.pos.z > 45,
+      { x: +g.player.pos.x.toFixed(2), z: +g.player.pos.z.toFixed(2) });
+    return { checks, diagnostics: null };
+  });
+
+  // THE BUG OF ROUND FOUR. `restore()` replayed a KEY-NUMBER flag onto a
+  // SOCKET INDEX while bankAny() seats bottom-up, so any out-of-order bank plus
+  // any death invented sockets: three filled from two real keys, `_opened`
+  // latched over a gate that never opened, and the real third key answered with
+  // the locked rattle forever. Alex hit it dying in the marrow.
+  //
+  // No test had ever called restore(), and the playthrough banks 1,2,3 in
+  // ascending order — the one order where the old code was accidentally right.
+  // So run ALL SIX orders: the bug lives in five of them.
+  await scenario('a-death-after-an-out-of-order-bank-cannot-invent-a-key', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    // Six orders share one page, so each must start from a genuinely clean
+    // gate: giveToJaw() refuses forever once 'gotgateKeyN' is set. Clearing
+    // THROUGH restore() also exercises its clearing direction, which the old
+    // key-number form could never do — it only ever wrote true, which is half
+    // the reason a phantom socket could never be corrected.
+    const resetGate = () => {
+      for (const k of [1, 2, 3]) {
+        g.flags.delete('gateKeyBanked:' + k);
+        g.flags.delete('gotgateKey' + k);
+      }
+      g.flags.delete('graveyardCleared');
+      if (g.skull.carry) g.skull.dropCarry();
+      g.gateKeys.restore();
+      for (const rec of g.gateKeys.list) rec.revealed = false;
+      g.graveyardGate.reset();
+    };
+
+    const ORDERS = [[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]];
+    for (const order of ORDERS) {
+      const tag = order.join('');
+      F.start();
+      F.teleport('graveyard');
+      F.stepWith(0.2, {}, false);
+      resetGate();
+      g.flag('graveyardResolved');
+      g.skull.holdNow();
+      F.stepWith(0.2, {}, false);
+
+      let bad = g.gateKeys.banked() === 0 ? null
+        : `the reset left ${g.gateKeys.banked()} banked`;
+      for (let i = 0; i < 3; i++) {
+        const rec = g.gateKeys.list[order[i] - 1];
+        rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+        rec.giveToJaw();
+        F.stepWith(0.1, {}, false);
+        const seated = g.gateKeys.sockets.find((s) => !s.filled)?.bank();
+        F.stepWith(0.1, {}, false);
+        if (seated !== true) bad ||= `key ${order[i]} refused at position ${i + 1}`;
+        if (g.gateKeys.banked() !== i + 1) {
+          bad ||= `count ${g.gateKeys.banked()} after ${i + 1} banks`;
+        }
+
+        // THE DEATH. Respawn after every single bank, not just the last —
+        // restore() runs twice per respawn and must be idempotent both times.
+        g.director.respawn();
+        F.stepWith(0.6, {}, false);
+
+        const banked = g.gateKeys.banked();
+        if (banked !== i + 1) bad ||= `respawn inflated ${i + 1} keys to ${banked}`;
+        const col = g.gateKeys.sockets.map((s) => !!s.filled);
+        // bottom-up, always: the seated column IS the no-HUD progress read
+        const want = [0, 1, 2].map((k) => k < i + 1);
+        if (col.join() !== want.join()) bad ||= `column ${col.join()} want ${want.join()}`;
+        const down = g.graveyardGate.weights
+          .filter((w) => w.position.y < w.userData.homeY - 0.005).length;
+        if (i < 2 && down !== i + 1) bad ||= `${down} weights down for ${i + 1} keys`;
+        if (i < 2 && g.gateKeys._opened) bad ||= `_opened latched at ${i + 1} keys`;
+
+        // THE SOFTLOCK INVARIANT, tested at every step regardless of how the
+        // count got here: three banked must mean a gate that is open or opening.
+        if (banked >= 3 && !g.graveyardGate.opening && !g.graveyardGate.open
+          && !g.flags.has('graveyardCleared')) bad ||= 'SOFTLOCK: 3 banked, gate shut';
+      }
+      F.stepWith(1.8, {}, false);
+      if (!(g.graveyardGate.opening || g.graveyardGate.open)) {
+        bad ||= 'the third key did not give the gate';
+      }
+      if (!g.flags.has('graveyardCleared')) bad ||= 'graveyardCleared never flagged';
+      check(`banked ${tag} with a death after each: the count survives, the gate gives`,
+        bad === null, { order: tag, problem: bad, banked: g.gateKeys.banked() });
+    }
+    return { checks, diagnostics: null };
+  });
+
+  // ...and the same corruption walked in from a session that was ALREADY broken:
+  // restore() must heal it, not preserve it. This is the state Alex was stuck in.
+  await scenario('a-session-that-walks-in-corrupt-heals-on-respawn', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.2, {}, false);
+    g.flag('graveyardResolved');
+    F.stepWith(0.2, {}, false);
+
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    // hand-build the exact corrupt state: three filled sockets, `_opened`
+    // latched, no 'graveyardCleared', gate shut — two real keys' worth of flags
+    for (const s of g.gateKeys.sockets) s.filled = true;
+    g.gateKeys._opened = true;
+    g.flag('gateKeyBanked:2');
+    g.flag('gateKeyBanked:3');
+    F.stepWith(0.4, {}, false);
+    check('the corrupt state reproduces (3 hanging weights, gate shut)',
+      g.gateKeys.banked() === 3 && !g.graveyardGate.opening && !g.graveyardGate.open,
+      { banked: g.gateKeys.banked() });
+
+    g.director.respawn();
+    F.stepWith(0.6, {}, false);
+    check('a respawn re-derives the true count from the flags',
+      g.gateKeys.banked() === 2
+      && g.gateKeys.sockets.map((s) => !!s.filled).join() === 'true,true,false',
+      { banked: g.gateKeys.banked(),
+        column: g.gateKeys.sockets.map((s) => !!s.filled).join() });
+    check('the stale latch is gone, so the last key can still give the gate',
+      !g.gateKeys._opened, { opened: !!g.gateKeys._opened });
+
+    // and the real third key still works — 'the key does nothing' is over
+    const rec = g.gateKeys.list[0];
+    rec.reveal(g.player.pos.x, g.player.pos.y + 1.2, g.player.pos.z + 1.2);
+    rec.giveToJaw();
+    F.stepWith(0.1, {}, false);
+    const seated = g.gateKeys.sockets.find((s) => !s.filled)?.bank();
+    F.stepWith(1.8, {}, false);
+    check('the third key banks and the gate gives',
+      seated === true && (g.graveyardGate.opening || g.graveyardGate.open)
+      && g.flags.has('graveyardCleared'),
+      { seated, opening: g.graveyardGate.opening });
+    return { checks, diagnostics: null };
+  });
+
+  // THE KEY TREE. One limb, hung where a throw can reach it; the key visible
+  // up near the leaves and NOT takeable until the limb comes down. One hit.
+  await scenario('the-key-tree-gives-on-one-hit', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    const climb = g.keyTreeClimb;
+    const key3 = g.gateKeys.list[2];
+
+    check('nothing hangs out of the tree before the funeral',
+      climb.dropped === false && climb.arm.visible === false
+      && climb.branchTarget.enabled === false && key3.target.enabled === false);
+
+    g.director._completeGraveyard('loud');
+    for (let i = 0; i < 90; i++) F.stepWith(0.1, {}, false);   // reveal at 4.0s + payout
+    check('the tree lets one branch down, and it answers a throw',
+      climb.dropped === true && climb.arm.visible === true
+      && climb.branchTarget.enabled === true && climb.branchTarget.radius > 2,
+      { hangY: +climb.branchTarget.pos.y.toFixed(2) });
+    check('the key is up there, in sight and out of reach',
+      key3.key.visible === true && key3.target.enabled === false && key3.home.y > 3.0,
+      { visible: key3.key.visible, fetchable: key3.target.enabled, y: +key3.home.y.toFixed(2) });
+    check('the branch hangs where a level throw meets it',
+      climb.branchTarget.pos.y > 2.0 && climb.branchTarget.pos.y < 4.6,
+      { y: +climb.branchTarget.pos.y.toFixed(2) });
+
+    climb.tear();
+    check('a second hit changes nothing — one is the whole count',
+      climb.tear() === false);
+    for (let i = 0; i < 70; i++) F.stepWith(0.1, {}, false);
+    check('the key and the bones came down into the grass',
+      g.flags.has('keyTreeFelled') && key3.home.y < 1.2
+      && climb.bones.position.y < 0.9 && climb.shards.visible === true,
+      { keyY: +key3.home.y.toFixed(2), boneY: +climb.bones.position.y.toFixed(2) });
+    check('and only now can it be fetched',
+      key3.target.enabled === true, { enabled: key3.target.enabled });
+    // a felled branch still answers — it just does not eat the throw, because
+    // the key it dropped is lying in the grass behind it
+    check('the torn limb still answers, and still lets the skull through',
+      climb.branchTarget.enabled === true && climb.branchTarget.radius < 2.0,
+      { radius: climb.branchTarget.radius });
+    return { checks, diagnostics: null };
+  });
+
+  // THE CONTRAPTION THAT DID NOTHING. "One of the basement contraptions in the
+  // picture is still not required for the puzzle for some reason." The crawl
+  // cage is the pump-works drive weight now, and the winch says so.
+  await scenario('the-crawl-cage-is-the-pump-works-drive-weight', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('basement');
+    g.enemies.clear();
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+
+    const winch = g.world.fetchTargets.find((t) => t.id === 'pumpWinchCradle');
+    const at = g.pumpGallery.cradle.getWorldPosition(g.player.pos.clone());
+    F.setSkull(at.x, at.y, at.z, 0, 0, 0, 'outbound');
+    const refused = winch.onHit.call(winch, g.skull);
+    F.stepWith(0.1, {}, false);
+    check('the winch will not take the skull while the cage hangs empty',
+      refused === 'return' && g.skull.mode !== 'anchored'
+      && !g.flags.has('pumpWinchTouched'),
+      { directive: refused, mode: g.skull.mode });
+    check('and the refusal points back east at the cage that owes it',
+      g.crawlSecret.pulse > 0, { pulse: +g.crawlSecret.pulse.toFixed(2) });
+
+    g.flag('crawlSecretSolved');
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    F.setSkull(at.x, at.y, at.z, 0, 0, 0, 'outbound');
+    const accepted = winch.onHit.call(winch, g.skull);
+    check('with the weight hung, the winch takes it',
+      accepted === 'anchor' && g.flags.has('pumpWinchTouched'),
+      { directive: accepted });
+
+    // and while we are in this room: the decorative boiler wears a door, a
+    // latch bar and a gauge two metres from the fire that IS a puzzle
+    const boiler = g.world.fetchTargets.find((t) => t.id === 'boilerDoor');
+    check('the boiler that opens nothing at least answers a throw',
+      !!boiler && boiler.enabled === true);
+    return { checks, diagnostics: null };
+  });
+
+  // ONE BROKEN STONE, TWO PRIZES, IN ORDER. "might as well remove that powerup
+  // and put both powerups in the same spot as the first powerup is in now that
+  // comes out of that destroyed gravestone."
+  await scenario('the-hero-grave-yields-two-in-order', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    F.stepWith(0.2, {}, false);
+    const canine = g.world.fetchTargets.find((t) => t.id === 'ironCanine');
+    const relic = g.world.fetchTargets.find((t) => t.id === 'marrowRelic');
+    check('nothing is in the rubble until the stone comes down',
+      !!canine && !!relic && canine.object.visible === false && relic.object.visible === false);
+
+    g.destructibleGraves[5].hits = 2;
+    F.stepWith(2.0, {}, false);
+    check('the stone gives up the canine first, and only the canine',
+      canine.object.visible === true && canine.enabled === true
+      && relic.object.visible === false && relic.enabled === false);
+
+    g.flag('skullSharpened');
+    F.stepWith(2.0, {}, false);
+    check('the sharpened bite applies, and the second thing lights up behind it',
+      g.skullPower === 2 && canine.object.visible === false
+      && relic.object.visible === true && relic.enabled === true);
+    check('and it stands clear of the first, not on top of it',
+      Math.hypot(relic.object.position.x - 18.52, relic.object.position.z - 37.5) > 0.4,
+      { at: relic.object.position.toArray().map((v) => +v.toFixed(2)) });
+
+    g.flag('relicKept');
+    F.stepWith(0.6, {}, false);
+    check('the keepsake rides the jaw, derived from the flag so a reload rebuilds it',
+      !!g.relicDangle && g.relicDangle.parent === g.skull.jaw
+      && relic.object.visible === false,
+      { applied: g._relicApplied });
+    return { checks, diagnostics: null };
+  });
+
+  // THE PIERCE. The canine's real gift: ordinary bodies drop on contact and
+  // the skull keeps going. Unkillables are untouched by it.
+  await scenario('the-canine-pierces-ordinary-bodies', () => {
+    const F = window.__FETCH;
+    const g = window.__game;
+    const checks = [];
+    const check = (name, passed, details = null) => checks.push({ name, passed: !!passed, details });
+
+    F.start();
+    F.teleport('graveyard');
+    F.stepWith(0.3, {}, false);
+    g.skull.holdNow();
+    g.enemies.clear(() => true);
+    F.stepWith(0.2, {}, false);
+
+    const line = (power) => {
+      g.skullPower = power;
+      g.enemies.clear(() => true);
+      g.player.pos.set(0, 0, 20);
+      g.player.vel.set(0, 0, 0);
+      g.player.yaw = Math.PI;                      // +z, straight down the line
+      g.player.pitch = 0;
+      g.player._sync(0);
+      const a = g.enemies.spawn('walker', 0, 24, 'chase');
+      const b = g.enemies.spawn('walker', 0, 27, 'chase');
+      a.graveRiseT = 0; b.graveRiseT = 0;
+      F.stepWith(0.2, {}, false);
+      g.skull.holdNow();
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+      F.stepWith(0.75, { throwHeld: true }, false);
+      const state = { a: a.state, b: b.state, mode: g.skull.mode };
+      F.stepWith(1 / 120, { throwReleased: true }, false);
+      for (let t = 0; t < 3 && g.skull.mode !== 'held'; t += 0.1) F.stepWith(0.1, {}, false);
+      return state;
+    };
+
+    const plain = line(1);
+    check('at power 1 the first body is STUNNED and the throw comes home',
+      plain.a === 'stunned' && plain.b !== 'dying' && plain.mode !== 'outbound',
+      plain);
+    const sharp = line(2);
+    check('at power 2 the first body DROPS and the skull is still in flight',
+      sharp.a === 'dying' && (sharp.mode === 'outbound' || sharp.mode === 'poised'),
+      sharp);
+    check('and it reaches the body standing behind it',
+      sharp.b === 'dying', sharp);
+
+    // the unkillables keep every existing rule
+    g.enemies.clear(() => true);
+    g.skullPower = 2;
+    g.player.pos.set(0, 0, 20);
+    g.player.yaw = Math.PI;
+    g.player.pitch = 0;
+    g.player._sync(0);
+    const k = g.enemies.spawn('kneeler', 0, 25, 'chase');
+    k.graveRiseT = 0;
+    F.stepWith(0.2, {}, false);
+    g.skull.holdNow();
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+    F.stepWith(0.7, { throwHeld: true }, false);
+    check('a kneeler still cannot be put down, powered or not',
+      k.state !== 'dying', { state: k.state });
+    g.skullPower = 1;
+    return { checks, diagnostics: null };
   });
 } finally {
   await browser.close().catch(() => {});

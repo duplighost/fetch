@@ -10,6 +10,17 @@ const ROOM_H = 2.7;
 const CONTACT_HALF = 0.37;
 const CONTACT_TIME = 2.35;
 
+// THE RAISED HANDS, authored here because _updatePressure owns them (it rewrites
+// both rotations every frame, after skull.update). Roughly (-PI/2, 0, ±PI) —
+// fingers up, backs of the hands to the camera, thumbs lateral — softened by
+// the splay the hold pose already carries. The ±PI about each hand's own local
+// Z is the finger axis: it turns the hand over without mirroring it, which
+// matters because mkHand puts the handedness in the GEOMETRY (right thumb at
+// local -X, left at +X). Negating thumb offsets instead would put a left hand
+// on the right wrist.
+const RAISED_L = Object.freeze({ x: -1.24, y: 0.30, z: Math.PI - 0.10 });
+const RAISED_R = Object.freeze({ x: -1.24, y: -0.30, z: -(Math.PI - 0.10) });
+
 // Four mirror renders make every draw matter. The finale therefore uses a
 // bounded authored kit: shared materials, compact furniture groups, and an
 // exact shared-geometry clone of the live skull rather than duplicate assets.
@@ -189,7 +200,6 @@ function makeFractureGeometry() {
 export class Finale {
   constructor(game) {
     this.game = game;
-    const warmRootStart = game.scene.children.length;
     this.active = false;
     this.t = 0;
     this.half = 3.0;                  // wall half-extent, shrinks to contact at 0.37
@@ -208,37 +218,7 @@ export class Finale {
     this._v2 = new THREE.Vector3();
     this._recallFar = new THREE.Vector3();
     this._recallPos = new THREE.Vector3();
-    this._targetWarmState = null;
-    this._targetRecoveryTimer = null;
-    this._targetRecoveryGeneration = -1;
-    this._targetRecoveryRound = 0;
-    this._visibilityIsolationSaved = new Map();
-    this.visibilityIsolation = {
-      active: false,
-      runs: 0,
-      roots: 0,
-      renderables: 0,
-      writes: 0,
-      allHidden: false,
-      durationMs: 0,
-      restoreRuns: 0,
-      restoreRoots: 0,
-      restoreWrites: 0,
-      restoreDurationMs: 0,
-      savedAfterRestore: 0,
-    };
-    // A restored WebGL context has no resident mirror programs or FBO storage,
-    // even though the JS-side Finale object is still active. Keep the panes as
-    // authored dark glass while the new generation is rebuilt; simulation and
-    // player control continue, but the first live reflection can never become
-    // the accidental synchronous warmup frame.
-    this._contextRewarming = false;
-    this._contextRewarmGeneration = -1;
     this._build();
-    // An exact ownership boundary for shader residency/context restoration.
-    // main.js consumes these roots incrementally; it never traverses the full
-    // assembled world to discover the finale's late-only signatures.
-    this.warmRoots = game.scene.children.slice(warmRootStart);
   }
 
   _build() {
@@ -727,6 +707,13 @@ export class Finale {
     return skull;
   }
 
+  // Called once at boot, before World.pinLightCensus, so the double's two
+  // cloned lamps are counted with every other light in the game instead of
+  // joining the mirror pass's census in the last act (which recompiled every
+  // reflected material at the climax). Idempotent — reset() still calls it for
+  // any path that reaches the room without a head.
+  mountReflectionSkull() { this._mountExactSkull(); }
+
   _mountExactSkull() {
     const data = this.figure.userData;
     if (data.exactHead) return;
@@ -806,362 +793,8 @@ export class Finale {
     });
   }
 
-  invalidateWarmRenderTargets(reason = 'invalidated') {
-    if (this._targetRecoveryTimer) {
-      clearTimeout(this._targetRecoveryTimer);
-      this._targetRecoveryTimer = null;
-    }
-    if (this.active && reason.startsWith('context-')) {
-      this.beginContextRewarm(this.game._webglGeneration);
-    }
-    const state = this._targetWarmState;
-    if (!state) return false;
-    state.invalidated = true;
-    state.status = 'invalidated';
-    state.reason = reason;
-    state.invalidatedAt = performance.now();
-    this._targetWarmState = null;
-    // A shader generation may be waiting for these uploads before declaring
-    // itself ready. Resolve that waiter now; it will reject the stale token and
-    // the restored generation will install its own callback/state.
-    const callbacks = state.callbacks.splice(0);
-    for (const callback of callbacks) callback({ ...state, callbacks: undefined });
-    return true;
-  }
-
-  _renderTargetPoolSignature() {
-    return this.game._renderTargetPoolIdentity(
-      this.mirrors?.pool, this.mirrors,
-    );
-  }
-
-  _targetPoolRefsMatch(state) {
-    const pool = this.mirrors?.pool;
-    return !!(state && Array.isArray(pool) && state.poolRef === pool
-      && state.targetRefs?.length === pool.length
-      && state.targetRefs.every((target, index) => target === pool[index]));
-  }
-
-  _scheduleWarmRenderTargetRecovery(state) {
-    if (!state || state !== this._targetWarmState || state.status !== 'degraded'
-        || state.invalidated || state.generation !== this.game._webglGeneration
-        || state.recoveryRound >= 2 || state.recoveryScheduled
-        || this.game.terminal || this.mirrors?._disposed) return false;
-    state.recoveryScheduled = true;
-    const generation = state.generation;
-    const poolSignature = state.poolSignature;
-    const poolRef = state.poolRef;
-    const poolEpoch = state.poolEpoch;
-    const budget = state.budget;
-    const nextRound = state.recoveryRound + 1;
-    const handle = setTimeout(() => {
-      if (this._targetRecoveryTimer === handle) this._targetRecoveryTimer = null;
-      const liveSignature = this._renderTargetPoolSignature();
-      if (state !== this._targetWarmState || state.status !== 'degraded'
-          || generation !== this.game._webglGeneration
-          || poolRef !== this.mirrors?.pool || !this._targetPoolRefsMatch(state)
-          || poolEpoch !== this.mirrors?.poolEpoch
-          || poolSignature !== liveSignature || budget !== this.mirrors.budget
-          || this.game.terminal || this.mirrors?._disposed) return;
-      state.invalidated = true;
-      this._targetWarmState = null;
-      this._targetRecoveryGeneration = generation;
-      this._targetRecoveryRound = nextRound;
-      this.warmRenderTargets((nextState) => {
-        if (nextState.status === 'ready') {
-          this._targetRecoveryRound = 0;
-          this.completeContextRewarm(generation);
-        }
-      });
-    }, 800);
-    this._targetRecoveryTimer = handle;
-    return true;
-  }
-
-  beginContextRewarm(generation = this.game._webglGeneration) {
-    if (!this.active) return false;
-    this._contextRewarming = true;
-    this._contextRewarmGeneration = generation;
-    for (const pane of this.panes) pane.setActive(false);
-    return true;
-  }
-
-  completeContextRewarm(generation = this.game._webglGeneration) {
-    if (!this.active || !this._contextRewarming
-        || generation !== this.game._webglGeneration
-        || generation !== this._contextRewarmGeneration) return false;
-    const targets = this._targetWarmState;
-    // Fail closed. A degraded shader generation or a target which merely
-    // exhausted its retry count is not resident GPU state. Keep authored dark
-    // glass over the panes rather than exposing an uninitialised reflection;
-    // player input/simulation remain live and a later clean generation can
-    // still release the shield.
-    if (!targets || targets.generation !== generation
-        || targets.status !== 'ready'
-        || targets.warmed !== this.mirrors.budget
-        || targets.budget !== this.mirrors.budget
-        || targets.poolRef !== this.mirrors.pool || !this._targetPoolRefsMatch(targets)
-        || targets.poolEpoch !== this.mirrors.poolEpoch
-        || targets.poolSignature !== this._renderTargetPoolSignature()
-        || targets.failedTargets?.length
-        || !this.game.shaderWarmup?.readyVariants?.includes('finale-world')
-        || !this.game.shaderWarmup?.readyVariants?.includes('reflection-target')) return false;
-    for (const pane of this.panes) pane.setActive(true);
-    this._contextRewarming = false;
-    return true;
-  }
-
-  warmRenderTargets(onComplete = null) {
-    // WebGLRenderTarget construction is only a JavaScript descriptor; Chrome
-    // allocates the texture/depth/FBO storage the first time it is bound. Four
-    // 1024-square mirror targets used to arrive together on the first finale
-    // frame, exactly where a live playtest should never feel the driver stop.
-    // Allocate one resident target per idle slice while the player is still in
-    // earlier districts. This does not render, advance, or reveal the finale.
-    const poolSignature = () => this._renderTargetPoolSignature();
-    const currentPoolRef = this.mirrors?.pool;
-    const currentPoolEpoch = this.mirrors?.poolEpoch;
-    const currentPoolSignature = poolSignature();
-    if (this._targetRecoveryGeneration !== this.game._webglGeneration) {
-      this._targetRecoveryGeneration = this.game._webglGeneration;
-      this._targetRecoveryRound = 0;
-    }
-    if (this._targetWarmState
-        && (this._targetWarmState.generation !== this.game._webglGeneration
-          || this._targetWarmState.poolRef !== currentPoolRef
-          || !this._targetPoolRefsMatch(this._targetWarmState)
-          || this._targetWarmState.poolEpoch !== currentPoolEpoch
-          || this._targetWarmState.poolSignature !== currentPoolSignature
-          || this._targetWarmState.budget !== this.mirrors.budget)) {
-      this.invalidateWarmRenderTargets(
-        this._targetWarmState.generation !== this.game._webglGeneration
-          ? 'stale-generation' : 'stale-pool-epoch',
-      );
-    }
-    if (this._targetWarmState) {
-      if (onComplete) {
-        if (this._targetWarmState.status === 'ready'
-            || this._targetWarmState.status === 'degraded'
-            || this._targetWarmState.status === 'skipped') {
-          queueMicrotask(() => onComplete({ ...this._targetWarmState }));
-        } else this._targetWarmState.callbacks.push(onComplete);
-      }
-      return this._targetWarmState;
-    }
-    const state = this._targetWarmState = {
-      status: 'scheduled',
-      generation: this.game._webglGeneration,
-      poolRef: currentPoolRef,
-      poolEpoch: currentPoolEpoch,
-      poolSignature: currentPoolSignature,
-      targetRefs: [...(currentPoolRef || [])],
-      budget: this.mirrors.budget,
-      warmed: 0,
-      index: 0,
-      maxAttemptsPerTarget: 2,
-      attempts: Array(this.mirrors.budget).fill(0),
-      failedTargets: [],
-      retryErrors: [],
-      maxSliceMs: 0,
-      errors: [],
-      callbacks: onComplete ? [onComplete] : [],
-      recoveryRound: this._targetRecoveryRound,
-      recoveryScheduled: false,
-    };
-    const finish = (status = state.failedTargets.length ? 'degraded' : 'ready') => {
-      if (state.invalidated || state !== this._targetWarmState
-          || state.generation !== this.game._webglGeneration) return;
-      if (state.poolSignature !== poolSignature()
-          || state.poolRef !== this.mirrors?.pool
-          || !this._targetPoolRefsMatch(state)
-          || state.poolEpoch !== this.mirrors?.poolEpoch
-          || state.budget !== this.mirrors.budget) {
-        state.errors.push('mirror pool changed during target warmup');
-        state.failedTargets.push(state.index);
-        state.status = 'degraded';
-        const staleCallbacks = state.callbacks.splice(0);
-        for (const callback of staleCallbacks) callback({ ...state, callbacks: undefined });
-        this._scheduleWarmRenderTargetRecovery(state);
-        return;
-      }
-      state.status = status;
-      const callbacks = state.callbacks.splice(0);
-      for (const callback of callbacks) callback({ ...state, callbacks: undefined });
-      if (status === 'ready') this._targetRecoveryRound = 0;
-      else if (status === 'degraded') this._scheduleWarmRenderTargetRecovery(state);
-    };
-    const schedule = (fn) => {
-      // Once play has begun, put a paint opportunity between allocations. Four
-      // plain zero-delay timers may legally run before Chrome chooses to paint,
-      // turning four individually bounded uploads back into one delivered-frame
-      // hitch. On the title, ordinary idle slices keep even that small work
-      // behind presentation.
-      if (this.game.started) {
-        requestAnimationFrame(() => setTimeout(fn, 0));
-        return;
-      }
-      if (typeof requestIdleCallback === 'function') {
-        requestIdleCallback(fn, { timeout: 420 });
-      } else setTimeout(fn, 0);
-    };
-    const step = () => {
-      if (state.invalidated || state !== this._targetWarmState
-          || state.generation !== this.game._webglGeneration) return;
-      if (this.game.terminal || this.mirrors?._disposed) {
-        finish('skipped');
-        return;
-      }
-      if (state.index >= state.budget) {
-        finish();
-        return;
-      }
-      const targetIndex = state.index;
-      const target = this.mirrors?.pool?.[targetIndex];
-      if (!target || state.poolRef !== this.mirrors?.pool
-          || state.poolEpoch !== this.mirrors?.poolEpoch
-          || state.targetRefs[targetIndex] !== target) {
-        state.errors.push('mirror pool target identity changed during warmup');
-        state.failedTargets.push(targetIndex);
-        finish();
-        return;
-      }
-      state.status = 'warming';
-      const renderer = this.game.renderer;
-      const startedAt = performance.now();
-      let previousTarget = null;
-      let targetRead = false;
-      let successful = false;
-      let failureMessage = '';
-      try {
-        previousTarget = renderer.getRenderTarget();
-        targetRead = true;
-        renderer.setRenderTarget(target);
-        renderer.clear(true, true, true);
-        successful = true;
-      } catch (error) {
-        failureMessage = error?.message || `${error}`;
-      } finally {
-        if (targetRead) {
-          try {
-            renderer.setRenderTarget(previousTarget);
-          } catch (error) {
-            successful = false;
-            failureMessage ||= `restore target: ${error?.message || error}`;
-          }
-        }
-        state.maxSliceMs = Math.max(state.maxSliceMs, performance.now() - startedAt);
-      }
-      state.attempts[targetIndex]++;
-      if (successful) {
-        state.warmed++;
-        state.index++;
-      } else {
-        state.retryErrors.push(`target ${targetIndex} attempt ${state.attempts[targetIndex]}: ${failureMessage}`);
-        if (state.attempts[targetIndex] >= state.maxAttemptsPerTarget) {
-          state.failedTargets.push(targetIndex);
-          state.errors.push(`target ${targetIndex} failed after ${state.attempts[targetIndex]} attempts: ${failureMessage}`);
-          // Bound the retry path and continue allocating the remaining pool.
-          // `warmed` counts only successfully initialised targets.
-          state.index++;
-        }
-      }
-      schedule(step);
-    };
-    schedule(step);
-    return state;
-  }
-
-  _isolateFinishedDistricts() {
-    const g = this.game;
-    const startedAt = performance.now();
-    const roots = [...new Set([
-      ...(g.houseRenderRoots || []),
-      ...(g.outsideRenderRoots || []),
-      g.atmosphere?.group,
-    ].filter((root) => root?.parent === g.scene))];
-    const state = this.visibilityIsolation;
-    if (!state.active) this._visibilityIsolationSaved.clear();
-    let writes = 0;
-    let renderables = 0;
-    for (const root of roots) {
-      if (!this._visibilityIsolationSaved.has(root)) {
-        this._visibilityIsolationSaved.set(root, root.visible);
-      }
-      root.traverse((object) => {
-        if ((object.isMesh || object.isLine || object.isPoints)
-            && object.geometry && object.material) renderables++;
-      });
-      if (root.visible) {
-        root.visible = false;
-        writes++;
-      }
-    }
-    state.active = true;
-    state.runs++;
-    state.roots = roots.length;
-    state.renderables = renderables;
-    state.writes = writes;
-    state.allHidden = roots.every((root) => root.visible === false);
-    state.durationMs = performance.now() - startedAt;
-    return state;
-  }
-
-  leave() {
-    const g = this.game;
-    const startedAt = performance.now();
-    this.active = false;
-    this.phase = 'idle';
-    this._contextRewarming = false;
-    this._contextRewarmGeneration = -1;
-    this._handPressure = 0;
-    this._wallPressure.fill(0);
-    this._restoreEmptyHands(1);
-    g.player.frozen = false;
-    g.baseTension = 0;
-    g.audio.setTension(0);
-    if (this._recallActive) {
-      g.audio.skullMoanStop();
-      this._recallActive = false;
-    }
-    this.mirrors._darkenAll();
-    this.figure.visible = false;
-
-    let roots = 0;
-    let writes = 0;
-    for (const [root, visible] of this._visibilityIsolationSaved) {
-      if (root.parent !== g.scene) continue;
-      roots++;
-      if (root.visible !== visible) {
-        root.visible = visible;
-        writes++;
-      }
-    }
-    this._visibilityIsolationSaved.clear();
-    const state = this.visibilityIsolation;
-    state.active = false;
-    state.allHidden = false;
-    state.restoreRuns++;
-    state.restoreRoots = roots;
-    state.restoreWrites = writes;
-    state.restoreDurationMs = performance.now() - startedAt;
-    state.savedAfterRestore = this._visibilityIsolationSaved.size;
-    return state;
-  }
-
   begin() {
     const g = this.game;
-    // Underfalls restores the pre-cave scene transaction before this call. The
-    // production Director already does this at the hatch edge, but the public
-    // QA teleport reaches begin directly. Make that ordering intrinsic and
-    // idempotent so neither path can replay the cave snapshot after isolation.
-    g.underfalls?.visibility?.restore?.();
-    // The forest culler may already believe its back-district boundary is
-    // active, so force its visibility writes once, then hide every completed
-    // surface root behind an explicit Finale lifecycle boundary. Without this
-    // step the real mirror cameras traversed the restored moon, graveyard, and
-    // forest; the first pane became an accidental global prime and visual leak.
-    g.forest?.syncBackDistrictCulling?.(true, { reapply: true });
-    this._isolateFinishedDistricts();
     this.active = true;
     this.t = 0;
     this.phase = 'still';
@@ -1179,13 +812,10 @@ export class Finale {
     this._dresserSnap = false;
     this.poses = [];
     this._mountExactSkull();
-    // Finale's authored law is irreversible: the carried skull was surrendered
-    // at the waterfall, while only its reflected double remains here. The
-    // production route already arrives in `gone`; enforce the same invariant in
-    // direct QA/respawn entry so it cannot retain the live skull's world lights
-    // beside their DOUBLE-layer clone and accidentally create a non-shipping
-    // P17 reflection signature.
-    if (g.skull?.mode !== 'gone') g.skull?.vanish?.();
+    // The swap happens behind the fade, at the door, long before anything is
+    // raised — it is invisible until the hands come up, so the earliest moment
+    // is the safest one.
+    g.skull.becomeBone?.(g.mats?.bone);
 
     for (const o of this.resetProps) {
       o.position.copy(o.userData.homePosition);
@@ -1315,14 +945,26 @@ export class Finale {
       h.hold.rotation.y = lerp(h.holdRot.y, 0, k);
       h.hold.rotation.z = lerp(h.holdRot.z, 0, k);
       h.hold.scale.copy(h.holdScale).multiplyScalar(1 + k * 0.09);
+      // The raise is authored HERE, not in skull.js. This block rewrites both
+      // hand rotations every frame after skull.update, so a pose fix over there
+      // passes its probe and changes nothing on screen.
+      //
+      // The k=0 end used to alias skull.js's `lowered` row through
+      // _captureEmptyHands, which is why the raised hands came up rolled 180°
+      // about their own finger axis — palms out, backs to the glass, reading as
+      // somebody else's hands reaching in at Alex rather than his own coming up.
+      // RAISED_L/RAISED_R sever that coupling. BOTH endpoints carry the roll:
+      // rolling only k=1 spins each hand through palm-toward-camera during a
+      // press. Handedness is in the geometry (mkHand builds the thumbs on
+      // opposite sides), so this is a rigid roll of the group, never a mirror.
       h.left.rotation.set(
-        lerp(h.leftRot.x, -1.28, k),
-        lerp(h.leftRot.y, 0.22, k),
-        lerp(h.leftRot.z, 0.05, k));
+        lerp(RAISED_L.x, -1.28, k),
+        lerp(RAISED_L.y, 0.22, k),
+        lerp(RAISED_L.z, Math.PI - 0.05, k));
       h.right.rotation.set(
-        lerp(h.rightRot.x, -1.28, k),
-        lerp(h.rightRot.y, -0.22, k),
-        lerp(h.rightRot.z, -0.05, k));
+        lerp(RAISED_R.x, -1.28, k),
+        lerp(RAISED_R.y, -0.22, k),
+        lerp(RAISED_R.z, -(Math.PI - 0.05), k));
     }
 
     this._pressSoundT = Math.max(0, this._pressSoundT - dt);
@@ -1472,6 +1114,14 @@ export class Finale {
     this._contactCrack = false;
     this._contactSurge = false;
     this._placeWalls();
+
+    // THE LAST THING YOU SEE IS YOUR OWN HANDS. They come up once — nothing is
+    // coming back to them, so this is not a catch, it is being shown something
+    // — and they are bone. The tree in the graveyard held a skeleton with an
+    // empty cradle where a head should be; this is the other half of that
+    // sentence, and the game never says either half out loud.
+    g.skull.becomeBone?.(g.mats?.bone);
+    g.skull.raiseHands?.(7);
 
     g.camera.updateMatrixWorld(true);
     g.camera.getWorldDirection(this._v0);
@@ -1698,6 +1348,12 @@ export class Finale {
           this.phase = 'closing';
           g.audio.stoneGrind({ pos: this.panes[0].mesh.position,
             gain: 0.4, rate: 0.5, verb: 0.68 });
+          // "In the final room of the game, have the player raise their hands
+          // earlier." Here: the beat the mirrors wake and the walls begin to
+          // come in. Infinity survives the per-frame decay, so they stay up
+          // for the whole closing — which is also what finally makes the
+          // glass-press pose something anyone can see.
+          g.skull.raiseHands?.(Infinity);
         }
         break;
       case 'closing': {
@@ -1762,35 +1418,6 @@ export class Finale {
 
   render(scene, camera) {
     if (!this.active || this.phase === 'black' || this.phase === 'end') return false;
-    const warmup = this.game.shaderWarmup;
-    const skipped = warmup?.status === 'skipped';
-    const targets = this._targetWarmState;
-    const poolSignature = this._renderTargetPoolSignature();
-    const resourcesReady = skipped || (
-      warmup?.readyVariants?.includes('finale-world')
-      && warmup.readyVariants.includes('reflection-target')
-      && targets?.generation === this.game._webglGeneration
-      && targets.status === 'ready'
-      && targets.warmed === this.mirrors.budget
-      && targets.budget === this.mirrors.budget
-      && targets.poolRef === this.mirrors.pool
-      && this._targetPoolRefsMatch(targets)
-      && targets.poolEpoch === this.mirrors.poolEpoch
-      && targets.poolSignature === poolSignature
-      && !targets.failedTargets?.length
-    );
-    if (!resourcesReady) {
-      // The room, player and pressure simulation remain live. Only the unsafe
-      // FBO consumer fails closed as ordinary dark silver; a failed compile or
-      // attachment can never become an exception or an uninitialised flash.
-      for (const pane of this.panes) {
-        pane.setActive(false);
-        pane.material.uniforms.tDiffuse.value = null;
-      }
-      return false;
-    }
-    if (this._contextRewarming
-        && !this.completeContextRewarm(this.game._webglGeneration)) return false;
     this.mirrors.update(scene, camera);
     return true;
   }

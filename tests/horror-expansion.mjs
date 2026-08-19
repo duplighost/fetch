@@ -9,7 +9,7 @@ import { ensureServer, launchBrowser, openPage, URL_BASE, resultsPath } from './
 const server = await ensureServer();
 const browser = await launchBrowser();
 let exit = 0;
-const report = { url: `${URL_BASE}/?test=1&warmup=1&warmupRace=1`, checks: [], browserErrors: [] };
+const report = { url: `${URL_BASE}/?test=1`, checks: [], browserErrors: [] };
 
 try {
   const { page, errors } = await openPage(browser, report.url);
@@ -20,7 +20,7 @@ try {
     null, { timeout: 60000, polling: 100 },
   );
 
-  report.checks = await page.evaluate(async () => {
+  report.checks = await page.evaluate(() => {
     const F = window.__FETCH;
     const g = window.__game;
     const checks = [];
@@ -32,30 +32,6 @@ try {
     // Prove the production loop creates actual HRTF PannerNodes before replacing
     // its long-running surface with deterministic lifecycle spies.
     F.start();
-    const audioDeadline = performance.now() + 5000;
-    let audioSignature = '';
-    let audioProgressDeadline = performance.now() + 1000;
-    while (!(g.audio.ready && g.audio.startupBake?.status === 'ready')
-        && performance.now() < audioDeadline) {
-      const startup = g.audio.startupBake;
-      if (!startup || ['failed', 'cancelled'].includes(startup.status)) {
-        throw new Error(`Choir audio startup entered ${startup?.status || 'missing'}`);
-      }
-      const nextSignature = JSON.stringify([
-        startup.status, startup.completed, startup.totalPrimitives, startup.pending,
-        startup.slices?.length, startup.slices?.at(-1)?.labels?.join('|'),
-      ]);
-      if (nextSignature !== audioSignature) {
-        audioSignature = nextSignature;
-        audioProgressDeadline = performance.now() + 1000;
-      } else if (performance.now() >= audioProgressDeadline) {
-        throw new Error(`Choir audio startup made no progress: ${audioSignature}`);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    if (!(g.audio.ready && g.audio.startupBake?.status === 'ready')) {
-      throw new Error(`Choir audio startup exceeded 5s: ${audioSignature}`);
-    }
     const nativePannerModels = [];
     const originalPanner = g.audio._panner;
     g.audio._panner = function (...args) {
@@ -94,8 +70,12 @@ try {
     };
 
     if (!g.flags.has('waterfallTaken')) g.director.waterfallTaken();
-    g.skull.vanish();
     F.teleport('cave');
+    // AFTER the teleport, not before: the settle-arrival path (main.js, "skull
+    // in the hands") sees mode 'gone' and calls arriveRestore()+holdNow(), so
+    // vanishing first was silently undone and this page has been asserting a
+    // skull it kept putting back.
+    g.skull.vanish();
     F.stepWith(1 / 120, {}, false);
 
     const prelude = g.director._caveEcology;

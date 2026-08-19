@@ -39,11 +39,9 @@ const ENEMIES = {
 
 export class GameAudio {
   constructor() {
-    // The native context may be prepared while the title is still loading;
-    // graph creation, resume and every audible source remain gesture-owned.
+    // allocates nothing audio-side; init() must run inside a user gesture
     this._ready = false;
     this.ctx = null;
-    this._graphInitialized = false;
     this._zone = 'bedroom';
     this._tension = 0;
     this._hbT = 0;
@@ -53,70 +51,8 @@ export class GameAudio {
     this._chatter = null;
     this._chatAcc = 0.9; // head start: first jaw tick lands almost immediately
     this._moan = null;
-    this._pendingMoan = null;
+    this._boneApproach = null;
     this._loops = new Set();
-    // Audio PCM is deliberately baked after the first paint. Keep live queue
-    // closures and WebAudio nodes out of the public telemetry object so the
-    // evidence remains bounded and JSON-safe.
-    this._startupBakeQueue = null;
-    this._startupBakeToken = 0;
-    this._startupBakeRaf = null;
-    this._startupBakeTimer = null;
-    this._startupBakeWatchdog = null;
-    this._startupSourcesStarted = false;
-    this._resumePromise = null;
-    this._suspendTimer = null;
-    this._suspendPromise = null;
-    this._stopped = false;
-    this.startupBake = {
-      status: 'idle',
-      prepareCalls: 0,
-      initCalls: 0,
-      resumeCalls: 0,
-      contextPrepareStartedAt: null,
-      contextPrepareReadyAt: null,
-      contextPrepareMs: null,
-      contextPrepareError: null,
-      requestedAt: null,
-      contextCreatedAt: null,
-      startedAt: null,
-      readyAt: null,
-      durationMs: null,
-      totalLatencyMs: null,
-      sliceBudgetMs: 16,
-      primitiveLimit: 1,
-      pcmChunkSamples: 12000,
-      sliceTelemetryLimit: 128,
-      slices: [],
-      maxSliceMs: 0,
-      maxPrimitiveMs: 0,
-      completed: 0,
-      totalPrimitives: 0,
-      pending: 0,
-      droppedSlices: 0,
-      scheduler: null,
-      contextState: null,
-      resumeError: null,
-      cancelReason: null,
-      error: null,
-    };
-    // Deferring Math.random calls across paints would make unrelated gameplay
-    // randomness depend on audio/frame timing. This per-instance PRNG keeps all
-    // core and lazy bake recipes private while retaining procedural variation.
-    let audioSeed = (Date.now() ^ 0xa53c9e17) >>> 0;
-    try {
-      const entropy = new Uint32Array(1);
-      globalThis.crypto?.getRandomValues?.(entropy);
-      if (entropy[0]) audioSeed = entropy[0];
-    } catch {}
-    let audioRandomState = audioSeed || 0x6d2b79f5;
-    this._audioRandom = () => {
-      audioRandomState = (audioRandomState + 0x6d2b79f5) | 0;
-      let x = audioRandomState;
-      x = Math.imul(x ^ (x >>> 15), x | 1);
-      x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
-      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
-    };
     // Forest story props are ordinary owned loop handles, but their separate
     // set makes the two-voice budget an invariant of the audio engine rather
     // than a promise every caller has to remember.
@@ -135,66 +71,9 @@ export class GameAudio {
 
   get ready() { return this._ready; }
 
-  prepare() {
-    const telemetry = this.startupBake;
-    telemetry.prepareCalls++;
-    if (this._stopped) return false;
-    if (this.ctx && this.ctx.state !== 'closed') {
-      telemetry.contextState = this.ctx.state;
-      return true;
-    }
-    if (this._graphInitialized) return false;
-    this.ctx = null;
-    const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
-    if (!AC) {
-      telemetry.contextPrepareError = 'WebAudio is unavailable';
-      return false;
-    }
-    const startedAt = this._audioNow();
-    if (telemetry.contextPrepareStartedAt == null) telemetry.contextPrepareStartedAt = startedAt;
-    try {
-      let ctx;
-      try { ctx = new AC({ latencyHint: 'interactive', sampleRate: 24000 }); }
-      catch { ctx = new AC(); }
-      this.ctx = ctx;
-      const readyAt = this._audioNow();
-      telemetry.contextCreatedAt = readyAt;
-      telemetry.contextPrepareReadyAt = readyAt;
-      telemetry.contextPrepareMs = readyAt - startedAt;
-      telemetry.contextPrepareError = null;
-      telemetry.contextState = ctx.state;
-      return true;
-    } catch (error) {
-      const readyAt = this._audioNow();
-      telemetry.contextPrepareReadyAt = readyAt;
-      telemetry.contextPrepareMs = readyAt - startedAt;
-      telemetry.contextPrepareError = String(error?.message || error);
-      telemetry.contextState = null;
-      return false;
-    }
-  }
-
   init() {
-    const telemetry = this.startupBake;
-    telemetry.initCalls++;
-    if (telemetry.requestedAt == null) telemetry.requestedAt = this._audioNow();
-    // stopAll is a terminal audio boundary. A late callback or repeated init
-    // may be observed for evidence, but must not resume or rebuild the graph.
-    if (this._stopped) return;
-    if (this.ctx?.state === 'closed' && !this._graphInitialized) this.ctx = null;
-    if (this.ctx && this._graphInitialized) {
-      if (this.ctx.state === 'closed') {
-        this._failStartupBake(new Error('AudioContext is closed'));
-        return;
-      }
-      this._resumeAudioContext();
-      // Repeated init while a bake is pending may restore a lost schedule, but
-      // must never duplicate the plan or its eventual BufferSources.
-      if (!this._ready && ['scheduled', 'planning', 'baking'].includes(telemetry.status)) {
-        this._scheduleStartupBakeSlice(this._startupBakeToken);
-      }
-      return;
-    }
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
     // FETCH's synthesized palette tops out well below 12 kHz (the master
     // low-pass is 7.5 kHz), so generating every procedural buffer at a 48 kHz
     // hardware rate burned roughly twice the CPU and memory for frequencies the
@@ -202,507 +81,117 @@ export class GameAudio {
     // resamples once at output and every authored oscillator/filter remains
     // comfortably under Nyquist. Keep a constructor fallback for older WebAudio
     // implementations that do not accept options.
-    if (!this.ctx && !this.prepare()) {
-      this._failStartupBake(new Error(telemetry.contextPrepareError || 'WebAudio is unavailable'));
-      return;
-    }
-    const ctx = this.ctx;
-    telemetry.contextState = ctx.state;
-    this._resumeAudioContext();
+    let ctx;
+    try { ctx = new AC({ latencyHint: 'interactive', sampleRate: 24000 }); }
+    catch { ctx = new AC(); }
+    this.ctx = ctx;
+    if (ctx.state === 'suspended') ctx.resume();
 
-    // Resume and graph creation remain inside the user gesture. Keep the entire
-    // graph at exact silence until every deferred core buffer is populated. A
-    // browser/driver node failure must degrade to a silent game, never strand
-    // Wake after its one-way started latch has been set.
-    const startedNodes = [];
-    const startNode = (node) => { node.start(); startedNodes.push(node); };
-    try {
-      this.master = ctx.createGain(); this.master.gain.value = 0;
-      this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 7500;
-      this.comp = ctx.createDynamicsCompressor();
-      this.comp.threshold.value = -18; this.comp.ratio.value = 4; this.comp.knee.value = 12;
-      this.master.connect(this.lp).connect(this.comp).connect(ctx.destination);
+    // THE WATCHDOG. His report, 2026-08-18: "a major sound problem in the next
+    // area that triggers loud sound until it just stops playing sound."
+    //
+    // The second half of that is a state a browser can put us in on its own —
+    // Chrome suspends an AudioContext under CPU or memory pressure, and once
+    // suspended FETCH is silent for the rest of the run with no way back,
+    // because init() is the only thing that ever resumed it and init() only
+    // runs once. Whatever causes the loud part, silence must not be permanent.
+    // Nothing here masks a bug: _voiceStats records every intervention so the
+    // next occurrence reports itself instead of being guessed at.
+    this._voices = 0;
+    this._peakVoices = 0;
+    this._droppedVoices = 0;
+    this._resumes = 0;
+    ctx.addEventListener?.('statechange', () => {
+      if (ctx.state === 'running' || ctx.state === 'closed') return;
+      this._resumes++;
+      ctx.resume?.().catch?.(() => {});
+    });
+
+    // master bus
+    this.master = ctx.createGain(); this.master.gain.value = 0.9;
+    this.lp = ctx.createBiquadFilter(); this.lp.type = 'lowpass'; this.lp.frequency.value = 7500;
+    this.comp = ctx.createDynamicsCompressor();
+    this.comp.threshold.value = -18; this.comp.ratio.value = 4; this.comp.knee.value = 12;
+    this.master.connect(this.lp).connect(this.comp).connect(ctx.destination);
 
     // three reverb characters share one send bus; setZone crossfades the wets
-      this.verbBus = ctx.createGain(); this.verbBus.gain.value = 1;
-      this._wet = {};
-      this._impulseSpecs = { interior: [0.6, 4.5], outdoor: [1.4, 2.8], cave: [2.4, 2.2] };
-      this._convolvers = {};
-      for (const k of Object.keys(this._impulseSpecs)) {
-        const conv = ctx.createConvolver();
-        const wet = ctx.createGain();
-        wet.gain.value = 0.0001;
-        this.verbBus.connect(conv); conv.connect(wet).connect(this.master);
-        this._wet[k] = wet;
-        this._convolvers[k] = conv;
+    this.verbBus = ctx.createGain(); this.verbBus.gain.value = 1;
+    this._wet = {};
+    this._impulseSpecs = { interior: [0.6, 4.5], outdoor: [1.4, 2.8], cave: [2.4, 2.2] };
+    this._convolvers = {};
+    for (const k of Object.keys(this._impulseSpecs)) {
+      const conv = ctx.createConvolver();
+      // Bedroom/house need the interior tail on the first frame. Later-act
+      // spaces prepare their own impulse only when setZone first reaches them;
+      // generating 3.8 seconds of unused stereo noise inside Start was a large
+      // part of the reported cold-input hitch.
+      if (k === 'interior') {
+        const spec = this._impulseSpecs[k];
+        conv.buffer = this._impulse(spec[0], spec[1]);
       }
+      const wet = ctx.createGain();
+      wet.gain.value = 0.0001;
+      this.verbBus.connect(conv); conv.connect(wet).connect(this.master);
+      this._wet[k] = wet;
+      this._convolvers[k] = conv;
+    }
+
+    // shared pinkish noise for beds and breaths
+    this._noiseBuf = this._makeNoiseBuf(1.5);
 
     // beds — all through bedGain so duck() sidechains everything at once
-      this.bedGain = ctx.createGain(); this.bedGain.gain.value = 1;
-      this.bedGain.connect(this.master);
+    this.bedGain = ctx.createGain(); this.bedGain.gain.value = 1;
+    this.bedGain.connect(this.master);
 
-      this.windGain = ctx.createGain(); this.windGain.gain.value = 0.0001;
-      this.windGain.connect(this.bedGain);
+    const wind = this._noiseSrc();
+    const windLP = ctx.createBiquadFilter(); windLP.type = 'lowpass'; windLP.frequency.value = 320; windLP.Q.value = 0.4;
+    this.windGain = ctx.createGain(); this.windGain.gain.value = 0.0001;
+    wind.connect(windLP).connect(this.windGain).connect(this.bedGain);
 
-      const dr1 = ctx.createOscillator(); dr1.type = 'sawtooth'; dr1.frequency.value = 46;
-      const dr2 = ctx.createOscillator(); dr2.type = 'sine'; dr2.frequency.value = 57.5;
-      const drLP = ctx.createBiquadFilter(); drLP.type = 'lowpass'; drLP.frequency.value = 180;
-      this.droneGain = ctx.createGain(); this.droneGain.gain.value = 0.0001;
-      dr1.connect(drLP); dr2.connect(drLP); drLP.connect(this.droneGain).connect(this.bedGain);
-      startNode(dr1); startNode(dr2);
+    const dr1 = ctx.createOscillator(); dr1.type = 'sawtooth'; dr1.frequency.value = 46;
+    const dr2 = ctx.createOscillator(); dr2.type = 'sine'; dr2.frequency.value = 57.5;
+    const drLP = ctx.createBiquadFilter(); drLP.type = 'lowpass'; drLP.frequency.value = 180;
+    this.droneGain = ctx.createGain(); this.droneGain.gain.value = 0.0001;
+    dr1.connect(drLP); dr2.connect(drLP); drLP.connect(this.droneGain).connect(this.bedGain);
+    dr1.start(); dr2.start();
 
-      this.fallsGain = ctx.createGain(); this.fallsGain.gain.value = 0.0001;
-      this.fallsGain.connect(this.bedGain);
+    const falls = this._noiseSrc();
+    const fLP = ctx.createBiquadFilter(); fLP.type = 'lowpass'; fLP.frequency.value = 1100;
+    const fBody = ctx.createGain(); fBody.gain.value = 0.8;
+    const falls2 = this._noiseSrc();
+    const fBP = ctx.createBiquadFilter(); fBP.type = 'bandpass'; fBP.frequency.value = 2900; fBP.Q.value = 0.7;
+    const fSpray = ctx.createGain(); fSpray.gain.value = 0.35;
+    this.fallsGain = ctx.createGain(); this.fallsGain.gain.value = 0.0001;
+    falls.connect(fLP).connect(fBody).connect(this.fallsGain);
+    falls2.connect(fBP).connect(fSpray).connect(this.fallsGain);
+    this.fallsGain.connect(this.bedGain);
 
     // tension layer: chamber's dread drone, silent at 0 — on master so a duck
     // (which is usually a scare) never kills the dread itself
-      const t1 = ctx.createOscillator(); t1.type = 'sawtooth'; t1.frequency.value = 41.2;
-      const t2 = ctx.createOscillator(); t2.type = 'sine'; t2.frequency.value = 55;
-      this._tLP = ctx.createBiquadFilter(); this._tLP.type = 'lowpass'; this._tLP.frequency.value = 220;
-      this._tGain = ctx.createGain(); this._tGain.gain.value = 0.0001;
-      t1.connect(this._tLP); t2.connect(this._tLP); this._tLP.connect(this._tGain).connect(this.master);
-      startNode(t1); startNode(t2);
+    const t1 = ctx.createOscillator(); t1.type = 'sawtooth'; t1.frequency.value = 41.2;
+    const t2 = ctx.createOscillator(); t2.type = 'sine'; t2.frequency.value = 55;
+    this._tLP = ctx.createBiquadFilter(); this._tLP.type = 'lowpass'; this._tLP.frequency.value = 220;
+    this._tGain = ctx.createGain(); this._tGain.gain.value = 0.0001;
+    t1.connect(this._tLP); t2.connect(this._tLP); this._tLP.connect(this._tGain).connect(this.master);
+    t1.start(); t2.start();
 
     // sub for stings/screams
-      this.subOsc = ctx.createOscillator(); this.subOsc.type = 'sine'; this.subOsc.frequency.value = 42;
-      this.subGain = ctx.createGain(); this.subGain.gain.value = 0.0001;
-      this.subOsc.connect(this.subGain).connect(this.master);
-      startNode(this.subOsc);
+    this.subOsc = ctx.createOscillator(); this.subOsc.type = 'sine'; this.subOsc.frequency.value = 42;
+    this.subGain = ctx.createGain(); this.subGain.gain.value = 0.0001;
+    this.subOsc.connect(this.subGain).connect(this.master);
+    this.subOsc.start();
 
-      this.cricketGain = ctx.createGain(); this.cricketGain.gain.value = 0.0001;
-      this.cricketGain.connect(this.bedGain);
+    this._bake();
 
-      this._graphInitialized = true;
-      this._beginStartupBake();
-    } catch (error) {
-      for (const node of startedNodes) {
-        try { node.stop(); } catch {}
-      }
-      this._graphInitialized = false;
-      this._failStartupBake(error);
-    }
-  }
+    // crickets bed = looping baked chorus
+    const cr = ctx.createBufferSource(); cr.buffer = this._crickLoop; cr.loop = true;
+    this.cricketGain = ctx.createGain(); this.cricketGain.gain.value = 0.0001;
+    cr.connect(this.cricketGain).connect(this.bedGain);
+    cr.start();
 
-  _audioNow() {
-    return globalThis.performance?.now?.() ?? Date.now();
-  }
-
-  _resumeAudioContext() {
-    const ctx = this.ctx;
-    if (!ctx) return;
-    this.startupBake.contextState = ctx.state;
-    if (ctx.state !== 'suspended') return;
-    if (this._resumePromise) return;
-    this.startupBake.resumeCalls++;
-    try {
-      const resumed = ctx.resume();
-      if (!resumed?.then) return;
-      const tracked = Promise.resolve(resumed).then(() => {
-        this.startupBake.resumeError = null;
-        this.startupBake.contextState = ctx.state;
-      }, (error) => {
-        this.startupBake.resumeError = String(error?.message || error);
-        this.startupBake.contextState = ctx.state;
-      });
-      this._resumePromise = tracked;
-      tracked.finally(() => {
-        if (this._resumePromise === tracked) this._resumePromise = null;
-      });
-    } catch (error) {
-      this.startupBake.resumeError = String(error?.message || error);
-    }
-  }
-
-  _scheduleTerminalSuspend() {
-    const ctx = this.ctx;
-    if (!ctx || this._suspendTimer || this._suspendPromise) return;
-    this._suspendTimer = setTimeout(() => {
-      this._suspendTimer = null;
-      const resume = this._resumePromise;
-      const pending = Promise.resolve(resume).then(() => {
-        if (ctx.state === 'running') return ctx.suspend();
-        return undefined;
-      }).catch(() => {});
-      this._suspendPromise = pending;
-      pending.finally(() => {
-        if (this._suspendPromise === pending) this._suspendPromise = null;
-        this.startupBake.contextState = ctx.state;
-      });
-    }, 420);
-  }
-
-  _beginStartupBake() {
-    const telemetry = this.startupBake;
-    if (['scheduled', 'planning', 'baking', 'ready'].includes(telemetry.status)) return;
-    this._clearStartupBakeSchedule();
-    const token = ++this._startupBakeToken;
-    this._startupBakeQueue = null; // null means the lightweight plan is pending
-    telemetry.status = 'scheduled';
-    telemetry.startedAt = null;
-    telemetry.readyAt = null;
-    telemetry.durationMs = null;
-    telemetry.totalLatencyMs = null;
-    telemetry.slices = [];
-    telemetry.maxSliceMs = 0;
-    telemetry.maxPrimitiveMs = 0;
-    telemetry.completed = 0;
-    telemetry.totalPrimitives = 0;
-    telemetry.pending = 1;
-    telemetry.droppedSlices = 0;
-    telemetry.scheduler = null;
-    telemetry.contextState = this.ctx?.state ?? null;
-    telemetry.resumeError = null;
-    telemetry.cancelReason = null;
-    telemetry.error = null;
-    this._scheduleStartupBakeSlice(token);
-  }
-
-  _scheduleStartupBakeSlice(token) {
-    if (token !== this._startupBakeToken || this._ready) return;
-    if (this._startupBakeRaf != null || this._startupBakeTimer != null || this._startupBakeWatchdog != null) return;
-    let settled = false;
-    const run = (scheduler) => {
-      if (settled || token !== this._startupBakeToken) return;
-      settled = true;
-      this.startupBake.scheduler = scheduler;
-      this._runStartupBakeSlice(token, scheduler);
-    };
-    if (typeof globalThis.requestAnimationFrame === 'function') {
-      let rafHandle = null;
-      let watchdogHandle = null;
-      rafHandle = globalThis.requestAnimationFrame(() => {
-        if (settled || this._startupBakeRaf !== rafHandle) return;
-        this._startupBakeRaf = null;
-        if (this._startupBakeWatchdog === watchdogHandle) {
-          clearTimeout(watchdogHandle);
-          this._startupBakeWatchdog = null;
-        }
-        // rAF callbacks precede paint; a zero-delay task lets that frame reach
-        // the screen before any PCM primitive begins.
-        const timerHandle = setTimeout(() => {
-          if (this._startupBakeTimer !== timerHandle) return;
-          this._startupBakeTimer = null;
-          run('paint');
-        }, 0);
-        this._startupBakeTimer = timerHandle;
-      });
-      this._startupBakeRaf = rafHandle;
-      // Background tabs may stop rAF entirely. This fallback preserves bounded
-      // progress without racing the normal visible-paint path.
-      watchdogHandle = setTimeout(() => {
-        if (settled || this._startupBakeWatchdog !== watchdogHandle) return;
-        this._startupBakeWatchdog = null;
-        if (this._startupBakeRaf === rafHandle) {
-          if (typeof globalThis.cancelAnimationFrame === 'function') globalThis.cancelAnimationFrame(rafHandle);
-          this._startupBakeRaf = null;
-        }
-        run('watchdog');
-      }, 120);
-      this._startupBakeWatchdog = watchdogHandle;
-    } else {
-      const timerHandle = setTimeout(() => {
-        if (this._startupBakeTimer !== timerHandle) return;
-        this._startupBakeTimer = null;
-        run('timer');
-      }, 24);
-      this._startupBakeTimer = timerHandle;
-    }
-  }
-
-  _runStartupBakeSlice(token, scheduler) {
-    if (token !== this._startupBakeToken || this._ready) return;
-    const telemetry = this.startupBake;
-    if (!this.ctx || this.ctx.state === 'closed') {
-      this._failStartupBake(new Error('AudioContext closed during startup'));
-      return;
-    }
-    const sliceStart = this._audioNow();
-    if (telemetry.startedAt == null) telemetry.startedAt = sliceStart;
-    const labels = [];
-    let primitiveCount = 0;
-    let maxPrimitiveMs = 0;
-    try {
-      if (this._startupBakeQueue == null) {
-        telemetry.status = 'planning';
-        this._startupBakeQueue = this._planStartupBake();
-        telemetry.totalPrimitives = this._startupBakeQueue.length;
-        telemetry.pending = this._startupBakeQueue.length;
-        labels.push('plan-core-pcm');
-        telemetry.status = 'baking';
-      } else {
-        // Exactly one primitive per paint. A time-budget loop can begin a large
-        // fill after several cheap ones and overshoot even when each primitive
-        // is individually bounded.
-        const primitive = this._startupBakeQueue.shift();
-        const primitiveStart = this._audioNow();
-        primitive.run();
-        const primitiveMs = this._audioNow() - primitiveStart;
-        labels.push(primitive.label);
-        primitiveCount = 1;
-        maxPrimitiveMs = primitiveMs;
-        telemetry.completed++;
-        telemetry.pending = this._startupBakeQueue.length;
-      }
-    } catch (error) {
-      this._recordStartupBakeSlice(sliceStart, scheduler, labels, maxPrimitiveMs, primitiveCount);
-      this._failStartupBake(error);
-      return;
-    }
-    this._recordStartupBakeSlice(sliceStart, scheduler, labels, maxPrimitiveMs, primitiveCount);
-    if (this._startupBakeQueue?.length) {
-      this._scheduleStartupBakeSlice(token);
-      return;
-    }
-    if (!this._ready) {
-      this._failStartupBake(new Error('Startup bake finished without activating audio'));
-      return;
-    }
-    const readyAt = this._audioNow();
-    telemetry.status = 'ready';
-    telemetry.readyAt = readyAt;
-    telemetry.durationMs = readyAt - telemetry.startedAt;
-    telemetry.totalLatencyMs = readyAt - telemetry.requestedAt;
-    telemetry.pending = 0;
-    telemetry.contextState = this.ctx.state;
-    this._startupBakeQueue = [];
-  }
-
-  _recordStartupBakeSlice(startedAt, scheduler, labels, maxPrimitiveMs, primitiveCount) {
-    const telemetry = this.startupBake;
-    const durationMs = this._audioNow() - startedAt;
-    telemetry.maxSliceMs = Math.max(telemetry.maxSliceMs, durationMs);
-    telemetry.maxPrimitiveMs = Math.max(telemetry.maxPrimitiveMs, maxPrimitiveMs);
-    const row = {
-      index: telemetry.slices.length + telemetry.droppedSlices,
-      scheduler,
-      durationMs,
-      primitiveCount,
-      maxPrimitiveMs,
-      labels,
-      remaining: this._startupBakeQueue?.length ?? 0,
-    };
-    // 128 rows covers the 24 kHz request and the 48 kHz constructor fallback.
-    // Overflow remains explicit so a gate cannot mistake truncation for green.
-    if (telemetry.slices.length < telemetry.sliceTelemetryLimit) telemetry.slices.push(row);
-    else telemetry.droppedSlices++;
-  }
-
-  _planStartupBake() {
-    const ctx = this.ctx;
-    const tasks = [];
-    const R = this._audioRandom;
-    const chunkSamples = this.startupBake.pcmChunkSamples;
-
-    // Impulse channels are themselves split into finite sample ranges. Commit
-    // each Convolver buffer only after the final range of channel two.
-    for (const [kind, spec] of Object.entries(this._impulseSpecs)) {
-      const [dur, decay] = spec;
-      const n = Math.floor(ctx.sampleRate * dur);
-      const buffer = ctx.createBuffer(2, n, ctx.sampleRate);
-      for (let channel = 0; channel < 2; channel++) {
-        for (let start = 0; start < n; start += chunkSamples) {
-          const end = Math.min(n, start + chunkSamples);
-          tasks.push({
-            label: `impulse-${kind}-${channel}-${start}-${end}`,
-            run: () => {
-              const data = buffer.getChannelData(channel);
-              for (let i = start; i < end; i++) data[i] = (R() * 2 - 1) * Math.pow(1 - i / n, decay);
-              if (channel === 1 && end === n) this._convolvers[kind].buffer = buffer;
-            },
-          });
-        }
-      }
-    }
-
-    const noiseN = Math.floor(ctx.sampleRate * 1.5);
-    const noiseBuffer = ctx.createBuffer(1, noiseN, ctx.sampleRate);
-    this._noiseBuf = noiseBuffer;
-    let pink = 0;
-    for (let start = 0; start < noiseN; start += chunkSamples) {
-      const end = Math.min(noiseN, start + chunkSamples);
-      tasks.push({
-        label: `shared-noise-${start}-${end}`,
-        run: () => {
-          const data = noiseBuffer.getChannelData(0);
-          for (let i = start; i < end; i++) {
-            const white = R() * 2 - 1;
-            pink = 0.98 * pink + 0.02 * white;
-            data[i] = pink * 3 + white * 0.15;
-          }
-        },
-      });
-    }
-
-    // Reuse the authored recipes without running their fill loops now. Each
-    // intercepted allocation appends one finite primitive; lazy forest/enemy/
-    // choir closures retain the restored helpers and private R above.
-    const hadMono = Object.prototype.hasOwnProperty.call(this, '_mono');
-    const hadLoop = Object.prototype.hasOwnProperty.call(this, '_loopBuf');
-    const hadCricket = Object.prototype.hasOwnProperty.call(this, '_cricketLoopBuffer');
-    const savedMono = this._mono;
-    const savedLoop = this._loopBuf;
-    const savedCricket = this._cricketLoopBuffer;
-    let serial = 0;
-    this._mono = (dur, fill) => {
-      const n = Math.floor(ctx.sampleRate * dur);
-      const buffer = ctx.createBuffer(1, n, ctx.sampleRate);
-      const label = `mono-${String(++serial).padStart(2, '0')}-${dur.toFixed(3)}s`;
-      tasks.push({ label, run: () => fill(buffer.getChannelData(0), ctx.sampleRate, n) });
-      return buffer;
-    };
-    this._loopBuf = (dur, fill) => {
-      const n = Math.floor(ctx.sampleRate * dur);
-      const buffer = ctx.createBuffer(1, n, ctx.sampleRate);
-      const label = `loop-${String(++serial).padStart(2, '0')}-${dur.toFixed(3)}s`;
-      tasks.push({
-        label,
-        run: () => {
-          const data = buffer.getChannelData(0);
-          fill(data, ctx.sampleRate, n);
-          const fade = Math.max(1, Math.min(Math.floor(ctx.sampleRate * 0.012), Math.floor(n / 8)));
-          for (let i = 0; i < n; i++) {
-            const edge = Math.min(1, Math.min(i / fade, (n - 1 - i) / fade));
-            data[i] = clamp(data[i] * edge, -1, 1);
-          }
-        },
-      });
-      return buffer;
-    };
-    this._cricketLoopBuffer = () => {
-      serial++;
-      const dur = 1.5;
-      const n = Math.floor(ctx.sampleRate * dur);
-      const buffer = ctx.createBuffer(1, n, ctx.sampleRate);
-      const fade = Math.max(1, Math.min(Math.floor(ctx.sampleRate * 0.012), Math.floor(n / 8)));
-      let chirps = null;
-      for (let start = 0; start < n; start += chunkSamples) {
-        const end = Math.min(n, start + chunkSamples);
-        tasks.push({
-          label: `cricket-loop-${start}-${end}`,
-          run: () => {
-            if (!chirps) {
-              chirps = [];
-              for (let k = 0; k < 3; k++) {
-                chirps.push({ at: R() * 1.15, f: 3900 + R() * 700, dur: 0.26 + R() * 0.18 });
-              }
-            }
-            const data = buffer.getChannelData(0);
-            for (let i = start; i < end; i++) {
-              const t = i / ctx.sampleRate;
-              let value = 0;
-              for (const cricket of chirps) {
-                if (t < cricket.at || t > cricket.at + cricket.dur) continue;
-                const phase = (t - cricket.at) / cricket.dur;
-                const pulse = Math.max(0, Math.sin(TAU * 21 * (t - cricket.at))) ** 2;
-                value += Math.sin(TAU * cricket.f * t) * pulse * Math.sin(Math.PI * phase) * 0.22;
-              }
-              const edge = Math.min(1, Math.min(i / fade, (n - 1 - i) / fade));
-              data[i] = clamp(value * edge, -1, 1);
-            }
-            if (end === n) this._crickLoop = buffer;
-          },
-        });
-      }
-      // Activation is the final primitive, after every range has committed.
-      return null;
-    };
-    try {
-      this._bake();
-    } finally {
-      if (hadMono) this._mono = savedMono; else delete this._mono;
-      if (hadLoop) this._loopBuf = savedLoop; else delete this._loopBuf;
-      if (hadCricket) this._cricketLoopBuffer = savedCricket; else delete this._cricketLoopBuffer;
-    }
-
-    tasks.push({ label: 'activate-core-audio', run: () => this._activateStartupAudio() });
-    return tasks;
-  }
-
-  _activateStartupAudio() {
-    if (this._startupSourcesStarted) return;
-    const ctx = this.ctx;
-    const wind = this._noiseSrc();
-    const windLP = ctx.createBiquadFilter(); windLP.type = 'lowpass'; windLP.frequency.value = 320; windLP.Q.value = 0.4;
-    wind.connect(windLP).connect(this.windGain);
-
-    const falls = this._noiseSrc();
-    const fallsLP = ctx.createBiquadFilter(); fallsLP.type = 'lowpass'; fallsLP.frequency.value = 1100;
-    const fallsBody = ctx.createGain(); fallsBody.gain.value = 0.8;
-    const fallsSpray = this._noiseSrc();
-    const fallsBP = ctx.createBiquadFilter(); fallsBP.type = 'bandpass'; fallsBP.frequency.value = 2900; fallsBP.Q.value = 0.7;
-    const sprayGain = ctx.createGain(); sprayGain.gain.value = 0.35;
-    falls.connect(fallsLP).connect(fallsBody).connect(this.fallsGain);
-    fallsSpray.connect(fallsBP).connect(sprayGain).connect(this.fallsGain);
-
-    const crickets = ctx.createBufferSource(); crickets.buffer = this._crickLoop; crickets.loop = true;
-    crickets.connect(this.cricketGain);
-    crickets.start();
-
-    this._startupSourcesStarted = true;
-    const t = ctx.currentTime;
-    this.master.gain.cancelScheduledValues(t);
-    this.master.gain.setValueAtTime(0, t);
-    this.master.gain.linearRampToValueAtTime(0.9, t + 0.06);
     this._ready = true;
     this.setZone(this._zone);
-    if (this._pendingMoan) {
-      const pending = this._pendingMoan;
-      this._pendingMoan = null;
-      this.skullMoanStart(pending.pos);
-      this.skullMoanUpdate(pending.pos, pending.speed, pending.tension);
-    }
     this._queueForestStoryPrewarm?.();
-  }
-
-  _clearStartupBakeSchedule() {
-    if (this._startupBakeRaf != null && typeof globalThis.cancelAnimationFrame === 'function') {
-      globalThis.cancelAnimationFrame(this._startupBakeRaf);
-    }
-    if (this._startupBakeTimer != null) clearTimeout(this._startupBakeTimer);
-    if (this._startupBakeWatchdog != null) clearTimeout(this._startupBakeWatchdog);
-    this._startupBakeRaf = null;
-    this._startupBakeTimer = null;
-    this._startupBakeWatchdog = null;
-  }
-
-  _cancelStartupBake(reason) {
-    if (!['scheduled', 'planning', 'baking'].includes(this.startupBake.status)) return;
-    this._clearStartupBakeSchedule();
-    this._startupBakeToken++;
-    this._startupBakeQueue = null;
-    this.startupBake.status = 'cancelled';
-    this.startupBake.pending = 0;
-    this.startupBake.cancelReason = reason;
-    this.startupBake.contextState = this.ctx?.state ?? null;
-    if (this.master) {
-      const t = this.ctx?.currentTime ?? 0;
-      this.master.gain.cancelScheduledValues(t);
-      this.master.gain.setValueAtTime(0, t);
-    }
-  }
-
-  _failStartupBake(error) {
-    this._clearStartupBakeSchedule();
-    this._startupBakeToken++;
-    this._startupBakeQueue = null;
-    this._ready = false;
-    this.startupBake.status = 'failed';
-    this.startupBake.pending = 0;
-    this.startupBake.error = String(error?.message || error);
-    this.startupBake.contextState = this.ctx?.state ?? null;
-    if (this.master) {
-      const t = this.ctx?.currentTime ?? 0;
-      this.master.gain.cancelScheduledValues(t);
-      this.master.gain.setValueAtTime(0, t);
-    }
-    const ctx = this.ctx;
-    if (ctx && ctx.state !== 'closed') {
-      try {
-        ctx.close()?.then?.(() => {
-          this.startupBake.contextState = ctx.state;
-        }, () => {});
-      } catch {}
-    }
   }
 
   // ---------------- synthesis helpers ----------------
@@ -712,7 +201,7 @@ export class GameAudio {
     const buf = this.ctx.createBuffer(2, n, sr);
     for (let c = 0; c < 2; c++) {
       const d = buf.getChannelData(c);
-      for (let i = 0; i < n; i++) d[i] = (this._audioRandom() * 2 - 1) * Math.pow(1 - i / n, decay);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, decay);
     }
     return buf;
   }
@@ -723,7 +212,7 @@ export class GameAudio {
     const d = buf.getChannelData(0);
     let b = 0;
     for (let i = 0; i < d.length; i++) {
-      const w = this._audioRandom() * 2 - 1;
+      const w = Math.random() * 2 - 1;
       b = 0.98 * b + 0.02 * w;
       d[i] = b * 3 + w * 0.15;
     }
@@ -756,7 +245,7 @@ export class GameAudio {
   }
 
   _bake() {
-    const R = this._audioRandom;
+    const R = Math.random;
     // ---- footsteps: distinct buffers per surface ----
     this._steps = { wood: [], stone: [], dirt: [], leaves: [] };
     for (let v = 0; v < 3; v++) {
@@ -961,8 +450,21 @@ export class GameAudio {
         }
       }));
     }
-    // ---- crickets chorus loop (edge-faded) ----
-    this._crickLoop = this._cricketLoopBuffer();
+    // ---- crickets chorus loop (4s, edge-faded) ----
+    this._crickLoop = this._loopBuf(1.5, (d, sr, n) => {
+      const chirps = [];
+      for (let k = 0; k < 3; k++) chirps.push({ at: R() * 1.15, f: 3900 + R() * 700, dur: 0.26 + R() * 0.18 });
+      for (let i = 0; i < n; i++) {
+        const t = i / sr; let v = 0;
+        for (const c of chirps) {
+          if (t < c.at || t > c.at + c.dur) continue;
+          const k2 = (t - c.at) / c.dur;
+          const pulse = Math.max(0, Math.sin(TAU * 21 * (t - c.at))) ** 2;
+          v += Math.sin(TAU * c.f * t) * pulse * Math.sin(Math.PI * k2) * 0.22;
+        }
+        d[i] = v;
+      }
+    });
     // ---- found machines in the forest -----------------------------------
     // Eight identities, one deterministic recipe each. The world owns where
     // they are and which two deserve voices; these buffers only make a phone
@@ -1103,81 +605,116 @@ export class GameAudio {
       if (this._enemyBufs.walker) return;
     this._enemyBufs = {
       walker: {
-        // far: dry skeletal clicks + a dark ragged breath
-        far: this._loopBuf(0.923, (d, sr, n) => {
-          let lpv = 0;
+        // Far: one asymmetrical lung drags through a loose jaw. The events do
+        // not share a clock, so this reads as a body occupying the room rather
+        // than a short sound-effect loop restarting beside the player.
+        far: this._loopBuf(1.37, (d, sr, n) => {
+          let dark = 0;
+          const clicks = [0.08, 0.34, 0.79, 1.13].map((at) => at + R() * 0.055);
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const w = R() * 2 - 1; lpv += 0.045 * (w - lpv);
-            const breathe = 0.35 + 0.65 * Math.max(0, Math.sin(TAU * 1.083 * t)) ** 2;
-            let s = lpv * 2.2 * breathe * 0.32;
-            const ph = fract(t * 6.5);
-            if (ph < 0.06) s += w * Math.exp(-ph * 120) * 0.5;
-            d[i] = s;
+            const w = fixedNoise(i, 11);
+            dark += 0.032 * (w - dark);
+            const lung = 0.14 + Math.max(0, Math.sin(TAU * (t / 1.37 - 0.11))) ** 1.8 * 0.86;
+            let s = dark * 1.9 * lung * 0.36;
+            for (let k = 0; k < clicks.length; k++) {
+              const age = t - clicks[k];
+              if (age >= 0 && age < 0.075) {
+                const snap = Math.exp(-age * (54 + k * 8));
+                s += (Math.sin(TAU * (310 + k * 97) * age) * 0.42 + (w - dark) * 0.46) * snap;
+              }
+            }
+            d[i] = s * 0.78;
           }
         }),
-        // close pressure (Behind You chaserClose): pulse-gated chest + teeth
-        close: this._loopBuf(0.32, (d, sr, n) => {
+        // Close: two chest pulses fall slightly out of phase with a held,
+        // stop-motion tooth tremor. Locomotion stays smooth; only the mouth is
+        // allowed to sound mechanically discontinuous.
+        close: this._loopBuf(0.71, (d, sr, n) => {
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const pulse = 0.58 + Math.sin(TAU * 11 * t) * 0.34;
-            const chest = Math.sin(TAU * 78 * t) * 0.62;
-            const teeth = Math.sin(TAU * 430 * t) * 0.2;
-            d[i] = (chest + teeth) * pulse * 0.58;
+            const p0 = Math.exp(-fract(t / 0.355) * 10.5);
+            const p1 = Math.exp(-fract((t + 0.083) / 0.403) * 13);
+            const chest = Math.sin(TAU * (72 + Math.sin(TAU * 1.4 * t) * 5) * t) * (p0 * 0.48 + p1 * 0.22);
+            const held = Math.sin((Math.floor(t * 14) + 3) * 12.9898) > 0.15 ? 1 : 0.12;
+            const teeth = Math.sin(TAU * 477 * t) * held * 0.11;
+            d[i] = chest + teeth;
           }
         }),
       },
       resident: {
-        // far: slow heavy drone with a wood-creak character riding the swell
-        far: this._loopBuf(1.6, (d, sr, n) => {
-          let ph = 0;
+        // Far: several incompatible fundamentals bend through the house, with
+        // real stick-slip transients embedded in the mass. It should sound as
+        // though the frame is speaking through the Resident, not like a synth
+        // pad assigned to a monster.
+        far: this._loopBuf(2.2, (d, sr, n) => {
+          let wood = 0;
+          const breaks = [0.42 + R() * 0.08, 1.36 + R() * 0.12, 1.91 + R() * 0.06];
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const swell = 0.5 + 0.5 * Math.sin(TAU * 0.625 * t);
-            const body = (Math.sin(TAU * 43 * t) * 0.55 + Math.sin(TAU * 64.7 * t) * 0.2) * (0.45 + swell * 0.55);
-            ph += (TAU * (74 - 18 * swell)) / sr;
-            const stick = fract(t * (11 - swell * 6)) < 0.5 ? 1 : 0.25;
-            const creakv = (Math.sin(ph) * 0.4 + (R() * 2 - 1) * 0.12) * stick * swell * 0.3;
-            d[i] = body * 0.42 + creakv;
+            const swell = 0.26 + Math.max(0, Math.sin(TAU * (t / 2.2 - 0.16))) ** 1.45 * 0.74;
+            const body = Math.sin(TAU * (41.5 * t + Math.sin(TAU * 0.31 * t) * 1.8)) * 0.34
+              + Math.sin(TAU * 61.3 * t + 1.7) * 0.19
+              + Math.sin(TAU * 89.1 * t + 4.2) * 0.08;
+            const w = fixedNoise(i, 17); wood += 0.055 * (w - wood);
+            let snap = 0;
+            for (const at of breaks) {
+              const age = t - at;
+              if (age >= 0 && age < 0.14) snap += (w - wood) * Math.exp(-age * 23) * 0.72;
+            }
+            d[i] = body * swell + snap;
           }
         }),
-        close: this._loopBuf(0.7, (d, sr, n) => {
+        close: this._loopBuf(0.94, (d, sr, n) => {
+          let throat = 0;
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const breath = 0.48 + Math.sin(TAU * 1.43 * t) * 0.12;
-            const sub = Math.sin(TAU * 42 * t) * 0.45;
-            const rough = Math.sin(TAU * 96 * t) * 0.14;
-            d[i] = (sub + rough) * breath;
+            const breath = 0.22 + Math.max(0, Math.sin(TAU * (t / 0.94 - 0.12))) ** 1.4 * 0.78;
+            const flutter = 0.54 + Math.sin(TAU * 19.4 * t + Math.sin(TAU * 2.1 * t)) * 0.21;
+            const voices = Math.sin(TAU * 38.5 * t) * 0.36
+              + Math.sin(TAU * 57.8 * t + 0.8) * 0.19
+              + Math.sin(TAU * 87.4 * t + 2.3) * 0.09;
+            const w = fixedNoise(i, 23); throat += 0.09 * (w - throat);
+            d[i] = voices * breath * flutter + throat * breath * 0.18;
           }
         }),
       },
       kneeler: {
-        // far: huge slow sub thumps + wet blips
-        far: this._loopBuf(1.4, (d, sr, n) => {
-          let lpv = 0;
-          const blips = [];
-          for (let k = 0; k < 5; k++) blips.push(R() * 1.25);
+        // Far: body weight lands on an irregular three-beat gait while small,
+        // much faster contacts scramble above it. Size comes from the split
+        // between those time scales, not simply turning up a sub oscillator.
+        far: this._loopBuf(1.82, (d, sr, n) => {
+          let wet = 0;
+          const loads = [0.02, 0.73 + R() * 0.08, 1.34 + R() * 0.09];
+          const skitters = [0.19, 0.31, 0.96, 1.07, 1.55, 1.66].map((at) => at + R() * 0.035);
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const cyc = t % 0.7;
-            const thump = Math.exp(-cyc * 7);
-            const sub = Math.sin(TAU * 37 * t) * thump * 0.85 + Math.sin(TAU * 18.5 * t) * 0.18;
-            const w = R() * 2 - 1; lpv += 0.06 * (w - lpv);
-            let wet = 0;
-            for (const b of blips) if (t > b && t < b + 0.09) wet += lpv * 6 * Math.sin(Math.PI * (t - b) / 0.09);
-            d[i] = sub * 0.7 + wet * 0.22;
+            let body = Math.sin(TAU * 18.2 * t) * 0.08;
+            for (const at of loads) {
+              const age = t - at;
+              if (age >= 0 && age < 0.38) {
+                body += Math.sin(TAU * (38 - age * 31) * age) * Math.exp(-age * 8) * 0.78;
+              }
+            }
+            const w = fixedNoise(i, 29); wet += 0.12 * (w - wet);
+            let feet = 0;
+            for (const at of skitters) {
+              const age = t - at;
+              if (age >= 0 && age < 0.055) feet += (w - wet) * Math.exp(-age * 72) * 0.62;
+            }
+            d[i] = body + feet;
           }
         }),
-        close: this._loopBuf(0.8, (d, sr, n) => {
-          let lpv = 0;
+        close: this._loopBuf(0.96, (d, sr, n) => {
+          let gorge = 0;
           for (let i = 0; i < n; i++) {
             const t = i / sr;
-            const breath = 0.5 + Math.sin(TAU * 1.25 * t) * 0.14;
-            const sub = Math.sin(TAU * 34 * t) * 0.55;
-            const rough = Math.sin(TAU * 68 * t) * 0.18;
-            const w = R() * 2 - 1; lpv += 0.08 * (w - lpv);
-            const gargle = lpv * 4 * Math.max(0, Math.sin(TAU * 7.5 * t)) ** 3 * 0.4;
-            d[i] = (sub + rough) * breath + gargle;
+            const breath = 0.3 + Math.max(0, Math.sin(TAU * (t / 0.96 - 0.08))) ** 1.7 * 0.7;
+            const sub = Math.sin(TAU * (31.5 + Math.sin(TAU * 1.04 * t) * 2.5) * t) * 0.43;
+            const w = fixedNoise(i, 31); gorge += 0.075 * (w - gorge);
+            const heldStep = Math.sin((Math.floor(t * 22) + 9) * 78.233) > 0.22 ? 1 : 0.08;
+            const scrape = (w - gorge) * heldStep * 0.22;
+            d[i] = sub * breath + gorge * breath * 0.27 + scrape;
           }
         }),
       },
@@ -1224,24 +761,6 @@ export class GameAudio {
     };
   }
 
-  _cricketLoopBuffer() {
-    const R = this._audioRandom;
-    return this._loopBuf(1.5, (d, sr, n) => {
-      const chirps = [];
-      for (let k = 0; k < 3; k++) chirps.push({ at: R() * 1.15, f: 3900 + R() * 700, dur: 0.26 + R() * 0.18 });
-      for (let i = 0; i < n; i++) {
-        const t = i / sr; let v = 0;
-        for (const c of chirps) {
-          if (t < c.at || t > c.at + c.dur) continue;
-          const k2 = (t - c.at) / c.dur;
-          const pulse = Math.max(0, Math.sin(TAU * 21 * (t - c.at))) ** 2;
-          v += Math.sin(TAU * c.f * t) * pulse * Math.sin(Math.PI * k2) * 0.22;
-        }
-        d[i] = v;
-      }
-    });
-  }
-
   // ---------------- routing helpers ----------------
 
   _panner(pos, ref = 2.4, roll = 1.5) {
@@ -1263,8 +782,22 @@ export class GameAudio {
   }
 
   // one-shot buffer player; verb send is post-envelope/post-panner, never raw source
+  // No more than this many one-shot voices at once. Normal play measures 0-2
+  // live sources plus a handful of one-shots (tools/probe-audio-live.mjs), so
+  // this ceiling is never met by the game working; it is only ever met by the
+  // game misbehaving, and when it is, the result is a dropped sound instead of
+  // a graph that gets louder until the context gives up.
+  static VOICE_CAP = 40;
+
   _play(buf, { pos = null, gain = 1, rate = 1, when = 0, verb = 0.3, dest = null } = {}) {
     if (!this._ready) return null;
+    if (this._voices >= GameAudio.VOICE_CAP) {
+      this._droppedVoices = (this._droppedVoices || 0) + 1;
+      if (this._droppedVoices === 1) {
+        console.warn('[FETCH audio] voice cap hit — dropping one-shots. Something is calling far more sound than play produces; see tools/probe-audio-live.mjs.');
+      }
+      return null;
+    }
     const ctx = this.ctx;
     const src = ctx.createBufferSource();
     src.buffer = buf; src.playbackRate.value = rate;
@@ -1275,8 +808,28 @@ export class GameAudio {
     tail.connect(dest || this.master);
     if (verb > 0) { vs = ctx.createGain(); vs.gain.value = verb; tail.connect(vs).connect(this.verbBus); }
     src.start(ctx.currentTime + when);
-    src.onended = () => { try { src.disconnect(); g.disconnect(); tail.disconnect(); if (vs) vs.disconnect(); } catch {} };
+    this._voices++;
+    if (this._voices > this._peakVoices) this._peakVoices = this._voices;
+    src.onended = () => {
+      this._voices = Math.max(0, this._voices - 1);
+      try { src.disconnect(); g.disconnect(); tail.disconnect(); if (vs) vs.disconnect(); } catch {}
+    };
     return src;
+  }
+
+  // What the audio engine has actually been doing. Read it after a session
+  // that went wrong: droppedVoices > 0 means something stormed the mixer, and
+  // resumes > 0 means the browser suspended us and the watchdog caught it.
+  voiceStats() {
+    return {
+      ready: !!this._ready,
+      state: this.ctx?.state ?? 'none',
+      voices: this._voices | 0,
+      peakVoices: this._peakVoices | 0,
+      droppedVoices: this._droppedVoices | 0,
+      resumes: this._resumes | 0,
+      cap: GameAudio.VOICE_CAP,
+    };
   }
 
   // output bus for live-synthesized one-shots: voices connect (post their own
@@ -1358,6 +911,7 @@ export class GameAudio {
     } else this._hbT = 0;
 
     this._updateChatter(dt);
+    this._updateBoneApproach(dt);
   }
 
   _thump(vol) {
@@ -1424,6 +978,82 @@ export class GameAudio {
       pos: opts.pos, gain: 0.55 * (opts.gain ?? 1),
       rate: (0.9 + Math.random() * 0.2) * (opts.rate ?? 1), verb: opts.verb ?? 0.4,
     });
+  }
+
+  // Wood-on-wood: a swollen window sash forced up its frame. Stick-slip
+  // judder over a mid bandpass sweep with a low wood body under it — shorter
+  // and drier than stoneGrind (which reads as masonry) and far below the
+  // hinge squeal register of doorOpen.
+  sashScrape(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.72 / r;
+    const out = this._bus(opts, dur + 0.4, 1, opts.verb ?? 0.4);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2.4;
+    bp.frequency.setValueAtTime(215 * r, t);
+    bp.frequency.linearRampToValueAtTime(345 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.05, dur);
+    const jud = ctx.createOscillator(); jud.type = 'square'; jud.frequency.value = 12.5 * r;
+    const judDepth = ctx.createGain(); judDepth.gain.value = 0.14;
+    jud.connect(judDepth).connect(g.gain);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.15);
+    jud.start(t); jud.stop(t + dur + 0.15);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(92 * r, t);
+    o.frequency.linearRampToValueAtTime(74 * r, t + dur);
+    const og = ctx.createGain();
+    this._env(og, t, 0.16, 0.04, dur * 0.9);
+    o.connect(og).connect(out);
+    o.start(t); o.stop(t + dur + 0.1);
+  }
+
+  // A drawer riding its wooden runners: a small dry falling scrape with a
+  // faint wood body under it. The bedroom searchables' furniture voice —
+  // quieter and shorter than sashScrape (a whole swollen sash forced up its
+  // frame), no stick-slip judder, nowhere near doorOpen's hinge squeal.
+  // house.js sequences any stop-knock after it on its own dt clock.
+  woodSlide(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.4 / r;
+    const out = this._bus(opts, dur + 0.3, 1, opts.verb ?? 0.25);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.8;
+    bp.frequency.setValueAtTime(250 * r, t);
+    bp.frequency.linearRampToValueAtTime(180 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.4, 0.04, dur);
+    src.connect(bp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.1);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(88 * r, t);
+    o.frequency.linearRampToValueAtTime(72 * r, t + dur);
+    const og = ctx.createGain();
+    this._env(og, t, 0.1, 0.05, dur * 0.85);
+    o.connect(og).connect(out);
+    o.start(t); o.stop(t + dur + 0.08);
+  }
+
+  // Bedclothes dragged over a mattress edge: a lowpassed noise swell that
+  // breathes up and settles, darkening as the cloth lands. Deliberately the
+  // one search voice with NO transient — everything else in the room knocks,
+  // ticks, or scrapes; cloth answers by moving air.
+  clothDrag(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const dur = 0.6 / r;
+    const out = this._bus(opts, dur + 0.4, 1, opts.verb ?? 0.28);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 0.7;
+    lp.frequency.setValueAtTime(720 * r, t);
+    lp.frequency.linearRampToValueAtTime(330 * r, t + dur);
+    const g = ctx.createGain();
+    this._env(g, t, 0.34, dur * 0.4, dur * 0.6);
+    src.connect(lp).connect(g).connect(out);
+    src.start(t); src.stop(t + dur + 0.15);
   }
 
   doorOpen(heavy, opts = {}) {
@@ -1531,21 +1161,89 @@ export class GameAudio {
     }
   }
 
+  // THE CAR ALARM. His round-nine note: "maybe it even has a car alarm going
+  // off before you destroy it." A dying wagon's alarm, not a showroom's: two
+  // alternating tones on a battery that has been in a graveyard for years, so
+  // every cycle sags a little and the horn under it is more rattle than tone.
+  //
+  // ONE CYCLE PER CALL, hard-bounded. The car's ticker re-fires it on a period
+  // while the alarm is live, so nothing here loops and nothing can outlive the
+  // wreck — the cave's unbounded voice is still an open bug and this does not
+  // repeat it. opts.dying sags the whole cycle into silence instead: the
+  // game's dying-machine grammar, the same sentence the boiler speaks.
+  carAlarm(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t0 = ctx.currentTime;
+    const dying = !!opts.dying;
+    const rate = opts.rate ?? 1;
+    const cycles = dying ? 3 : 4;
+    const step = dying ? 0.26 : 0.19;
+    const out = this._bus(opts, cycles * step + 0.6, 0.9, opts.verb ?? 0.55);
+    for (let i = 0; i < cycles; i++) {
+      const t = t0 + i * step;
+      // the sag: a dying battery drops pitch across the cycle, and a dying
+      // alarm drops it across the whole wail
+      const sag = dying ? 1 - i / cycles * 0.62 : 1 - i * 0.012;
+      const hz = (i % 2 ? 618 : 494) * rate * sag;
+      const peak = (dying ? 0.34 - i * 0.09 : 0.4) * (1 - i * 0.02);
+      for (const [mult, amp] of [[1, 1], [2, 0.34], [3, 0.16]]) {
+        const o = ctx.createOscillator();
+        o.type = mult === 1 ? 'square' : 'sine';
+        o.frequency.setValueAtTime(hz * mult, t);
+        if (dying) o.frequency.exponentialRampToValueAtTime(hz * mult * 0.72, t + step * 0.92);
+        const g = ctx.createGain();
+        this._env(g, t, Math.max(0.0003, peak * amp), 0.012, step * 0.78);
+        o.connect(g).connect(out);
+        o.start(t);
+        o.stop(t + step + 0.05);
+      }
+      // the horn's own body: a short filtered noise rattle riding each tone,
+      // so it reads as a fitting bolted to a rusted panel
+      const src = ctx.createBufferSource();
+      src.buffer = this._noiseBuf;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1750 * rate * sag;
+      bp.Q.value = 3.4;
+      const ng = ctx.createGain();
+      this._env(ng, t, 0.11 * (dying ? 0.6 : 1), 0.01, step * 0.6);
+      src.connect(bp).connect(ng).connect(out);
+      src.start(t);
+      src.stop(t + step);
+    }
+  }
+
   // A real struck servant bell, not the generic metal-drop cluster.  The
   // inharmonic partials and long positional tail make the window relay audible
   // from either floor, so its causal payoff cannot be mistaken for a loose
   // latch.  Brightness, motion and this sound all tell the same state change.
+  //
+  // opts.dark: the bedroom hand bell — the same honest strike on the wrong
+  // bell. The partial stack sits lower, every decay is stretched ~1.8x into a
+  // 4-5s tail, and the fundamental is a PAIR ~4 cents apart so the tail beats
+  // slowly (~0.9 Hz) against itself. Realistic but kind of spooky: the
+  // wrongness lives entirely in the tail, never in the strike.
   bellRing(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
     const rate = opts.rate ?? 1;
-    const out = this._bus(opts, 3.4, 0.92, opts.verb ?? 0.78);
-    for (const [frequency, peak, decay, phase] of [
-      [512, 0.42, 2.7, 0],
-      [731, 0.3, 2.35, 0.35],
-      [1049, 0.19, 1.85, 0.8],
-      [1486, 0.1, 1.25, 1.2],
-    ]) {
+    const dark = !!opts.dark;
+    const out = this._bus(opts, dark ? 5.9 : 3.4, 0.92, opts.verb ?? 0.78);
+    const partials = dark
+      ? [
+        [370, 0.4, 4.85, 0],
+        [370.86, 0.33, 4.6, 0],  // detuned twin of the fundamental (~4 cents)
+        [528, 0.3, 4.2, 0.35],
+        [758, 0.19, 3.35, 0.8],
+        [1073, 0.1, 2.25, 1.2],
+      ]
+      : [
+        [512, 0.42, 2.7, 0],
+        [731, 0.3, 2.35, 0.35],
+        [1049, 0.19, 1.85, 0.8],
+        [1486, 0.1, 1.25, 1.2],
+      ];
+    for (const [frequency, peak, decay, phase] of partials) {
       const oscillator = ctx.createOscillator();
       oscillator.type = 'sine';
       oscillator.frequency.value = frequency * rate;
@@ -1598,6 +1296,67 @@ export class GameAudio {
     }
   }
 
+  // Something answers through the front door: ONE heavy muffled thump from
+  // beyond the wood. The sine body drops with opts.rate so a phrase can get
+  // heavier knock by knock, and the lowpassed noise is the muffle — a bigger
+  // space than yours is on the other side (baseVerb 0.5). Phrases are
+  // sequenced from house.js on its dt ticker; each call here is one thump, so
+  // tests can count calls. knock() ignores opts.rate by contract (every
+  // existing caller passes one and would retune), hence this sibling voice.
+  knockBack(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 1.1, 1, opts.verb ?? 0.5);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(74 * r, t);
+    o.frequency.exponentialRampToValueAtTime(40 * r, t + 0.16);
+    const g = ctx.createGain();
+    this._env(g, t, 0.6, 0.004, 0.32);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.44);
+    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 480;
+    const g2 = ctx.createGain();
+    this._env(g2, t, 0.35, 0.003, 0.14);
+    src.connect(lp).connect(g2).connect(out);
+    src.start(t); src.stop(t + 0.2);
+  }
+
+  // THE BLOW: the front door struck from outside, frame and wall taking it
+  // with the panel. Three diminishing frame-shudder pulses ride behind the
+  // slam, and the sub swells underneath the way sting()'s does.
+  doorBoom(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 1.9, 1, opts.verb ?? 0.45);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(52 * r, t);
+    o.frequency.exponentialRampToValueAtTime(30 * r, t + 0.3);
+    const g = ctx.createGain();
+    this._env(g, t, 0.9, 0.003, 0.5);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.62);
+    const slam = ctx.createBufferSource(); slam.buffer = this._noiseBuf;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 300;
+    const sg = ctx.createGain();
+    this._env(sg, t, 0.6, 0.002, 0.25);
+    slam.connect(lp).connect(sg).connect(out);
+    slam.start(t); slam.stop(t + 0.32);
+    for (const [i, at] of [0.12, 0.26, 0.42].entries()) {
+      const shudder = ctx.createBufferSource(); shudder.buffer = this._noiseBuf;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 150; bp.Q.value = 2;
+      const gg = ctx.createGain();
+      this._env(gg, t + at, 0.25 - i * 0.075, 0.004, 0.1);
+      shudder.connect(bp).connect(gg).connect(out);
+      shudder.start(t + at); shudder.stop(t + at + 0.16);
+    }
+    const sub = this.subGain.gain;
+    sub.cancelScheduledValues(t);
+    sub.setValueAtTime(Math.max(0.0001, sub.value), t);
+    sub.exponentialRampToValueAtTime(Math.max(0.0002, 0.2 * (opts.gain ?? 1)), t + 0.28);
+    sub.exponentialRampToValueAtTime(0.0001, t + 1.4);
+  }
+
   metalDrop(opts = {}) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
@@ -1623,6 +1382,32 @@ export class GameAudio {
     this._env(g, t, 0.9, 0.3, 1.8);
     src.connect(bp).connect(g).connect(out);
     src.start(t); src.stop(t + 2.2);
+  }
+
+  // One working beat of an archive pressure stand: a low damped piston thump
+  // with a soft bandpassed exhaust hiss trailing it. house.js sequences the
+  // six stands on phase-offset dt clocks while the furnace draft is open —
+  // each call is one cycle, positional, transient. No standing loop nodes
+  // exist to scope, leak, or stop; leaving the district just stops the calls.
+  archiveChug(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 0.75, 1, opts.verb ?? 0.3);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(86 * r, t);
+    o.frequency.exponentialRampToValueAtTime(57 * r, t + 0.13);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.004, 0.24);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.34);
+    const hiss = ctx.createBufferSource(); hiss.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(760 * r, t + 0.05);
+    bp.frequency.linearRampToValueAtTime(430 * r, t + 0.34);
+    const hg = ctx.createGain();
+    this._env(hg, t + 0.05, 0.13, 0.03, 0.26);
+    hiss.connect(bp).connect(hg).connect(out);
+    hiss.start(t + 0.05); hiss.stop(t + 0.42);
   }
 
   fireRoar(opts = {}) {
@@ -1673,109 +1458,44 @@ export class GameAudio {
     this.duck(0.5, 1.6);
   }
 
-  flameSteal(opts = {}) {
-    // A small flame does not merely wink out: it is audibly pulled across the
-    // room and seats in the skull with two hot, glassy ticks. This is the
-    // wordless hand-off between the required source and the carried state.
-    if (!this._ready) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus(opts, 1.25, 0.9, 0.48);
-    const breath = ctx.createBufferSource(); breath.buffer = this._noiseBuf;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
-    bp.frequency.setValueAtTime(520, t);
-    bp.frequency.exponentialRampToValueAtTime(3100, t + 0.48);
-    const bg = ctx.createGain();
-    bg.gain.setValueAtTime(0.0001, t);
-    bg.gain.exponentialRampToValueAtTime(0.42, t + 0.3);
-    bg.gain.exponentialRampToValueAtTime(0.0001, t + 0.72);
-    breath.connect(bp).connect(bg).connect(out);
-    breath.start(t); breath.stop(t + 0.78);
-    for (const [delay, frequency, peak] of [[0.42, 1180, 0.25], [0.51, 1620, 0.17]]) {
-      const o = ctx.createOscillator(); o.type = 'triangle';
-      o.frequency.setValueAtTime(frequency, t + delay);
-      o.frequency.exponentialRampToValueAtTime(frequency * 0.72, t + delay + 0.16);
-      const g = ctx.createGain();
-      this._env(g, t + delay, peak, 0.002, 0.22);
-      o.connect(g).connect(out);
-      o.start(t + delay); o.stop(t + delay + 0.28);
-    }
-  }
-
-  pressureSurge(opts = {}) {
-    // A pressure line waking: retained pipe-body thump, travelling steam, then
-    // a hard pawl seat. It is deliberately unlike a generic key/unlock sound.
-    if (!this._ready) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus(opts, 2.1, 0.92, 0.56);
-    const body = ctx.createOscillator(); body.type = 'sine';
-    body.frequency.setValueAtTime(68, t);
-    body.frequency.exponentialRampToValueAtTime(38, t + 0.72);
-    const bodyGain = ctx.createGain();
-    this._env(bodyGain, t, 0.7, 0.008, 0.72);
-    body.connect(bodyGain).connect(out);
-    body.start(t); body.stop(t + 0.82);
-
-    const steam = ctx.createBufferSource(); steam.buffer = this._noiseBuf; steam.loop = true;
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass';
-    hp.frequency.setValueAtTime(420, t + 0.08);
-    hp.frequency.exponentialRampToValueAtTime(2600, t + 0.92);
-    const sg = ctx.createGain();
-    sg.gain.setValueAtTime(0.0001, t);
-    sg.gain.exponentialRampToValueAtTime(0.34, t + 0.32);
-    sg.gain.setTargetAtTime(0.18, t + 0.72, 0.24);
-    sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.42);
-    steam.connect(hp).connect(sg).connect(out);
-    steam.start(t); steam.stop(t + 1.5);
-    for (const [delay, frequency] of [[0.92, 420], [1.05, 310], [1.2, 220]]) {
-      const o = ctx.createOscillator(); o.type = 'square'; o.frequency.value = frequency;
-      const g = ctx.createGain(); this._env(g, t + delay, 0.13, 0.002, 0.07);
-      o.connect(g).connect(out); o.start(t + delay); o.stop(t + delay + 0.1);
-    }
-  }
-
-  steamSpit(opts = {}) {
-    // Harmless archive valves answer a throw locally without pretending to be
-    // another progression switch.
-    if (!this._ready) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus(opts, 0.75, 0.72, 0.32);
-    const src = ctx.createBufferSource(); src.buffer = this._noiseBuf;
-    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
-    bp.frequency.setValueAtTime(3100 * (opts.rate ?? 1), t);
-    bp.frequency.exponentialRampToValueAtTime(920 * (opts.rate ?? 1), t + 0.42);
-    const g = ctx.createGain(); this._env(g, t, 0.38, 0.004, 0.46);
-    src.connect(bp).connect(g).connect(out);
-    src.start(t); src.stop(t + 0.52);
-  }
-
-  ashEject(opts = {}) {
-    // Drawer kick + unmistakable small iron key ringing in the exposed pan.
-    // This punctuation lands while the offered skull is still in the fire.
-    if (!this._ready) return;
-    const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus(opts, 1.25, 1, 0.46);
-    const thump = ctx.createOscillator(); thump.type = 'sine';
-    thump.frequency.setValueAtTime(105, t);
-    thump.frequency.exponentialRampToValueAtTime(42, t + 0.24);
-    const tg = ctx.createGain(); this._env(tg, t, 0.82, 0.003, 0.3);
-    thump.connect(tg).connect(out); thump.start(t); thump.stop(t + 0.38);
-    for (const [delay, frequency, peak] of [
-      [0.08, 1820, 0.24], [0.19, 2440, 0.18], [0.34, 1370, 0.13],
-    ]) {
-      const o = ctx.createOscillator(); o.type = 'triangle';
-      o.frequency.setValueAtTime(frequency, t + delay);
-      o.frequency.exponentialRampToValueAtTime(frequency * 0.72, t + delay + 0.28);
-      const g = ctx.createGain(); this._env(g, t + delay, peak, 0.002, 0.42);
-      o.connect(g).connect(out); o.start(t + delay); o.stop(t + delay + 0.5);
-    }
-  }
-
   whisper(opts = {}) {
     if (!this._ready) return;
     this._play(this._whisperBuf, {
       pos: opts.pos, gain: 0.5 * (opts.gain ?? 1),
       rate: (0.92 + Math.random() * 0.12) * (opts.rate ?? 1), verb: opts.verb ?? 0.6,
     });
+  }
+
+  // MARROW's eye-glimpse (its audio.js:500-524), ported for THE MARROW: a
+  // bandpassed noise swell plus three descending sawtooth formants — a wet
+  // blink from something that has no lids to blink with.
+  eyeGlimpse(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.05, 0.55, 0.75);
+    const swell = ctx.createBufferSource();
+    swell.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(980, t);
+    const sg = ctx.createGain();
+    sg.gain.setValueAtTime(0.0001, t);
+    sg.gain.exponentialRampToValueAtTime(0.16 * (opts.gain ?? 1), t + 0.09);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    swell.connect(bp).connect(sg).connect(out);
+    swell.start(t); swell.stop(t + 0.34);
+    for (const [i, f] of [410, 610, 870].entries()) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f * 1.1, t + i * 0.02);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.72, t + 0.24 + i * 0.02);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, t + i * 0.02);
+      og.gain.exponentialRampToValueAtTime(0.045 * (opts.gain ?? 1), t + 0.05 + i * 0.02);
+      og.gain.exponentialRampToValueAtTime(0.0001, t + 0.26 + i * 0.02);
+      osc.connect(og).connect(out);
+      osc.start(t + i * 0.02); osc.stop(t + 0.3 + i * 0.02);
+    }
   }
 
   // A wordless human inhale for the final black. The noise breath rises toward
@@ -1823,6 +1543,68 @@ export class GameAudio {
       o.connect(g).connect(out);
       o.start(t); o.stop(t + 0.4);
     }
+  }
+
+  // The bedroom window gives way: one 25ms crack of raw high noise as the
+  // pane fails all at once, a shower of staggered glassTink shard partials
+  // scattering after it, and the frame taking the blow underneath. Long verb
+  // tail — the room keeps the event after the glass is gone. One-shot;
+  // house.js owns the choreography around it.
+  glassShatter(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 2.6, 1, opts.verb ?? 0.75);
+    const crack = ctx.createBufferSource(); crack.buffer = this._noiseBuf;
+    const hp = ctx.createBiquadFilter(); hp.type = 'bandpass'; hp.Q.value = 0.55;
+    hp.frequency.value = 4200 * r;
+    const cg = ctx.createGain();
+    this._env(cg, t, 0.95, 0.001, 0.06);
+    crack.connect(hp).connect(cg).connect(out);
+    crack.start(t); crack.stop(t + 0.1);
+    // shards: 10-14 tink partials at randomized rates over the first 180ms
+    const bases = [2350, 3620, 5210];
+    const n = 10 + ((Math.random() * 5) | 0);
+    for (let i = 0; i < n; i++) {
+      const at = t + Math.random() * 0.18;
+      const o = ctx.createOscillator();
+      o.frequency.value = bases[(Math.random() * 3) | 0] * r * (0.72 + Math.random() * 0.62);
+      const g = ctx.createGain();
+      this._env(g, at, 0.05 + Math.random() * 0.1, 0.002, 0.16 + Math.random() * 0.24);
+      o.connect(g).connect(out);
+      o.start(at); o.stop(at + 0.5);
+    }
+    // the frame takes it: knock's low body, once, heavy
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(95 * r, t);
+    o.frequency.exponentialRampToValueAtTime(55 * r, t + 0.1);
+    const g = ctx.createGain();
+    this._env(g, t, 0.6, 0.003, 0.3);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.42);
+  }
+
+  // E on the pre-arrival bedroom pane. Deliberately RATTLE-FREE: lockedRattle's
+  // clacking grammar means "openable but locked", and this window is neither —
+  // it answers as one dull solid mass, a wall that happens to be glass. Single
+  // damped low body plus one quiet surface tick; nothing loose anywhere in it.
+  glassKnock(opts = {}) {
+    if (!this._ready) return;
+    const ctx = this.ctx, t = ctx.currentTime, r = opts.rate ?? 1;
+    const out = this._bus(opts, 0.6, 1, opts.verb ?? 0.22);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(140 * r, t);
+    o.frequency.exponentialRampToValueAtTime(112 * r, t + 0.09);
+    const g = ctx.createGain();
+    this._env(g, t, 0.5, 0.003, 0.16);
+    o.connect(g).connect(out);
+    o.start(t); o.stop(t + 0.28);
+    const tick = ctx.createBufferSource(); tick.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.6;
+    bp.frequency.value = 2400 * r;
+    const tg = ctx.createGain();
+    this._env(tg, t, 0.09, 0.001, 0.03);
+    tick.connect(bp).connect(tg).connect(out);
+    tick.start(t); tick.stop(t + 0.06);
   }
 
   splash(opts = {}) {
@@ -2071,15 +1853,7 @@ export class GameAudio {
   // ---------------- the skull's voice ----------------
 
   skullMoanStart(pos = null) {
-    if (!this._ready) {
-      this._pendingMoan = {
-        pos: pos ? { x: pos.x, y: pos.y, z: pos.z } : { x: 0, y: 1.4, z: 0 },
-        speed: 0,
-        tension: 0,
-      };
-      return;
-    }
-    if (this._moan) return;
+    if (!this._ready || this._moan) return;
     const ctx = this.ctx;
     // Start at the actual launch point instead of jumping from world origin on
     // the first audio quantum before skullMoanUpdate has run.
@@ -2115,16 +1889,8 @@ export class GameAudio {
   }
 
   skullMoanUpdate(pos, speed, tension) {
-    if (!this._ready) {
-      if (this._pendingMoan) {
-        this._pendingMoan.pos = { x: pos.x, y: pos.y, z: pos.z };
-        this._pendingMoan.speed = speed;
-        this._pendingMoan.tension = tension;
-      }
-      return;
-    }
     const m = this._moan;
-    if (!m) return;
+    if (!m || !this._ready) return;
     const t = this.ctx.currentTime;
     this._setPos(m.p, pos.x, pos.y, pos.z);
     const s = clamp(speed / 24, 0, 1.5);   // normalized flight speed
@@ -2141,7 +1907,6 @@ export class GameAudio {
   }
 
   skullMoanStop() {
-    this._pendingMoan = null;
     const m = this._moan;
     if (!m) return;
     this._moan = null;
@@ -2153,6 +1918,99 @@ export class GameAudio {
       for (const nd of m.nodes) { try { nd.stop(); } catch {} }
       try { m.p.disconnect(); m.vs.disconnect(); m.out.disconnect(); } catch {}
     }, 700);
+  }
+
+  // THE ANSWER TO THE BELL: bones on the night air. One persistent HRTF
+  // panner glides in from beyond the graveyard while house.js drives it per
+  // frame — the skullMoan lifecycle (start / update / stop), never timers.
+  // Two layers on the one panner: bone clicks emitted from a dt accumulator
+  // in update() using the CHATTER recipe — the same baked tick buffers, with
+  // density and pitch riding closeness exactly like the radar rides threat,
+  // so when the skull later chatters in your hands you recognize what flew at
+  // you — and a soar layer, the moan's bandpassed-noise whoosh, that only
+  // speaks once the thing is close (closeness > 0.5). house.js layers
+  // skullMoanStart on top for the final seconds; this voice is the bones,
+  // not the throat.
+  boneApproachStart(pos = null, opts = {}) {
+    if (!this._ready || this._boneApproach) return;
+    const ctx = this.ctx;
+    // Wider refDistance than the moan's: this voice is born ~40m out and must
+    // read as a distant detail rather than silence, while the exponential
+    // model still supplies the whole approach crescendo for free.
+    const p = this._panner(pos || { x: 0, y: 1.4, z: 0 }, opts.ref ?? 5.5, opts.roll ?? 1.1);
+    const out = ctx.createGain(); out.gain.value = 0.0001;
+    out.connect(p); p.connect(this.master);
+    const vs = ctx.createGain(); vs.gain.value = 0.45;
+    p.connect(vs).connect(this.verbBus);
+    const soar = ctx.createBufferSource(); soar.buffer = this._noiseBuf; soar.loop = true;
+    const sbp = ctx.createBiquadFilter(); sbp.type = 'bandpass'; sbp.frequency.value = 420; sbp.Q.value = 1.1;
+    const sg = ctx.createGain(); sg.gain.value = 0.0001;
+    soar.connect(sbp).connect(sg).connect(out);
+    soar.start();
+    out.gain.setTargetAtTime(0.55, ctx.currentTime, 0.3);
+    this._boneApproach = { p, out, vs, sbp, sg, closeness: 0, fresh: 0.4, acc: 0.8, nodes: [soar] };
+  }
+
+  boneApproachUpdate(pos, closeness) {
+    const h = this._boneApproach;
+    if (!h || !this._ready) return;
+    const t = this.ctx.currentTime;
+    if (pos) this._setPos(h.p, pos.x, pos.y, pos.z);
+    const c = clamp01(closeness);
+    h.closeness = c; h.fresh = 0.4;
+    const s = smoothstep01((c - 0.5) / 0.5);
+    h.sg.gain.setTargetAtTime(Math.max(0.0001, s * 0.5), t, 0.09);
+    h.sbp.frequency.setTargetAtTime(380 + c * 2400, t, 0.09);
+    h.out.gain.setTargetAtTime(0.42 + c * 0.5, t, 0.12);
+  }
+
+  // Click emission rides the engine clock like the radar's does, so the cloud
+  // freezes with the sim on pause and falls silent if its driver dies.
+  _updateBoneApproach(dt) {
+    const h = this._boneApproach;
+    if (!h) return;
+    h.fresh -= dt;
+    if (h.fresh <= 0) {
+      // The driving script stopped feeding us mid-beat: go quiet but keep the
+      // nodes — a resumed driver picks the voice back up, and
+      // boneApproachStop / stopAll still own the teardown.
+      const t = this.ctx.currentTime;
+      h.sg.gain.setTargetAtTime(0.0001, t, 0.2);
+      h.out.gain.setTargetAtTime(0.0001, t, 0.25);
+      return;
+    }
+    const c = h.closeness;
+    h.acc += dt * lerp(2, 14, smoothstep01(c)); // click density IS the approach
+    while (h.acc >= 1) {
+      h.acc -= 1;
+      const hard = smoothstep01((c - 0.3) / 0.7); // the radar's soft-to-hard mix
+      const set = Math.random() < hard ? this._tickHard : this._tickSoft;
+      // dest is pre-panner so every click glides with the cloud; verb 0 here
+      // because the handle's own send is post-panner and carries the tail
+      const gain = 0.5 + c * 0.55;
+      const rate = (0.92 + Math.random() * 0.16) * (0.82 + c * 0.5);
+      this._play(set[(Math.random() * set.length) | 0], { dest: h.out, verb: 0, gain, rate });
+      if (Math.random() < 0.2 + c * 0.45) {
+        // a knuckle of the cloud answers itself — bones, plural
+        this._play(set[(Math.random() * set.length) | 0], {
+          dest: h.out, verb: 0, when: 0.025 + Math.random() * 0.05,
+          gain: gain * 0.7, rate: rate * 1.06,
+        });
+      }
+    }
+  }
+
+  boneApproachStop() {
+    const h = this._boneApproach;
+    if (!h) return;
+    this._boneApproach = null;
+    const t = this.ctx.currentTime;
+    h.out.gain.cancelScheduledValues(t);
+    h.out.gain.setTargetAtTime(0.0001, t, 0.1);
+    setTimeout(() => {
+      for (const nd of h.nodes) { try { nd.stop(); } catch {} }
+      try { h.p.disconnect(); h.vs.disconnect(); h.out.disconnect(); } catch {}
+    }, 600);
   }
 
   // THE THREAT RADAR. Call per-frame with 0..1: rate and sharpness carry the
@@ -2188,45 +2046,128 @@ export class GameAudio {
   skullScream(pos) {
     if (!this._ready) return;
     const ctx = this.ctx, t = ctx.currentTime;
-    const out = this._bus({ pos }, 4.5, 1, 0.9); // long verb tail
-    // formant-ish wail: saw source through parallel voice-band peaks
-    const src = ctx.createOscillator(); src.type = 'sawtooth';
-    src.frequency.setValueAtTime(150, t);
-    src.frequency.exponentialRampToValueAtTime(330, t + 0.5);
-    src.frequency.setValueAtTime(330, t + 1.4);
-    src.frequency.exponentialRampToValueAtTime(120, t + 2.6);
-    const vib = ctx.createOscillator(); vib.frequency.value = 6.5;
-    const vg = ctx.createGain(); vg.gain.value = 12;
-    vib.connect(vg).connect(src.frequency);
-    const srcG = ctx.createGain();
-    srcG.gain.setValueAtTime(0.0001, t);
-    srcG.gain.exponentialRampToValueAtTime(0.9, t + 0.08);
-    srcG.gain.exponentialRampToValueAtTime(0.5, t + 1.8);
-    srcG.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
-    src.connect(srcG);
-    for (const [f, q, g0] of [[640, 8, 0.5], [1150, 9, 0.38], [2600, 11, 0.2]]) {
-      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q;
-      const bg = ctx.createGain(); bg.gain.value = g0;
-      srcG.connect(bp); bp.connect(bg).connect(out);
+    const out = this._bus({ pos, ref: 3.2, roll: 1.25 }, 3.4, 0.76, 0.68);
+
+    // The old cue was one clean sawtooth glissando through fixed formants: a
+    // perfectly legible synthesizer patch wearing a scream moustache. This is
+    // the skull finding several incompatible throats at once. A sucked inhale
+    // establishes breath first; three inharmonic voices tear loose at slightly
+    // different times, lose their pitch, and collapse into the body below.
+    const inhale = ctx.createBufferSource(); inhale.buffer = this._noiseBuf;
+    const inhaleBP = ctx.createBiquadFilter(); inhaleBP.type = 'bandpass'; inhaleBP.Q.value = 0.72;
+    inhaleBP.frequency.setValueAtTime(360, t);
+    inhaleBP.frequency.exponentialRampToValueAtTime(2350, t + 0.34);
+    const inhaleG = ctx.createGain();
+    inhaleG.gain.setValueAtTime(0.0001, t);
+    inhaleG.gain.exponentialRampToValueAtTime(0.32, t + 0.27);
+    inhaleG.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    inhale.connect(inhaleBP).connect(inhaleG).connect(out);
+    inhale.start(t); inhale.stop(t + 0.5);
+
+    const start = t + 0.24;
+    const voices = [
+      { at: 0,     f0: 118, peak: 213, end: 71,  gain: 0.27, type: 'triangle', phase: 0.1 },
+      { at: 0.045, f0: 147, peak: 274, end: 93,  gain: 0.2,  type: 'sine',     phase: 1.7 },
+      { at: 0.11,  f0: 189, peak: 326, end: 111, gain: 0.13, type: 'triangle', phase: 3.4 },
+    ];
+    for (const voice of voices) {
+      const at = start + voice.at;
+      const o = ctx.createOscillator(); o.type = voice.type;
+      o.frequency.setValueAtTime(voice.f0, at);
+      o.frequency.exponentialRampToValueAtTime(voice.peak, at + 0.29);
+      o.frequency.exponentialRampToValueAtTime(voice.peak * 0.78, at + 0.72);
+      o.frequency.exponentialRampToValueAtTime(voice.end, at + 2.12);
+
+      // The modulation rates are intentionally unrelated. Their depth rises
+      // after the initial cry, so the voice breaks apart instead of sustaining
+      // a recognisable musical vibrato.
+      const trem = ctx.createOscillator(); trem.type = 'square'; trem.frequency.value = 12.7 + voice.phase * 1.9;
+      const tremDepth = ctx.createGain();
+      const tremAmount = 0.105 + voice.phase * 0.008;
+      tremDepth.gain.setValueAtTime(0.0001, at);
+      tremDepth.gain.linearRampToValueAtTime(tremAmount, at + 0.38);
+      tremDepth.gain.setValueAtTime(tremAmount, at + 1.12);
+      tremDepth.gain.linearRampToValueAtTime(0.0001, at + 1.78);
+      const pitchBreak = ctx.createOscillator(); pitchBreak.frequency.value = 4.1 + voice.phase * 0.73;
+      const pitchDepth = ctx.createGain(); pitchDepth.gain.value = 5.5 + voice.phase * 2.2;
+      pitchBreak.connect(pitchDepth).connect(o.frequency);
+
+      const raw = ctx.createGain(); raw.gain.value = 0.62;
+      const gate = ctx.createGain();
+      gate.gain.setValueAtTime(0.0001, at);
+      gate.gain.exponentialRampToValueAtTime(voice.gain, at + 0.055);
+      gate.gain.exponentialRampToValueAtTime(voice.gain * 0.84, at + 0.56);
+      gate.gain.setValueAtTime(voice.gain * 0.84, at + 0.7);
+      gate.gain.exponentialRampToValueAtTime(voice.gain * 0.22, at + 1.46);
+      gate.gain.exponentialRampToValueAtTime(0.0001, at + 2.28);
+      trem.connect(tremDepth).connect(gate.gain);
+      o.connect(raw);
+
+      // Each throat owns a moving cavity rather than sharing three static
+      // vowel bands. The formants cross as the jaws stop agreeing.
+      for (const [f0, f1, q, g0] of [
+        [430 + voice.phase * 36, 710 - voice.phase * 19, 4.2, 0.62],
+        [960 + voice.phase * 71, 1280 - voice.phase * 44, 5.1, 0.34],
+        [1840 + voice.phase * 83, 1320 + voice.phase * 31, 3.4, 0.17],
+      ]) {
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = q;
+        bp.frequency.setValueAtTime(f0, at);
+        bp.frequency.exponentialRampToValueAtTime(f1, at + 1.62);
+        const fg = ctx.createGain(); fg.gain.value = g0;
+        raw.connect(bp); bp.connect(fg).connect(gate);
+      }
+      gate.connect(out);
+      o.start(at); o.stop(at + 2.34);
+      trem.start(at + 0.32); trem.stop(at + 2.32);
+      pitchBreak.start(at); pitchBreak.stop(at + 2.32);
     }
-    src.start(t); src.stop(t + 3.3);
-    vib.start(t); vib.stop(t + 3.3);
-    // torn-throat noise layer
-    const nz = ctx.createBufferSource(); nz.buffer = this._noiseBuf;
-    const nbp = ctx.createBiquadFilter(); nbp.type = 'bandpass'; nbp.frequency.value = 1500; nbp.Q.value = 1.2;
-    const ng = ctx.createGain();
-    this._env(ng, t, 0.3, 0.1, 2.6);
-    nz.connect(nbp).connect(ng).connect(out);
-    nz.start(t); nz.stop(t + 2.9);
-    // sub dread
-    const sub = ctx.createOscillator(); sub.type = 'sine';
-    sub.frequency.setValueAtTime(60, t);
-    sub.frequency.exponentialRampToValueAtTime(28, t + 2.4);
-    const sg = ctx.createGain();
-    this._env(sg, t, 0.5, 0.06, 2.5);
-    sub.connect(sg).connect(out);
-    sub.start(t); sub.stop(t + 2.8);
-    this.duck(0.12, 4); // ducks everything hard
+
+    // Dry tooth catches interrupt the long envelope. They are deliberately
+    // brief and non-periodic: the skull is choking on the sound, not singing.
+    for (const [offset, freq, gain] of [[0.61, 2260, 0.24], [0.87, 1740, 0.19], [1.31, 2480, 0.14]]) {
+      const tear = ctx.createBufferSource(); tear.buffer = this._noiseBuf;
+      const hp = ctx.createBiquadFilter(); hp.type = 'bandpass'; hp.frequency.value = freq; hp.Q.value = 1.8;
+      const tg = ctx.createGain(); this._env(tg, start + offset, gain, 0.002, 0.065);
+      tear.connect(hp).connect(tg).connect(out);
+      tear.start(start + offset); tear.stop(start + offset + 0.1);
+    }
+
+    const body = ctx.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(54, start);
+    body.frequency.exponentialRampToValueAtTime(23, start + 2.36);
+    const bodyG = ctx.createGain(); this._env(bodyG, start, 0.34, 0.025, 2.35);
+    body.connect(bodyG).connect(out); body.start(start); body.stop(start + 2.48);
+
+    // Leave the arena bed present enough to locate the world around the cue.
+    // The scream owns the foreground; it does not switch the rest of the mix
+    // off for four seconds.
+    this.duck(0.28, 2.7);
+  }
+
+  enemyTell(kind, opts = {}) {
+    if (!this._ready || !opts.pos) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const out = this._bus(opts, 1.6, 0.78, opts.verb ?? 0.58);
+    const recipe = {
+      walker:   { f: [91, 137], dur: 0.72, noise: 1220, rise: 1.42, bite: 0.32 },
+      resident: { f: [43, 63.7, 91], dur: 1.18, noise: 610, rise: 0.71, bite: 0.24 },
+      kneeler:  { f: [32, 49], dur: 0.94, noise: 880, rise: 0.58, bite: 0.42 },
+    }[kind] || { f: [91, 137], dur: 0.72, noise: 1220, rise: 1.42, bite: 0.32 };
+
+    for (let i = 0; i < recipe.f.length; i++) {
+      const at = t + i * 0.027;
+      const o = ctx.createOscillator(); o.type = i % 2 ? 'triangle' : 'sine';
+      o.frequency.setValueAtTime(recipe.f[i], at);
+      o.frequency.exponentialRampToValueAtTime(recipe.f[i] * recipe.rise, at + recipe.dur * 0.38);
+      o.frequency.exponentialRampToValueAtTime(recipe.f[i] * 0.73, at + recipe.dur);
+      const g = ctx.createGain(); this._env(g, at, 0.19 - i * 0.025, 0.07 + i * 0.025, recipe.dur * 0.84);
+      o.connect(g).connect(out); o.start(at); o.stop(at + recipe.dur + 0.1);
+    }
+    const breath = ctx.createBufferSource(); breath.buffer = this._noiseBuf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = recipe.noise; bp.Q.value = 0.82;
+    const bg = ctx.createGain(); this._env(bg, t, recipe.bite, 0.025, recipe.dur * 0.82);
+    breath.connect(bp).connect(bg).connect(out); breath.start(t); breath.stop(t + recipe.dur + 0.08);
+    return true;
   }
 
   catchThud(opts = {}) {
@@ -2489,20 +2430,12 @@ export class GameAudio {
   // ---------------- teardown ----------------
 
   stopAll({ suspend = false } = {}) {
-    this._stopped = true;
-    this._pendingMoan = null;
-    if (!this._ready) {
-      // Terminal teardown can arrive while startup PCM is still queued. Cancel
-      // the tokenized scheduler and retain exact silence; no later slice may
-      // resurrect sources after the game has stopped.
-      this._cancelStartupBake('stopAll');
-      if (suspend) this._scheduleTerminalSuspend();
-      return;
-    }
+    if (!this._ready) return;
     this._cancelForestStoryPrewarm?.();
     const t = this.ctx.currentTime;
     for (const h of Array.from(this._loops)) h.stop();
     this.skullMoanStop();
+    this.boneApproachStop();
     this._chatter = null;
     this._tension = 0;
     this._hbT = 0;
@@ -2512,15 +2445,20 @@ export class GameAudio {
       g.gain.cancelScheduledValues(t);
       g.gain.setTargetAtTime(0.0001, t, 0.25);
     }
-    // Clear any in-flight duck. Terminal teardown leaves the resident beds
-    // silent and marks the public audio surface unready below.
+    // clear any in-flight duck; beds stay alive but silent — the next setZone()
+    // brings them back without re-allocating anything
     this.bedGain.gain.cancelScheduledValues(t);
     this.bedGain.gain.setTargetAtTime(0.0001, t, 0.16);
     this._tGain.gain.cancelScheduledValues(t);
     this._tGain.gain.setTargetAtTime(0.0001, t, 0.1);
     this.master.gain.cancelScheduledValues(t);
     this.master.gain.setTargetAtTime(0.0001, t, 0.18);
-    this._ready = false;
-    if (suspend) this._scheduleTerminalSuspend();
+    if (suspend && !this._suspendTimer) {
+      const ctx = this.ctx;
+      this._suspendTimer = setTimeout(() => {
+        this._suspendTimer = null;
+        if (ctx.state === 'running') ctx.suspend().catch(() => {});
+      }, 420);
+    }
   }
 }
