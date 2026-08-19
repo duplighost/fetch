@@ -398,6 +398,18 @@ try {
       g.ossuary.unlock('ritual');
       const state = g.ossuary;
       const target = state.target;
+      // ROUND NINE: the counterweight is DEAD until the kennel cradle arms it
+      // (his note: "there is a weighted basket thing you can use that does
+      // nothing in terms of gameplay"). This page is about hold commitment, not
+      // about the arming, so it takes the same silent restore a respawn takes —
+      // but it asserts the locked answer first, because a locked mechanism that
+      // says nothing is the failure this game keeps having.
+      g.skull.mode = 'outbound';
+      const lockedDirective = target.onHit.call(target, g.skull, target.object.position);
+      const lockedState = { directive: lockedDirective, pulling: state.pulling,
+        progress: state.progress, armed: state.armed };
+      g.skull.holdNow();
+      state.restoreArm();
       const shortPull = () => {
         g.skull.mode = 'outbound';
         const directive = target.onHit.call(target, g.skull, target.object.position);
@@ -420,6 +432,7 @@ try {
           after: ritualCreditsAfter,
         },
         ossuary: {
+          lockedState,
           firstShort,
           secondShort,
           committedDirective,
@@ -441,6 +454,12 @@ try {
         && commitments.tree.collidersCleared
         && commitments.tree.activeLogColliders === 0,
     commitments.tree);
+    check('an unarmed counterweight sends the skull home instead of anchoring',
+      commitments.ossuary.lockedState.directive === 'return'
+        && commitments.ossuary.lockedState.pulling === false
+        && commitments.ossuary.lockedState.progress === 0
+        && commitments.ossuary.lockedState.armed === false,
+    commitments.ossuary.lockedState);
     check('short ossuary pulls decay instead of banking progress between retries',
       commitments.ossuary.firstShort.directive === 'anchor'
         && commitments.ossuary.firstShort.peak > 0.15

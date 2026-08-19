@@ -223,6 +223,9 @@ export class Director {
         g.ossuary.entryLid.open = true;
         g.ossuary.slabT = 1;
       }
+      // the kennel arms the counterweight (round nine). A restore has to find
+      // the pawl already dropped, and must not replay the travelling knocks.
+      if (g.flags.has('ossuaryKennelSolved')) g.ossuary?.restoreArm?.();
       // the counterweight's own flag, not the gate's: the gate is three keys
       // now and the under-yard is only one of them
       if (g.flags.has('ossuaryCleared') && g.ossuary) {

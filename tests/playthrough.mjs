@@ -634,6 +634,24 @@ try {
     walkTo(-68.0, -1.2, 8);
     walkTo(-72.0, 3.4, 18);
     walkTo(-72.0, 5.6, 8);
+    // ROUND NINE: the weighted basket in the kennel ARMS the counterweight.
+    // His note: it "does nothing in terms of gameplay. maybe it should be the
+    // thing that turns on that wheel." So the wheel refuses out loud until the
+    // cradle has been paid, and the walk-through has to pay it — the kennel
+    // scare is on the critical path now, which is the point of the change.
+    walkTo(-72.6, 2.0, 16);
+    aimAt(-74.75, -3.18, 2.0);
+    F.stepWith(1 / 120, { throwPressed: true, throwHeld: true });
+    F.stepWith(0.45, { throwHeld: true });
+    beat('the-kennel-cradle-takes-the-weight',
+      g.skull.mode === 'anchored' && g.skull.anchor?.puzzleId === 'ossuaryKennel',
+      { mode: g.skull.mode, puzzle: g.skull.anchor?.puzzleId ?? null });
+    F.stepWith(1.5, { throwHeld: true });
+    beat('the-weighted-basket-arms-the-wheel',
+      g.ossuaryKennel.solved === true && g.ossuary.armed === true,
+      { solved: g.ossuaryKennel.solved, armed: g.ossuary.armed });
+    F.stepWith(1 / 120, { throwReleased: true });
+    waitHeld();
     walkTo(-68.0, 10.8, 18);
     walkTo(-68.0, 12.9, 8);
     walkTo(-70.0, 15.0, 10);

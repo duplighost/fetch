@@ -2335,6 +2335,124 @@ function buildOssuaryRoute(game) {
   const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.7, 6), ironMat);
   chain.position.set(1.15, CORBEL_Y - 0.275, 0);
   mechanism.add(chain);
+
+  // ------------------------------------------------------------- THE PAWL
+  // HIS NOTE, 2026-08-19: "there is a weighted basket thing you can use that
+  // does nothing in terms of gameplay. maybe it should be the thing that turns
+  // on that wheel/activates it at the end. make sure it looks deactivated."
+  //
+  // So the machine has to be visibly LOCKED before it is armed, and the lock
+  // has to be a thing, not a state: a dog standing up into the rim from the
+  // plinth's shoulder. Engaged, it is touching the wheel — you can see what is
+  // stopping it. Armed, it drops clear and the wheel is free. Both poses come
+  // off ONE scalar (state.armT), so a director restore seats it in a single
+  // assignment, exactly like the two lids.
+  //
+  // The first cut of this put the dog under the wheel, where the plinth ate it
+  // and the frame showed nothing (scratch shot 01, opened and looked at). A
+  // lock nobody can see is not a lock. It comes up the wheel's SOUTH face now,
+  // where the player's own approach silhouettes it, and it carries a lifted
+  // iron: the mechanism's own colour at this range is the same value as the
+  // stone behind it, so shape alone was never going to do it.
+  const pawlMat = ironMat.clone();
+  pawlMat.color.setHex(0x8d918c);
+  pawlMat.roughness = 0.5;
+  pawlMat.emissive = new THREE.Color(0x161a19);
+  pawlMat.emissiveIntensity = 0.6;
+  const pawlBracket = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.34, 0.24), ironMat);
+  pawlBracket.position.set(0, 0.17, 0.95);
+  mechanism.add(pawlBracket);
+  const pawlPivot = new THREE.Group();
+  // ENGAGED = -0.44 rad: the tooth sits on the rim's lower south face.
+  // RELEASED = +0.55: it falls back and down, a full radian of travel, so the
+  // release is a MOTION and not a colour change.
+  pawlPivot.position.set(0, 0.42, 0.95);
+  pawlPivot.rotation.x = -0.44;
+  mechanism.add(pawlPivot);
+  const pawlArm = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.78, 0.1), pawlMat);
+  pawlArm.position.set(0, 0.39, 0);
+  pawlPivot.add(pawlArm);
+  const pawlTooth = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.17, 0.19), pawlMat);
+  pawlTooth.position.set(0, 0.8, -0.04);
+  pawlPivot.add(pawlTooth);
+  const pawlSpring = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.34, 6), pawlMat);
+  pawlSpring.rotation.x = 0.5;
+  pawlSpring.position.set(0.15, 0.2, 0.1);
+  pawlPivot.add(pawlSpring);
+
+  // ...and the wheel's own tell. Unlit, near-black while the mechanism is
+  // dead; it comes up and breathes once the kennel has armed it. Value and
+  // motion, never hue — the light in here is one carried lantern.
+  const wheelCoreMat = new THREE.MeshBasicMaterial({
+    color: 0xdfe5e2, transparent: true, opacity: 0.02, depthWrite: false,
+  });
+  const wheelCore = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.018, 5, 20), wheelCoreMat);
+  wheelCore.rotation.y = Math.PI / 2;
+  wheelGroup.add(wheelCore);
+
+  // THE WIRE. His words: "the basket thing that you throw the skull into
+  // clearly wires back to activate it." Cause has to point at effect BEFORE
+  // it is ever used, so the conduit is laid at build time and is readable on
+  // the walk up: down the kennel's back wall, out under the bars, across the
+  // corridor, and thirteen metres north to this plinth. Same vocabulary as the
+  // exit-slab wiring below it (world.box merges into the shell: zero draws),
+  // and it runs UNDER the baffle bases the way the slab's conduit already
+  // does — that is what a floor conduit does to a wall.
+  //
+  // AND IT HAS TO BE SEEN. The first cut used ironMat at 0.055 m and vanished
+  // into the floor at four metres — measured with conduitMat.visible toggled,
+  // not eyeballed. A wire that "clearly wires back" and cannot be seen is the
+  // round-two disease with a new coat of paint. So: its OWN material, value
+  // lifted well clear of the floor it lies on (one extra batch bucket, one
+  // draw), and a section thick enough to survive the mip chain at range.
+  // AND IT HAS TO BE IN routeRoot, NOT world.box. THE FINDING OF THIS ITEM:
+  // the district seal (keepInOssuary/syncOssuaryVisibility, below) hides every
+  // scene child that is not routeRoot while you are down here — and world.box
+  // merges into the world SHELL, which is a scene child. So a floor conduit
+  // laid with world.box in this district is drawn nowhere and always has been:
+  // the exit-slab wiring three blocks down, the "basement's blessed
+  // vocabulary" comment and all, has never been visible to anybody. Found by
+  // toggling the merged mesh off and diffing the frame; the first two cuts of
+  // this wire measured 0.00% of pixels and I would have shipped them.
+  //
+  // One merged BufferGeometry, one mesh, one draw, inside the route.
+  const conduitMat = ironMat.clone();
+  conduitMat.name = 'ossuary kennel conduit';
+  conduitMat.color.setHex(0x9aa09b);
+  conduitMat.roughness = 0.52;
+  conduitMat.emissive = new THREE.Color(0x1b201e);
+  conduitMat.emissiveIntensity = 0.75;
+  const WIRE_X = OX - 0.55;
+  const WIRE_Z = OZ + 12.4;
+  const WIRE_W = 0.13, WIRE_H = 0.1;
+  {
+    const parts = [];
+    const run = (x, y, z, w, h, d) => {
+      const g2 = new THREE.BoxGeometry(w, h, d);
+      g2.translate(x, y, z);
+      parts.push(g2);
+    };
+    run(OX - 5.75, FLOOR + 0.86, WIRE_Z, 0.09, 1.72, 0.09);                       // riser behind the cradle
+    run(OX - 4.4, FLOOR + 0.05, WIRE_Z, 2.82, WIRE_H, WIRE_W);                    // out of the cell
+    run((OX - 3.0 + WIRE_X) / 2, FLOOR + 0.05, WIRE_Z,
+      (WIRE_X - (OX - 3.0)), WIRE_H, WIRE_W);                                     // across the corridor
+    run(WIRE_X, FLOOR + 0.05, (WIRE_Z + OZ + 26.0) / 2,
+      WIRE_W, WIRE_H, (OZ + 26.0) - WIRE_Z);                                      // north to the machine
+    run(WIRE_X, FLOOR + 0.34, OZ + 26.0, 0.09, 0.68, 0.09);                       // up onto the plinth
+    run((WIRE_X + OX) / 2, FLOOR + 0.66, OZ + 26.0, OX - WIRE_X, 0.09, 0.09);
+    // cleats: a wire somebody FITTED, not a line drawn. They also give the run
+    // a rhythm, which is what makes it read as one object at a glance instead
+    // of a seam in the floor.
+    for (const cz of [OZ + 14.2, OZ + 16.6, OZ + 19.0, OZ + 21.4, OZ + 23.8]) {
+      run(WIRE_X, FLOOR + 0.1, cz, 0.26, 0.1, 0.09);
+    }
+    const conduit = new THREE.Mesh(mergeGeometries(parts), conduitMat);
+    conduit.name = 'ossuary kennel conduit';
+    conduit.userData.noBatch = true;
+    conduit.receiveShadow = true;
+    routeRoot.add(conduit);
+    game.ossuaryConduit = conduit;          // tools toggle this to measure it
+  }
   const exitSlab = new THREE.Mesh(new THREE.BoxGeometry(HALF_W * 2 - 0.35, 2.65, 0.34), wallMat);
   exitSlab.userData.noBatch = true;
   exitSlab.position.set(OX, FLOOR + 1.33, OZ + 28.15);
@@ -2823,6 +2941,10 @@ function buildOssuaryRoute(game) {
     origin: { x: OX, z: OZ, floor: FLOOR }, root: routeRoot,
     unlocked: false, route: null, inOssuary: false, solved: false,
     pulling: false, progress: 0, slabT: 0, exitT: 0,
+    // the counterweight is DEAD until the kennel cradle arms it. armT is the
+    // pawl's pose (0 = dog in the rim, 1 = dropped clear) and, like the lids,
+    // it is a plain scalar so a restore is one assignment.
+    armed: false, armT: 0,
     // Both hatches are plain scalars on the state object, deliberately: the
     // director's restore paths seat this district in single assignments, and
     // anything that needs a sequence to be correct would break on a respawn.
@@ -2871,6 +2993,37 @@ function buildOssuaryRoute(game) {
     },
   };
   game.ossuary = state;
+
+  // THE ARMING SENTENCE. Cause -> wire -> effect, spoken out loud along the
+  // conduit the player has been walking beside since the kennel. Four knocks
+  // travelling the run, then the dog comes out of the rim and the wheel is
+  // live. A restore that finds the flag already set seats the pose instead
+  // (see restoreArm) and skips the noise, the exit-slab tickers' law.
+  const armTheCounterweight = () => {
+    if (state.armed) return;
+    state.armed = true;
+    const legs = [
+      [OX - 4.4, WIRE_Z], [WIRE_X, WIRE_Z],
+      [WIRE_X, OZ + 17.4], [WIRE_X, OZ + 22.6], [OX, OZ + 26.0],
+    ];
+    legs.forEach(([kx, kz], i) => {
+      game.after(0.16 + i * 0.19, () => game.audio.knock({
+        pos: new THREE.Vector3(kx, FLOOR + 0.12, kz),
+        gain: 0.34 + i * 0.05, rate: 0.86 - i * 0.06, verb: 0.8,
+      }), { global: true });
+    });
+    game.after(0.16 + legs.length * 0.19, () => {
+      game.audio.metalDrop({ pos: anchorPos, gain: 0.78, rate: 0.5 });
+      game.audio.unlock({ pos: anchorPos, gain: 0.6, rate: 0.5 });
+      game.shake(0.16);
+      game.impact('hurt', anchorPos);
+    }, { global: true });
+  };
+  // a director restore lands the armed pose in one assignment, silently
+  state.restoreArm = () => {
+    state.armed = true;
+    state.armT = 1;
+  };
 
   // "you just get to the end and telport. everything you can open should
   // kind of work the same way." — climbing out is now a USED verb: stand on
@@ -3005,26 +3158,35 @@ function buildOssuaryRoute(game) {
     // them. The keepInOssuary marker spares it from the district seal.
     const residentAlive = state.resident && game.enemies.list.includes(state.resident);
     if (!state.solved && !residentAlive) {
-      // posted on the WEST side: the last baffle forces the east gap, so
-      // the player passes it at arm's-plus length — watched, never blocked
-      const res = game.enemies.spawn('walker', OX - 1.6, OZ + 20.4, 'standing', FLOOR + 1);
+      // HIS NOTE, 2026-08-19: "the area would also be cooler if the enemies in
+      // it were in some of those rooms." They stood in the CORRIDOR — two posts
+      // on the walking line, which is why they read as obstacles on a route
+      // rather than as things that live here. Both are in pockets now: the
+      // corridor is empty and the rooms are not, so every doorway is worth a
+      // look and none of them is compulsory.
+      //
+      // ONE, in the mouth of the kennel cell, facing the bars it cannot pass —
+      // the player meets it side-on through the west wall gap while the lunger
+      // is still throwing itself at the iron behind it.
+      const res = game.enemies.spawn('walker', OX - 3.25, OZ + 12.05, 'standing', FLOOR + 1);
       res.standing = true;
       res.ossuaryResident = true;
-      res.home = { x: OX - 1.6, z: OZ + 20.4 };
+      res.home = { x: OX - 3.25, z: OZ + 12.05 };
       // it closes while your back is turned, but never leaves its post —
       // the corridor stays a walk of glances, not a pursuit
       res.tether = 2.2;
       res.mesh.userData.keepInOssuary = true;
       state.resident = res;
-      // ...and a second, leaning out of the EAST niche pocket on a tighter
-      // leash. Same ossuaryResident marker, so both exits clear it and there is
-      // no new teardown path. Nothing is posted between z+15.4 and z+18.2 —
-      // that is the counterweight hold, where the player stands still for 1.7 s
-      // with no skull in hand and no way to answer anything.
-      const east = game.enemies.spawn('walker', OX + 2.1, OZ + 18.6, 'standing', FLOOR + 1);
+      // TWO, standing in the EAST NICHE ROOM among the resonant minis: the
+      // payoff room of the whole district has somebody already in it. Same
+      // ossuaryResident marker, so both exits clear it and there is no new
+      // teardown path. Nothing is posted between z+15.4 and z+18.2 — that is
+      // the counterweight hold, where the player stands still for 1.7 s with
+      // no skull in hand and no way to answer anything.
+      const east = game.enemies.spawn('walker', OX + 4.5, OZ + 19.3, 'standing', FLOOR + 1);
       east.standing = true;
       east.ossuaryResident = true;
-      east.home = { x: OX + 2.1, z: OZ + 18.6 };
+      east.home = { x: OX + 4.5, z: OZ + 19.3 };
       east.tether = 1.8;
       east.mesh.userData.keepInOssuary = true;
     }
@@ -3156,6 +3318,16 @@ function buildOssuaryRoute(game) {
     onHit(skull, at) {
       if (state.solved) return 'return';
       if (skull.mode !== 'outbound') return 'continue';
+      // LOCKED, and it says so. The target stays ENABLED while the pawl is in
+      // — a disabled target lets the skull sail through in silence, and
+      // silence is the one answer this game is not allowed to give. This is
+      // the throat's idiom, restated on iron.
+      if (!state.armed) {
+        game.audio.knock({ pos: anchorPos, gain: 0.6, rate: 0.42, verb: 0.9 });
+        game.audio.lockedRattle({ pos: anchorPos, gain: 0.34, rate: 0.55 });
+        game.impact('locked', at || anchorPos);
+        return 'return';
+      }
       this.enabled = false;
       state.pulling = true;
       skull.anchorAt(anchorPos, { maxHold: 4.5, puzzleId: 'ossuaryCounterweight' });
@@ -3260,6 +3432,18 @@ function buildOssuaryRoute(game) {
     // the weight rides its bottom end down. The old maths ran the chain from
     // y 1.8 to y 3.5 at rest, through a ceiling that is at 2.85, and the two
     // parts never stayed connected to each other.
+    // the pawl rides its own scalar toward wherever armT points: engaged and
+    // touching the rim, or dropped clear of it
+    state.armT += ((state.armed ? 1 : 0) - state.armT) * Math.min(1, dt * 6.5);
+    const pawlPose = state.armT * state.armT * (3 - 2 * state.armT);
+    pawlPivot.rotation.x = -0.44 + pawlPose * 0.99;
+    pawlSpring.scale.y = 1 - pawlPose * 0.38;
+    // and the wheel stops looking dead the instant it is free
+    const wheelWant = state.armed
+      ? (state.solved ? 0.16 : 0.3 + Math.sin(time * 2.4) * 0.06)
+      : 0.02;
+    wheelCoreMat.opacity += (wheelWant - wheelCoreMat.opacity) * Math.min(1, dt * 2.6);
+    state._coreOpacity = wheelCoreMat.opacity;   // read by tools/probe-ossuary-arming
     wheelGroup.rotation.x = state.progress * TAU * 1.45;
     const payout = 0.55 + state.progress * 1.1;
     chain.scale.y = payout / 1.7;
@@ -3347,6 +3531,14 @@ function buildOssuaryRoute(game) {
           game.audio.metalDrop({ pos: kennel.solvePos, gain: 0.7, rate: 0.62 });
           game.after(0.62, () => game.audio.knock({ pos: kennel.remainsPos, gain: 0.34, rate: 0.76 }));
           game.after(1.15, () => game.audio.whisper({ pos: kennel.remainsPos, gain: 0.28, rate: 0.7, verb: 0.85 }));
+          // AND IT ARMS THE WHEEL. The cradle used to raise a shutter on a
+          // scare and stop there — his "does nothing in terms of gameplay."
+          // Now the weight is the first act of the gate: cause travels the
+          // conduit it was laid on, knock by knock, thirteen metres north, and
+          // the pawl lets go of the rim at the far end. The archive draft's
+          // travelling thunks in house.js are the model; this is the same
+          // sentence with a longer wire.
+          armTheCounterweight();
         }
       } else kp.progress = 1;
       const ke = kp.progress * kp.progress * (3 - 2 * kp.progress);
