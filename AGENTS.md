@@ -25,9 +25,11 @@ the same commit.
   superseded once main caught up — closed, not deleted.
 - **Work in a fresh `git worktree`, never in a shared checkout.**
   `C:\Users\Alex\Projects\fetch-claude` is stale and shared; do not use it.
-- **The round records are in `docs/`** — `ROUND-NINE.md` is the most recent and
-  is the one to read first; each round's file carries what was measured, what
-  was wrong, and what is still open.
+- **The standing job is `docs/ROUND-TEN.md`** — the polish brief. When Alex
+  says "fetch," read that file first and follow it. The round records
+  (`docs/ROUND-NINE.md` newest) carry what was measured, what was wrong, and
+  what is still open; each brief supersedes this line when a new round starts —
+  update this pointer in the same commit that adds the next brief.
 
 ## What this is
 
