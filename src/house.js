@@ -6627,12 +6627,28 @@ function buildPumpGallery(game) {
       const onFarLanding = game.act === 'basement' && game.player.pos.y < B + 2.2
         && game.player.pos.x < -17.28
         && game.player.pos.z > -9.6 && game.player.pos.z < 1.9;
-      if (onFarLanding && route.progress > 0.9) latchRoute();
+      // HIS NOTE, 2026-08-19: "you can get the gateway down and walk across the
+      // walkway to the last room without the thing you step on activating. i
+      // think it only activates once the gate is down all the way or for long
+      // enough... that seems confusing if the player misses it."
+      //
+      // He had it exactly. The latch used to ALSO require route.progress > 0.9,
+      // and progress REWINDS at 0.34/s the moment the hold ends — maxHold is
+      // 4.5 s, and the walk is longer than what is left of it. So the honest
+      // sequence (weigh the cradle, watch the gate rise, let go, cross) landed
+      // on the far bank at ~0.7 and latched NOTHING: no pawl, no clank, no
+      // pumpGalleryLatched, and every later refusal at the furnace pointed at a
+      // crossing the player had actually made.
+      //
+      // Standing on the west bank IS the proof of the crossing — this bank is
+      // unreachable except over that bridge, and the act/height/x/z box above
+      // is the only way into this branch. The instantaneous value of a rewind
+      // ticker was never evidence of anything.
+      if (onFarLanding) latchRoute();
       // The PLATE band is a separate, tighter box, and only ever drives the
-      // pre-latch depress and its creak — the latch line above is untouched
-      // (two tests assert that exact threshold and two more cross on fixed
-      // durations with no slack). Its east edge is deliberately WEST of -17.28,
-      // so weight on the plate can never fire before the landing does.
+      // pre-latch depress and its creak — the latch line above is untouched by
+      // it. Its east edge is deliberately WEST of -17.28, so weight on the
+      // plate can never fire before the landing does.
       const onPlate = game.act === 'basement' && game.player.pos.y < B + 2.2
         && game.player.pos.x < -17.32 && game.player.pos.x > -18.2
         && game.player.pos.z > -3.95 && game.player.pos.z < -2.05;
