@@ -253,3 +253,27 @@ frames, both landed:
    desk's unlit side (world furniture, same as production, not the arms).
 
 Warm pass now uploads 41 textures (the forearm cloth clone). All gates green.
+
+---
+
+# DEPLOYED (2026-08-19): site PR #75 MERGED
+
+The hands round is LIVE. Site PR
+[#75](https://github.com/duplighost/qualiacology/pull/75) squash-merged to
+main `0e8c94a`; qualiacology.com/fetch/ serves it and **production
+fetch-boot-check PASSED** (world lit, skull visible in hand 44% lit-frac, zero
+errors). Two files shipped: `fetch/src/skull.js`, `fetch/src/textures.js` —
+22/22 src files byte-identical to this branch at `85a590e`.
+
+Deploy notes for the next thread:
+- The PR's `static-site` CI run sat in GitHub's runner queue 30+ minutes
+  (Actions API also 500'd on cancel — GitHub-side degradation). Merged on
+  local + preview evidence; the MERGE push's own run then completed green in
+  18 s, so the workflow did validate main. A queued run means no machine ever
+  looked at the code — do not read it as failure.
+- Alex mentioned he accidentally asked ANOTHER thread to deploy first and
+  stopped it. Audited before merging: origin/main untouched, no stray
+  branches/PRs, game worktree clean. The stop worked; nothing raced us.
+- **The game branch `claude/aug18-round7-look` is still NOT pushed** to
+  duplighost/fetch — eleven commits live only in this worktree. Normal split,
+  but the deployed site now runs code whose only git home is this machine.
