@@ -354,7 +354,39 @@ export class Skull {
     const nailMat = new THREE.MeshStandardMaterial({ color: 0x4a352e, roughness: 0.93, metalness: 0 });
     // held so the last room can change what they are made of
     this._handSkin = { skin, crease, nail: nailMat };
-    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x090b0e, roughness: 1.0, metalness: 0 });
+    // The sleeves are load-bearing story (playtest 2: without arms rooted off
+    // the bottom of the frame, the hands read as the SKULL's — "hands making
+    // glasses around its eyes"), but at 0x090b0e with no map they photographed
+    // as featureless black boxes — his exact question. Cloth needs folds:
+    // borrow the curtain sheet the game already paints (vertical fold strokes
+    // that wrap a cylinder as creases running down the sleeve), lift the base
+    // a step so the folds can shade, and let the multiply keep it well under
+    // the skin in the value order.
+    const curtainTex = this.mats?.curtain?.map || null;
+    const sleeveMat = new THREE.MeshStandardMaterial({
+      color: 0x2c3036, roughness: 1.0, metalness: 0,
+      map: curtainTex, bumpMap: curtainTex, bumpScale: 0.22,
+      // open-ended tubes: a capped cylinder shows its end disc when the
+      // camera looks down the arm, and a flat dark polygon under the wrist
+      // was his "black boxes" read. DoubleSide so the cuff opening shows
+      // cloth lining instead of a see-through hole.
+      side: THREE.DoubleSide,
+    });
+    // The forearms are the same cloth but OUTSIDE the cradle lamps' reach
+    // (probe-black-quad.mjs: hiding them, not the sleeves, removed the black
+    // wedge he asked about) — inverse-square leaves them several times dimmer
+    // than the wrists, so their curvature never shaded and they stayed flat
+    // black at any sleeve value. The lamps cannot be moved (calibrated), so
+    // the value is baked into a lifted clone instead, with the folds tiled to
+    // arm scale. Material clone = same program; texture clone = one more 256
+    // canvas upload at boot, warmed with everything else.
+    const foreTex = curtainTex ? curtainTex.clone() : null;
+    if (foreTex) { foreTex.repeat.set(2, 3); foreTex.needsUpdate = true; }
+    const foreMat = new THREE.MeshStandardMaterial({
+      color: 0x41464e, roughness: 1.0, metalness: 0,
+      map: foreTex, bumpMap: foreTex, bumpScale: 0.22,
+      side: THREE.DoubleSide,
+    });
 
     // "they must be actually bones like a skeleton. right now they don't look
     // like that." They did not, and no recolour could make them: becomeBone
@@ -427,13 +459,15 @@ export class Skull {
       const i1 = skBones.push(k1) - 1;
       const i2 = skBones.push(k2) - 1;
       const i3 = skBones.push(d) - 1;
-      const nail = fleshy(new THREE.Mesh(BLOCK, nailMat));
-      // DORSAL (the fingers curl toward local +y, so +y is the palm side),
-      // narrower than the fingertip it caps, and no two quite square to it.
-      nail.scale.set(0.0104 * scale * 0.8, 0.0015, 0.0125 * scale);
-      nail.position.set(0, -0.0060 * scale, 0.019 * scale);
-      nail.rotation.set(-0.10, droop * 1.6, 0);
-      d.add(nail);
+      // NO NAILS. They were flat BLOCK chips sized for the old capsule
+      // fingertips, and on the curved skinned tube their corners stood off the
+      // surface — his read of the result: "an odd little square thing sticking
+      // out... they're not part of the hands." He is right twice over: at
+      // cradle distance a nail is four pixels, and a box on a curved surface
+      // can only ever be a box. If nails ever come back they are a painted
+      // patch in the skin sheet, not geometry. (nailMat itself survives in
+      // _handSkin — becomeBone retints it and the shape of that object is
+      // load-bearing.)
       k2.add(d);
       k1.add(k2);
       parent.add(k1);
@@ -744,7 +778,7 @@ export class Skull {
       buildHandFlesh(hand, skBones, handFingers);
       // and the cuff comes in with the wrist it sits on: a 91 mm sleeve mouth
       // on a 63 mm wrist was most of what made the bottom of the frame a sock
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.062, 0.24, 12), sleeveMat);
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.062, 0.24, 16, 1, true), sleeveMat);
       sleeve.position.set(0, -0.03, -0.15);
       sleeve.rotation.x = 1.3;
       hand.add(sleeve);
@@ -891,7 +925,7 @@ export class Skull {
       const b = new THREE.Vector3(side * 0.3, -0.62, 0.34);
       const dir = b.clone().sub(a);
       const len = dir.length();
-      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 10), sleeveMat);
+      const fore = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.07, len, 14, 1, true), foreMat);
       fore.position.copy(a).addScaledVector(dir, 0.5);
       fore.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
       fore.userData.baseY = fore.position.y;
