@@ -7831,6 +7831,40 @@ function buildFallsField(game, C, FX, FZ) {
       plant(x, z);
     }
   }
+  // A FIFTH PASS, and it exists because of one rule forty lines up.
+  //
+  // clearOf keeps trees out of the corridor you arrive through (|x| < 8 south
+  // of z -14), which is right for the arrival and wrong for the walk back: the
+  // sealing forest has closed by then, so the one direction with no trees in it
+  // is also the one direction with nothing behind them. Alex: "the waterfall
+  // area disappears behind you. the player could probably walk back there and
+  // see the nothingness where the world ends... maybe we could kind of block
+  // them off after they get out in a way that doesn't get them stuck. plop a
+  // few trees down that looks like the path looked when it was closing behind
+  // them as well."
+  //
+  // So: the flanks of that mouth, never its centre. 3.5 < |x| < 8 leaves a
+  // seven-metre lane clear, which is wider than the arrival needs and narrows
+  // the empty sight line to something that reads as a way out of a wood rather
+  // than the edge of a map. NO COLLIDERS: the corridor is the one gap in the
+  // clearing's wall (section 3 skips |x| < 8 on the south run), and closing it
+  // for real risks walling a restored player out of the district — a worse bug
+  // than the one being fixed, and he said so himself. Own seed, appended: the
+  // three streams above are position-order dependent and widening any of their
+  // bands moves all 92 existing trees.
+  {
+    const mouth = new RNG(0x51ae);
+    for (let guard = 0, made = 0; guard < 600 && made < 26; guard++) {
+      const x = (mouth.float() < 0.5 ? -1 : 1) * mouth.range(3.5, 8);
+      const z = mouth.range(-29, -25.5);
+      // every other exclusion in clearOf still applies out here; only the
+      // corridor clause is being deliberately overridden, and the basin, the
+      // machines, the fire lines and the walked legs are all far north of this
+      // band (the southernmost walked leg ends at z -12).
+      plant(x, z);
+      made++;
+    }
+  }
   const trunks = new THREE.InstancedMesh(trunkGeo, bark, trunkM.length);
   trunkM.forEach((mm, i) => trunks.setMatrixAt(i, mm));
   const branches = new THREE.InstancedMesh(branchGeo, bark, branchM.length);
