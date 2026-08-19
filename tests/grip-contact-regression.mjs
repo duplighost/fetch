@@ -109,31 +109,49 @@ try {
     };
     const insideSkull = (x, y, z) => { const c = cellOf(x, y, z); return rad[c.i] > 0 && c.r < rad[c.i] * 0.985; };
 
-    const measure = () => {
-      const gaps = [];
-      for (const f of g.skull._fingers) {
-        let min = Infinity;
-        f.k1.traverse((o) => {
-          if (!o.isMesh || !o.visible || !o.geometry?.getAttribute('position')) return;
-          const pos = o.geometry.getAttribute('position');
-          for (let i = 0; i < pos.count; i++) {
-            V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
-            const d = nearest(V.x, V.y, V.z);
-            if (d < min) min = d;
-          }
-        });
-        gaps.push(+(min * MM).toFixed(1));
+    // The flesh is a SkinnedMesh since the round-nine rebuild: raw vertex
+    // positions are the BIND pose, so every vertex goes through
+    // applyBoneTransform (which reads live bone matrixWorlds) before it means
+    // anything. Per-finger grouping rides skinIndex: buildHandFlesh stamps
+    // userData.fingerOfBone with which finger each bone drives.
+    const eachVert = (o, cb) => {
+      const pos = o.geometry?.getAttribute('position');
+      if (!pos) return;
+      for (let i = 0; i < pos.count; i++) {
+        V.fromBufferAttribute(pos, i);
+        if (o.isSkinnedMesh) o.applyBoneTransform(i, V);
+        V.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+        cb(V, i);
       }
+    };
+    const measure = () => {
+      const mins = new Array(g.skull._fingers.length).fill(Infinity);
+      let base = 0;
+      for (const hand of [hold.children[0], hold.children[1]]) {
+        let sm = null;
+        hand.traverse((o) => { if (o.isSkinnedMesh) sm = o; });
+        if (sm) {
+          const sidx = sm.geometry.getAttribute('skinIndex');
+          const map = sm.userData.fingerOfBone || [];
+          const fb = base;
+          eachVert(sm, (v, i) => {
+            const fi = map[sidx.getX(i)];
+            if (fi === undefined || fi < 0) return;
+            const d = nearest(v.x, v.y, v.z);
+            if (d < mins[fb + fi]) mins[fb + fi] = d;
+          });
+        }
+        base += 5;
+      }
+      const gaps = mins.map((m) => +(m * MM).toFixed(1));
       let insideN = 0, total = 0;
       for (const hand of [hold.children[0], hold.children[1]]) {
         hand.traverse((o) => {
           if (!o.isMesh || !o.visible || !o.geometry?.getAttribute('position')) return;
-          const pos = o.geometry.getAttribute('position');
-          for (let i = 0; i < pos.count; i++) {
-            V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+          eachVert(o, (v) => {
             total++;
-            if (insideSkull(V.x, V.y, V.z)) insideN++;
-          }
+            if (insideSkull(v.x, v.y, v.z)) insideN++;
+          });
         });
       }
       // the thumbs are tucked behind the bone on purpose; the eight fingers
@@ -165,12 +183,10 @@ try {
       node.updateWorldMatrix(true, true);
       node.traverse((o) => {
         if (!o.isMesh || !o.geometry?.getAttribute('position')) return;
-        const pos = o.geometry.getAttribute('position');
-        for (let i = 0; i < pos.count; i++) {
-          V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
-          const xyz = [V.x, V.y, V.z];
+        eachVert(o, (v) => {
+          const xyz = [v.x, v.y, v.z];
           for (let k = 0; k < 3; k++) { if (xyz[k] < l[k]) l[k] = xyz[k]; if (xyz[k] > h[k]) h[k] = xyz[k]; }
-        }
+        });
       });
       return [0, 1, 2].map((k) => +(h[k] - l[k]).toFixed(3));
     };

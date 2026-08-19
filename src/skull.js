@@ -333,10 +333,16 @@ export class Skull {
     // It is the bumpMap as well, which is most of the point: the light the
     // player carries moves, and a hand it cannot rake across is a shape.
     const skinTex = handSkinTexture();
+    // vertexColors carries what geometry used to: the darkened folds at the
+    // finger hinges and the contact shadow on the fingertip pads are painted
+    // into the skinned mesh's colour attribute, exactly at the joints.
     const skin = new THREE.MeshStandardMaterial({
-      color: 0x51362f, roughness: 0.97, metalness: 0,
+      color: 0x51362f, roughness: 0.97, metalness: 0, vertexColors: true,
       map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
     });
+    // No flesh uses `crease` since the skinned rebuild (hinge shadow moved to
+    // vertex colour), but it stays: _handSkin's shape is load-bearing —
+    // becomeBone retints it and the playthrough's ending beat reads _handSkin.
     const crease = new THREE.MeshStandardMaterial({
       color: 0x3f2822, roughness: 1.0, metalness: 0,
       map: skinTex, bumpMap: skinTex, bumpScale: 0.30,
@@ -370,16 +376,18 @@ export class Skull {
     const SHAFT = new THREE.CapsuleGeometry(0.006, 0.03, 3, 7);
     const JOINT = new THREE.SphereGeometry(0.01, 8, 6);
     const BLOCK = new THREE.BoxGeometry(1, 1, 1);
-    // ...and the same argument for the FLESH, which was still building six
-    // unique geometries per digit — sixty across ten fingers, in a game whose
-    // mirror act sat at 1449 against a 1500 gate. One capsule and one ball
-    // scaled per-mesh serve every segment, knuckle and pad; the nail borrows
-    // BLOCK. A capsule scaled unevenly is an ellipsoid-capped shaft, which is
-    // what a phalanx is, and scaling width and height differently is how a
-    // finger stops having a circular cross-section — which is most of what
-    // "sausages" means.
-    const FSEG = new THREE.CapsuleGeometry(0.01, 0.03, 4, 10);
-    const FBALL = new THREE.SphereGeometry(0.01, 10, 8);
+    // The FLESH used to be assembled from shared primitives too — one capsule
+    // and one ball scaled into every segment, knuckle and pad. Round eight
+    // retired the idea entirely, on his exact words: "we keep just making
+    // hands that have all these weird giant joints and balls that don't look
+    // like hands." That was structural, not a tuning miss: an assembly of
+    // solids cannot stop reading as an assembly of solids, because every
+    // capsule shades as its own tube with its own terminator, and every
+    // knuckle ball exists to hide the seam between two capsules — the balls
+    // ARE the seam-hiding, so the joints inflate. The flesh is now ONE skinned
+    // surface per hand (buildHandFlesh below); only the bone twin and the
+    // nails are still primitives, because bones and nails really are separate
+    // hard parts.
     const shaft = (parent, r, len, z, s, mat = boneMat, droop = 0) => {
       const m = bony(new THREE.Mesh(SHAFT, mat));
       m.rotation.x = Math.PI / 2 + droop;
@@ -397,83 +405,31 @@ export class Skull {
       return m;
     };
 
-    // A finger segment from the shared capsule. `droop` is a constant tilt
-    // baked into the MESH and never into k1/k2 — update() ASSIGNS their
-    // rotation.x every frame and would erase anything left on the group.
-    const seg = (parent, r, len, z, s, droop = 0) => {
-      const m = fleshy(new THREE.Mesh(FSEG, skin));
-      m.rotation.x = Math.PI / 2 + droop;
-      m.position.z = z * s;
-      const k = (r / 0.01) * s;
-      // wider than tall: a finger's cross-section is an ellipse, and a round
-      // one at this camera distance is the whole sausage read
-      m.scale.set(k * 1.05, (len / 0.03) * s, k * 0.82);
-      parent.add(m);
-      return m;
-    };
-    const ball = (parent, r, y, z, s, mat, sx, sy, sz) => {
-      const m = fleshy(new THREE.Mesh(FBALL, mat));
-      m.position.set(0, y * s, z * s);
-      const k = (r / 0.01) * s;
-      m.scale.set(k * sx, k * sy, k * sz);
-      parent.add(m);
-      return m;
-    };
-
-    // proportions: proximal 0.0145 -> 0.0100 puts a 39 mm finger on screen at
-    // 27, which is human; the taper across the three segments goes from 24% to
-    // 34%. The LENGTHS are untouched — they were never the problem.
-    // BEADS ON A STRING was the read, and tools/probe-finger-profile.mjs says
-    // why in one column of numbers: the proximal capsule ENDED at 0.045 s and
-    // the middle one BEGAN at 0.046 s — butted end to end, never overlapping —
-    // so every finger had a waist at each joint, and the only thing hiding the
-    // seam was a knuckle ball 33% WIDER than the shaft it sat on. Capsule,
-    // bead, capsule, bead, capsule: a wooden artist's mannequin.
-    //
-    // A real finger is one continuous tube whose width barely changes at the
-    // joints. So the segments now overlap by a third of their length (the far
-    // cap of each sits INSIDE the near cap of the next, which is free — the
-    // hidden geometry costs nothing and the silhouette can no longer pinch),
-    // and the knuckles swell 12% instead of 33%, keeping the shaft's own
-    // elliptical cross-section so they read as bone under skin rather than as
-    // a ball threaded on a wire.
-    const mkFinger = (parent, x, y, z, scale, yaw, droop = 0, knuckle = 1) => {
-      const k1 = new THREE.Group();
+    // The finger is a BONE CHAIN now, not a stack of capsules. THREE.Bone is a
+    // plain Object3D, so k1/k2 keep the exact animation contract — update()
+    // ASSIGNS k1.rotation.x / k2.rotation.x every frame, the pose blends move
+    // the hand roots, raiseHands and the sink still work, and the finale still
+    // captures hold.children[0]/[1] — while the flesh becomes vertices these
+    // bones DRIVE instead of solids they carry. The distal bend stays baked on
+    // d (update never touches it), the nail stays a plain mesh child of d, and
+    // the bone twin hangs off the same chain unchanged, hidden until
+    // becomeBone. Proportions carried from round eight: proximal 0.0100 with a
+    // 24-34% taper, lengths untouched.
+    const mkFinger = (parent, skBones, x, y, z, scale, yaw, droop = 0, knuckle = 1) => {
+      const k1 = new THREE.Bone();
       k1.position.set(x, y, z);
       k1.rotation.y = yaw;
-      // proximal: fattest, sunk into the palm so no gap shows, and long enough
-      // that its far cap is buried inside the middle phalanx
-      const s1 = seg(k1, 0.0100, 0.036, 0.018, scale, droop);
-      // MCP knuckle. Same ellipse as the shaft, 12% bigger, and short: it is a
-      // swelling, not a joint sphere. No two stand equally proud, but the range
-      // is now millimetres rather than the third of a finger it used to be.
-      const kn = ball(k1, 0.0112 * knuckle, 0.0, 0.046, scale, crease, 1.05, 0.82, 0.72);
-      const k2 = new THREE.Group();
+      const k2 = new THREE.Bone();
       k2.position.set(0, 0, 0.042 * scale);
-      // middle phalanx — starts 15 mm (hold scale) behind where the proximal
-      // ends, so the two capsules interpenetrate instead of meeting
-      const s2 = seg(k2, 0.0085, 0.028, 0.014, scale, droop * 0.6);
-      // PIP knuckle: the one that actually shows on a curled finger, and the
-      // one this rig never had. It also covers the bone twin's condyle, which
-      // used to poke a fraction of a millimetre out of the old thin middle.
-      const kn2 = ball(k2, 0.0098 * knuckle, 0.0, 0.0335, scale, crease, 1.05, 0.82, 0.70);
-      // distal: a static curl off k2 — pad, slight inward bend, nail on top
-      const d = new THREE.Group();
+      const d = new THREE.Bone();
       d.position.set(0, -0.001, 0.034 * scale);
       d.rotation.x = -0.35;
-      const s3 = seg(d, 0.0068, 0.020, 0.010, scale);
-      // THE PAD IS THE CONTACT. It is the one part of the hand pressed against
-      // the bone, and a pressed pad is in its own shadow -- so it takes the
-      // crease colour rather than the open-skin colour. Costs nothing (the
-      // mesh and the material both already existed) and it is what makes the
-      // fingertips read as touching rather than as ending near.
-      const pad = ball(d, 0.0080, 0.0016, 0.023, scale, crease, 1, 0.88, 1);
+      const i1 = skBones.push(k1) - 1;
+      const i2 = skBones.push(k2) - 1;
+      const i3 = skBones.push(d) - 1;
       const nail = fleshy(new THREE.Mesh(BLOCK, nailMat));
-      // narrower than the fingertip it sits on, and no two quite square to it.
-      // DORSAL, which is the side it was not on: the fingers curl toward local
-      // +y, so +y is the palm — and the nails were sitting on it, face down
-      // against the skull where the camera has never once seen them. Backs of
-      // the hands are what this cradle shows, and backs of hands have nails.
+      // DORSAL (the fingers curl toward local +y, so +y is the palm side),
+      // narrower than the fingertip it caps, and no two quite square to it.
       nail.scale.set(0.0104 * scale * 0.8, 0.0015, 0.0125 * scale);
       nail.position.set(0, -0.0060 * scale, 0.019 * scale);
       nail.rotation.set(-0.10, droop * 1.6, 0);
@@ -496,35 +452,186 @@ export class Skull {
       const tk = 0.62 * scale;
       tuft.scale.set(tk * 1.25, tk * 0.72, tk * 1.15);
       d.add(tuft);
-      return { k1, k2 };
+      return { k1, k2, d, i1, i2, i3, s: scale, kn: knuckle };
+    };
+
+    // ---- the flesh, as ONE surface --------------------------------------
+    // A tapered elliptical tube per finger and a sculpted blob for the palm,
+    // all in one BufferGeometry, skinned to the bones above. Joints become
+    // half-weighted rings — a bend folds the surface into a crease instead of
+    // breaking it between two solids — and knuckles become millimetre swells
+    // on the dorsal side of a continuous tube. The hinge rings are darkened in
+    // vertex colour (a fold is in its own shadow), the distal palm side
+    // carries the contact darkening the pads used to, and the whole flesh of
+    // a hand is TWO draw calls instead of fifty-six.
+    const RN = 12; // segments around a finger
+    const buildHandFlesh = (hand, skBones, handFingers) => {
+      const P = [], NM = [], UVA = [], CL = [], SI = [], SW = [], IX = [];
+      const M = new THREE.Matrix4();
+      const bx = new THREE.Vector3(), by = new THREE.Vector3(), bz = new THREE.Vector3();
+      const c = new THREE.Vector3(), p = new THREE.Vector3(), n = new THREE.Vector3();
+      const push = (nx, ny, nz, u, v, col, ia, wa, ib, wb) => {
+        P.push(p.x, p.y, p.z); NM.push(nx, ny, nz); UVA.push(u, v);
+        CL.push(col, col, col); SI.push(ia, ib, 0, 0); SW.push(wa, wb, 0, 0);
+        return P.length / 3 - 1;
+      };
+      // One elliptical ring in `bone`'s frame at local z. `swell` fattens the
+      // dorsal (-y) half only — a knuckle is a bump on the BACK of a finger —
+      // and `dark` multiplies the palm-side vertex colour: the fingertip pad
+      // pressed on bone is in its own shadow.
+      const ring = (bone, z, r, rf, v, col, ia, wa, ib, wb, swell, dark) => {
+        M.copy(bone.matrixWorld);
+        bx.setFromMatrixColumn(M, 0).normalize();
+        by.setFromMatrixColumn(M, 1).normalize();
+        c.set(0, 0, z).applyMatrix4(M);
+        const rx = r * 1.06 * rf, ry0 = r * 0.85 * rf;
+        const first = P.length / 3;
+        for (let k = 0; k <= RN; k++) {
+          const th = (k / RN) * TAU;
+          const co = Math.cos(th), si = Math.sin(th);
+          const ry = ry0 * (1 + (swell || 0) * Math.max(0, -si));
+          p.copy(c).addScaledVector(bx, co * rx).addScaledVector(by, si * ry);
+          n.copy(bx).multiplyScalar(co / rx).addScaledVector(by, si / ry).normalize();
+          const cc = col * ((dark && si > 0.25) ? 0.78 : 1);
+          push(n.x, n.y, n.z, k / RN, v, cc, ia, wa, ib, wb);
+        }
+        return first;
+      };
+      const weld = (a, b) => {
+        for (let k = 0; k < RN; k++) {
+          IX.push(a + k, a + k + 1, b + k, a + k + 1, b + k + 1, b + k);
+        }
+      };
+      const pole = (bone, z, v, col, ia, flip) => {
+        M.copy(bone.matrixWorld);
+        bz.setFromMatrixColumn(M, 2).normalize();
+        if (flip) bz.negate();
+        p.set(0, 0, z).applyMatrix4(M);
+        return push(bz.x, bz.y, bz.z, 0.5, v, col, ia, 1, 0, 0);
+      };
+      const cap = (ringStart, poleIdx, flip) => {
+        for (let k = 0; k < RN; k++) {
+          if (flip) IX.push(ringStart + k + 1, ringStart + k, poleIdx);
+          else IX.push(ringStart + k, ringStart + k + 1, poleIdx);
+        }
+      };
+      // Station rows: [bone, localZ, radius, boneA, wA, boneB, wB, swell,
+      // colour, dark]. Hinge rings sit AT the next bone's origin weighted
+      // half-and-half — that is what turns a bend into a crease instead of a
+      // break — and are darkened, because a crease is a fold in shadow.
+      for (let fi = 0; fi < handFingers.length; fi++) {
+        const f = handFingers[fi];
+        const s = f.s, kn = f.kn, rf = f.rf || 1;
+        // The v column is authored so the sheet's dense crease bands (skinPaint
+        // paints them at v 0.13 and 0.87, tiling every 1.0) land ON the two
+        // hinges — the first shot let v run free and every finger came back
+        // wrapped in seven bands like a bandaged hand.
+        const st = [
+          [f.k1, -0.008 * s, 0.0100, 0.00, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.006 * s, 0.0104, 0.22, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.018 * s, 0.0100, 0.45, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.030 * s, 0.0097, 0.68, f.i1, 1, 0, 0, 0, 1, 0],
+          [f.k1, 0.038 * s, 0.0096, 0.80, f.i1, 0.8, f.i2, 0.2, 0.10 * kn, 0.92, 0],
+          [f.k1, 0.042 * s, 0.0090, 0.87, f.i1, 0.5, f.i2, 0.5, 0, 0.80, 0],
+          [f.k2, 0.005 * s, 0.0088, 0.94, f.i2, 0.8, f.i1, 0.2, 0, 0.92, 0],
+          [f.k2, 0.016 * s, 0.0085, 1.02, f.i2, 1, 0, 0, 0, 1, 0],
+          [f.k2, 0.028 * s, 0.0084, 1.09, f.i2, 0.8, f.i3, 0.2, 0.08 * kn, 0.93, 0],
+          [f.k2, 0.034 * s, 0.0078, 1.13, f.i2, 0.5, f.i3, 0.5, 0, 0.82, 0],
+          [f.d, 0.004 * s, 0.0074, 1.20, f.i3, 0.8, f.i2, 0.2, 0, 0.93, 0],
+          [f.d, 0.012 * s, 0.0070, 1.32, f.i3, 1, 0, 0, 0, 1, 1],
+          [f.d, 0.019 * s, 0.0063, 1.44, f.i3, 1, 0, 0, 0, 1, 1],
+          [f.d, 0.024 * s, 0.0048, 1.54, f.i3, 1, 0, 0, 0, 0.96, 1],
+        ];
+        let prev = -1, firstRing = -1;
+        for (let idx = 0; idx < st.length; idx++) {
+          const [bone, z, r, v, ia, wa, ib, wb, swell, col, dark] = st[idx];
+          const start = ring(bone, z, r * s, rf, v, col, ia, wa, ib, wb, swell, dark);
+          if (prev >= 0) weld(prev, start);
+          if (idx === 0) firstRing = start;
+          prev = start;
+        }
+        // root cap hidden inside the palm; a rounded pad at the fingertip
+        cap(firstRing, pole(f.k1, -0.014 * s, 0, 1, f.i1, true), true);
+        cap(prev, pole(f.d, 0.0285 * s, 1.62, 0.9, f.i3, false), false);
+      }
+      // The palm and the wrist heel: sculpted lat-long blobs. A plain
+      // flattened sphere came back as "a flat circle instead of the palm part
+      // of a hand" — his words, and right: a real hand-back is not a disc. So
+      // the blob dooms toward the knuckles (both faces deepen with +z, the
+      // pads on the palm side and the metacarpal rise on the back), tapers in
+      // width toward the wrist, and stays flatter on the palm (+y) side.
+      // Round-eight dimensions still hold: ~90 x 33 x 111 mm at the knuckles.
+      const blob = (cx, cy, cz, ra, rb, rc, flatten, tiles, sculpt) => {
+        const W = 20, H = 14;
+        const rows = [];
+        for (let iy = 0; iy <= H; iy++) {
+          const vphi = iy / H, phi = vphi * Math.PI;
+          const row = [];
+          for (let ix = 0; ix <= W; ix++) {
+            const u = ix / W, th = u * TAU;
+            const ux = -Math.cos(th) * Math.sin(phi);
+            const uy = Math.cos(phi);
+            const uz = Math.sin(th) * Math.sin(phi);
+            // dome toward the knuckles, pinch toward the wrist
+            const depth = sculpt ? 1 + 0.38 * Math.max(0, uz) : 1;
+            const width = sculpt ? 1 - 0.26 * Math.max(0, -uz) : 1;
+            const be = (uy > 0 ? rb * flatten : rb) * depth;
+            p.set(cx + ux * ra * width, cy + uy * be, cz + uz * rc);
+            n.set(ux / (ra * width), uy / be, uz / rc).normalize();
+            row.push(push(n.x, n.y, n.z, u * tiles, vphi * tiles, 1, 0, 1, 0, 0));
+          }
+          rows.push(row);
+        }
+        for (let iy = 0; iy < H; iy++) for (let ix = 0; ix < W; ix++) {
+          const a = rows[iy][ix + 1], b = rows[iy][ix], c2 = rows[iy + 1][ix], d2 = rows[iy + 1][ix + 1];
+          if (iy !== 0) IX.push(a, b, d2);
+          if (iy !== H - 1) IX.push(b, c2, d2);
+        }
+      };
+      // tiles 3 on the palm: at 2 the sheet's crease bands appeared as eight
+      // broad latitude rings and the heel read as wrapped in bandages; finer
+      // tiling turns the same bands into skin-scale wrinkle texture
+      blob(0, 0.002, 0.004, 0.0500, 0.0165, 0.0620, 0.8, 3, true);
+      blob(0, -0.004, -0.040, 0.0350, 0.0150, 0.0310, 0.9, 2.2, false);
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(NM, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(UVA, 2));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(CL, 3));
+      geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(SI, 4));
+      geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(SW, 4));
+      geo.setIndex(IX);
+      const mesh = new THREE.SkinnedMesh(geo, skin);
+      // the held pass never culls, and a posed skeleton walks outside the
+      // bind-pose bounding sphere
+      mesh.frustumCulled = false;
+      hand.add(mesh);
+      hand.updateMatrixWorld(true);
+      mesh.bind(new THREE.Skeleton(skBones.slice()));
+      // which finger each bone drives — the measurement tools group skinned
+      // vertices by dominant bone to answer per-finger questions
+      const fingerOfBone = new Array(skBones.length).fill(-1);
+      handFingers.forEach((f, fi) => {
+        fingerOfBone[f.i1] = fi; fingerOfBone[f.i2] = fi; fingerOfBone[f.i3] = fi;
+      });
+      mesh.userData.fingerOfBone = fingerOfBone;
+      fleshy(mesh);
+      return mesh;
     };
 
     this._fingers = [];
     const mkHand = (side) => {
-      // A HAND IS FLAT. This one was 116 mm across and 52 mm THICK -- the
-      // measurement that names what the frames had been showing since round
-      // two: not a hand with poor detail, a mitten. A real palm is about
-      // 90 mm across and 28 thick, and thickness is the number that decides
-      // whether the thing at the bottom of the screen reads as a hand or as a
-      // sock with fingers sewn on. (Calibration is the skull's own: it is
-      // 0.166 in hold space and a human cranium is ~145 mm, so a hold unit is
-      // 874 mm and every number here can be checked against a hand.)
+      // Round eight first measured the mitten (palm 116 x 52 mm against a real
+      // 90 x 28 — thickness is what decides hand vs sock), then replaced the
+      // assembly outright: palm, heel and fingers are ONE skinned surface,
+      // built in buildHandFlesh above with the corrected dimensions.
       const hand = new THREE.Group();
-      const palm = new THREE.Mesh(new THREE.SphereGeometry(0.052, 14, 10), skin);
-      palm.scale.set(1.03, 0.36, 1.22);          // 94 x 33 x 111 mm
-      hand.add(palm);
-      const heel = new THREE.Mesh(new THREE.SphereGeometry(0.034, 12, 8), skin);
-      heel.position.set(0, -0.004, -0.04);
-      heel.scale.set(1.06, 0.44, 0.92);          // the wrist, 63 x 26 mm
-      hand.add(heel);
-      // webbing: flesh across the finger bases so they grow FROM the hand
-      const web = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), skin);
-      web.position.set(0, 0.004, 0.058);
-      // narrower, because the roots are: at 2.05 the web now overhung the
-      // outer fingers by several millimetres of bare flesh
-      web.scale.set(1.60, 0.42, 0.72);
-      hand.add(web);
-      fleshy(palm); fleshy(heel); fleshy(web);
+      // the skeleton root — every vertex that is not on a finger weights here
+      const palmBone = new THREE.Bone();
+      hand.add(palmBone);
+      const skBones = [palmBone];
+      const handFingers = [];
       // and the hand under the hand: a carpal block and a fan of four
       // metacarpals reaching out to the finger roots. No palm sphere, no
       // webbing — the gaps between the bones ARE the read.
@@ -598,7 +705,7 @@ export class Skull {
         : [1.03, 1.08, 1.0, 0.94];
       for (let i = 0; i < 4; i++) {
         const f = mkFinger(
-          hand,
+          palmBone, skBones,
           rootX[i],
           0.006 + (i & 1 ? 0.0012 : -0.0009),
           0.062 + rootArc[i],
@@ -609,6 +716,7 @@ export class Skull {
         );
         f.phase = i * 0.9;
         this._fingers.push(f);
+        handFingers.push(f);
       }
       // The thumb is the single strongest "this is a hand" cue, and it used to
       // point straight into the gap between the two hands, where the other
@@ -619,14 +727,21 @@ export class Skull {
       // seated where they can actually touch the skull, the two thumbs met in
       // the middle and crossed the jaw as a pair of blobs under the chin. In
       // the reference the thumbs are behind the bone, not in front of it.
-      const thumb = mkFinger(hand, side * -0.056, 0.022, -0.012, 1.12, side * -0.60);
-      // A thumb is a short, thick opposing mass, not a fifth long finger.
-      // Scaling its existing rig preserves the animation contract while making
-      // the cradle silhouette unmistakably human.
+      const thumb = mkFinger(palmBone, skBones, side * -0.056, 0.022, -0.012, 1.12, side * -0.60);
+      // A thumb is a short, thick opposing mass, not a fifth long finger. The
+      // bone scale is part of the BIND pose, so skinning cancels it for the
+      // flesh — the thumb tube gets its girth from rf instead — while the nail
+      // and the bone twin, plain children of the bone, inherit the scale
+      // exactly the way the old rig's meshes did.
       thumb.k1.scale.set(1.22, 1.12, 0.72);
+      thumb.rf = 1.18;
       thumb.phase = 4.2;
       thumb.thumb = true;
       this._fingers.push(thumb);
+      handFingers.push(thumb);
+      // bind pose is final: one surface over the whole skeleton
+      hand.updateMatrixWorld(true);
+      buildHandFlesh(hand, skBones, handFingers);
       // and the cuff comes in with the wrist it sits on: a 91 mm sleeve mouth
       // on a 63 mm wrist was most of what made the bottom of the frame a sock
       const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.040, 0.062, 0.24, 12), sleeveMat);

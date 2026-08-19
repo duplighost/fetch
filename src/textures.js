@@ -1005,10 +1005,13 @@ function skinPaint(g, w, h, r) {
         0.30 + r.float() * 0.30, 1.8 + r.float() * 2.0, i * 1.7);
     }
   }
-  // and the rest of the length, looser
-  for (let i = 0; i < 12; i++) {
-    crease(r.float() * h, r.int(1, 4), 1.0 + r.float() * 3.0,
-      0.14 + r.float() * 0.22, 1.4 + r.float() * 1.8, i * 0.9);
+  // and the rest of the length, looser — and SPARSE. Twelve of these wrapped
+  // every finger of the skinned hand in rings; the geometry carries the
+  // joints now (hinge folds are vertex colour), so the sheet only needs the
+  // fine dry-skin lines between them.
+  for (let i = 0; i < 5; i++) {
+    crease(r.float() * h, r.int(1, 4), 1.0 + r.float() * 2.4,
+      0.10 + r.float() * 0.14, 1.2 + r.float() * 1.6, i * 0.9);
   }
 
   // pores cluster, they do not sprinkle — and at this scale a pore has to be

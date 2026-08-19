@@ -119,7 +119,9 @@ try {
         if (!o.isMesh || !o.geometry?.getAttribute('position')) return;
         const pos = o.geometry.getAttribute('position');
         for (let i = 0; i < pos.count; i++) {
-          V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+          V.fromBufferAttribute(pos, i);
+          if (o.isSkinnedMesh) o.applyBoneTransform(i, V);
+          V.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
           const xyz = [V.x, V.y, V.z];
           for (let k = 0; k < 3; k++) {
             if (xyz[k] < lo[k]) lo[k] = xyz[k];
@@ -135,7 +137,9 @@ try {
           if (!o.isMesh || !o.geometry?.getAttribute('position')) return;
           const pos = o.geometry.getAttribute('position');
           for (let i = 0; i < pos.count; i++) {
-            V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+            V.fromBufferAttribute(pos, i);
+            if (o.isSkinnedMesh) o.applyBoneTransform(i, V);
+            V.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
             const d = ((V.x - c[0]) / r[0]) ** 2 + ((V.y - c[1]) / r[1]) ** 2 + ((V.z - c[2]) / r[2]) ** 2;
             total++;
             if (d < 1) { inside++; deepest = Math.max(deepest, 1 - Math.sqrt(d)); }

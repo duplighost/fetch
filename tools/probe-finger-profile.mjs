@@ -1,18 +1,16 @@
-// probe-finger-profile.mjs -- WHY THE FINGERS READ AS BEADS ON A STRING.
+// probe-finger-profile.mjs -- the silhouette half-width along a finger, as a
+// column of numbers.
 //
-// Open scratch-hands/z-01-hands.png and every finger is capsule, ball, capsule,
-// ball, capsule -- a wooden artist's mannequin, not a hand. A real finger is
-// ONE continuous tube whose width barely changes at the joints. Two things
-// have to be true for that and neither is checked anywhere:
+// Round eight used this to catch BEADS ON A STRING: capsule segments butted
+// end to end with no overlap, so every joint printed as a waist, hidden only
+// by a knuckle ball 33% wider than the shaft (a bead). Round nine replaced
+// the assembly with one skinned surface per hand, and this probe is the
+// regression watch on that idea: the column should now read as ONE smooth
+// taper with millimetre swells at the joints -- any waist/bead alternation
+// bigger than a millimetre means the tube construction regressed.
 //
-//   1. the segments must OVERLAP, so no waist appears between them;
-//   2. the knuckle must not be WIDER than the finger, or it reads as a bead.
-//
-// So walk each finger along its own axis and print the silhouette half-width
-// at every millimetre: the waists and the beads show up as dips and spikes in
-// one column of numbers. Also settles which way the finger faces, because the
-// nail and the pad disagree in the source (nail at +y, pad at -y) and only one
-// of them can be on the back of the hand.
+// The flesh is a SkinnedMesh, so vertices go through applyBoneTransform and
+// are grouped to fingers by skinIndex (userData.fingerOfBone).
 //
 //   node tools/probe-finger-profile.mjs
 import { ensureServer, launchBrowser, openPage, URL_BASE } from '../tests/lib/harness.mjs';
@@ -31,67 +29,44 @@ try {
     F.stepWith(1.5, {}, false);
     const V = new g.player.pos.constructor();
     const hold = g.skull.hold;
+    // straighten the fingers for the measurement: this probe answers a
+    // CONSTRUCTION question (is the tube smooth?), and binning a curled
+    // finger along a straight axis folds the far segments onto each other and
+    // prints phantom beads. update() reasserts the curl on the next step.
+    for (const f of g.skull._fingers) { f.k1.rotation.x = 0; f.k2.rotation.x = 0; }
     hold.updateWorldMatrix(true, true);
 
-    // ---- 1. profile: sample every flesh vertex of one finger in k1 space ----
-    // k1 is the finger's own frame: +z along the finger, +y the curl side.
-    const profileOf = (f) => {
+    // sample every skinned vertex of one finger in k1-local space and bin the
+    // max radius per millimetre of arc along the finger axis
+    const profileOf = (hand, f, localFi) => {
+      let sm = null;
+      hand.traverse((o) => { if (o.isSkinnedMesh) sm = o; });
+      if (!sm) return [];
       f.k1.updateWorldMatrix(true, true);
       const inv = f.k1.matrixWorld.clone().invert();
+      const pos = sm.geometry.getAttribute('position');
+      const sidx = sm.geometry.getAttribute('skinIndex');
+      const map = sm.userData.fingerOfBone || [];
       const bins = new Map();
-      f.k1.traverse((o) => {
-        if (!o.isMesh || !o.visible || !o.geometry?.getAttribute('position')) return;
-        const pos = o.geometry.getAttribute('position');
-        for (let i = 0; i < pos.count; i++) {
-          V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
-          // straighten the distal curl out of the way: bin on arc length along
-          // the finger, which for the first two links is just z
-          const b = Math.round(V.z * 1000);
-          const r = Math.hypot(V.x, V.y);
-          if (!bins.has(b) || bins.get(b) < r) bins.set(b, r);
-        }
-      });
+      for (let i = 0; i < pos.count; i++) {
+        if (map[sidx.getX(i)] !== localFi) continue;
+        V.fromBufferAttribute(pos, i);
+        sm.applyBoneTransform(i, V);
+        V.applyMatrix4(sm.matrixWorld).applyMatrix4(inv);
+        const b = Math.round(V.z * 1000);
+        const r = Math.hypot(V.x, V.y);
+        if (!bins.has(b) || bins.get(b) < r) bins.set(b, r);
+      }
       return [...bins.entries()].sort((a, b) => a[0] - b[0]);
     };
 
-    // ---- 2. which side is the camera on? ----
-    const cam = new g.player.pos.constructor();
-    g.camera.getWorldPosition(cam);
-    const facing = (f) => {
-      const dist = (o) => { const p = new g.player.pos.constructor(); o.getWorldPosition(p); return p.distanceTo(cam); };
-      // the distal group's children: [seg, pad, nail] in build order
-      const d = f.k2.children.find((c) => c.isGroup);
-      if (!d) return null;
-      const meshes = d.children.filter((c) => c.isMesh);
-      const seg = meshes[0], pad = meshes[1], nail = meshes[2];
-      // curl direction: rotate k1 a touch and see which way the tip moves
-      const tipBefore = new g.player.pos.constructor();
-      seg.getWorldPosition(tipBefore);
-      const keep = f.k1.rotation.x;
-      f.k1.rotation.x -= 0.3;
-      f.k1.updateWorldMatrix(true, true);
-      const tipAfter = new g.player.pos.constructor();
-      seg.getWorldPosition(tipAfter);
-      f.k1.rotation.x = keep;
-      f.k1.updateWorldMatrix(true, true);
-      return {
-        segToCam: +dist(seg).toFixed(4),
-        padToCam: +dist(pad).toFixed(4),
-        nailToCam: +dist(nail).toFixed(4),
-        nailFacesCamera: dist(nail) < dist(seg),
-        padFacesCamera: dist(pad) < dist(seg),
-        curlTowardCamera: tipAfter.distanceTo(cam) < tipBefore.distanceTo(cam),
-      };
-    };
-
+    const L = hold.children[0];
     const fs = g.skull._fingers;
     return {
-      // index-side finger of the left hand, and the middle one
       profiles: [
-        { name: 'L f0', rows: profileOf(fs[0]) },
-        { name: 'L f2', rows: profileOf(fs[2]) },
+        { name: 'L f0', rows: profileOf(L, fs[0], 0) },
+        { name: 'L f2', rows: profileOf(L, fs[2], 2) },
       ],
-      facing: { 'L f0': facing(fs[0]), 'L f2': facing(fs[2]) },
     };
   });
 
@@ -106,7 +81,6 @@ try {
       prev = w;
     }
   }
-  console.log('\nfacing:', JSON.stringify(out.facing, null, 2));
   console.log(errors.length ? 'ERRORS: ' + errors.slice(0, 4).join(' | ') : '(clean)');
 } finally {
   await browser.close().catch(() => {});

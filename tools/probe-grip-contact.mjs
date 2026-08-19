@@ -47,7 +47,9 @@ try {
       if (!o.isMesh || !o.visible || !o.geometry?.getAttribute('position')) return;
       const pos = o.geometry.getAttribute('position');
       for (let i = 0; i < pos.count; i++) {
-        V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+        V.fromBufferAttribute(pos, i);
+        if (o.isSkinnedMesh) o.applyBoneTransform(i, V);
+        V.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
         pts.push(V.x, V.y, V.z);
         const xyz = [V.x, V.y, V.z];
         for (let k = 0; k < 3; k++) { if (xyz[k] < lo[k]) lo[k] = xyz[k]; if (xyz[k] > hi[k]) hi[k] = xyz[k]; }
@@ -86,30 +88,44 @@ try {
     };
 
     // ---- per finger: the closest any of its flesh gets to the bone ----
+    // The flesh is one SkinnedMesh per hand since the round-nine rebuild, so
+    // per-finger grouping rides skinIndex (userData.fingerOfBone says which
+    // finger each bone drives), and vertices go through applyBoneTransform.
+    // The tip column is the distal bone's own vertices.
     const NAMES = ['pinky/index', 'ring/middle', 'middle/ring', 'index/pinky', 'THUMB'];
     const fingers = [];
-    const fs = g.skull._fingers;
-    for (let fi = 0; fi < fs.length; fi++) {
-      const f = fs[fi];
-      let min = Infinity, tipMin = Infinity;
-      f.k1.updateWorldMatrix(true, true);
-      f.k1.traverse((o) => {
-        if (!o.isMesh || !o.visible || !o.geometry?.getAttribute('position')) return;
-        const pos = o.geometry.getAttribute('position');
-        // the distal group is the last link: its meshes are the pads
-        const isTip = !!o.parent && o.parent !== f.k1 && o.parent !== f.k2;
+    const mins = [], tips = [];
+    for (let i = 0; i < g.skull._fingers.length; i++) { mins.push(Infinity); tips.push(Infinity); }
+    let base = 0;
+    for (const hand of [hold.children[0], hold.children[1]]) {
+      let sm = null;
+      hand.traverse((o) => { if (o.isSkinnedMesh) sm = o; });
+      if (sm) {
+        const pos = sm.geometry.getAttribute('position');
+        const sidx = sm.geometry.getAttribute('skinIndex');
+        const map = sm.userData.fingerOfBone || [];
+        const tipBone = new Set();
+        g.skull._fingers.forEach((f) => tipBone.add(f.i3));
         for (let i = 0; i < pos.count; i++) {
-          V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+          const bi = sidx.getX(i);
+          const fi = map[bi];
+          if (fi === undefined || fi < 0) continue;
+          V.fromBufferAttribute(pos, i);
+          sm.applyBoneTransform(i, V);
+          V.applyMatrix4(sm.matrixWorld).applyMatrix4(inv);
           const d = nearest(V.x, V.y, V.z);
-          if (d < min) min = d;
-          if (isTip && d < tipMin) tipMin = d;
+          if (d < mins[base + fi]) mins[base + fi] = d;
+          if (tipBone.has(bi) && d < tips[base + fi]) tips[base + fi] = d;
         }
-      });
+      }
+      base += 5;
+    }
+    for (let fi = 0; fi < g.skull._fingers.length; fi++) {
       fingers.push({
         hand: fi < 5 ? 'L' : 'R',
         finger: NAMES[fi % 5],
-        gapMM: +(min * MM).toFixed(1),
-        tipGapMM: +(tipMin * MM).toFixed(1),
+        gapMM: +(mins[fi] * MM).toFixed(1),
+        tipGapMM: +(tips[fi] * MM).toFixed(1),
       });
     }
 
@@ -121,7 +137,9 @@ try {
         if (!o.isMesh || !o.geometry?.getAttribute('position')) return;
         const pos = o.geometry.getAttribute('position');
         for (let i = 0; i < pos.count; i++) {
-          V.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(inv);
+          V.fromBufferAttribute(pos, i);
+          if (o.isSkinnedMesh) o.applyBoneTransform(i, V);
+          V.applyMatrix4(o.matrixWorld).applyMatrix4(inv);
           const xyz = [V.x, V.y, V.z];
           for (let k = 0; k < 3; k++) { if (xyz[k] < l[k]) l[k] = xyz[k]; if (xyz[k] > h[k]) h[k] = xyz[k]; }
         }
