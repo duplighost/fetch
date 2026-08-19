@@ -789,7 +789,14 @@ export class GameAudio {
   // a graph that gets louder until the context gives up.
   static VOICE_CAP = 40;
 
-  _play(buf, { pos = null, gain = 1, rate = 1, when = 0, verb = 0.3, dest = null } = {}) {
+  // `ref` widens the panner's reference distance for a sound that is MEANT to
+  // carry. The default 2.4 m is right for the world you are standing in and
+  // wrong for a landmark: exponential rolloff puts a 30-metre event at 1/44 of
+  // its gain, which is how the key tree came down eighty metres away, announced
+  // itself twice, and was never heard (tools/probe-key-tree-legibility.mjs).
+  // The model clamps d to refDistance, so a wider ref never makes a near sound
+  // louder — it only stops a far one from vanishing.
+  _play(buf, { pos = null, gain = 1, rate = 1, when = 0, verb = 0.3, dest = null, ref, roll } = {}) {
     if (!this._ready) return null;
     if (this._voices >= GameAudio.VOICE_CAP) {
       this._droppedVoices = (this._droppedVoices || 0) + 1;
@@ -804,7 +811,7 @@ export class GameAudio {
     const g = ctx.createGain(); g.gain.value = gain;
     src.connect(g);
     let tail = g, vs = null;
-    if (pos) { const p = this._panner(pos); g.connect(p); tail = p; }
+    if (pos) { const p = this._panner(pos, ref ?? 2.4, roll ?? 1.5); g.connect(p); tail = p; }
     tail.connect(dest || this.master);
     if (verb > 0) { vs = ctx.createGain(); vs.gain.value = verb; tail.connect(vs).connect(this.verbBus); }
     src.start(ctx.currentTime + when);
@@ -977,6 +984,7 @@ export class GameAudio {
     this._play(this._creaks[(Math.random() * 3) | 0], {
       pos: opts.pos, gain: 0.55 * (opts.gain ?? 1),
       rate: (0.9 + Math.random() * 0.2) * (opts.rate ?? 1), verb: opts.verb ?? 0.4,
+      ref: opts.ref, roll: opts.roll,
     });
   }
 
@@ -1726,6 +1734,7 @@ export class GameAudio {
     this._play(this._brushBuf, {
       pos: opts.pos, gain: 0.7 * (opts.gain ?? 1),
       rate: (0.9 + Math.random() * 0.2) * (opts.rate ?? 1), verb: opts.verb ?? 0.3,
+      ref: opts.ref, roll: opts.roll,
     });
   }
 

@@ -1629,8 +1629,11 @@ function buildKeyTreeClimb(game) {
   const KEY_T = 0.22, BONE_T = 0.45, HIT_T = 0.8;
   const keyHang = at(KEY_T), boneHang = at(BONE_T), hitAt = at(HIT_T);
   const KEY_DROP = 0.42;                              // string length under the branch
+  const KEY_TREE_REF = 15;                            // metres this limb is allowed to be heard from
 
-  const climb = game.keyTreeClimb = { dropped: false, hit: false, t: 0, fall: 0 };
+  // callT/swing/calls: the limb's own voice while it hangs unfelled — see the
+  // ticker below for why a working, reachable, lit branch still needed one.
+  const climb = game.keyTreeClimb = { dropped: false, hit: false, t: 0, fall: 0, callT: 2.6, swing: 0, calls: 0 };
 
   // The branch swings about its own shoulder, so it lives inside a group whose
   // origin IS the shoulder; the whole tear is one quaternion.
@@ -1810,13 +1813,17 @@ function buildKeyTreeClimb(game) {
     branchTarget.enabled = true;
     gateKey3.reveal(keyHang.x, keyHang.y - KEY_DROP, keyHang.z);
     // it comes down LOUD: the tree gives up something heavy, in the dark,
-    // eighty metres from wherever the player is standing when the funeral ends
-    game.audio.brushCrash({ pos: A.clone(), gain: 0.62, rate: 0.66 });
+    // thirty metres from where the funeral leaves the player standing — and
+    // that distance is the whole reason for `ref`. The panner's default 2.4 m
+    // reference with exponential rolloff puts a 30 m event at a FORTY-FOURTH of
+    // its gain, so "it comes down LOUD" has been arriving as nothing at all.
+    // KEY_TREE_REF is how far this announcement is allowed to carry.
+    game.audio.brushCrash({ pos: A.clone(), gain: 0.62, rate: 0.66, ref: KEY_TREE_REF });
     game.after(0.35, () => game.audio.creak({
-      pos: at(0.4), gain: 0.66, rate: 0.5, verb: 0.8,
+      pos: at(0.4), gain: 0.66, rate: 0.5, verb: 0.8, ref: KEY_TREE_REF,
     }), { global: true });
     game.after(1.15, () => game.audio.creak({
-      pos: hitAt.clone(), gain: 0.4, rate: 0.64, verb: 0.8,
+      pos: hitAt.clone(), gain: 0.4, rate: 0.64, verb: 0.8, ref: KEY_TREE_REF,
     }), { global: true });
     return true;
   };
@@ -1865,10 +1872,38 @@ function buildKeyTreeClimb(game) {
       const e = 1 - (1 - climb.fall) ** 3;
       const ring = Math.sin(climb.fall * 16.5) * 0.11 * (1 - climb.fall);
       angle = TEAR_ANGLE * e + ring + Math.sin(time * 1.15) * 0.02 * e;
+      lamp.want = 1.05;      // the calling breath is over; the lamp goes back to steady
     } else {
       climb.t = Math.min(1, climb.t + dt * 0.62);
       const p = climb.t * climb.t * (3 - 2 * climb.t);
-      angle = -0.62 * (1 - p) + Math.sin(time * 0.8) * 0.024 * p;
+      // IT KEEPS ASKING. Measured (tools/probe-key-tree-legibility.mjs): when
+      // the funeral's third beat drops this limb, the player is standing at the
+      // checkpoint it just set — 30.4 m away and 53.9 degrees off-centre, past
+      // the half-frame at 48.8. The limb falls behind their shoulder, the crash
+      // and its two creaks play once, and then the yard goes quiet forever. The
+      // mechanism was never the problem (probe-key-tree: hit it, key drops,
+      // fetch works); he simply never learned there was anything to hit.
+      //
+      // So while it hangs unfelled it speaks on a slow irregular cycle, and it
+      // MOVES when it speaks: one voice, one swing, one object. Value, motion
+      // and sound on the same beat — the three channels a carried lantern in a
+      // dark yard leaves you. It all stops the instant it is hit, because then
+      // the answer is lying in the grass and the invitation is spent.
+      climb.callT -= dt;
+      if (climb.callT <= 0) {
+        // deterministic irregularity: never a metronome, never a random number
+        climb.calls = (climb.calls || 0) + 1;
+        climb.callT = 5.4 + (Math.sin(climb.calls * 2.399963) * 0.5 + 0.5) * 3.2;
+        climb.swing = 1;
+        if (game.act === 'graveyard' && !game.ossuary?.inOssuary && !game.marrow?.inMarrow) {
+          game.audio.creak({ pos: hitAt, gain: 0.62, rate: 0.46 + (climb.calls % 3) * 0.05, verb: 0.8, ref: KEY_TREE_REF });
+        }
+      }
+      climb.swing = Math.max(0, (climb.swing || 0) - dt * 1.15);
+      const breath = climb.swing * climb.swing;
+      angle = -0.62 * (1 - p)
+        + (Math.sin(time * 0.8) * 0.055 + Math.sin(time * 2.35) * 0.085 * breath) * p;
+      lamp.want = 1.05 + breath * 0.5;
     }
     armQ.setFromAxisAngle(TEAR_AXIS, angle);
     arm.quaternion.copy(armQ);
