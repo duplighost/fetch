@@ -16,26 +16,32 @@ verified. **`main` of this repo IS the live game** (caught up 2026-08-19;
 zero open PRs; the `claude/*`/`codex/*` branches are finished history, not
 choices). As of writing **he had not yet played round nine.**
 
-## The first move, before any code
+## Do not wait on Alex
 
-**Ask Alex for his notes.** Every good round in this project has been his
-played notes turned into fixes; a polish round invented without them is
-guessing. If he has notes, his notes ARE the round — this list becomes the
-backlog. If he has none yet, tell him to hard-refresh and play, and start on
-item 1 below while he does.
+**His instruction, verbatim (2026-08-19): "you should just have them do it
+without my notes. if i have notes ill give them notes."** So: start working
+the agenda below immediately. If notes arrive mid-round, they outrank
+everything here — reprioritize around them without ceremony. Do not open the
+round by asking him questions.
 
-Also put these two open questions to him early — both are HIS calls, parked
-deliberately by round nine:
+Two decisions round nine parked as "his call" are therefore YOURS now, with
+these defaults (each cheap to reverse if he objects):
 
 1. **The graveyard fight got harder.** A basement enemy had been silently
    eating the arena's attack tokens since forever; fixing his dropcloth bug
    removed it, and the fight now runs at authored pressure for the first time
    (seed 583 dies at wave 2 where it used to scrape through — that is why
-   `grave-arena-regression` is red). Tune it back down, or keep full pressure
-   and re-pin the test seeds? Nothing was tuned either way.
+   `grave-arena-regression` is red). **Default: restore the difficulty he
+   actually PLAYED.** Every live playtest he ever did was with the leak, and
+   he never called the fight too easy — so the pressure he approved is the
+   leaked pressure. Tune the token budget/pacing until the six seeds behave
+   about as they did pre-fix, re-pin the test, and say plainly in the record
+   that full authored pressure is one knob away if he wants it.
 2. **The pump bridge still retracts under a player standing on it** when the
-   hold rewinds. Freeze the rewind underfoot, or keep it as a hazard? Ask,
-   don't decide.
+   hold rewinds. **Default: freeze the rewind while the player is on the
+   bridge segments.** A bridge leaving under your feet is the same
+   working-but-confusing shape he already reported about this exact
+   mechanism; the hazard reading is available later if he asks for it.
 
 ## How to get going
 
