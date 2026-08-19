@@ -99,10 +99,22 @@ try {
       { skull: g.skull.mode, checkpoint: g.lastCheckpoint, pose: g.checkpointPose },
     );
 
-    const chapelApproach = g.underfalls.layout.main[4];
-    g.player.pos.set(chapelApproach.x, chapelApproach.y, chapelApproach.z);
+    // THE ORDER IS THE CONTRACT, SO STAND WHERE THE ORDER HAPPENS.
+    //
+    // This used to teleport onto layout.main[4] and assert "revealed, and no
+    // Choir yet" — but main[4] is already PAST choirTriggerZ (chapel.z - 4),
+    // so one hop crossed the false sighting's line and the predator's line in
+    // the same tick and the check has been red ever since, for an order the
+    // game still keeps. The false sighting is heard within 15 m of the chapel
+    // and shows itself 0.85 s later; the Choir arms six metres further in. So
+    // arrive on the near side of the arming line, let the sighting land, and
+    // assert the gap — then walk through and assert the predator answers.
+    const chapel = g.underfalls.layout.chapel;
+    const armZ = chapel.z - 4;
+    const approach = g.underfalls.layout.main[4];
+    g.player.pos.set(approach.x, approach.y, Math.min(approach.z, armZ - 2.5));
     g.player.vel.set(0, 0, 0); g.player.fallV = 0; g.player.grounded = true; g.player._sync(0);
-    F.stepWith(1.0, {}, false);
+    F.stepWith(1.2, {}, false);
     check(
       'the chapel displacement is visibly first and remains non-attacking',
       g.underfalls.displacement.revealed
@@ -110,11 +122,24 @@ try {
         && !g.enemies.choir
         && !g.dead,
       {
+        playerZ: +g.player.pos.z.toFixed(2),
+        armZ: +armZ.toFixed(2),
         passiveHeard: g.underfalls.displacement.heard,
         passiveRevealed: g.underfalls.displacement.revealed,
         passiveVisible: g.underfalls.displacement.root.visible,
         choirCount: g.enemies.list.filter((e) => e.kind === 'choir').length,
       },
+    );
+    // ...and the predator is genuinely on the far side of that line, not merely
+    // late: crossing it is what wakes it.
+    g.player.pos.set(approach.x, approach.y, armZ + 0.5);
+    g.player._sync(0);
+    F.stepWith(0.2, {}, false);
+    check(
+      'crossing the arming line is what wakes the Choir, after the sighting',
+      !!g.enemies.choir && g.underfalls.displacement.revealed,
+      { playerZ: +g.player.pos.z.toFixed(2), armZ: +armZ.toFixed(2),
+        choirCount: g.enemies.list.filter((e) => e.kind === 'choir').length },
     );
 
     const lowerSluice = g.underfalls.layout.lowerSluice;

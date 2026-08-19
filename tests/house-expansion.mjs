@@ -54,7 +54,6 @@ try {
       rooms: g.world.rooms.filter((r) => ['pumpGallery', 'blindArchive'].includes(r.id)).map((r) => r.id),
       windows: g.world.windowOpenings.map((w) => w.id),
       relay: !!g.windowRelay,
-      mirror: !!g.houseMirror,
       pump: !!g.pumpGallery,
       bridgeSegments: g.pumpGallery?.bridgeSegments.length ?? 0,
       gate: g.pumpGallery?.gateCollider?.id ?? null,
@@ -65,8 +64,8 @@ try {
     'second basement district is compiled as real rooms', structure.rooms);
   check(structure.windows.includes('livingRelayWindow') && structure.windows.includes('studyRelayWindow'),
     'both relay windows are physical skull-pass apertures', structure.windows);
-  check(structure.relay && structure.mirror && structure.pump && structure.bridgeSegments === 5,
-    'all three authored systems exist with a segmented bridge', structure);
+  check(structure.relay && structure.pump && structure.bridgeSegments === 5,
+    'both surviving authored systems exist with a segmented bridge', structure);
 
   const boilerClearance = await page.evaluate(() => {
     const fixture = window.__game.houseFixtures?.boiler;
@@ -273,41 +272,14 @@ try {
     'receiver physically drops its blocker and opens the existing non-key void-door beat', windowResult);
   await canvasShot('house-expansion-window-relay.png', { isolateEnvironment: true });
 
-  const mirrorResult = await page.evaluate(() => {
-    const F = window.__FETCH, g = window.__game;
-    g.player.pos.set(-1.75, 0, -11.25);
-    g.player.yaw = Math.PI / 2;
-    g.player.pitch = 0;
-    g.player.vel.set(0, 0, 0);
-    g.player._sync(0);
-    F.stepWith(1.25, {}, true); // seed a local delayed-pose history after setup
-    const first = g.houseMirror.double.position.clone();
-    F.stepWith(0.3, { moveZ: -1 }, true); // back away while still facing the glass
-    const playerNow = g.player.pos.clone();
-    const lagNow = g.houseMirror.double.position.clone();
-    const separation = playerNow.distanceTo(lagNow);
-    const active = g.houseMirror.active && g.houseMirror.pool._activeCount === 1;
-    F.stepWith(1.25, {}, true);
-    const caughtUp = g.houseMirror.double.position.distanceTo(g.player.pos);
-    return {
-      awakened: g.houseMirror.awakened,
-      relay: g.houseMirror.relay,
-      active,
-      first: first.toArray(), playerNow: playerNow.toArray(), lagNow: lagNow.toArray(),
-      separation, caughtUp,
-      doubleLayer: g.houseMirror.double.layers.mask,
-      cameraLayer: g.camera.layers.mask,
-      echoVisible: g.houseMirror.echo.visible,
-    };
-  });
-  report.diagnostics.mirror = mirrorResult;
-  check(mirrorResult.awakened && mirrorResult.relay && mirrorResult.active && mirrorResult.echoVisible,
-    'relay wakes a live pooled planar mirror when physically faced', mirrorResult);
-  check(mirrorResult.separation > 0.45 && mirrorResult.caughtUp < 0.18,
-    'mirror inhabitant visibly follows an old pose, then catches up without stealing control', mirrorResult);
-  check((mirrorResult.doubleLayer & mirrorResult.cameraLayer) === 0,
-    'delayed inhabitant exists only on the reflection layer', mirrorResult);
-  await canvasShot('house-expansion-lag-mirror.png', { isolateEnvironment: true });
+  // THE FOYER LAG MIRROR IS GONE, AND HAS BEEN SINCE THE LOOK ROUND.
+  // src/house.js line 6 says so in the source ("the foyer lag mirror is gone;
+  // house.js no longer imports from mirrors.js"). This file kept driving
+  // g.houseMirror.double anyway, so it threw on a property of undefined, and
+  // this suite has been red ever since -- for a feature nobody broke. A
+  // permanently red gate teaches every thread that red is normal, which is the
+  // most expensive thing a test can teach. The pooled planar mirror itself is
+  // still covered where it still exists: the finale, in tests/regressions.mjs.
 
   const pumpResult = await page.evaluate(() => {
     const F = window.__FETCH, g = window.__game;
