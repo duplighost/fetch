@@ -576,7 +576,12 @@ export class Skull {
       // point straight into the gap between the two hands, where the other
       // hand's fingers hid it completely. Raised onto the top of the palm and
       // swung further across so it breaks the finger line in silhouette.
-      const thumb = mkFinger(hand, side * -0.058, 0.028, 0.004, 1.12, side * -0.72);
+      // Tucked back and swung less far across than round seven left it. That
+      // thumb was aimed at a cradle 32 mm wider than this one; with the hands
+      // seated where they can actually touch the skull, the two thumbs met in
+      // the middle and crossed the jaw as a pair of blobs under the chin. In
+      // the reference the thumbs are behind the bone, not in front of it.
+      const thumb = mkFinger(hand, side * -0.056, 0.022, -0.012, 1.12, side * -0.60);
       // A thumb is a short, thick opposing mass, not a fifth long finger.
       // Scaling its existing rig preserves the animation contract while making
       // the cradle silhouette unmistakably human.
@@ -677,7 +682,34 @@ export class Skull {
       // exactly as they pass its widest point (measured, 7-13% buried). And
       // they must be much straighter while held, which is what the finger
       // constants in _updateHands now do.
-      cradle: { x: 0.156, y: -0.118, z: 0.122, rx: -1.671, ry: -0.060, rz: -1.370 },
+      //
+      // ROUND EIGHT MEASURED IT, and the answer was not an angle. He has said
+      // twice that they do not look like hands, and the number nobody had
+      // taken is the one tools/probe-grip-contact.mjs prints: how far each
+      // finger is from the nearest bone. At this seat it was 12 to 70 mm,
+      // MEAN 38 -- a finger's length of air between the hands and the thing
+      // they are holding. Of course it did not look like he was holding it.
+      //
+      // The old sweep could not see that, because it scored candidates on how
+      // much of the hand was INSIDE an ellipsoid inscribed in the skull's
+      // AABB, and that box is tall (the jaw hangs off the bottom) so the
+      // ellipsoid it inscribes pinches in exactly where the fingers pass.
+      // Zero buried against it meant nothing. sweep-grip-contact scores the
+      // gap and the burial against the skull's OWN surface instead, at both
+      // growth stages, and it says the gap was mostly in Z: seated at z 0.122
+      // against a skull whose front face is at 0.117, the hands were never
+      // beside the skull at all. They were in front of it, reaching back.
+      //
+      // Two more things the sweep settled. The fingers must SPLAY very
+      // slightly outward as they rise, not lean in: the cranium widens toward
+      // the brow, so the aim that hugs it is the one that opens with it, and
+      // every inward lean drove the fingertips through the eye sockets
+      // (10-20% buried, 20 mm deep) on the way to closing the gap. And the
+      // curl stays where round seven put it -- more curl hooks the tips over
+      // the cheekbone, which reads as clutching a face, not cradling a skull.
+      //
+      // 38 mm mean gap -> 11. The fingers touch the bone.
+      cradle: { x: 0.124, y: -0.118, z: 0.100, rx: -1.691, ry: -0.060, rz: -1.343 },
       // Untouched. "its fine after the skull goes": the hands drop, open
       // outward and roll until the backs, the knuckle line and both thumbs are
       // in frame, and they have read as hands since round two. The cradle now

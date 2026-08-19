@@ -30,30 +30,65 @@ mkdirSync(OUT, { recursive: true });
 // a1/a2 are the held-pose bend constants update() produces at rest grip
 // (current tree: 0.431 / 0.496).
 const BASE = { x: 0.156, y: -0.118, z: 0.122, rx: -1.671, ry: -0.060, rz: -1.370, a1: 0.431, a2: 0.496 };
-// ROUND TWO of the sweep. The first said the gap is mostly in Z, not X: the
-// cradle seats the hands at z 0.122 when the skull's own front face is at
-// about 0.117, so they were not beside the skull at all -- they were in front
-// of it, reaching back. And round seven had FLATTENED the held fingers
-// (a1 0.431 = 25 deg, a2 0.496 = 28 deg) reading the reference's near-straight
-// fingers literally; a hand actually gripping a sphere runs MCP ~40, PIP ~50.
-// Straight fingers cannot lie on a curve. So: come back in Z, in a little in
-// X, and let the curl close the last centimetre.
+// ROUND THREE of the sweep, and it aims the hand instead of nudging Eulers.
+//
+// Round one said the gap is mostly in Z, not X: the cradle seated the hands at
+// z 0.122 when the skull's own front face is at about 0.117, so they were not
+// beside the skull at all, they were in front of it reaching back. Round two
+// closed that and showed the next thing -- the fingers rise VERTICALLY, and
+// the cranium is a dome, so a straight vertical finger leaves the surface the
+// moment it passes the widest point. Curl alone answers that by hooking the
+// tips over the cheek, which reads as clutching a face rather than cradling a
+// skull.
+//
+// So sweep the AIM. `finger` is where the fingers point and `palm` is which
+// way the palm faces, both in the held rig's space (x right, y up, z toward
+// the viewer) for the LEFT hand -- which sits at NEGATIVE x, so a positive x
+// component in `finger` leans the fingers IN over the dome and a negative one
+// splays them out along its widening. The solver reads the Euler back off the
+// basis, which works because _applyHandPose applies (rx, -side*ry, -side*rz):
+// the stored numbers ARE the applied angles for the left hand.
+const UP = [0.02, 0.99, -0.12];            // round seven's vertical aim
+const PALM = [0.97, -0.05, -0.22];         // palm inward at the bone
+const lean = (k) => [UP[0] + k, UP[1], UP[2]];
 const CANDIDATES = [
   { name: 'r7-baseline' },
-  { name: 'back-100', z: 0.100 },
-  { name: 'back-085', z: 0.085 },
-  { name: 'back-085-in', x: 0.144, z: 0.085 },
-  { name: 'curl-mid', a1: 0.60, a2: 0.72 },
-  { name: 'curl-full', a1: 0.72, a2: 0.88 },
-  { name: 'back-100-curlmid', z: 0.100, a1: 0.60, a2: 0.72 },
-  { name: 'back-100-curlfull', z: 0.100, a1: 0.72, a2: 0.88 },
-  { name: 'back-085-curlmid', z: 0.085, a1: 0.60, a2: 0.72 },
-  { name: 'back-085-curlfull', z: 0.085, a1: 0.72, a2: 0.88 },
-  { name: 'back-085-in-curlmid', x: 0.144, z: 0.085, a1: 0.60, a2: 0.72 },
-  { name: 'back-070-in-curlmid', x: 0.144, z: 0.070, a1: 0.60, a2: 0.72 },
-  { name: 'back-085-in2-curlmid', x: 0.134, z: 0.085, a1: 0.60, a2: 0.72 },
-  { name: 'back-085-in-curlfull', x: 0.144, z: 0.085, a1: 0.72, a2: 0.88 },
+  // near-straight fingers, hand walked in: does the dome let them lie on it?
+  { name: 'aim-in06-x134', finger: lean(0.06), palm: PALM, x: 0.134, z: 0.100 },
+  { name: 'aim-in12-x134', finger: lean(0.12), palm: PALM, x: 0.134, z: 0.100 },
+  { name: 'aim-in12-x124', finger: lean(0.12), palm: PALM, x: 0.124, z: 0.100 },
+  { name: 'aim-in18-x124', finger: lean(0.18), palm: PALM, x: 0.124, z: 0.100 },
+  { name: 'aim-out08-x124', finger: lean(-0.08), palm: PALM, x: 0.124, z: 0.100 },
+  // ...and the same aims with the seat higher, so the fingers end at the eye
+  // sockets rather than along the jaw
+  { name: 'aim-in12-x134-hi', finger: lean(0.12), palm: PALM, x: 0.134, y: -0.095, z: 0.100 },
+  { name: 'aim-in12-x124-hi', finger: lean(0.12), palm: PALM, x: 0.124, y: -0.095, z: 0.100 },
+  { name: 'aim-in18-x124-hi', finger: lean(0.18), palm: PALM, x: 0.124, y: -0.095, z: 0.100 },
+  { name: 'aim-in12-x124-hi-curl', finger: lean(0.12), palm: PALM, x: 0.124, y: -0.095, z: 0.100, a1: 0.60, a2: 0.70 },
+  { name: 'aim-in12-x134-hi-curl', finger: lean(0.12), palm: PALM, x: 0.134, y: -0.095, z: 0.100, a1: 0.60, a2: 0.70 },
+  { name: 'aim-in12-x134-hi-bk', finger: lean(0.12), palm: PALM, x: 0.134, y: -0.095, z: 0.085 },
+  { name: 'aim-in18-x134-hi-bk', finger: lean(0.18), palm: PALM, x: 0.134, y: -0.095, z: 0.085 },
+  { name: 'aim-in12-x128-hi2', finger: lean(0.12), palm: PALM, x: 0.128, y: -0.078, z: 0.100 },
 ];
+
+// makeBasis(X,Y,Z) puts the axes in the COLUMNS, and Euler 'XYZ' reads back as
+// y = asin(m13), x = atan2(-m23, m33), z = atan2(-m12, m11).
+function solve(fingerArr, palmArr) {
+  const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const Z = norm(fingerArr);
+  const p = palmArr, d = dot(p, Z);
+  const Y = norm([p[0] - Z[0] * d, p[1] - Z[1] * d, p[2] - Z[2] * d]);
+  const X = [Y[1] * Z[2] - Y[2] * Z[1], Y[2] * Z[0] - Y[0] * Z[2], Y[0] * Z[1] - Y[1] * Z[0]];
+  return {
+    rx: +Math.atan2(-Z[1], Z[2]).toFixed(3),
+    ry: +Math.asin(Math.max(-1, Math.min(1, Z[0]))).toFixed(3),
+    rz: +Math.atan2(-Y[0], X[0]).toFixed(3),
+  };
+}
+for (const c of CANDIDATES) {
+  if (c.finger && c.palm) Object.assign(c, solve(c.finger, c.palm));
+}
 
 const server = await ensureServer();
 const browser = await launchBrowser();
