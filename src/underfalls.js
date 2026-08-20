@@ -1244,21 +1244,61 @@ function buildBellCistern(game, layout, state) {
   // else changes, and the snapped chain overhead now reads as the reason it is
   // down here: the bell FELL. That is the story the dressing was already
   // telling; it just was not standing in it.
+  // ...AND IT STANDS BESIDE THE LANE, NOT ON IT, SO IT CAN BE SOLID.
+  //
+  // Sitting it down left a 2.06 m iron bell straddling the exact secret-route
+  // node with no collider of any kind, so you walk through it — the same
+  // sentence as his screenshots 4, 5 and 6: a thing that is drawn and is not
+  // there. The pump chapel two hundred lines up gives its pillars (line 872)
+  // and its altar (line 895) real colliders, so this was a judgement rather
+  // than a district policy, and it was the wrong one.
+  //
+  // 1.95 m along the bend's interior bisector — the INSIDE of the turn, which
+  // is forced: the keepsake shelf owns the outside. Derived, not guessed
+  // (tools/probe-bell-cistern.mjs replays all of it):
+  //   bisector of (22,59)->(27,68)->(37,75) is (0.743, -0.670); x 1.95 gives
+  //   (+1.45, -1.31), and the bell axis lands 1.90 m off both centrelines.
+  //   tests/underfalls-expansion.mjs:167 samples both polylines every 0.55 m
+  //   and fails any authored underfalls collider within 0.32 m of a sample;
+  //   the closest sample here is 0.70 m outside the box. The same gate then
+  //   walks the secret route node to node needing to arrive within 0.62 m of
+  //   each: the cistern node stands 0.70 m clear of the collider face against
+  //   a 0.34 m player radius, and no leg of that walk touches the box.
+  //   Cave enemies DO consult world.colliders — findUnderfallsRoute takes an
+  //   edgeAllowed hook and enemies.js:2060 sweeps the Choir's 0.42 m footprint
+  //   through every AABB — so this was checked too: of the seven node chords
+  //   the box intersects, six were already refused by the corridor union, and
+  //   the one live loss (pump undercroft -> service climb) costs 0.57 m of
+  //   detour through the cistern node. Every consecutive route chord is open.
+  //   Moving the ROUTE instead would change secretLength, which the same gate
+  //   checks against the main route it is supposed to shorten.
+  //
+  // Bell, rim and clapper hang off ONE pivot at the bell's base so the tick in
+  // installBeats can rock the whole assembly and keep the pale rim — the only
+  // part of this object that survives a dark room — attached to the dark iron
+  // it belongs to. A Group is free: no draw call, no renderRoot.
+  const bx = C.x + 1.45, bz = C.z - 1.31;
+  const bellPivot = new THREE.Group();
+  bellPivot.position.set(bx, C.y, bz);
+  group.add(bellPivot);
   const bell = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 16), iron);
-  bell.position.set(C.x, C.y, C.z);
   bell.castShadow = true;
-  group.add(bell);
+  bellPivot.add(bell);
   const bellRim = new THREE.Mesh(new THREE.TorusGeometry(1.03, 0.075, 7, 24), pale);
-  bellRim.position.set(C.x, C.y + 1.44, C.z);
+  bellRim.position.set(0, 1.44, 0);
   bellRim.rotation.x = Math.PI / 2;
-  group.add(bellRim);
+  bellPivot.add(bellRim);
   const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), iron);
-  clapper.position.set(C.x, C.y + 0.28, C.z);
-  group.add(clapper);
+  clapper.position.set(0, 0.28, 0);
+  bellPivot.add(clapper);
+  // The chain stays where it broke: 1.47 m to the side of the bell's axis and
+  // 1.24 m above its rim, which is the whole story in one silhouette — the
+  // bell hung there, and it is not there any more.
   const snapped = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.8, 5), iron);
   snapped.position.set(C.x + 0.48, C.y + 3.45, C.z - 0.2);
   snapped.rotation.z = 0.55;
   group.add(snapped);
+  addColliderCylinder(world, bx, bz, 0.75, C.y - 0.4, C.y + 1.44, 'fallen bell');
 
   const shelf = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.18, 0.75), M.woodDark);
   shelf.position.set(C.x - 1.8, C.y + 0.72, C.z + 2.0);
@@ -1284,18 +1324,45 @@ function buildBellCistern(game, layout, state) {
   addInstances(group, ringGeo, iron, lost.ringIron, { name: 'dry iron keepsake rings' });
   addInstances(group, rodGeo, pale, lost.rodPale, { name: 'dry pale keepsake rods' });
   addInstances(group, rodGeo, iron, lost.rodIron, { name: 'dry iron keepsake rods' });
-  const dryRing = new THREE.Mesh(new THREE.RingGeometry(2.05, 2.28, 28),
+  // The dry ring is the bell's rain shadow, so it goes where the bell goes:
+  // left on the node it would be a marked circle with nothing standing in it,
+  // which is the same unexplained-object defect one level down. It also has to
+  // shrink to travel. At its old 2.28 outer radius, moved 1.95 m off centre,
+  // its far edge would reach 4.23 m while the chamber's visible floor is a
+  // sixteen-gon whose real edge on this bearing is 3.49 m — a metre of pale
+  // annulus hanging over black nothing. At 1.40 the far edge is 3.35 m, inside
+  // the floor, and the near edge stays 0.50 m clear of the walking line.
+  const dryRing = new THREE.Mesh(new THREE.RingGeometry(1.22, 1.40, 28),
     new THREE.MeshBasicMaterial({ color: 0xa6b0ad, transparent: true, opacity: 0.27, side: THREE.DoubleSide }));
   dryRing.rotation.x = -Math.PI / 2;
-  dryRing.position.set(C.x, C.y + 0.025, C.z);
+  dryRing.position.set(bx, C.y + 0.025, bz);
   group.add(dryRing);
   world.candles.push({ x: C.x - 2.4, y: C.y + 1.05, z: C.z + 1.8, intensity: 1.25, r: 4.5 });
   const bellLight = new THREE.PointLight(0xd7a468, 13.5, 12, 1.15);
   markUnderfalls(bellLight);
-  bellLight.position.set(C.x - 0.6, C.y + 2.25, C.z + 0.5);
+  // The district's one cistern light follows the bell, but only part of the
+  // way: it is also the keepsake shelf's second source, and the shelf is what
+  // the comment above calls the actual secret. Pulled back to bx-1.05/bz+0.85
+  // it sits 1.66 m off the rim and 3.48 m off the keepsakes, which costs the
+  // rim 0.64x and the keepsakes 0.59x of what each had before — against 0.34x
+  // for the rim if the light had stayed put. The shelf keeps its own pooled
+  // candle 0.68 m away, unmoved, and the tick below lifts this light to 24 on
+  // a strike, which puts the rim at 1.14x its old resting level exactly when
+  // it is moving. Do NOT add a second PointLight: the census is pinned at boot
+  // and a new one recompiles every lit material in the game.
+  bellLight.position.set(bx - 1.05, C.y + 2.4, bz + 0.85);
   scene.add(bellLight);
   state.lights.push(bellLight);
-  state.secret = { group, bell, clapper, position: new THREE.Vector3(C.x, C.y, C.z), discovered: false };
+  // `position` stays the CHAMBER NODE, not the bell: it is the discovery
+  // radius and the route point the gate walks to. `strikePos` is where the
+  // water lands, which is where the sound has to come from.
+  state.secret = {
+    group, bell, clapper, pivot: bellPivot, light: bellLight,
+    position: new THREE.Vector3(C.x, C.y, C.z),
+    strikePos: new THREE.Vector3(bx, C.y + 1.15, bz),
+    discovered: false,
+    rock: 0, ringT: 3.4, ringIndex: 0,
+  };
 }
 
 function buildSprayDisplacement(game, layout, state) {
@@ -1689,10 +1756,79 @@ function installBeats(game, layout, state) {
       game.audio.splash({ pos: new THREE.Vector3(behind.x - 2.6, behind.y + 2.2, behind.z), gain: 0.46, rate: 0.64, verb: 0.82 });
     }
 
-    if (!state.secret.discovered && player.distanceToSquared(state.secret.position) < 3.05 * 3.05) {
-      state.secret.discovered = true;
+    // THE FALLEN BELL IS THE ONE IRON THING IN A ROOM MADE OF WATER.
+    //
+    // Alex, on the live build: "what is this, it doesn't move or do anything."
+    // Round twelve answered half of that — it was floating, and now it is on
+    // the floor. This is the other half, and he was literally right: it had no
+    // ticker, no light of its own and no voice. The only line in the whole
+    // codebase that ever named it was the discovery one-shot, and that one-shot
+    // played metalDrop — a dropped spanner. The room's only bell made the sound
+    // of something else falling over.
+    //
+    // It cannot be a fetch target. The skull is GONE by the time anyone stands
+    // here (director.js:1240 waterfallTaken -> skull.vanish, "the waterfall. it
+    // does not come back"), so the answer cannot be a verb. It is the district
+    // answering itself: water off the broken vault finds the iron, the iron
+    // answers, and the bell rocks because a bell resting mouth-up on its crown
+    // is not stable. That is what the dry ring underneath has always meant.
+    const S = state.secret;
+    // Discovery keeps its radius and its flag untouched — tests/underfalls-
+    // expansion.mjs:203-220 walks to this node and asserts both — but it is the
+    // FIRST TOLL instead of a dropped spanner, in the bell's own voice, from
+    // the bell's own mouth.
+    if (!S.discovered && player.distanceToSquared(S.position) < 3.05 * 3.05) {
+      S.discovered = true;
       game.flag('underfallsSecret');
-      game.audio.metalDrop({ pos: state.secret.position.clone().add(new THREE.Vector3(0, 2.4, 0)), gain: 0.36, rate: 0.44, verb: 0.95 });
+      S.rock = 1;
+      S.ringT = 9.1;
+      game.audio.bellRing({ pos: S.strikePos, gain: 0.23, rate: 0.33, verb: 0.96, dark: true });
+    }
+    if (S.pivot) {
+      // EARSHOT IS MEMBERSHIP, NOT A RADIUS. A 22 m circle around the strike
+      // point reaches the MAIN route at 8.06 m (lower sluice) and covers most
+      // of the chapel-to-upper-sluice run through solid rock: a secret calling
+      // attention to itself along the public road, which inverts law 6 and is
+      // the thing audio.js:1634 refuses to do. So the gate is the district's
+      // own walk-region query instead. projectUnderfalls answers 'secret' only
+      // inside the culvert and the cistern, and the chapel chamber's r 10.5
+      // disc owns the first two culvert legs, so walking in the toll opens
+      // 6.49 m short of the bell and sounds nowhere on the main route. It
+      // rewards the player who went in rather than luring them in. Cost is one
+      // projectUnderfalls per cave frame — 22 segment/chamber projections, the
+      // same order as the lateral clamp's existing per-frame call, and zero
+      // outside the cave because the ticker has already returned by here.
+      const where = projectUnderfalls(layout, player.x, player.z);
+      if (where && where.kind === 'secret' && where.clearance <= 0) {
+        S.ringT -= dt;
+        if (S.ringT <= 0) {
+          const cadence = [7.3, 11.6, 9.1, 13.8];
+          S.ringT = cadence[S.ringIndex % cadence.length];
+          S.ringIndex++;
+          S.rock = 1;
+          game.audio.caveDrip({ pos: S.strikePos, gain: 0.26, rate: 1.22, verb: 0.9 });
+          game.audio.bellRing({
+            pos: S.strikePos, gain: 0.17 + (S.ringIndex % 3) * 0.015,
+            rate: 0.33, verb: 0.96, dark: true,
+          });
+        }
+      }
+      // It never fully stops. The idle wobble is what a two-tonne thing
+      // balanced on its narrow end does; the struck rock is six times it and
+      // decays over about three seconds. Value and motion carry it — the pale
+      // rim travels 0.25 m peak-to-peak on a strike against dark iron, which
+      // is all a dark room leaves behind — and no part of the read is hue.
+      // Fixed cadence array, no Math.random and no setTimeout, so a
+      // playthrough stays bit-identical.
+      S.rock = Math.max(0, S.rock - dt * 0.34);
+      const amp = 0.012 + S.rock * S.rock * 0.075;
+      S.pivot.rotation.z = Math.sin(t * 1.05) * amp;
+      S.pivot.rotation.x = Math.cos(t * 0.83) * amp * 0.72;
+      // 0.04, not the 0.11 first drafted: the lathe's inner radius at the
+      // clapper's height is 0.287 and the clapper is 0.24, so it has exactly
+      // 0.047 m of room before it pushes out through the bell's own wall.
+      S.clapper.position.x = Math.sin(t * 2.9) * 0.04 * S.rock;
+      S.light.intensity = 13.5 + S.rock * 10.5;
     }
 
     // Hear displaced spray before it owns a silhouette. It never attacks,
