@@ -464,13 +464,13 @@ function boot() {
     get part() { return { index: S.partIndex, id: S.song ? S.song.id : null, of: SONGS.length }; },
     get hud() { return { score: S.hud.score, grin: S.hud.grin, combo: S.hud.combo }; },
     get engine() { return S.engine; },
-    get notesLeft() { return S.engine ? S.engine.notes.filter((n) => n.judged === null).length : 0; },
+    get notesLeft() { return S.engine ? S.engine.notes.filter((n) => !n.judged).length : 0; },
     get audio() {
       const ctx = getAudioContext();
       return { state: ctx ? ctx.state : 'none', time: ctx ? +ctx.currentTime.toFixed(3) : 0, muted: S.muted };
     },
     get clips() {
-      return [ui.el.clipClub, ui.el.clipStage, ui.el.clipSpin].map((v) => ({
+      return Object.values(ui.el.clips).map((v) => ({
         src: (v.currentSrc || '').split('/').pop(),
         playing: !v.paused, readyState: v.readyState,
         shown: window.getComputedStyle(v).opacity !== '0',
