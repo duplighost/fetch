@@ -48,6 +48,73 @@ carry no lantern, meaning real play is brighter than they look.
   canonical playbook — read it before touching the site.
 * `Projects/fetch-claude` is STALE. Worktrees only.
 
+## THE DIAGNOSIS IS DONE — read `analysis/ROUND-THIRTEEN-PLANS.md`
+
+A parallel triage run (22 agents, 4.55M tokens, 66 minutes, zero failures) produced
+a challenged patch plan for **every** item in his notes. Each plan was then handed
+to a second agent whose only job was to refute it. **That pass found 23 blockers
+across 10 of the 11 plans** — including one plan that walked straight into the exact
+trap it claimed to have designed around.
+
+`docs/analysis/ROUND-THIRTEEN-PLANS.md` (429 KB) has the whole thing: findings with
+file/line/evidence, raw steps with verbatim anchors, cost, risk, and — the part that
+matters — a **"Execute THIS"** corrected plan per item. **Apply the corrected plan,
+not the raw steps.**
+
+### One trap that applies to applying ANY of them
+
+`src/underfalls.js` uses **CRLF** line endings (1671 CR characters across 1672
+lines). Multi-line anchors written with LF joins match **zero** times against the
+raw bytes. The challenger reproduced this. Normalise before matching, or the patch
+will silently do nothing and look like a failed edit.
+
+### What each plan actually concluded
+
+| item | the finding |
+|---|---|
+| **walls** (4/5/6) | Round twelve fixed the **wrong half**. Walls follow the local lane now, but sit 0.15 m outside a lane the clamp lets you enter by 0.04–0.08 m — against a 0.34 m capsule and a 0.2 m near plane. All 81 flank boxes are reachable; 3 are in the walking line. They have **no colliders at all**. Fix costs **zero draws** and *fewer* vertices. |
+| **walkway** (9) | 145 butted boxes, 125 m long, each wearing **one stretched 256 px tile** over a constant unmapped emissive, in a district with no shadow-casting light. It is flat because *nothing modulates it*. Cut into ~0.6 m flags — which fixes the UV scale and revives the bump map for free. **Not** a brightness problem. Net +3 draws. |
+| **furnace** | **There is no ordering bug in the fire.** The condition is recomputed every frame and no flag can be lost. But the furnace's *voice* is latched to the hinge — the E handler returns on its first line once the door is open — and the exact state he stood in (draft whole, pilot dark) is **the one state on the whole scoreboard with no pointer at all**. The machine went silent in precisely the situation that needed it to speak. Zero draws to fix. |
+| **bell** (3) | It IS the pilot, but its brass line runs 1.35 m east and dies **inside the ground slab**, 9.5 m short of the furnace. Lay the feed along the route the player walks. Net **−6 draws** (the pilot fixture merges 20 meshes to 13). |
+| **jailcell** (2) | The free wall is the crawl's −Z wall east of the cage. Now *proven* why west breaks `playthrough`: the bot jams in the pocket at (−11.53, −5.84) and the pump beat only passes because the skull spawns **inside** the west wall and the collider ejects it into the pump gallery. +3 draws. |
+| **ball** (11) | It is `Forest.ravineKnot`. Round twelve gave it 3 of the key-tree kit's 5 parts; it still has a raw `M.curtain` line, **no motion and no voice**. +0 draws. |
+| **water** (7/10) | All four effects are cheap. Steam and drips are one reused Points shader under existing batches (+3 cave draws, 0 new programs); the lens droplets hang off `grainScene`, the only camera-space surface, summed *after* `lastRender` — effectively free. |
+| **cone** (8) | The fallen bell in the optional bell-cistern shortcut. One behaviour in the whole codebase, and it can never be a fetch target because **the skull does not exist in that district**. |
+| **ossuary** (1) | Already fixed by round twelve (`515ebef`). He was on the old live build. Should be gone now. |
+| **postgame** | The brief was stale — the coda is already in hand. And the attachment point **already exists**: `main.js:1231` answers a click on the ending screen with `location.reload()`. The whole hand-off is a one-line change of destination plus a prefetch. **Do not add an act. Do not hook `_finishEnd`.** |
+
+### THE AUDIT — three things round twelve got wrong, two of them mine
+
+The adversarial audit cleared the round on the things that matter most (no runtime
+throw, no light-census change, and the spider merge is **mathematically exact**),
+but it found three real defects:
+
+1. **A 2.06 m walk-through iron bell sits on the secret route's centre-line** — in
+   the one district he had just complained about walking through walls. Round
+   twelve dropped that bell 1.18 m to stop it floating and put it in the lane.
+2. **The new webs' collider clearance check runs eleven builders too early**, so the
+   check is *decorative*. All nineteen sites "cleared" — against an incomplete
+   collider set. That was my check and my claim, and it did not mean what the
+   commit message said it meant.
+3. **The shipped screenshots contradict two of the round's own claims**: the sign
+   plate's contrast polarity, and the "lit candle behind the opened door", which
+   **does not exist**. The second was written into a commit message as fact.
+
+None of these reach a player as a crash, and round twelve is live and fine to play.
+But #1 is a genuine instance of the very complaint being fixed, and #2 and #3 are
+claims that outran their evidence — which is the failure mode this project keeps a
+law about.
+
+### Suggested order, if it helps
+
+Nothing here is binding — this is what seemed sensible from the diagnosis, not a
+directive. **walls** first: it is the thing that is actually broken for him, it costs
+zero draws, and it closes three screenshots at once. Then **furnace** (zero draws,
+and it explains the confusing session he reported), then the **audit**'s bell-on-the-
+lane and the web-check ordering, since both belong to the same "walking through
+things" family. **walkway**, **bell**, **water**, **ball**, **jailcell** after that
+in whatever order suits. **postgame** last, and cheaper than expected.
+
 ## What he said about the pace
 
 On 2026-08-19, mid-session:
@@ -131,3 +198,22 @@ cave 137 · ossuary 142 · marrow 140
 
 The house is the tightest. **The cave has the most headroom** — which is
 convenient, because the cave is where the work is.
+
+---
+
+## One more trap, learned the hard way this session
+
+**CRLF.** `src/underfalls.js` (and others) use CRLF. Anchors written with LF joins
+match zero times. Normalise before matching or the edit silently does nothing.
+
+**Backticks in shell heredocs.** Writing these docs, an inline `node -e "..."` with
+backticks in the string got them expanded by bash, producing a mangled file twice.
+Write the script to a file with a quoted heredoc (`<<'EOF'`), or build fences with
+`String.fromCharCode(96)`. Cost about fifteen minutes across two occurrences.
+
+**`page.screenshot` composites the canvas black headless.** Use WebGL canvas
+readback — `tools/probe-door-sign.mjs` is the pattern.
+
+**Parallel gate batches flake.** Four Chrome batches at once made
+`forest-nervous-system-regression` fail; alone it passes. Re-run any parallel-batch
+failure alone before believing it.
