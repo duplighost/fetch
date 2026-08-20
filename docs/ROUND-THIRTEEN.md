@@ -4,6 +4,40 @@
 his notes** — his standing instruction: *"you should just have them do it
 without my notes. if i have notes ill give them notes."*
 
+## SHIPPED — round twelve is LIVE (2026-08-19, evening)
+
+Site PR #79 merged (squash, site main `0a582c6`). **Production serves it, and
+all five changed files were fetched back off qualiacology.com and verified
+byte-identical to the repo.** The game repo's `main` was fast-forwarded to
+`438a665`, so main IS the live game again — worktree off `origin/main` as usual.
+
+Site gates on the branch: build-site (no generated-page drift), validate-site
+(4 hub pages, 25 games, 11 releases), route-smoke (44 routes, 21 intentional
+404s), `npm run qa` (10 viewports, 8 routes, zero serious/critical Axe
+violations), and **fetch-boot-check PASSED** — world on screen 8175 ms, 512
+contiguous lit frames, hand-lit 44.7%, zero errors.
+
+**He had not played it at the time of writing. Tell him to hard-refresh.**
+
+One gate is knowingly RED — see the bottom of `ROUND-TWELVE.md`. It is a
+geometry-accounting failure in `perf-pool-regression` caused by this round,
+proven *not* to be a gore-pool leak, with the mechanism NOT established and the
+obvious hypothesis refuted by measurement. It shipped red rather than loosened
+to fit a story, because nothing about it reaches a player. That judgement is
+worth revisiting with fresh eyes.
+
+### Verified by screenshot, at his request
+
+He asked: *"we sshould actually take a screenshot or something to make sure you
+put the sign in the right place on the door and that it goes away when the door
+opens"*. `tools/probe-door-sign.mjs` does that (WebGL readback — never
+`page.screenshot`, which composites the canvas black headless). Four frames in
+`shots/door-sign/`. Result: the plate is centred on the panel (0.92 m from the
+hinge on a 1.9 m door), sits at eye height, is legible from the stairs, and
+swings away with the panel when the door opens — edge-on and tiny in the open
+frames. Caveat recorded honestly: those frames pose the camera directly and so
+carry no lantern, meaning real play is brighter than they look.
+
 ## Where things stand
 
 * `claude/aug22-round12` — six fixes, all his notes from 2026-08-19. See
