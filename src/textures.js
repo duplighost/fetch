@@ -1080,6 +1080,84 @@ function waterPaint(g, w, h, r) {
 
 let cached = null;
 
+// THE WORKS PLATE ON THE STAIR DOOR. Alex's own idea, and his own reasoning:
+// "when that door is closed, we just put a sign on it with a picture of a
+// furnace, one of those things with a circle with a line through it. like its
+// saying no furnace. The player will see that sign on the door the first time
+// they leave the upstairs of the house."
+//
+// It is a PICTURE ON AN OBJECT, not a message on the screen, so it is inside
+// the no-HUD law; and it is shape, not hue, so it is inside the other one. What
+// it says is true: the furnace cannot light until the skull carries fire, and
+// that rule is checked every frame and cannot be lost.
+//
+// The ground is DARK, and that was not the first guess. A pale enamel plate is
+// the obvious answer for an unlit stairwell — until you measure it, and find
+// that this door is one of the palest surfaces in the house: pale plate on pale
+// door came back at 1.03x contrast from the pose he would actually read it
+// from, which is nothing at all. So it is a dark enamel works plate with a pale
+// glyph, which is period-correct anyway, and it reads as a dark shape on a
+// light door from across the landing. Legibility is CONTRAST, not brightness:
+// what the eye needs is a difference, in whichever direction the surface
+// underneath is not.
+function furnaceSignPaint(g, w, h, r) {
+  // enamel ground, faintly unevenly fired
+  g.fillStyle = rgb(34, 33, 30);
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 220; i++) {
+    const x = r.float() * w, y = r.float() * h, rad = 2 + r.float() * 9;
+    g.fillStyle = `rgba(${70 + r.float() * 60 | 0},${66 + r.float() * 56 | 0},${58 + r.float() * 50 | 0},${0.05 + r.float() * 0.07})`;
+    g.beginPath(); g.arc(x, y, rad, 0, TAU); g.fill();
+  }
+  // a dark border, the way a stamped plate is edged
+  g.strokeStyle = rgb(196, 190, 172); g.lineWidth = w * 0.045;
+  g.strokeRect(w * 0.055, h * 0.055, w * 0.89, h * 0.89);
+
+  // BOLD, because 256 px of sheet on a 0.44 m plate seen from three metres is
+  // a few dozen screen pixels, and round eight's law is that anything finer
+  // than about 8 px is gone to the mip chain before the player sees it. Fewer
+  // parts, thicker strokes, one silhouette.
+  const cx = w * 0.5, cy = h * 0.52, S = w * 0.31;
+  g.strokeStyle = rgb(206, 200, 182);
+  g.fillStyle = rgb(206, 200, 182);
+
+  // the furnace: squat body, arched mouth, short legs, flue rising off the top
+  const bw = S * 1.16, bh = S * 0.98;
+  g.fillRect(cx - bw / 2, cy - bh * 0.34, bw, bh);
+  g.lineWidth = w * 0.055;                         // flue, fat enough to survive
+  g.beginPath();
+  g.moveTo(cx + bw * 0.24, cy - bh * 0.34);
+  g.lineTo(cx + bw * 0.24, cy - bh * 1.02);
+  g.stroke();
+  // the mouth, cut back to the enamel so the furnace reads as open and cold
+  g.fillStyle = rgb(34, 33, 30);
+  g.beginPath();
+  g.moveTo(cx - bw * 0.30, cy + bh * 0.50);
+  g.lineTo(cx - bw * 0.30, cy + bh * 0.04);
+  g.arc(cx, cy + bh * 0.04, bw * 0.30, Math.PI, 0);
+  g.lineTo(cx + bw * 0.30, cy + bh * 0.50);
+  g.closePath(); g.fill();
+
+  // ...and the circle with the line through it
+  g.strokeStyle = rgb(206, 200, 182);
+  g.lineWidth = w * 0.075;
+  g.beginPath(); g.arc(cx, cy, S * 1.14, 0, TAU); g.stroke();
+  const d = S * 1.14 * Math.SQRT1_2;
+  g.beginPath();
+  g.moveTo(cx - d, cy + d); g.lineTo(cx + d, cy - d);
+  g.stroke();
+
+  // chips: enamel gone at the corners, bare tin under it
+  for (let i = 0; i < 26; i++) {
+    const corner = i % 4;
+    const x = (corner === 0 || corner === 3 ? 0.03 + r.float() * 0.16 : 0.81 + r.float() * 0.16) * w;
+    const y = (corner < 2 ? 0.03 + r.float() * 0.16 : 0.81 + r.float() * 0.16) * h;
+    g.fillStyle = `rgba(126,122,114,${0.35 + r.float() * 0.4})`;
+    g.beginPath(); g.arc(x, y, 2 + r.float() * 7, 0, TAU); g.fill();
+  }
+  speckle(g, w, h, r, 900, 0.05);
+}
+
 export function makeMaterials() {
   if (cached) return cached;
   const lam = (o) => new THREE.MeshLambertMaterial(o);
@@ -1156,6 +1234,10 @@ export function makeMaterials() {
   // panel relief this map was authored for survives the change.
   M.carPaint     = lam(bump(T(512, 512, 33, carPaintPaint, 1, 1), 0.20));
   M.headstone    = lam(bump(T(256, 256, 24, headstonePaint), 0.14));
+  // one plate, one repeat: this map is a PICTURE, not a tiling surface
+  M.furnaceSign  = lam(bump(T(256, 256, 71, furnaceSignPaint), 0.05));
+  M.furnaceSign.map.repeat.set(1, 1);
+  M.furnaceSign.map.wrapS = M.furnaceSign.map.wrapT = THREE.ClampToEdgeWrapping;
   M.rock         = std({ ...bump(T(256, 256, 25, rockPaint, 2, 2), 0.26), roughness: 0.6, metalness: 0.05 });
   M.curtain      = lam({ map: T(256, 256, 26, curtainPaint), side: THREE.DoubleSide });
   // web ground stays transparent — no repeat wrap, one web per quad
