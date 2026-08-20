@@ -85,7 +85,10 @@ Plus the focused regressions the rounds left behind — warm-start, basin-shore,
 choir-surfacing, district-culling, render-perf, grip-contact, grave-arena,
 **`tests/coda-seam-regression.mjs`** (the hand-off to the coda at `ending/`), and
 **`tests/legibility-regression.mjs`**, which asks the question the other gates
-cannot: not "did it work" but "could it be seen or heard".
+cannot: not "did it work" but "could it be seen or heard". Newest:
+**`tests/verb-rack-regression.mjs`**, which pins the Underfalls reverb rack to
+one convolver at a time and proves a zone change never cuts a tail short
+(cost and audibility evidence: `tools/probe-verb-cost.mjs`, `tools/probe-verb-ab.mjs`).
 
 Environment traps (hard-won — do not relearn):
 - **Never edit a src file while a gate is running.** The dev server reads from
