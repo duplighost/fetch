@@ -5,13 +5,27 @@ did, then get to work. Do not wait for his notes** — his standing instruction:
 *"you should just have them do it without my notes. if i have notes ill give
 them notes."*
 
-## STATUS: ROUND THIRTEEN IS BUILT AND NOT DEPLOYED
+## STATUS: ROUND THIRTEEN IS LIVE (2026-08-20)
 
-Branch `claude/aug23-round13`, worktree
-`C:\Users\Alex\Projects\fetch-aug23-round13`, **16 commits off `origin/main`**
-(503dfce), 45 files, +7.7k lines. **It has NOT been pushed and NOT shipped to
-the site** — he was asked and had not answered at the time of writing. `main`
-is still round twelve, which is what qualiacology.com/fetch/ serves.
+**Site PR #80 merged** (squash, site main `5f6367e`). qualiacology.com/fetch/
+serves it, and the coda is live at qualiacology.com/fetch/ending/.
+
+Verified on production, not assumed:
+
+* **fetch-boot-check PASSED** -- world on screen, skull lit in hand for 44.2%
+  of tail frames, zero page/console errors.
+* **All 22 src files byte-identical** to this tree, fetched back off
+  qualiacology.com and diffed.
+* **All 7 coda modules byte-identical**, and all 7 media files the exact
+  shipped byte counts.
+* The coda media serves as `video/mp4` / `image/jpeg` with
+  `Cache-Control: public,max-age=86400` -- which is what keeps the warm fetch
+  free at the seam in production, not just on localhost.
+
+The game repo's `main` was **fast-forwarded to `e3d4d53`**, so main IS the live
+game again and a fresh clone is what the site serves.
+
+**HE HAD NOT PLAYED IT at the time of writing -- tell him to hard-refresh.**
 
 Round thirteen answered **every item** in his 2026-08-19 notes plus the coda.
 See `ROUND-THIRTEEN.md` for the item-by-item record and the honest gate table.
