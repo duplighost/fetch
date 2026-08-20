@@ -52,6 +52,24 @@ const NAVIGATION_LOCAL = Object.freeze([
   Object.freeze({ x: 29.25, z: 55.75, y: 0.00, name: 'chapel north transept' }),
 ]);
 
+// THE ONE PAD. No drawn surface in this district may stand closer than this
+// to any pose the clamp will accept. It is the player's own radius (RADIUS
+// 0.34, player.js) plus the clamp's 0.08 dead band. Below it the player's body
+// is inside the rock; below 0.24 (the camera's near plane of 0.2, main.js, plus
+// the 0.04 of slack installClamp leaves) the surface is CLIPPED AWAY and you
+// look straight through the wall, which is what he photographed.
+export const UNDERFALLS_SOLID_PAD = 0.42;
+// The flank wall stands one post-depth clear of that pad, so the sluice gate's
+// iron reads AGAINST stone instead of inside it. The sluice-rise and
+// upper-sluice nodes are near-straight, so gate and wall both seat at about
+// clearance 0.445 against a single pad — and a 0.23 m post buried in a 0.54 m
+// slab is a post nobody can see. Two pads, and the gates keep their vertical.
+export const UNDERFALLS_WALL_PAD = UNDERFALLS_SOLID_PAD + 0.30;
+// How far a flank piece may be pushed outward to find that pad before it is
+// dropped instead. Beyond this the enclosure genuinely belongs to another
+// region and shoving the flank out would read as a hole.
+export const UNDERFALLS_WALL_MAX_PUSH = 1.55;
+
 export const UNDERFALLS_METRICS = Object.freeze({
   oldRouteMeters: 31.2,
   mainRouteMeters: 0, // calculated world value is exposed on the built layout
@@ -563,20 +581,74 @@ function addFloorAndShell(game, layout) {
       const pw = lerp(seg.a.w, seg.b.w, t);
       const depth = seg.length / n + 0.08;
       for (const side of [1, -1]) {
-        const cx = px + side * nx * (pw + 0.42);
-        const cz = pz + side * nz * (pw + 0.42);
-        // nine points over the piece's own footprint, in its own frame
-        let intrudes = false;
-        for (let a = -1; a <= 1 && !intrudes; a++) {
-          for (let b = -1; b <= 1 && !intrudes; b++) {
-            const ox = side * nx * (a * 0.27) + tx * (b * depth * 0.5);
-            const oz = side * nz * (a * 0.27) + tz * (b * depth * 0.5);
-            const hit = projectUnderfalls(layout, cx + ox, cz + oz);
-            if (hit && hit.clearance < 0) intrudes = true;
+        // ROUND TWELVE PUT THESE AT THE LOCAL WIDTH. THAT WAS HALF THE FIX.
+        //
+        // A piece at pw + 0.42 has its inner FACE at pw + 0.15, and the clamp
+        // stably permits a camera at pw - 0.04: installClamp declines to act
+        // until clearance > -0.04, then snaps to w - 0.08. Replayed against
+        // every pose the clamp will hold, ALL 81 pieces round twelve drew
+        // stood within 0.2 m of one, the worst 0.045 m on the service-climb
+        // leg — and the camera's near plane is 0.2 (main.js). Lean
+        // into the wall and the whole face is clipped away and you look
+        // through it: "some of these walls you can walk right through".
+        // Nothing here is a collider, so nothing stops you either.
+        //
+        // The offset is found against the UNION now, not against this leg:
+        // push outward until the whole footprint clears the wall pad, and drop
+        // the piece only if that would take it past the max push — at those
+        // places another region's lane is genuinely there and already owns the
+        // enclosure. tools/probe-district-walls.mjs replays all of this in
+        // plain node against the real route tables.
+        let cx = 0, cz = 0, seated = false, seatPush = 0;
+        for (let push = 0; push <= UNDERFALLS_WALL_MAX_PUSH + 1e-9; push += 0.05) {
+          cx = px + side * nx * (pw + 0.42 + push);
+          cz = pz + side * nz * (pw + 0.42 + push);
+          // nine points over the piece's own footprint, in its own frame.
+          // The only question is whether the WORST of them clears the pad, so
+          // the first one that does not ends this attempt: 43767 projections
+          // become 6751, and 75 ms of build time becomes 11. Same seating on
+          // every one of the pieces — this prunes work, not candidates.
+          let clears = true;
+          for (let a = -1; a <= 1 && clears; a++) {
+            for (let b = -1; b <= 1 && clears; b++) {
+              const ox = side * nx * (a * 0.27) + tx * (b * depth * 0.5);
+              const oz = side * nz * (a * 0.27) + tz * (b * depth * 0.5);
+              const hit = projectUnderfalls(layout, cx + ox, cz + oz);
+              if (hit && hit.clearance < UNDERFALLS_WALL_PAD) clears = false;
+            }
           }
+          if (clears) { seatPush = push; seated = true; break; }
         }
-        if (intrudes) continue;
-        world.box(M.rock, cx, py + 2.35, cz, 0.54, 5.15, depth, yaw);
+        if (!seated) continue;
+        // AND IT REACHES THE ROOF. The overburden above is ONE flat slab per
+        // leg at avgY + 4.86 while these pieces staircase with py, so on a
+        // rising leg the wall top (py + 4.925) fell below the roof underside
+        // (avgY + 4.63): a 0.43 m open slot up the first flight of the sluice
+        // climb, 0.44 m up the second, black all the way. Growing to the
+        // roof's TOP face rather than its underside also guarantees no wall
+        // fin ever stands proud of the overburden on a descending leg.
+        const bottom = py - 0.225;
+        const height = (avgY + 5.09) - bottom;
+        world.box(M.rock, cx, bottom + height * 0.5, cz, 0.54, height, depth, yaw);
+        // AND THE SHOULDER IS FLOORED. The route floor above is exactly 2 * w
+        // wide, so pushing the wall out opens an unlit, unfloored slot between
+        // the floor edge and the wall base — 0.15 m before, up to 1.6 m now —
+        // and under the slab's 0.22 m side face there is nothing at all: you
+        // look past it into the 0x03050c background, on the one district whose
+        // note is "the rest black". Bridge it here. It is the same merged
+        // M.rock shell, so it costs vertices and not one draw call.
+        const skirt = 0.15 + seatPush;
+        world.box(M.rock,
+          px + side * nx * (pw + skirt * 0.5), py - 0.11,
+          pz + side * nz * (pw + skirt * 0.5), skirt + 0.06, 0.22, depth, yaw);
+        // Publish the drawn face so tests/underfalls-expansion.mjs can ask the
+        // only question that matters here: can a pose the clamp accepts stand
+        // inside it. FACES, not AABBs — main#7's yaw is 35.5 degrees and a
+        // rotated 0.54 x 0.95 box has a 0.99 m AABB, 0.22 m fatter into the
+        // lane than the box itself. That overstatement is the forest trap.
+        (layout.solids || (layout.solids = [])).push({
+          x: cx, z: cz, nx, nz, tx, tz, halfN: 0.27, halfT: depth * 0.5,
+        });
       }
     }
   }
@@ -1044,14 +1116,52 @@ function buildSluice(game, layout, state) {
     const next = layout.main[Math.min(layout.main.length - 1, index + 1)];
     const yaw = Math.atan2(next.x - prev.x, next.z - prev.z);
     const gateMatrix = transformMatrix(p.x, p.y, p.z, 0, yaw, 0);
+    // THE GATE HAS TO STAND OUTSIDE THE LANE IT FRAMES, AND THE LANE AT A NODE
+    // IS THE UNION'S WIDTH THERE, NOT THIS NODE'S OWN w. At the overflow
+    // gallery the union is the 4.80 m chamber disc while p.w is 2.75, so both
+    // posts stood at clearance -1.930, inner faces at -2.045: two full-height
+    // iron posts nearly two metres inside the walkable floor, flanking the
+    // only line out of the gallery. "some of these walls you basically are
+    // forced to walk through to get there." At the other three nodes the post
+    // face cleared the lane by 0.005 m — a fortieth of the near plane — so
+    // brushing one deleted it. Measured distance from the nearest pose the
+    // clamp will hold to the nearest post: 0 m before, 0.466 m after.
+    const ax = Math.cos(yaw), az = -Math.sin(yaw);   // gateMatrix's local +X
+    const bx = Math.sin(yaw), bz = Math.cos(yaw);    // and its local +Z
+    let half = p.w + 0.12;
+    let seated = false;
+    for (; half <= p.w + 1.0 + 1e-9; half += 0.02) {
+      let worst = Infinity;
+      for (const side of [-1, 1]) {
+        for (const u of [-0.115, 0.115]) {
+          for (const v of [-0.14, 0.14]) {
+            const hit = projectUnderfalls(layout,
+              p.x + ax * side * (half + u) + bx * v,
+              p.z + az * side * (half + u) + bz * v);
+            if (hit && hit.clearance < worst) worst = hit.clearance;
+          }
+        }
+      }
+      if (worst >= UNDERFALLS_SOLID_PAD) { seated = true; break; }
+    }
+    // A gate that has to be that wide is not a gate: the union has swallowed
+    // the node. Its lintel would hang unattached across a room, which is the
+    // bell's mistake one district over — so the whole fixture, posts, lintel
+    // and tooth bar, sits this one out. Three gates on the climb, not four.
+    if (!seated) continue;
     for (const side of [-1, 1]) {
-      // posts stood at w-0.455 to their inner face — inside the clamp, so
-      // the player brushed through iron. They frame the lane now, not block it.
       postMatrices.push(gateMatrix.clone().multiply(transformMatrix(
-        side * (p.w + 0.12), 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
+        side * half, 1.9, 0, 0, 0, 0, 0.23, 3.85, 0.28)));
+      // The posts are the only part of the gate at body height: the lintel
+      // sits at 3.72 and the tooth bar at 2.15 and up, both well clear of
+      // HEAD (1.75), overhead by design. So the posts are what the pin reads.
+      (layout.solids || (layout.solids = [])).push({
+        x: p.x + ax * side * half, z: p.z + az * side * half,
+        nx: ax, nz: az, tx: bx, tz: bz, halfN: 0.115, halfT: 0.14,
+      });
     }
     topMatrices.push(gateMatrix.clone().multiply(transformMatrix(
-      0, 3.72, 0, 0, 0, 0, p.w * 2.1, 0.25, 0.36)));
+      0, 3.72, 0, 0, 0, 0, half * 2 + 0.34, 0.25, 0.36)));
     toothMatrices.push(gateMatrix.clone().multiply(transformMatrix(
       0, 2.15 + (index & 1) * 0.55, 0,
       0, 0, (index & 1 ? 1 : -1) * 0.05, p.w * 1.45, 0.11, 0.28)));

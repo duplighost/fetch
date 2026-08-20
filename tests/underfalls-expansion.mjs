@@ -164,6 +164,51 @@ try {
       { probes: Math.ceil(mainSamples.length / 17), failures: clampFailures.slice(0, 8) },
     );
 
+    // LEGIBILITY, NOT FUNCTION: not "is there a wall" but "can the player
+    // stand inside it, or close enough that the near plane deletes it". The
+    // camera's near plane is 0.2 (main.js); the clamp permits a stable pose at
+    // clearance -0.04, and the head bob adds up to 0.02 of world X on top that
+    // the clamp never sees (player.js _sync). A drawn face nearer than the pad
+    // is a wall you walk through — and every one of the 81 flank pieces round
+    // twelve drew was one. Nothing in this district is a collider, so this is
+    // the only test that can catch it. layout.solids carries the drawn FACES,
+    // not AABBs: a 35-degree yawed wall box's AABB is 0.22 m fatter into the
+    // lane than the box, and believing that number is the old forest trap.
+    const NEAR = 0.2;
+    const PAD = 0.42;
+    const solids = L.solids || [];
+    const wallFailures = [];
+    for (const s of [...mainSamples, ...secretSamples]) {
+      for (const lateral of [-1, 1]) {
+        // the outermost pose the clamp will hold...
+        const sx = s.x + s.nx * lateral * (s.w - 0.04);
+        const sz = s.z + s.nz * lateral * (s.w - 0.04);
+        if (!U.contains(sx, sz, -0.039)) continue;
+        // ...and only then the bob, which moves world X and is never clamped.
+        // Adding it before the filter silently drops both probes on every leg
+        // with nx > 0, which is most of them.
+        for (const bob of [-0.02, 0, 0.02]) {
+          const px = sx + bob, pz = sz;
+          for (const q of solids) {
+            const dx = px - q.x, dz = pz - q.z;
+            const u = Math.abs(dx * q.nx + dz * q.nz) - q.halfN;
+            const v = Math.abs(dx * q.tx + dz * q.tz) - q.halfT;
+            const gap = Math.hypot(Math.max(0, u), Math.max(0, v));
+            if (gap < PAD - 1e-3) {
+              wallFailures.push({ at: [round(px), round(pz)], gap: round(gap), clipped: gap < NEAR });
+              break;
+            }
+          }
+        }
+      }
+      if (wallFailures.length >= 8) break;
+    }
+    check(
+      'no pose the clamp accepts stands inside a drawn cave wall, or near enough for the near plane to delete it',
+      solids.length > 0 && wallFailures.length === 0,
+      { solids: solids.length, near: NEAR, pad: PAD, failures: wallFailures.slice(0, 8) },
+    );
+
     const routeColliders = g.world.colliders.filter((c) => c.underfalls);
     const blockedCenters = [];
     for (const s of [...mainSamples, ...secretSamples]) {

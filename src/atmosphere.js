@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { RNG, TAU } from './util.js';
 import { CLEARING_BASIN } from './outside.js';
-import { projectUnderfalls } from './underfalls.js';
+import { projectUnderfalls, UNDERFALLS_SOLID_PAD } from './underfalls.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -1614,7 +1614,14 @@ function buildCaveDress(game, track, own, tickers) {
   // teeth stay exempt — they roof the corridor by design.
   const clearOfRoute = (x, z, half) => {
     if (!layout) return { x, z };
-    const margin = half + 0.35;
+    // ONE LAW, ONE NUMBER: the same pad the structural walls obey. This
+    // clears a boulder's CENTRE by margin, so its surface cleared the lane by
+    // 0.35 and stood 0.39 m from a pose the clamp will hold — above the near
+    // plane, so it never vanished, but barely past the player's own 0.34 m
+    // body radius, and a second number for a law that should have one.
+    // Consistency, not a fix. A larger margin can only drop instances, never
+    // batches, so the draw-call count is untouched.
+    const margin = half + UNDERFALLS_SOLID_PAD;
     let px = x, pz = z;
     for (let guard = 0; guard < 6; guard++) {
       const p = projectUnderfalls(layout, px, pz);
