@@ -43,6 +43,22 @@ import { writeFileSync } from 'node:fs';
 // floored with room to move; the measured values live in the console output.
 const FLOORS = {
   'the ossuary conduit, from the walk-up': [0.35, 1.6],
+  // MEASURED 2026-08-20 on a real GPU, at 0.6x the share of frame and 0.7x the
+  // contrast -- the same rule the rest of this table follows.
+  //
+  // READ THESE AS A REGRESSION GUARD, NOT AS A TARGET. The two resting-wire
+  // contrasts are 1.14x and 1.11x against the ossuary conduit's 6.39x, and the
+  // mechanism is known: the conduit is a LIT material (ironMat clone, pale
+  // 0x9aa09b) in a dark room, so the carried lantern lifts it off its
+  // background, while this feed line is an UNLIT MeshBasicMaterial in a
+  // lantern-lit corridor, so the wall out-brightens the brass and the wire
+  // sinks into it. Brightening the basic colour cannot fix that -- it moves the
+  // wire THROUGH the wall's value on the way up. Making it lit, the way the
+  // conduit is, is the fix, and it is Alex's look call rather than a silent one.
+  // The pulse, which is the authored payoff, already reads at 2.45x.
+  'the pilot feed line, from the foot of the return flight': [2.11, 1.09],
+  'the pilot feed at the furnace, from the boiler door': [1.33, 1.07],
+  'the feed pulse crossing the storeroom': [0.06, 1.71],
   'the key-tree limb, from the top of the lane': [0.12, 1.8],
   'the key-tree limb, at throwing distance': [0.18, 1.15],
   'the key in the grass, from four metres': [0.01, 4.0],
@@ -53,8 +69,8 @@ const FLOORS = {
   // RAISE THEM under the first measured run: the console prints the real
   // numbers on every pass, and a floor that nothing can ever trip is a
   // decorative gate, which is the failure this whole file exists to end.
-  'the second stall, from the crawl doorway': [0.01, 1.02],
-  'the second stall, at the bars': [0.30, 1.05],
+  'the second stall, from the crawl doorway': [0.18, 1.07],
+  'the second stall, at the bars': [2.89, 1.36],
   // THESE TWO ARE NOT MEASURED YET, and they say so on purpose. Every other
   // pair in this table is 0.5-0.6x a number this gate printed; these two come
   // from arithmetic, because the round that added them had no GPU to run on.
@@ -67,8 +83,8 @@ const FLOORS = {
   // is drawn nowhere at all. FIRST RUN ON A MACHINE WITH A GPU: read the two
   // measured values off the console below and raise these to 0.6x the pct and
   // 0.7x the contrast, the same rule the rest of the table follows.
-  'the ravine ball and its line, up the approach': [0.01, 1.10],
-  'the ravine ball and its line, at the near lip': [0.05, 1.30],
+  'the ravine ball and its line, up the approach': [0.03, 1.36],
+  'the ravine ball and its line, at the near lip': [0.43, 3.84],
 };
 
 // NOT YET MEASURED. Round thirteen laid the basement pilot's feed line and
@@ -85,11 +101,10 @@ const FLOORS = {
 // the escalation order in src/house.js is FEED_SECTION 0.09 -> 0.12, then
 // feedMat's colour 0x8c6d31 -> 0xa9853d, then the cleat spacing 2.0 m -> 1.4 m.
 // Never a light.
-const UNMEASURED = new Set([
-  'the pilot feed line, from the foot of the return flight',
-  'the pilot feed at the furnace, from the boiler door',
-  'the feed pulse crossing the storeroom',
-]);
+// Empty, and it should stay that way: every subject in this gate now has a
+// floor measured on a real GPU. A subject with no floor passes vacuously,
+// which is the decorative-gate failure this whole file exists to end.
+const UNMEASURED = new Set([]);
 
 const server = await ensureServer();
 const browser = await launchBrowser();
