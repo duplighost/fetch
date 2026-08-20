@@ -1288,7 +1288,27 @@ function buildPumpChapel(game, layout, state) {
   // diagonal public aisle and the north-south secret culvert.
   const altarX = C.x + 6.05, altarZ = C.z - 4.15;
   add(new THREE.CylinderGeometry(1.25, 1.55, 0.72, 8), wetStone, altarX, 0.36, altarZ);
-  addColliderCylinder(world, altarX, altarZ, 1.28, -0.4, 1.1, 'pump altar');
+  // This box has to stop the camera short of the FLYWHEEL, not just the drum.
+  // The wheel's iron reaches 1.52 m from this axis (ring 1.38 + tube 0.14), and
+  // its plane is fixed: the spin below is rotation.z about the torus's OWN axis,
+  // so the silhouette never changes shape, only the world ZY circle it draws. At
+  // half 1.28 the closest pose the clamp will hold put the camera 0.100 m from
+  // that iron -- inside the 0.2 near plane, so the landmark was CLIPPED AWAY and
+  // you looked straight through the impossible wheel. The player's own 0.34 m
+  // radius already covers all of THE ONE PAD except the clamp's 0.08 dead band,
+  // so the box only has to stand 1.52 + 0.08 clear. 1.62 rather than 1.60
+  // because 1.60 MEETS 0.420 exactly and this measures 0.440, and because 1.62
+  // also swallows the drum's own 1.55 m base octagon -- the 1.28 box left 0.27 m
+  // of drum standing in walkable floor.
+  //
+  // Widening was measured before it was chosen, because this box sits in a room
+  // the player crosses and the Choir paths through (findUnderfallsRoute takes an
+  // edgeAllowed hook and enemies.js sweeps a 0.42 m footprint through every
+  // AABB). Across the whole navigation graph the SAME 9 of 91 line-of-sight
+  // pairs are blocked at 1.28 and at 1.62 -- not one route chord is lost -- and
+  // the floor reachable from the west aisle goes 388.8 -> 384.2 m2 with the east
+  // aisle, the culvert mouth and the north transept all still reached.
+  addColliderCylinder(world, altarX, altarZ, 1.62, -0.4, 1.1, 'pump altar');
   const pump = new THREE.Group();
   pump.position.set(altarX, 1.55, altarZ);
   group.add(pump);
@@ -1312,6 +1332,23 @@ function buildPumpChapel(game, layout, state) {
   const bellJar = add(new THREE.SphereGeometry(0.58, 12, 9, 0, TAU, 0, Math.PI * 0.64), pale,
     altarX + tx * 1.85, 2.86, altarZ + tz * 1.85, Math.PI);
   bellJar.scale.y = 1.32;
+  // The piston stands 1.85 m out along the aisle -- outside the altar box at any
+  // sane width -- and it had NO collider at all. Measured: the camera could stand
+  // 0.257 m inside it, and it spans y -0.09..2.99 so it crosses eye height for
+  // its whole stroke. Widening the altar cannot reach it: covering it with that
+  // square box needs half 1.93, which costs 10.2 m2 of chapel floor against the
+  // 0.4 this one costs, and STILL leaves the piston short of the pad at 0.335 m.
+  // It gets its own collider instead.
+  //
+  // It only ever moves in y (the ticker drives 1.45 +/- 0.29), so a fixed
+  // footprint holds. -0.4..3.0 covers the whole stroke, is far too tall to be a
+  // walkable step (STEP_UP 0.5) and starts far below head height (HEAD 1.75).
+  // Half 0.38 rather than the drawn 0.27 because addColliderCylinder builds a
+  // SQUARE box and the stop that matters is the face, not the corner:
+  // 0.38 + the player's 0.34, less the head bob's 0.02 of world X, leaves 0.430
+  // of air. Measured cost: 0.4 m2 of chapel floor and not one navigation edge.
+  addColliderCylinder(world, altarX + tx * 1.85, altarZ + tz * 1.85, 0.38, -0.4, 3.0,
+    'pump piston');
 
   const benchMatrices = [];
   const legMatrices = [];
