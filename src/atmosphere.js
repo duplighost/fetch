@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { RNG, TAU } from './util.js';
 import { CLEARING_BASIN } from './outside.js';
-import { projectUnderfalls, UNDERFALLS_SOLID_PAD } from './underfalls.js';
+import { projectUnderfalls, UNDERFALLS_SOLID_PAD, UNDERFALLS_WALL_MAX_PUSH } from './underfalls.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -1817,10 +1817,13 @@ function buildCaveDress(game, track, own, tickers) {
 
   // This was a wayfinding read carried by HUE — bright cyan mica against grey
   // rock, and the authored comment said out loud that it was meant to become a
-  // spatial memory. Alex is colourblind: to him it was grey mica on grey rock,
-  // which is no trail at all. Same idea, legal channel — the crystals GROW and
-  // BRIGHTEN the closer you get to the way out, so the read is "these are
-  // getting bigger, I am going the right way".
+  // spatial memory. (The note that used to sit here said Alex is colourblind. He
+  // is NOT, and he said so directly on 2026-08-18; the law it was reaching for
+  // stands on its own and is older than the mistake — this is a black cave lit
+  // by one carried skull, so hue is the channel the game itself destroys.)
+  // Same idea, legal channel — the crystals GROW and BRIGHTEN the closer you get
+  // to the way out, so the read is "these are getting bigger, I am going the
+  // right way".
   const crystalMat = own(new THREE.MeshStandardMaterial({
     color: 0x8f9ea1,
     emissive: 0x586d72,
@@ -1832,6 +1835,40 @@ function buildCaveDress(game, track, own, tickers) {
   const crystalMatrices = [];
   const crystalTints = [];
   const legs = Math.max(1, path.length - 1);
+  // The trail was authored at `halfW - 0.16`: INSIDE the lane edge, by
+  // construction, while the clamp will hold a pose out at `halfW - 0.04`. Built
+  // and audited for real against the full route union, not one leg at a time:
+  // all 71 crystals it drew had their own axis standing on a pose the clamp
+  // will hold, so you could put your body straight through every one of them.
+  // 26 of them stood closer to a legal camera than THE ONE PAD and 15 came
+  // inside the 0.2 near plane -- worst 0.007 m, on the spill descent at
+  // (67.95, 99.29), which is a marker that erases itself as you reach it. That
+  // is the walls-you-walk-through complaint, wearing a glow.
+  //
+  // After: 57 crystals, none inside the near plane, none breaking the pad, and
+  // the worst camera-to-crystal gap in the district is 0.501 m.
+  //
+  // Seat them against the rock instead. The seed is the smallest offset a
+  // straight corridor could ever allow -- the lane edge, plus the crystal's own
+  // reach, plus THE ONE PAD -- and clearOfRoute above is the authority that
+  // finishes the seat against the whole union, exactly as the wall skin does.
+  // ONE LAW, ONE HELPER; there is no second rule here.
+  //
+  // The drop rule is the one number that already answers this question for the
+  // flank walls: if the seat has to drift further than UNDERFALLS_WALL_MAX_PUSH
+  // to find rock, the nearest rock is not this lane's wall -- the sample is out
+  // in the open middle of a chamber -- and a marker flung at a wall it does not
+  // mark is worse than no marker. Pushing those anyway was measured and
+  // rejected: it lands three different legs on the same arc of the chapel rim,
+  // 4 cm apart, which destroys the size gradient that IS the legible read.
+  const seatCrystal = (x, z, dirX, dirZ, halfW, reach) => {
+    const off = halfW + reach + UNDERFALLS_SOLID_PAD;
+    const seedX = x + dirX * off, seedZ = z + dirZ * off;
+    const seat = clearOfRoute(seedX, seedZ, reach);
+    if (!seat) return null;
+    const drift = Math.hypot(seat.x - seedX, seat.z - seedZ);
+    return drift > UNDERFALLS_WALL_MAX_PUSH ? null : seat;
+  };
   for (let leg = 0; leg < path.length - 1; leg++) {
     const [ax, az, ay = 0, aw = 2.2] = path[leg];
     const [bx, bz, by = 0, bw = 2.2] = path[leg + 1];
@@ -1845,25 +1882,53 @@ function buildCaveDress(game, track, own, tickers) {
       const halfW = aw + (bw - aw) * routeT;
       // 0.88 of the chamber radius used to delete the trail across every
       // chamber -- roughly forty metres of it, including the whole chapel
-      // crossing. The trail therefore vanished at the biggest rooms, which are
-      // exactly the places the player has to choose a direction. Only the
-      // middle of a chamber is kept clear now, where the machines actually
-      // stand; the crystals continue along the route's edge past them.
+      // crossing. This early-out keeps only the middle of a chamber clear,
+      // where the machines actually stand.
+      //
+      // Be honest about what the seat rule below then does to the rest of a
+      // chamber: it drops those too, because out there the nearest rock is the
+      // 10.5 m chapel rim, not this lane's wall. The chapel crossing therefore
+      // goes unmarked -- 21 m of it -- and that is the deliberate trade. A
+      // crystal standing in the open middle of a room points nowhere, and it is
+      // precisely the one you walk through; the chapel is navigated by the
+      // flywheel, the pillars and the drowned aisle, which is what landmarks
+      // are for. The trail is a corridor device, and it picks up again on the
+      // far side. 43 of the 56 route samples still carry a marker.
       if (layout?.chambers?.some((chamber) =>
         Math.hypot(x - chamber.x, z - chamber.z) < chamber.r * 0.42)) continue;
       const t = (leg + d / len) / legs;                 // 0 at the mouth, 1 at the way out
       const grow = 0.52 + 0.95 * t;
       const bright = 0.38 + 0.62 * t;
       const sc = rng.range(0.10, 0.21) * grow;
-      crystalMatrices.push(compose(x + nx * (halfW - 0.16), floorY + rng.range(0.34, 1.16), z + nz * (halfW - 0.16),
-        rng.range(-0.38, 0.38), rng.range(0, TAU), rng.range(-0.38, 0.38), sc, sc * rng.range(2.0, 3.15), sc));
-      crystalTints.push(bright);
+      // Every random the old placement drew is still drawn, in the same order,
+      // whether or not this crystal survives the seat test. The wall skin, the
+      // teeth and the water passes share this stream; making a draw conditional
+      // on a placement decision would silently move all of them.
+      const spikeY = floorY + rng.range(0.34, 1.16);
+      const spikeRX = rng.range(-0.38, 0.38);
+      const spikeRY = rng.range(0, TAU);
+      const spikeRZ = rng.range(-0.38, 0.38);
+      const spikeSY = sc * rng.range(2.0, 3.15);
+      const spikeSeat = seatCrystal(x, z, nx, nz, halfW,
+        octahedronReach(spikeRX, spikeRY, spikeRZ, sc, spikeSY, sc));
+      if (spikeSeat) {
+        crystalMatrices.push(compose(spikeSeat.x, spikeY, spikeSeat.z,
+          spikeRX, spikeRY, spikeRZ, sc, spikeSY, sc));
+        crystalTints.push(bright);
+      }
       if (leg > 0 && rng.chance(0.38)) {
         const floorSc = sc * rng.range(0.62, 0.86);
-        crystalMatrices.push(compose(x - nx * (halfW - 0.28), floorY + floorSc * 1.1, z - nz * (halfW - 0.28),
-          rng.range(-0.2, 0.2), rng.range(0, TAU), rng.range(-0.2, 0.2),
-          floorSc, floorSc * rng.range(1.7, 2.65), floorSc));
-        crystalTints.push(bright * 0.9);
+        const clusterRX = rng.range(-0.2, 0.2);
+        const clusterRY = rng.range(0, TAU);
+        const clusterRZ = rng.range(-0.2, 0.2);
+        const clusterSY = floorSc * rng.range(1.7, 2.65);
+        const clusterSeat = seatCrystal(x, z, -nx, -nz, halfW,
+          octahedronReach(clusterRX, clusterRY, clusterRZ, floorSc, clusterSY, floorSc));
+        if (clusterSeat) {
+          crystalMatrices.push(compose(clusterSeat.x, floorY + floorSc * 1.1, clusterSeat.z,
+            clusterRX, clusterRY, clusterRZ, floorSc, clusterSY, floorSc));
+          crystalTints.push(bright * 0.9);
+        }
       }
     }
   }
@@ -2024,6 +2089,22 @@ function cloneTint(source, hex, fallback) {
   const m = source?.clone ? source.clone() : fallback();
   if (m.color) m.color.setHex(hex);
   return m;
+}
+
+// How far an octahedron(1) instance reaches from its own axis in XZ. Its
+// vertices sit on the SCALED axes, so a spike scaled three times taller than
+// it is wide sweeps far wider than its sx once it leans: the tall vertex
+// carries sy*sin(lean) sideways. Rotate the three axis vertices and measure
+// rather than guessing a radius from the scale.
+function octahedronReach(rx, ry, rz, sx, sy, sz) {
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
+  const v = new THREE.Vector3();
+  let reach = 0;
+  for (const axis of [[sx, 0, 0], [0, sy, 0], [0, 0, sz]]) {
+    v.set(axis[0], axis[1], axis[2]).applyQuaternion(q);
+    reach = Math.max(reach, Math.hypot(v.x, v.z));
+  }
+  return reach;
 }
 
 function compose(x, y, z, rx, ry, rz, sx, sy, sz) {
