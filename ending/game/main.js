@@ -454,6 +454,31 @@ function boot() {
   });
 
   setScreen('title');
+
+  // The same bargain FETCH makes with its own gates (window.__FETCH, src/main.js).
+  // Without a handle, nothing outside this file can ever assert that the coda
+  // actually plays -- only that its page returned 200. Read-only except hit(),
+  // which drives the identical path a real key press takes.
+  window.__CODA = {
+    get screen() { return S.screen; },
+    get part() { return { index: S.partIndex, id: S.song ? S.song.id : null, of: SONGS.length }; },
+    get hud() { return { score: S.hud.score, grin: S.hud.grin, combo: S.hud.combo }; },
+    get engine() { return S.engine; },
+    get notesLeft() { return S.engine ? S.engine.notes.filter((n) => n.judged === null).length : 0; },
+    get audio() {
+      const ctx = getAudioContext();
+      return { state: ctx ? ctx.state : 'none', time: ctx ? +ctx.currentTime.toFixed(3) : 0, muted: S.muted };
+    },
+    get clips() {
+      return [ui.el.clipClub, ui.el.clipStage, ui.el.clipSpin].map((v) => ({
+        src: (v.currentSrc || '').split('/').pop(),
+        playing: !v.paused, readyState: v.readyState,
+        shown: window.getComputedStyle(v).opacity !== '0',
+      }));
+    },
+    hit(lane) { hitLane(lane); return S.hud.score; },
+  };
+
   requestAnimationFrame(loop);
 }
 
