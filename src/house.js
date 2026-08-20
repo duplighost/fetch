@@ -2782,9 +2782,12 @@ function buildBasementPilot(game, B) {
 
   // A waist-to-ceiling brass line visibly belongs to the house-wide bell and
   // furnace circuit rather than reading as one more anonymous basement prop.
-  // It climbs the wall, turns EAST under the ceiling and runs toward the
-  // furnace, ending in a stub that enters the ground slab (-0.22..0 world)
-  // through the return-flight headroom gap — no more mid-air pipe ends.
+  // It climbs the wall and TEES: east and up into the ground slab (-0.22..0
+  // world) through the return-flight headroom gap, which is the house's own
+  // bell circuit, and west along the feed line below, which is the furnace's.
+  // The east stub used to be the whole of it — 1.35 m and gone into the
+  // ceiling — which is why he could not tell this fixture was wired to
+  // anything (screenshot 3, 2026-08-19).
   const riser = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 2.0, 8), brass);
   riser.position.set(0.42, 1.12, 0.08);
   pilot.add(riser);
@@ -2803,17 +2806,10 @@ function buildBasementPilot(game, B) {
   const back = new THREE.Mesh(new THREE.BoxGeometry(0.78, 1.22, 0.11), iron);
   back.position.set(0, 1.23, 0.03);
   pilot.add(back);
-  const bellHanger = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.023, 0.25, 6), brassEdge);
-  bellHanger.position.set(0, 2.04, -0.11);
-  pilot.add(bellHanger);
   const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.205, 0.28, 14), brass);
   cup.name = 'basement-pilot-servant-bell';
   cup.position.set(0, 1.82, -0.11);
   pilot.add(cup);
-  const bellMouth = new THREE.Mesh(new THREE.TorusGeometry(0.205, 0.025, 6, 20), brassEdge);
-  bellMouth.position.set(0, 1.675, -0.11);
-  bellMouth.rotation.x = Math.PI / 2;
-  pilot.add(bellMouth);
   const clapperStem = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.16, 6), bellDark);
   clapperStem.position.set(0, 1.61, -0.11);
   pilot.add(clapperStem);
@@ -2835,16 +2831,44 @@ function buildBasementPilot(game, B) {
   flame.position.set(0, 1.08, -0.18);
   flame.scale.set(0.72, 1.42, 0.72);
   pilot.add(flame);
-  for (let i = -2; i <= 2; i++) {
-    const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.015, 0.66, 6), brass);
-    guard.position.set(i * 0.095, 1.0, -0.24);
-    pilot.add(guard);
+  // THE CAGE IS ONE OBJECT, AND SO IS THE TRIM. Five guard bars, two cage
+  // rings, a hanger and a bell mouth were NINE draw calls for a rigid basket
+  // that has never been animated by anything — the same eighteen-draw spider
+  // the web pass just paid off. Composed by hand and merged: two draws, the
+  // same silhouette to the pixel, and the seven it frees are what buy the feed
+  // line below, in the district with the least headroom in the game.
+  {
+    const bars = [];
+    for (let i = -2; i <= 2; i++) {
+      const g2 = new THREE.CylinderGeometry(0.012, 0.015, 0.66, 6);
+      g2.translate(i * 0.095, 1.0, -0.24);
+      bars.push(g2);
+    }
+    const cage = new THREE.Mesh(mergeGeometries(bars), brass);
+    cage.name = 'basement-pilot-cage-bars';
+    pilot.add(cage);
   }
-  for (const y of [0.67, 1.33]) {
-    const cageRing = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.018, 6, 18), brassEdge);
-    cageRing.position.set(0, y, -0.2);
-    cageRing.rotation.x = Math.PI / 2;
-    pilot.add(cageRing);
+  {
+    // all indexed (Cylinder + Torus). The clapper stays its own mesh: a
+    // DodecahedronGeometry is NON-indexed and mergeGeometries returns null on
+    // a mixed list, which would delete the bell silently.
+    const trimParts = [];
+    for (const y of [0.67, 1.33]) {
+      const g2 = new THREE.TorusGeometry(0.235, 0.018, 6, 18);
+      g2.rotateX(Math.PI / 2);
+      g2.translate(0, y, -0.2);
+      trimParts.push(g2);
+    }
+    const hanger = new THREE.CylinderGeometry(0.018, 0.023, 0.25, 6);
+    hanger.translate(0, 2.04, -0.11);
+    trimParts.push(hanger);
+    const mouth = new THREE.TorusGeometry(0.205, 0.025, 6, 20);
+    mouth.rotateX(Math.PI / 2);
+    mouth.translate(0, 1.675, -0.11);
+    trimParts.push(mouth);
+    const trim = new THREE.Mesh(mergeGeometries(trimParts), brassEdge);
+    trim.name = 'basement-pilot-brass-trim';
+    pilot.add(trim);
   }
   // THE PILOT IS COLD. It used to be a second, fully equal flame source — a
   // duplicate faucet on the same ateFlame flag the guest candle grants,
@@ -2881,6 +2905,184 @@ function buildBasementPilot(game, B) {
     seg(riserFire, 0.0, 0.5);
     seg(elbowFire, 0.5, 0.72);
     seg(headerFire, 0.72, 1.0);
+  });
+
+  // ------------------------------------------------------- THE FEED LINE
+  // HIS NOTE, 2026-08-19: "can we make this bell at the bottom of the stairs at
+  // the first basement look like its wired to the rest of the puzzle."
+  //
+  // It already IS the puzzle — this pilot is the flame the furnace refuses to
+  // wake without. What was missing was the sentence. The brass line climbed the
+  // wall, ran 1.35 m east and vanished into the ground slab, so a fixture that
+  // gates the whole basement pointed at nothing a player can walk to.
+  //
+  // Round nine answered exactly this complaint in the ossuary ("the basket
+  // thing that you throw the skull into clearly wires back to activate it"):
+  // lay the wire at BUILD time, along the route the player actually walks, in
+  // ONE merged geometry on ONE material — one draw — so the causality is
+  // readable before it is ever used. Same vocabulary here, and its two traps:
+  //   * NOT world.box. A merged shell strip has no runtime handle and can never
+  //     change state, and the ossuary proved a wire nobody can read is not a
+  //     wire. Its own mesh, its own material, one draw.
+  //   * its lowest point (the union on the furnace crown, geometry min.y
+  //     -1.385) sits BELOW B + 2.42 = -0.58, so buildPumpGallery's upper-sector
+  //     culler — which zeroes the world layer of everything whose bounds are
+  //     entirely above the basement ceiling — never files it and can never
+  //     blank it. tests/legibility-regression.mjs pins that, and the sleeve
+  //     below is the one object here that MOVES, so it is seated on the route
+  //     at build time rather than left at world (0,0,0), where its bounds
+  //     (min.y -0.075) would clear that cut and be filed.
+  //
+  // It follows the walk, not the crow: west along the wall the bell hangs on,
+  // over the storeroom door, across the storeroom, over the heavy boiler door,
+  // and east to a union on the furnace crown. It cannot run east from the
+  // header — the basement has no ceiling at x 8..12, z 2..6 or x 4..8, z 4..6
+  // (the stair shaft), so an east run would float through open air the whole
+  // way. Both crossings land dead on the doorway centrelines from the tables:
+  // x -1.00 on the z=2 wall, z -3.00 on the x=4 wall. Twelve legs, 28.06 m.
+  //
+  // CLEARANCES, arithmetic off the same tables (tools/probe-feed-line.mjs
+  // replays it) and tight enough to write down: the -0.88 legs hang 0.455 m
+  // over a 1.62 m eye and 0.285 m under the -0.55 ceiling; the two lintel
+  // crossings at -0.66 clear the door heads at floor + DOOR_H = -0.75 by
+  // 0.045 m, so a DOOR_H change would drop this wire across an open doorway;
+  // and on the crown the tightest piece of the union stands 0.281 m clear of
+  // the flue collar and 0.422 m clear of the flue itself.
+  const FEED = [
+    new THREE.Vector3(3.77, B + 2.12, 5.80),    //  0 tee at the riser top
+    new THREE.Vector3(-1.00, B + 2.12, 5.80),   //  1 west along the bell's own wall
+    new THREE.Vector3(-1.00, B + 2.34, 5.80),   //  2 up to lintel height
+    new THREE.Vector3(-1.00, B + 2.34, 1.80),   //  3 over the storeroom door, through the wall
+    new THREE.Vector3(-1.00, B + 2.12, 1.80),   //  4
+    new THREE.Vector3(-1.00, B + 2.12, -3.00),  //  5 south across the storeroom
+    new THREE.Vector3(3.30, B + 2.12, -3.00),   //  6 east to the heavy door
+    new THREE.Vector3(3.30, B + 2.34, -3.00),   //  7 up to lintel height
+    new THREE.Vector3(4.70, B + 2.34, -3.00),   //  8 over the heavy door, through the wall
+    new THREE.Vector3(4.70, B + 2.12, -3.00),   //  9
+    new THREE.Vector3(11.05, B + 2.12, -3.00),  // 10 east across the boiler room
+    new THREE.Vector3(11.05, B + 2.12, -1.90),  // 11 north, over the furnace
+    new THREE.Vector3(11.05, B + 1.66, -1.90),  // 12 down onto the crown (top face -1.35)
+  ];
+  const FEED_SECTION = 0.09;             // thick enough to survive the mip chain
+  const FEED_CUM = [0];
+  for (let i = 1; i < FEED.length; i++) {
+    FEED_CUM.push(FEED_CUM[i - 1] + FEED[i].distanceTo(FEED[i - 1]));
+  }
+  const FEED_LEN = FEED_CUM[FEED_CUM.length - 1];
+  const FEED_TIME = 3.4;
+  // Where the pulse IS at time t, and when it reaches a waypoint. The knock
+  // ladder below is driven from this and never from hand-typed delays: the
+  // first cut's numbers landed the furnace knock 0.444 s ahead of the light
+  // travelling the same wire, which is two events again instead of one
+  // sentence, and that is the whole defect being fixed here.
+  const feedArrival = (wp) => FEED_TIME * FEED_CUM[wp] / FEED_LEN;
+  const _feedAt = new THREE.Vector3();
+  const feedPointAt = (s) => {
+    const d = clamp(s, 0, FEED_LEN);
+    let i = 1;
+    while (i < FEED_CUM.length - 1 && FEED_CUM[i] < d) i++;
+    const span = Math.max(1e-6, FEED_CUM[i] - FEED_CUM[i - 1]);
+    return _feedAt.copy(FEED[i - 1]).lerp(FEED[i], (d - FEED_CUM[i - 1]) / span);
+  };
+
+  // Its OWN material, so the value sits clear of the stone it hangs on and so
+  // the whole run can warm when the pulse passes. One material, one mesh, one
+  // draw — paid for by the nine-mesh bell trim merged into two above.
+  const feedMat = new THREE.MeshBasicMaterial({ color: 0x8c6d31, toneMapped: false });
+  const feedParts = [];
+  const feedBox = (cx, cy, cz, w, h, d) => {
+    const g2 = new THREE.BoxGeometry(w, h, d);
+    g2.translate(cx, cy, cz);
+    feedParts.push(g2);
+  };
+  {
+    const S = FEED_SECTION;
+    // one box per leg, over-long by half a section at each end so the turns
+    // mitre instead of leaving a corner gap
+    for (let i = 1; i < FEED.length; i++) {
+      const a = FEED[i - 1], b = FEED[i];
+      feedBox((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2,
+        Math.abs(b.x - a.x) + S, Math.abs(b.y - a.y) + S, Math.abs(b.z - a.z) + S);
+    }
+    // CLEATS AND HANGERS: a wire somebody FITTED, not a line drawn. The rhythm
+    // is what makes twenty-eight metres of pipe read as ONE object at a glance
+    // instead of a seam in the stone (the ossuary's cleats do the same job),
+    // and the straps up to the ceiling slab are what stop it floating. No more
+    // than 2 m apart, and only on the -0.88 legs: the lintel crossings at
+    // -0.66 have 0.065 m of headroom, which is not enough for a strap.
+    const CEILING = HOUSE_TABLES.levels.basement.ceil;
+    for (let i = 1; i < FEED.length; i++) {
+      const a = FEED[i - 1], b = FEED[i];
+      if (a.y !== b.y || Math.abs(a.y - (B + 2.12)) > 1e-6) continue;
+      const len = a.distanceTo(b);
+      const n = Math.max(0, Math.ceil(len / 2.0) - 1);
+      const alongX = Math.abs(b.x - a.x) > Math.abs(b.z - a.z);
+      for (let k = 1; k <= n; k++) {
+        const t = k / (n + 1);
+        const cx = a.x + (b.x - a.x) * t, cz = a.z + (b.z - a.z) * t;
+        feedBox(cx, a.y, cz, alongX ? 0.07 : 0.2, 0.14, alongX ? 0.2 : 0.07);
+        feedBox(cx, (a.y + 0.03 + CEILING) / 2, cz, 0.05, CEILING - a.y - 0.03, 0.05);
+      }
+    }
+    // the tee at the riser top: east and up is the house's bell circuit, west
+    // is the furnace's, and two pipes crossing bare reads as an accident
+    feedBox(FEED[0].x, FEED[0].y, FEED[0].z, 0.15, 0.15, 0.15);
+    // escutcheons on both faces of both walls it penetrates, sized to the
+    // 0.20 m header band between the door head (-0.75) and the ceiling
+    for (const z of [1.87, 2.13]) feedBox(-1.0, B + 2.34, z, 0.18, 0.18, 0.03);
+    for (const x of [3.87, 4.13]) feedBox(x, B + 2.34, -3.0, 0.03, 0.18, 0.18);
+    // the union, landed on the furnace crown (world x 10.685..11.715,
+    // z -2.115..-0.885, top face -1.35): a flange bolted flat to the plate,
+    // a gland above it, and the two bolts that hold it down
+    feedBox(11.05, B + 1.675, -1.9, 0.34, 0.05, 0.3);
+    feedBox(11.05, B + 1.76, -1.9, 0.16, 0.14, 0.16);
+    for (const dx of [-0.13, 0.13]) feedBox(11.05 + dx, B + 1.69, -1.9, 0.05, 0.06, 0.05);
+  }
+  const feedMesh = new THREE.Mesh(mergeGeometries(feedParts), feedMat);
+  feedMesh.name = 'basement pilot feed line';
+  feedMesh.receiveShadow = true;
+  scene.add(feedMesh);
+  game.basementPilotFeed = feedMesh;     // the legibility gate toggles this
+
+  // THE PULSE. Two walls hide most of the run from the bell — only the first
+  // 4.77 m of 28.06 m is even in frame from where he was standing — and the
+  // lit wire's own lift is 1.22x, under the 1.6x the ossuary conduit holds. So
+  // the MOTION is what has to carry it (law 4: value, motion, timing, never
+  // hue): one bright sleeve, drawn only while it is walking, and the knock
+  // ladder in the ignition below walking with it.
+  const feedSleeve = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.15),
+    new THREE.MeshBasicMaterial({ color: 0xf0b45a, toneMapped: false }));
+  feedSleeve.name = 'basement pilot feed pulse';
+  feedSleeve.position.copy(FEED[0]);     // NOT world (0,0,0) — see the culler note above
+  feedSleeve.visible = false;
+  scene.add(feedSleeve);
+  game.basementPilotPulse = feedSleeve;
+
+  const feed = { t: -1 };
+  // ONE ASSIGNMENT SEATS IT. `travel` above starts at -1 and its ticker
+  // early-outs on that, so nothing ever seated the brass line's lit look from
+  // the flag — harmless today, because an in-session respawn keeps flags AND
+  // materials, but the ossuary kept restoreArm() for exactly this. A wire that
+  // reads dead over a burning pilot is the same defect as a wire nobody sees.
+  const seatFeed = (live) => {
+    feed.t = live ? FEED_TIME : -1;
+    game.basementFeedLive = live;
+    feedMat.color.copy(live ? BRASS_WARM : BRASS_BASE);
+    feedSleeve.visible = false;
+  };
+  seatFeed(false);
+  game.tickers.push((dt) => {
+    if (feed.t < 0 || feed.t >= FEED_TIME) return;
+    feed.t = Math.min(FEED_TIME, feed.t + dt);
+    const k = feed.t / FEED_TIME;
+    feedMat.color.copy(BRASS_BASE).lerp(BRASS_WARM, k);
+    if (feed.t >= FEED_TIME) {
+      feedSleeve.visible = false;
+      game.basementFeedLive = true;
+      return;
+    }
+    feedSleeve.position.copy(feedPointAt(k * FEED_LEN));
+    feedSleeve.visible = true;
   });
 
   const riserTop = new THREE.Vector3(3.77, B + 2.12, 5.8);
@@ -2921,9 +3123,25 @@ function buildBasementPilot(game, B) {
       game.flag('basementPilotUsed');
       flame.visible = true;
       travel.t = 0;
+      feed.t = 0;
       game.impact('break', at || pos);
       game.audio.fireRoar({ pos, gain: 0.34, rate: 1.2 });
       game.after(0.5, () => game.audio.metalDrop({ pos: riserTop, gain: 0.42, rate: 1.1 }), { global: true });
+      // THE LINE ANNOUNCES WHERE IT GOES. Knocks walk the run away from him —
+      // over the storeroom door, across the storeroom, through the boiler door
+      // — and the last one lands on the furnace. Two walls hide the pipe from
+      // where he is standing; nothing hides the sound. The delays are the
+      // pulse's OWN arrival times, so the knock and the light reach the furnace
+      // together instead of the knock beating it there by 0.444 s, which is
+      // what the hand-typed first cut did.
+      [1, 3, 5, 8, 11].forEach((wp, i) => {
+        game.after(feedArrival(wp), () => game.audio.knock({
+          pos: FEED[wp], gain: 0.5 - i * 0.03, rate: 0.9 - i * 0.06,
+        }), { global: true });
+      });
+      game.after(FEED_TIME + 0.05, () => game.audio.metalDrop({
+        pos: FEED[FEED.length - 1], gain: 0.5, rate: 0.85,
+      }), { global: true });
       return 'return';
     },
   });
@@ -2938,6 +3156,10 @@ function buildBasementPilot(game, B) {
       this.pulse = 1.35;
       game.audio.glassTink({ pos: wick.getWorldPosition(new THREE.Vector3()), gain: 0.5, rate: 0.62 });
     },
+    // tools and tests/legibility-regression.mjs walk the feed pulse from here,
+    // the way game.ossuaryConduit exists to be toggled and measured. Gameplay
+    // starts it from the ignition above, never from this.
+    startFeedPulse() { feed.t = 0; },
   };
   // Deterministic observability, same precedent as game.voidDoorGlow: the
   // cold-pilot breath round twelve added lives entirely in this descriptor,
@@ -2947,6 +3169,9 @@ function buildBasementPilot(game, B) {
   game.basementPilot = state;
   game.tickers.push((dt, time) => {
     const lit = game.flags.has('pilotLit');
+    // A load, or a gate that force-sets the flag, would otherwise leave the
+    // feed line cold over a burning pilot. Seat it whole in one assignment.
+    if (lit && feed.t < 0) seatFeed(true);
     state.pulse = Math.max(0, state.pulse - dt);
     state.coldCd = Math.max(0, state.coldCd - dt);
     flame.scale.set(0.7, 1.32 + Math.sin(time * 15) * 0.13, 0.7);
@@ -3319,7 +3544,16 @@ function basementAct(game) {
     // furnace scoreboard, state 1: a lit pilot breathes in the door slits —
     // slow slit swell + ember brightness amplitude, readable before any
     // draft exists (motion + brightness, never hue alone)
-    const breath = game.flags.has('pilotLit') ? 0.5 + 0.5 * Math.sin(t * 1.6) : 0;
+    //
+    // THE FAR END OF THE WIRE. This used to fire the instant pilotLit flipped,
+    // two rooms away, with nothing connecting the two events — which is exactly
+    // why he could not tell the bell was wired to anything. It waits for the
+    // feed line's pulse to arrive now, 3.4 s of travel away. COSMETIC ONLY:
+    // hasDraft, incineratorAwake, the ready-glow and the whole flag chain still
+    // key on pilotLit and are untouched, and buildBasementPilot's own ticker
+    // seats basementFeedLive from pilotLit on the next frame, so a restore or a
+    // gate that force-sets the flag still gets a breathing furnace.
+    const breath = game.basementFeedLive ? 0.5 + 0.5 * Math.sin(t * 1.6) : 0;
     for (const slit of slits) slit.scale.y = 1 + breath * 0.9;
     const lit = clamp(glow.intensity / 1.3, 0.05, 2.2) + breath * 0.3;
     emberMat.color.setRGB(1 * lit * 0.55 + 0.03, 0.3 * lit * 0.45 + 0.01, 0.08 * lit * 0.3);

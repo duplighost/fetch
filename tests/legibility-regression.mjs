@@ -48,6 +48,26 @@ const FLOORS = {
   'the key in the grass, from four metres': [0.01, 4.0],
 };
 
+// NOT YET MEASURED. Round thirteen laid the basement pilot's feed line and
+// added the three reads below, but the agents who wrote them were forbidden to
+// launch a browser, so nobody has seen a number for them yet. A floor somebody
+// INVENTED is worse than no floor -- the ossuary wire is the cautionary tale,
+// two cuts that measured 0.00% of the frame and would have shipped -- so these
+// report their measurement and do not fail on it. The structural assertions on
+// the feed line further down DO fail, because those are arithmetic.
+//
+// FIRST PERSON TO RUN THIS: copy each measured pair out of the console into
+// FLOORS above, under the measurement with room to move, and delete it here.
+// If the corridor read comes in below the ossuary conduit's own 0.35% / 1.6x,
+// the escalation order in src/house.js is FEED_SECTION 0.09 -> 0.12, then
+// feedMat's colour 0x8c6d31 -> 0xa9853d, then the cleat spacing 2.0 m -> 1.4 m.
+// Never a light.
+const UNMEASURED = new Set([
+  'the pilot feed line, from the foot of the return flight',
+  'the pilot feed at the furnace, from the boiler door',
+  'the feed pulse crossing the storeroom',
+]);
+
 const server = await ensureServer();
 const browser = await launchBrowser();
 const { page, errors } = await openPage(browser, `${URL_BASE}/?test=1&mute=1`);
@@ -130,6 +150,50 @@ const result = await page.evaluate(() => {
   };
 
   F.start();
+
+  // ---- 0. the basement pilot's feed line ---------------------------------
+  // Screenshot 3, 2026-08-19: "can we make this bell at the bottom of the
+  // stairs at the first basement look like its wired to the rest of the
+  // puzzle." The wire is laid at build time and has to be readable BEFORE it
+  // is ever used, so the first two poses are cold-pilot poses: the walk-up in
+  // the corridor from where he was standing, and the far end landing on the
+  // furnace crown seen from just inside the boiler door.
+  //
+  // IF THE FOUR FLOORS ABOVE SHIFT because of this basement visit, move this
+  // block to the END of the evaluate. Never lower a floor to make it pass.
+  F.teleport('basement');
+  F.stepWith(0.25, {}, false);
+  g.enemies.clear();          // a wandering dropcloth walker would pollute the diff
+  g.skull.holdNow();
+  const pilotFeed = g.basementPilotFeed;
+  read('the pilot feed line, from the foot of the return flight', pilotFeed, () => {
+    seat(4.30, 4.95, -3.0);
+    lookAt(0.5, -0.86, 5.80);
+    F.stepWith(0.05, {}, false);
+  });
+  snap('basement-feed-corridor');
+  read('the pilot feed at the furnace, from the boiler door', pilotFeed, () => {
+    seat(5.20, -3.00, -3.0);
+    lookAt(11.05, -1.30, -1.90);
+    F.stepWith(0.05, {}, false);
+  });
+  snap('basement-feed-furnace');
+  // AND THE PULSE, which is the half of this the two frames above cannot
+  // reach. From the bell only 4.77 m of the 28.06 m run is in frame, and the
+  // wire's own lit lift is 1.22x against the 1.6x the ossuary conduit holds,
+  // so the travelling sleeve and the knock ladder are what carry law 4. Caught
+  // at t = 1.40 s, where it is coming down the storeroom's west leg.
+  g.basementPilot.startFeedPulse();
+  F.stepWith(1.35, {}, false);
+  read('the feed pulse crossing the storeroom', g.basementPilotPulse, () => {
+    seat(1.60, 0.60, -3.0);
+    lookAt(-1.00, -0.88, -0.54);
+    F.stepWith(0.05, {}, false);
+  });
+  snap('basement-feed-pulse');
+  pilotFeed.geometry.computeBoundingBox();
+  const feedMinY = pilotFeed.geometry.boundingBox.min.y;
+
   F.teleport('graveyard');
   F.stepWith(0.3, {}, false);
   g.skull.holdNow();
@@ -221,7 +285,12 @@ const result = await page.evaluate(() => {
   });
   snap('ossuary-conduit');
 
-  return { measured, shots, announce, conduitInRouteRoot: !!conduit && conduit.parent === g.ossuary.root };
+  return {
+    measured, shots, announce,
+    conduitInRouteRoot: !!conduit && conduit.parent === g.ossuary.root,
+    feedMinY,
+    feedIsInterior: g.houseInteriorRoots.includes(pilotFeed),
+  };
 });
 
 await browser.close();
@@ -231,6 +300,11 @@ const failures = [];
 console.log('legibility, measured (pctChanged = share of frame, ratio = brightness against what it hides):\n');
 for (const row of result.measured) {
   const floor = FLOORS[row.label];
+  if (!floor && UNMEASURED.has(row.label)) {
+    console.log(`  ----  ${row.label.padEnd(46)} ${String(row.pctChanged).padStart(6)}% of frame  ${String(row.contrast).padStart(6)}x contrast`
+      + `   (ratio ${row.ratio}x, NO FLOOR YET -- write this pair into FLOORS)`);
+    continue;
+  }
   const ok = floor && row.pctChanged >= floor[0] && row.contrast >= floor[1];
   if (!ok) failures.push(`${row.label}: ${row.pctChanged}% at ${row.contrast}x contrast (floor ${floor ? `${floor[0]}% / ${floor[1]}x` : 'MISSING'})`);
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${row.label.padEnd(46)} ${String(row.pctChanged).padStart(6)}% of frame  ${String(row.contrast).padStart(6)}x contrast`
@@ -238,6 +312,16 @@ for (const row of result.measured) {
 }
 if (!result.conduitInRouteRoot) failures.push('the ossuary conduit is not inside routeRoot (the seal will hide it)');
 console.log(`\n  ${result.conduitInRouteRoot ? 'PASS' : 'FAIL'}  the ossuary conduit lives inside routeRoot, where the seal cannot hide it`);
+// The basement's version of the same question. buildPumpGallery zeroes the
+// world layer of every mesh whose bounds sit ENTIRELY above B + 2.42 = -0.58
+// while the player is deep in the western works, so a feed line that never
+// reaches below that line is a wire the culler is free to blank one day.
+if (!(result.feedMinY <= -0.58)) {
+  failures.push(`the basement feed line's lowest point is ${result.feedMinY} — above the upper-sector cut at -0.58, so buildPumpGallery's culler will blank it`);
+}
+console.log(`  ${result.feedMinY <= -0.58 ? 'PASS' : 'FAIL'}  the basement feed line reaches below the upper-sector cut (min.y ${result.feedMinY}), where the culler cannot file it`);
+if (!result.feedIsInterior) failures.push('the basement feed line is not a house interior root (it will still be drawn from the graveyard)');
+console.log(`  ${result.feedIsInterior ? 'PASS' : 'FAIL'}  the basement feed line is a house interior root, so the graveyard retires it`);
 
 // THE ANNOUNCE. Pixels are only half of legibility, and for the key tree they
 // are the half that was never wrong: the limb reads fine when you look at it.
