@@ -938,6 +938,11 @@ function addFloorAndShell(game, layout) {
   //    — gets the tallest.
   {
     const marks = [];
+    // The cone's base radius, shared by the seating test below and the drawn
+    // geometry, so the two can never drift apart. The cone is WIDEST at the
+    // floor and the player capsule stands on that floor, so this -- not the
+    // narrower slice at EYE -- is the footprint that has to clear the lane.
+    const markR = 0.34;
     const main = layout.main;
     for (let i = 1; i < main.length - 1; i++) {
       const a = main[i - 1], b = main[i], c = main[i + 1];
@@ -949,14 +954,58 @@ function addFloorAndShell(game, layout) {
       const bis = new THREE.Vector2(inD.x - outD.x, inD.y - outD.y);
       if (bis.lengthSq() < 1e-6) continue;
       bis.normalize();
-      const off = b.w + 1.1;
+      // THE MARKER IS OFFSET AGAINST THIS NODE'S OWN w, BUT THE FLOOR IT
+      // STANDS ON IS THE UNION'S. Both chapel-aisle nodes carry w 4.75 while
+      // the chapel disc reaches 10.50, so b.w + 1.1 planted two pale cones on
+      // open chapel floor. The east one's axis sat 0.187 m INSIDE the walkable
+      // union and the nearest pose the clamp will hold was 0.337 m inside the
+      // cone: you stand in it. The west one's axis was 0.158 m OUTSIDE the
+      // disc and still failed, because a cone has a radius -- its 0.34 m base
+      // overlapped a legal stand by 0.161 m. So seat outward against the union
+      // until the whole base circle clears UNDERFALLS_SOLID_PAD.
+      //
+      // Measured (tools/probe-wayfinding-tier.mjs), distance from the drawn
+      // cone to the nearest pose the clamp holds, head bob included:
+      //   pump approach      off 5.70 (+0.00)    0.783 ->  0.783 m
+      //   chapel west aisle  off 6.63 (+0.78)   -0.161 ->  0.449 m
+      //   chapel east aisle  off 6.97 (+1.12)   -0.337 ->  0.451 m
+      //   east ambulatory    off 4.10 (+0.00)    0.791 ->  0.791 m
+      // Nothing dropped: all four turns keep their landmark. Both new seats
+      // land 11.27 m from the chapel centre, inside the 11.75 m half-extent
+      // of that chamber's structural cap, and the two cones are 4.28 m and
+      // 4.45 m against a cap underside at 5.82 m -- so moving them outward
+      // pokes nothing through the shell. What it does do is stand them at
+      // the chapel WALL rather than on the chapel FLOOR, which is what
+      // "outside of the turn" was supposed to mean in the first place.
+      const base = b.w + 1.1;
+      let off = base, seated = false;
+      // 1.5 m is the whole budget. Past that the cone is marking the far side
+      // of a different room rather than this turn. Deepest seat needed: 1.12.
+      for (let push = 0; push <= 1.5 + 1e-9; push += 0.02) {
+        off = base + push;
+        const mx = b.x + bis.x * off, mz = b.z + bis.y * off;
+        let worst = Infinity;
+        for (let k = 0; k < 8; k++) {
+          const th = k * Math.PI / 4;
+          const hit = projectUnderfalls(layout,
+            mx + Math.cos(th) * markR, mz + Math.sin(th) * markR);
+          if (hit && hit.clearance < worst) worst = hit.clearance;
+        }
+        const axis = projectUnderfalls(layout, mx, mz);
+        if (axis && axis.clearance < worst) worst = axis.clearance;
+        if (worst >= UNDERFALLS_SOLID_PAD) { seated = true; break; }
+      }
+      // A marker that cannot get out of the lane is a rock in the road. The
+      // turn would keep its geometry and lose its landmark -- never gain an
+      // obstacle. No turn needs this today; the branch is the guarantee.
+      if (!seated) continue;
       marks.push({
         x: b.x + bis.x * off, y: b.y, z: b.z + bis.y * off,
         h: 4.2 + Math.min(1.0, (turn - 45) / 90),
       });
     }
     if (marks.length) {
-      const geo = new THREE.ConeGeometry(0.34, 1, 6);
+      const geo = new THREE.ConeGeometry(markR, 1, 6);
       geo.translate(0, 0.5, 0);
       const mesh = new THREE.InstancedMesh(geo, paleMark, marks.length);
       const m4 = new THREE.Matrix4();
@@ -974,8 +1023,10 @@ function addFloorAndShell(game, layout) {
     }
   }
 
-  // 2. Paired pale jambs where the main route crosses a chamber rim: rooms
-  //    get doorways, so entering and leaving one reads as an event.
+  // 2. Paired pale jambs at every chamber rim crossing that can honestly
+  //    carry them, so entering and leaving a room reads as an event. Three
+  //    of the four chambers on the main route can; the drowned pump chapel
+  //    cannot, and the comment on the seating loop says why.
   {
     const jambs = [];
     for (const seg of layout.mainSegments) {
@@ -994,8 +1045,81 @@ function addFloorAndShell(game, layout) {
           const y = lerp(seg.a.y, seg.b.y, t);
           const w = lerp(seg.a.w, seg.b.w, t);
           const nx = seg.dz / seg.length, nz = -seg.dx / seg.length;
+          // THE SAME BUG AS THE SLUICE GATE, ONE FUNCTION AWAY: the jamb is
+          // offset against the SEGMENT's w, but at a chamber rim the floor
+          // underneath is the chamber DISC. Three of the fourteen jambs stood
+          // on walkable floor -- (20.338, 44.972) union clearance -1.320,
+          // (29.480, 48.925) -1.461, (35.209, 55.472) -2.532, that last one
+          // 2.53 m inside main#6, a corridor its own crossing has nothing to
+          // do with. For all three the nearest pose the clamp will hold was
+          // 0.000 m away: you stand inside a pale post, and being the
+          // brightest thing in the district it is the one you walk at.
+          // The other eleven cleared by only 0.357..0.396 m: every one under
+          // the pad, though none of those eleven reached the 0.24 m at which
+          // the near plane eats a face outright. Only the three did.
+          //
+          // Seat outward until the whole footprint clears the pad. The ten
+          // survivors need 0.08..0.10 m of push and end 0.442..0.465 m from
+          // the nearest legal stand -- measured twice, by
+          // tools/probe-wayfinding-tier.mjs (a model of this loop) and by
+          // tools/verify-wayfinding-tier.mjs (which executes this loop's own
+          // source text and reads the instance matrices back).
+          //
+          // DROPPED: both drowned-pump-chapel crossings, all four jambs.
+          // Their offsets would have to pass 2.4 m to escape, because the
+          // chapel rim is not a pinch -- the corridor just widens into the
+          // room, and there is no doorway there to frame. A doorway is a
+          // PAIR, so a crossing is all-or-nothing exactly the way the sluice
+          // gate drops posts, lintel and tooth bar together: one lone pale
+          // post beside the route IS the "rocks and random things" this tier
+          // exists to stop being. Ten jambs, and the intake apse, overflow
+          // gallery and hatch cistern still get their doorways; the chapel
+          // is announced by the pale cone on its turn instead.
+          const pair = [];
           for (const side of [-1, 1]) {
-            jambs.push({ x: x + nx * side * (w + 0.55), y, z: z + nz * side * (w + 0.55) });
+            const base = w + 0.55;
+            let off = base, seated = false;
+            // 0.6 m -- two post widths -- is the budget. Further out it is no
+            // longer framing this doorway, it is a stone standing near one.
+            for (let push = 0; push <= 0.6 + 1e-9; push += 0.02) {
+              off = base + push;
+              const jx = x + nx * side * off, jz = z + nz * side * off;
+              // The instance is composed with an identity quaternion, so the
+              // 0.3 x 0.3 post is WORLD-axis-aligned however the segment runs.
+              // Sample its real square; a turned one understates the corners.
+              let worst = Infinity;
+              for (const u of [-0.15, 0, 0.15]) {
+                for (const v of [-0.15, 0, 0.15]) {
+                  const hit = projectUnderfalls(layout, jx + u, jz + v);
+                  if (hit && hit.clearance < worst) worst = hit.clearance;
+                }
+              }
+              if (worst >= UNDERFALLS_SOLID_PAD) { seated = true; break; }
+            }
+            if (!seated) { pair.length = 0; break; }
+            pair.push({ x: x + nx * side * off, y, z: z + nz * side * off });
+          }
+          jambs.push(...pair);
+          // AND PUT THEM ON THE LEDGER. layout.solids is what
+          // tests/underfalls-expansion.mjs walks when it asks whether any
+          // pose the clamp accepts stands inside a drawn face. Nothing in
+          // this district is a collider, so a fixture missing from that
+          // ledger is a fixture no gate can see -- which is exactly how
+          // three jambs survived round thirteen standing on open floor
+          // while the flank walls and gate posts beside them got fixed.
+          // The post is composed with an identity quaternion, so its face
+          // IS world-axis-aligned: nx/tx are the world axes and 0.15 is the
+          // exact half-extent, not an AABB's overstatement.
+          // The cones cannot join it -- the ledger stores rectangles, and a
+          // 0.34 m cone squared off reaches 0.481 m at corners it does not
+          // have, which would fail the pin on geometry that is not there.
+          // tools/verify-wayfinding-tier.mjs measures them as circles
+          // against every clamp-legal pose in the union and exits nonzero.
+          for (const p of pair) {
+            (layout.solids || (layout.solids = [])).push({
+              x: p.x, z: p.z, nx: 1, nz: 0, tx: 0, tz: 1,
+              halfN: 0.15, halfT: 0.15,
+            });
           }
         }
       }
