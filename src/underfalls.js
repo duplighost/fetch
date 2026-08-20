@@ -6,7 +6,7 @@
 // Every floor sample and lateral clamp comes from one route description so a
 // beautiful ledge can never secretly be a hole.
 import * as THREE from 'three';
-import { clamp, lerp, smoothstep, TAU } from './util.js';
+import { clamp, lerp, RNG, smoothstep, TAU } from './util.js';
 
 const MAIN_LOCAL = Object.freeze([
   Object.freeze({ x: 0,  z: 22,  y: 0.00, w: 2.30, name: 'stone veil' }),
@@ -525,7 +525,13 @@ function addFloorAndShell(game, layout) {
       const z = lerp(seg.a.z, seg.b.z, t);
       const y = lerp(seg.a.y, seg.b.y, t);
       const w = lerp(seg.a.w, seg.b.w, t);
-      world.box(M.rock, x, y - 0.11, z, w * 2.0, 0.22, seg.length / n + 0.08, yaw);
+      // 12 mm under the chamber discs (which top out at chamber.y exactly).
+      // These strips run THROUGH every chamber, so at the same y they shared a
+      // plane with the disc bit-for-bit over ~225 m2 at the chapel alone — and
+      // two coplanar opaque surfaces with different tessellation is what
+      // z-fight speckle is. Ground height here is analytic (underfallsGroundAt),
+      // so a 12 mm cosmetic drop costs the player nothing.
+      world.box(M.rock, x, y - 0.122, z, w * 2.0, 0.22, seg.length / n + 0.08, yaw);
     }
     const avgY = (seg.a.y + seg.b.y) * 0.5;
     const avgW = (seg.a.w + seg.b.w) * 0.5;
@@ -662,35 +668,185 @@ function addFloorAndShell(game, layout) {
     }
   }
 
-  // THE WET LINE. One pale, slightly raised ribbon runs the whole MAIN route
-  // and none of the culvert: the way forward is the wet way, told in value
-  // and geometry, never in hue. This is the single strongest answer to
-  // Alex's "just has you walking through rocks and random things" — the
-  // route now draws itself on the floor. One cloned material = one draw
-  // call for the entire ribbon (world.box merges by material).
-  const wetStone = M.headstone.clone();
-  wetStone.userData.underfalls = true;   // cave visibility keeps tagged materials
-  // This must survive the stretches between fixtures: it is reflected wet
-  // stone, not a coloured breadcrumb. A higher value, wider shoulder and a
-  // restrained emissive floor keep the next physical tread present in every
-  // vista while the unmarked culvert remains genuinely dark.
-  wetStone.color.setHex(0xbcc8ca);
-  if ('roughness' in wetStone) wetStone.roughness = 0.16;
-  if ('emissive' in wetStone) {
-    wetStone.emissive = new THREE.Color(0x394548);
-    wetStone.emissiveIntensity = 0.72;
-  }
-  for (const seg of layout.mainSegments) {
-    const n = Math.max(2, Math.ceil(seg.length / 0.9));
-    const yaw = Math.atan2(seg.dx, seg.dz);
-    for (let i = 0; i < n; i++) {
-      const t = (i + 0.5) / n;
-      const w = lerp(seg.a.w, seg.b.w, t);
-      world.box(wetStone,
-        lerp(seg.a.x, seg.b.x, t), lerp(seg.a.y, seg.b.y, t) + 0.012,
-        lerp(seg.a.z, seg.b.z, t),
-        2 * clamp(w * 0.46, 0.94, 1.72), 0.06, (seg.length / n + 0.08) * 0.98, yaw);
+  // THE WET WALKWAY — IT IS PAVED NOW, NOT A RIBBON.
+  //
+  // It still runs the whole MAIN route and none of the culvert: the way
+  // forward is the wet way, told in value and geometry, never in hue.
+  //
+  // What stood here was ONE continuous strip — 145 boxes over 125.16 m, each
+  // 2.12–3.44 m wide and ~0.9 m long, butted with a 61 mm OVERLAP (measured
+  // 60.5–61.9 across the twelve legs) so not even a hairline showed, and with
+  // coplanar tops inside one merged batch, so every joint was two different
+  // parts of one texture arguing over the same depth. BoxGeometry UVs are
+  // 0..1 PER FACE — the law round twelve wrote down for the ossuary flicker
+  // (515ebef) — so ONE 256 px headstone tile was stretched over each of those
+  // pieces: a 2.4:1 to 3.8:1 anisotropic smear, with the map's only large
+  // features (three cracks, six lichen discs) repeating identically every
+  // 0.9 m. That stretch also killed the BUMP, which was the only channel left
+  // that could put relief into a flat floor: perturbNormalArb reads dFdx of
+  // the height map, and a 256 px height field spread over 3.4 m has no
+  // gradient left to read.
+  //
+  // Nothing else modulated it either. No light in this district casts a
+  // shadow. The baked contact shading is derived from COLLIDERS and the route
+  // deliberately has none. The emissive was a CONSTANT with no emissiveMap.
+  // Alex, on the live build: "walkway under waterfall doesn't look good" —
+  // one huge pale flat slab, black either side. It was never too bright.
+  // There was no surface on it.
+  //
+  // The same UV law that flattened it makes flags right for free. Cut the
+  // strip into stones of about 0.55 x 0.80 m and each wears ONE whole tile at
+  // the scale this material is already used at elsewhere — outside.js lays
+  // M.headstone flat as 0.52 x 0.72 m slabs at the marrow pit, and the map was
+  // painted to be a headstone, whose face is 0.74 m. Recomputed over the 676
+  // stones this lays down: the bump gradient comes back 5.3x across the route
+  // on average (3.2x to 6.6x) and 1.14x along it, and the texel aspect falls
+  // from 2.4–3.8:1 to 1.16–1.63:1. No new texture: the tiling came out of the
+  // geometry.
+  //
+  // Four things now modulate what was one flat field:
+  //   * a 55 mm JOINT both ways, showing the dark floor between stones. The
+  //     sluice treads next door are the one route surface in this district he
+  //     did NOT complain about, and they carry a worse smear than the ribbon
+  //     did — what they have that it lacked is 196–223 mm of gap between them.
+  //     The joints are what makes paving read.
+  //   * three value tiers running centre-bright to edge-dark, which is the
+  //     cave rocks' own ladder (atmosphere.js) turned on its side, carried in
+  //     BOTH diffuse and emissive so it survives the stretches no light
+  //     reaches. Tier one is exactly today's value and nothing gets brighter,
+  //     so the paving's mean value lands at 0.879 of the old ribbon's with a
+  //     0.52 kerb outside it. That is the one number here that wants a frame:
+  //     the point is walkway-against-shoulder CONTRAST, and contrast is not
+  //     brightness — but a district this dark can lose a surface by dimming
+  //     it, so it is worth looking at before anything else darkens.
+  //   * a darker broken verge on both shoulders, so the pale stops ending in
+  //     nothing.
+  //   * per-stone tilt, lift and yaw from a seeded RNG — never Math.random, or
+  //     the probes and the screenshots stop repeating.
+  //
+  // Courses alternate a quarter-cell either side of the centre line so no
+  // cross joint runs two rows deep. The verge rides that same shift: move the
+  // flags without the kerb and the outer stone climbs through it on every
+  // second course.
+  //
+  // Instanced, not merged: one merged shell batch becomes four instanced ones,
+  // so the cave pays +3 draw calls against the 450 ceiling
+  // district-culling-regression asserts (its current total was not measured
+  // here). GPU geometry goes DOWN: one shared 24-vertex box carries 966
+  // instances where the ribbon merged 145 segmented boxes into 6,208 vertices
+  // and 4,468 triangles, and the instance matrices are 62 KB of static-usage
+  // buffer. Boot trades 966 matrix compositions for 145 BoxGeometry
+  // allocations plus their share of the finishStatic merge — a wash, and
+  // unmeasured.
+  //
+  // Nothing here is a collider and no stone is over 0.08 m thick.
+  // underfallsGroundAt is analytic, so none of it can become a step, a ledge
+  // or a walk-through wall. The widest course plus its verge reaches 2.22 m
+  // against a route half-width that is never below 2.30, leaving 0.71 m of
+  // margin at the tightest point. Flag tops sit at route y + 0.042 — exactly
+  // where the ribbon's flat top was — and with the per-stone tilt and lift the
+  // highest corner in the district reaches y + 0.065 while the lowest stays
+  // buried at y - 0.053, under a floor strip that now tops out at y - 0.012:
+  // nothing floats and nothing steps. All of that is replayed through the
+  // vendored Matrix4 by tools/probe-walkway-paving.mjs, which fails if any of
+  // it stops being true.
+  //
+  // NOT roughness. M.headstone is a MeshLambertMaterial and r161's Lambert has
+  // no roughness property at all, so the `if ('roughness' in wetStone)` that
+  // used to stand here never assigned anything in any build — the wet sheen it
+  // asked for has never once existed. Deleted rather than left looking like it
+  // works.
+  const FLAG = 0.62;                 // target stone, both ways
+  const JOINT = 0.055;               // the dark line between stones
+  const VERGE = 0.30;                // the broken kerb on either shoulder
+  const WALKWAY_TIERS = [1, 0.88, 0.76];
+  const wetTiers = WALKWAY_TIERS.map((value, i) => {
+    const mat = M.headstone.clone();
+    mat.userData.underfalls = true;  // cave visibility keeps tagged materials
+    mat.name = `underfalls wet walkway flags tier ${i + 1} of ${WALKWAY_TIERS.length}`;
+    mat.color.setHex(0xbcc8ca).multiplyScalar(value);
+    if ('emissive' in mat) {
+      mat.emissive = new THREE.Color(0x394548).multiplyScalar(value);
+      mat.emissiveIntensity = 0.72;
     }
+    return mat;
+  });
+  const vergeStone = M.headstone.clone();
+  vergeStone.userData.underfalls = true;
+  vergeStone.name = 'underfalls wet walkway verge';
+  vergeStone.color.setHex(0xbcc8ca).multiplyScalar(0.52);
+  if ('emissive' in vergeStone) {
+    vergeStone.emissive = new THREE.Color(0x394548).multiplyScalar(0.52);
+    vergeStone.emissiveIntensity = 0.72;
+  }
+  {
+    const paveRng = new RNG(0x57a1b0c9);   // tilt, lift, yaw — cosmetic only
+    const tierRng = new RNG(0x2f6d13a7);   // which value course a stone joins
+    const flagMatrices = WALKWAY_TIERS.map(() => []);
+    const vergeMatrices = [];
+    let course = 0;
+    for (const seg of layout.mainSegments) {
+      const n = Math.max(2, Math.ceil(seg.length / 0.9));
+      const tx = seg.dx / seg.length, tz = seg.dz / seg.length;
+      const nx = tz, nz = -tx;
+      const yaw = Math.atan2(seg.dx, seg.dz);
+      const pitch = seg.length / n;
+      const depth = pitch - JOINT;         // was pitch + 61 mm: an overlap
+      for (let i = 0; i < n; i++, course++) {
+        const t = (i + 0.5) / n;
+        const x = lerp(seg.a.x, seg.b.x, t);
+        const y = lerp(seg.a.y, seg.b.y, t);
+        const z = lerp(seg.a.z, seg.b.z, t);
+        const w = lerp(seg.a.w, seg.b.w, t);
+        const half = clamp(w * 0.46, 0.94, 1.72);   // the ribbon's own half-width
+        const cols = Math.max(3, Math.round((half * 2) / FLAG));
+        const cell = (half * 2) / cols;
+        const width = cell - JOINT;
+        const shift = (course & 1) ? cell * 0.25 : -cell * 0.25;
+        for (let c = 0; c < cols; c++) {
+          const off = -half + (c + 0.5) * cell;
+          // Value by distance from the centre line, dithered by up to half
+          // a tier so it reads as a quarry and not as three painted stripes.
+          const tier = clamp(Math.floor(
+            (Math.abs(off) / half) * WALKWAY_TIERS.length + tierRng.range(-0.45, 0.45)),
+            0, WALKWAY_TIERS.length - 1);
+          const thick = 0.066 + paveRng.range(0, 0.012);
+          flagMatrices[tier].push(transformMatrix(
+            x + nx * (off + shift),
+            y + 0.042 + paveRng.range(-0.006, 0.006) - thick * 0.5,
+            z + nz * (off + shift),
+            paveRng.range(-0.024, 0.024),
+            yaw + paveRng.range(-0.03, 0.03),
+            paveRng.range(-0.024, 0.024),
+            width, thick, depth));
+        }
+        for (const side of [1, -1]) {
+          // The kerb takes the course's shift too. Without it the outer flag
+          // drives into the verge on every second row while the far shoulder
+          // opens a gap the width of the stagger.
+          const edge = side * (half + JOINT + VERGE * 0.5) + shift;
+          vergeMatrices.push(transformMatrix(
+            x + nx * edge,
+            y - 0.005 + paveRng.range(-0.008, 0.008),   // nominal top 12 mm low
+            z + nz * edge,
+            paveRng.range(-0.05, 0.05),
+            yaw + paveRng.range(-0.09, 0.09),
+            paveRng.range(-0.05, 0.05),
+            VERGE, 0.07, depth));
+        }
+      }
+    }
+    const flagGeo = new THREE.BoxGeometry(1, 1, 1);
+    WALKWAY_TIERS.forEach((_, i) => {
+      const mesh = addInstances(game.scene, flagGeo, wetTiers[i], flagMatrices[i], {
+        name: `underfalls wet walkway flags tier ${i + 1} of ${WALKWAY_TIERS.length}`,
+        receiveShadow: true,
+      });
+      if (mesh) mesh.userData.underfalls = true;
+    });
+    const verge = addInstances(game.scene, flagGeo, vergeStone, vergeMatrices,
+      { name: 'underfalls wet walkway verge', receiveShadow: true });
+    if (verge) verge.userData.underfalls = true;
   }
 
   // Chamber floors are broad and honest. Each used to be one big SQUARE slab
@@ -698,7 +854,11 @@ function addFloorAndShell(game, layout) {
   // that meant over two metres of visible floor you could not walk on at the
   // corners, and rim gaps of invisible floor at the edge midpoints — "random
   // things" in floor form. One instanced sixteen-gon disc per chamber now
-  // matches the clamp within 2%, with no coplanar overlaps to shimmer.
+  // matches the clamp within 2%. The disc is the TOP of a deliberate z-ladder:
+  // it tops out at chamber.y, the corridor strips 12 mm under it and the hatch
+  // cistern square 24 mm under that. It did not used to be — all three sat at
+  // exactly chamber.y, sharing a plane bit-for-bit wherever a route crossed a
+  // chamber, which is the same z-fight class as the ossuary deck (515ebef).
   {
     const discGeo = new THREE.CylinderGeometry(1, 1, 1, 16);
     const discs = new THREE.InstancedMesh(discGeo, M.rock, layout.chambers.length);
@@ -1085,8 +1245,19 @@ function buildSluice(game, layout, state) {
     const next = climb[Math.min(climb.length - 1, s.segment + 1)];
     const prev = climb[Math.max(0, s.segment)];
     const yaw = Math.atan2(next.x - prev.x, next.z - prev.z);
-    treadMatrices.push(transformMatrix(s.x, s.y + 0.018, s.z,
-      0, yaw, 0, s.w * 1.65, 0.11, 0.76));
+    // Four stones across, not one plank. At s.w*1.65 (4.13–4.54 m) with
+    // M.rock's repeat (2,2) one tread wore 2.06–2.27 m of stone per texture
+    // tile across against 0.38 m along — a 5.4:1 to 6.0:1 smear, worse than the
+    // ribbon's. Quartering brings the across axis to ~0.5 m a tile and matches
+    // the paving next door. Same InstancedMesh, same draw call, 34 treads ->
+    // 136 stones, and a 50 mm joint between them like the walkway's.
+    const treadW = s.w * 1.65;
+    for (let q = 0; q < 4; q++) {
+      const off = -treadW / 2 + treadW * (q + 0.5) / 4;
+      treadMatrices.push(transformMatrix(
+        s.x + Math.cos(yaw) * off, s.y + 0.018, s.z - Math.sin(yaw) * off,
+        0, yaw, 0, treadW / 4 - 0.05, 0.11, 0.76));
+    }
   }
   addInstances(group, new THREE.BoxGeometry(1, 1, 1), wetStone, treadMatrices,
     { name: 'sluice climb treads', receiveShadow: true });
@@ -1409,7 +1580,10 @@ function buildHatchCistern(game, layout, state) {
   const H = layout.hatch;
   const y = H.y;
   const r = 4.0;
-  world.box(M.rock, H.x, y - 0.15, H.z, r * 2, 0.3, r * 2);
+  // 24 mm under the chamber disc and 12 under the corridor strip: this square
+  // used to top out at exactly y, coplanar with both of them across the arrival
+  // room. One surface per tier, no shared planes.
+  world.box(M.rock, H.x, y - 0.174, H.z, r * 2, 0.3, r * 2);
   world.box(M.rock, H.x + r, y + 2.0, H.z, 0.8, 4.5, r * 2);
   // West shell is a north-only segment: the full-length slab used to cross the
   // authored entry diagonal as ghost geometry. What remains is visually AND
