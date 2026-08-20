@@ -6253,6 +6253,7 @@ export class Forest {
     // the same three things, and nothing invented for it. Cost: one sprite.
     if (this.ravineKnot) {
       this.ravineKnot.material = knotMat;
+      this.ravineKnot.geometry.dispose();   // the 0.09 sphere it was, orphaned otherwise
       this.ravineKnot.geometry = knotGeo;
       this.ravineKnot.scale.set(1, 1.5, 1);
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({

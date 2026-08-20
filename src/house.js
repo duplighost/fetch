@@ -787,6 +787,13 @@ export function buildHouse(game) {
   cellarBoards(game);
   basementAct(game);
   buildPumpGallery(game);
+  // Anything that needs the FINISHED collider set runs here — the corner webs
+  // are checked against a house that is actually furnished, not against the
+  // first thirteenth of one. Still inside buildHouse: main.js slices
+  // houseRenderRoots and computes houseInteriorRoots after this returns, so a
+  // web placed here is still in the interior cull ledger.
+  for (const fn of game.__deferredBuild || []) fn();
+  game.__deferredBuild = null;
 }
 
 // F3 — THE FALLS. A small sincere landscape: a pale waterfall line under the
@@ -1641,7 +1648,6 @@ function furnish(game) {
   // and every site is checked against the colliders before it is built — a web
   // grown through a crate reads as a bug, and furnish() puts down enough that
   // hand-picked corners cannot be trusted to stay empty.
-  const CEIL = HOUSE_TABLES.levels;
   const webSites = [
     // the corridor curtain — the original five, unchanged
     ...Array.from({ length: 5 }, (_, i) => ({
@@ -1652,7 +1658,14 @@ function furnish(game) {
     // ---- basement corners (ceiling -0.55) ----
     { at: [-2.65, -1.30, -4.65], rotY: Math.PI / 4, s: 0.55, seed: 0x2a11, spider: true },   // storeroom, far corner
     { at: [2.65, -1.30, 0.65], rotY: -Math.PI * 0.75, s: 0.5, seed: 0x2a22 },                // storeroom, by the corridor
-    { at: [-10.65, -1.30, -8.65], rotY: Math.PI / 4, s: 0.55, seed: 0x2a33, spider: true },  // crawl, deep end
+    // the "deep end" site sat INSIDE the barred counterweight kennel (x -11.72
+    // to -8.25, z -9.7 to -6.25), a mechanism cage the player can never enter.
+    // Nobody chose to put a web in there, and the collider check could never
+    // have caught it: the cage owns two bar-plane colliders and nothing in the
+    // middle, so a web floating inside it clears them. North-west corner of the
+    // crawl instead — 1.22 m off both wall faces (interior walls at x -11.87
+    // and z 1.87), in the open half of the wing rather than behind the bars.
+    { at: [-10.65, -1.30, 0.65], rotY: Math.PI * 0.75, s: 0.55, seed: 0x2a33, spider: true },  // crawl, north-west corner
     { at: [-10.65, -1.30, 4.65], rotY: Math.PI * 0.75, s: 0.5, seed: 0x2a44 },               // hatchbay
     { at: [10.65, -1.30, -4.65], rotY: -Math.PI / 4, s: 0.5, seed: 0x2a55 },                 // boiler room
     { at: [-18.65, -1.30, 4.65], rotY: Math.PI * 0.75, s: 0.55, seed: 0x2a66, spider: true },// blind archive
@@ -1664,7 +1677,9 @@ function furnish(game) {
     { at: [-10.6, 2.55, 4.6], rotY: Math.PI * 0.75, s: 0.6, seed: 0x3b44, spider: true },    // study
     // ---- first corners (ceiling 6.4) ----
     { at: [-10.6, 5.65, -0.6], rotY: Math.PI / 4, s: 0.6, seed: 0x4c11, spider: true },      // nursery
-    { at: [10.6, 5.65, -8.6], rotY: -Math.PI / 4, s: 0.55, seed: 0x4c22 },                   // guest room
+    // (no guest-room web: that room is the one place the player can never
+    //  stand, and the only sightline into it is the open voidDoor, where the
+    //  candle wants the frame to itself)
     { at: [2.6, 5.65, -8.6], rotY: -Math.PI / 4, s: 0.5, seed: 0x4c33 },                     // stair shaft
   ];
 
@@ -1680,7 +1695,22 @@ function furnish(game) {
     return true;
   };
 
+  // DEFERRED UNTIL THE HOUSE IS FINISHED. This ran inside furnish(), which is
+  // the FIRST of thirteen builders — so the "checked against the colliders"
+  // guarantee above could not see bedroomAct, nurseryAct, voidDoorAct,
+  // frontDoorKnockAct, the window relay, the scullery crawler, the window
+  // watchers, the return horror, the family photo, cellarBoards, basementAct
+  // or buildPumpGallery. The basement machinery — the incinerator, the crawl
+  // counterweight, the hatch, the pump gallery — is all built by those last
+  // two, so the sites in those rooms were cleared against empty ones. buildHouse
+  // drains this queue after all thirteen, which is still inside buildHouse and
+  // so still before main.js takes its houseInteriorRoots census.
+  //
+  // It is only ever a partial guarantee: webClear consults colliders, and most
+  // house decor has none. "Cleared" means nothing rejected it, not that
+  // nothing is there.
   const webReport = { placed: 0, skipped: [] };
+  const placeWebs = () => {
   for (const site of webSites) {
     const [x, y, z] = site.at;
     // the curtain five are authored across an empty corridor and predate the
@@ -1721,7 +1751,20 @@ function furnish(game) {
         if (d < 1.7 && darted <= 0) {
           darted = 6;                                          // it FLEES you — motion is the scare
           const a = Math.random() * TAU;
-          home.set(home.x + Math.cos(a) * 0.45, Math.min(0.9, home.y + 0.3), 0.02);
+          // BOUNDED TO THE WEB IT LIVES ON. home was an unbounded accumulator:
+          // only y was capped, so every dart added another 0.45 of a random
+          // walk in x with nothing to stop it, while the web it hangs on has
+          // an R of 0.95 to 1.20. Stand near one long enough and the spider
+          // walks off it — a near-black mesh hanging in the air beside the
+          // thing it belongs to. The cap is radial rather than per-axis
+          // because the web is a disc: a per-axis 0.6 would still permit
+          // (0.6, 0.9), which is 1.08 out. 0.72 plus the widest leg tip in
+          // the web plane (0.076 of the spider scale, 0.099 at the largest of
+          // the three) is 0.82, inside the smallest R mkWeb can roll.
+          const hx = home.x + Math.cos(a) * 0.45;
+          const hy = Math.min(0.9, home.y + 0.3);
+          const k = Math.min(1, 0.72 / (Math.hypot(hx, hy) || 1));
+          home.set(hx * k, hy * k, 0.02);
         }
         darted -= dt;
         sp.position.lerp(home, Math.min(1, dt * 9));
@@ -1729,6 +1772,8 @@ function furnish(game) {
     }
   }
   game.__webReport = webReport;
+  };
+  (game.__deferredBuild || (game.__deferredBuild = [])).push(placeWebs);
 }
 
 // ---------------------------------------------------------------- act 0
@@ -7004,9 +7049,13 @@ function voidDoorAct(game) {
   // with the fire behind it. A works plate saying no-furnace, hung on the one
   // door in the house you can never walk through, over the stair void where
   // every player sees it on the way down — and when the beat finally knocks it
-  // open, the plate swings away with the panel and what is behind it is the lit
-  // candle you came for. The warning is replaced by the answer, and it costs
-  // nothing to say it that way: the plate is a child of the panel.
+  // open, the plate swings away with the panel. What is behind it is NOT a lit
+  // candle: this act's own openDoor() opens on an UNLIT igniter — the flame is
+  // held at scale 0.0001 and the glow breathes 0.08-0.17 — and the wick only
+  // takes when the skull strikes it. The aperture in
+  // shots/door-sign/3-open-from-stairs.png measures 0.002 mean luminance and
+  // peaks at 0.012: black. The plate is the warning, the strike is the answer,
+  // and it costs nothing to say it that way: the plate is a child of the panel.
   //
   // What it claims is true and unlosable. The furnace two floors down needs a
   // flame the skull has to steal, checked every frame by three flags none of

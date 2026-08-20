@@ -48,6 +48,15 @@ const out = await page.evaluate(() => {
     g.camera.updateMatrixWorld(true);
   };
 
+  // ON THE RAMP, NOT FLOATING AT FIRST-FLOOR LEVEL. Every pose below used to
+  // put the feet at 3.6, but (2.6,-4.4) and (3.6,-5.6) are both inside the
+  // main stair shaft, and HOUSE_TABLES.ramps.mainStairs runs y 0 -> 3.6 over
+  // world z -10 -> -2. A real player at z=-4.4 stands at 2.52 and at z=-5.6
+  // at 1.98, so the old shots read the plate from 1.1-1.6 m too high and far
+  // squarer-on than anyone ever will. Same lerp the world compiler uses
+  // (world.js groundHeightAt).
+  const stairY = (z) => 3.6 * Math.min(1, Math.max(0, (z + 10) / 8));
+
   const plateWorld = () => {
     if (!plate) return null;
     const p = plate.getWorldPosition(new V());
@@ -63,9 +72,9 @@ const out = await page.evaluate(() => {
   door.panel.rotation.y = 0;
   door.panel.updateMatrixWorld(true);
   notes.push(`CLOSED plate world ${JSON.stringify(plateWorld())}`);
-  look([2.6, 3.6, -4.4], [4.0, 4.75, -7.0]);
+  look([2.6, stairY(-4.4), -4.4], [4.0, 4.75, -7.0]);
   shoot('1-closed-from-stairs');
-  look([3.6, 3.6, -5.6], [4.0, 4.75, -7.0]);
+  look([3.6, stairY(-5.6), -5.6], [4.0, 4.75, -7.0]);
   shoot('2-closed-close');
 
   // ---- OPEN ----
@@ -74,9 +83,9 @@ const out = await page.evaluate(() => {
   door.panel.updateMatrixWorld(true);
   notes.push(`OPEN  panel.rotation.y=${door.panel.rotation.y.toFixed(3)} open=${door.open}`);
   notes.push(`OPEN  plate world ${JSON.stringify(plateWorld())}`);
-  look([2.6, 3.6, -4.4], [4.0, 4.75, -7.0]);
+  look([2.6, stairY(-4.4), -4.4], [4.0, 4.75, -7.0]);
   shoot('3-open-from-stairs');
-  look([3.6, 3.6, -5.6], [4.0, 4.75, -7.0]);
+  look([3.6, stairY(-5.6), -5.6], [4.0, 4.75, -7.0]);
   shoot('4-open-close');
 
   return { frames, notes };

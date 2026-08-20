@@ -1115,16 +1115,22 @@ function buildBellCistern(game, layout, state) {
   // profile above is a bottom-origin lathe, and it inherited the +1.18 offset
   // from the centre-origin sphere it replaced. The rim was re-based onto the
   // new top and the base offset never was. So a two-metre dark iron object
-  // floated unattached, dead centre of the walking line, over a marked ring,
-  // under a snapped chain that misses it by half a metre — mechanism grammar,
-  // in a district whose previous lesson was that a suspended dark metal disc is
-  // a thing you throw the skull at. Alex, on the live build: "what is this, it
-  // doesn't move or do anything."
+  // floated unattached, dead centre of the walking line, over a marked ring —
+  // mechanism grammar, in a district whose previous lesson was that a
+  // suspended dark metal disc is a thing you throw the skull at. Alex, on the
+  // live build: "what is this, it doesn't move or do anything."
   //
-  // Dropped by that same 1.18 so its narrow end rests on the stone. Nothing
-  // else changes, and the snapped chain overhead now reads as the reason it is
-  // down here: the bell FELL. That is the story the dressing was already
-  // telling; it just was not standing in it.
+  // Dropped by that same 1.18 so its narrow end rests on the stone, and the
+  // snapped chain overhead comes down with it (below) so it reads as the
+  // reason the bell is here: it FELL.
+  //
+  // ONE HONEST CORRECTION to the round that dropped it: the chain did not
+  // "miss it by half a metre". Its free end was 0.086 from the centre-line of
+  // the rim ring, i.e. hung ON it, and the paragraph above this one authored
+  // the bell as deliberately suspended and inverted. His complaint was that
+  // it does not move or do anything, which is about PURPOSE, not height, so
+  // hanging it again is still a live answer — his call, not the code's. Both
+  // answers need the collider below; only the y range changes.
   const bell = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 16), iron);
   bell.position.set(C.x, C.y, C.z);
   bell.castShadow = true;
@@ -1136,8 +1142,37 @@ function buildBellCistern(game, layout, state) {
   const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), iron);
   clapper.position.set(C.x, C.y + 0.28, C.z);
   group.add(clapper);
-  const snapped = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.8, 5), iron);
-  snapped.position.set(C.x + 0.48, C.y + 3.45, C.z - 0.2);
+  // A TWO-METRE IRON OBJECT ON THE WALKING LINE IS NOT A HOLOGRAM.
+  //
+  // The bell cistern is a chamber (r 3.45) AND a node on the secret path, so
+  // this stands dead centre of where the player walks, and nothing in this
+  // district ever gave it collision — one more of "some of these walls you
+  // can walk right through", in the district he said it about. Since round
+  // twelve put the mouth on the floor the walk-through cross-section at
+  // chest height is the full 2.06 m rim.
+  //
+  // Radius 0.72, not the rim's 1.03: addColliderCylinder builds an AABB, and
+  // 0.72 puts its corners at 1.018 from the axis — inside the rim ring at
+  // 1.03 — so no invisible corner ever stands proud of the silhouette. The
+  // chamber is 3.45 m of floor and the clamp lets a player centre reach 3.41
+  // of it, so the lane around the bell is an annulus 1.06 to 3.41 wide open.
+  addColliderCylinder(world, C.x, C.z, 0.72, C.y - 0.2, C.y + 1.5, 'fallen bell');
+  // THE CHAIN WAS HOLDING IT, so it comes down with it.
+  //
+  // The old pose was not a near miss: at length 1.8 tilted 0.55 about z, the
+  // free end sat at C.x+0.950, C.y+2.683, which is 0.971 out from the axis
+  // and 0.086 from the centre-line of the rim ring it was hung over — 1 cm
+  // off touching a tube of radius 0.075. Dropping the bell 1.18 without
+  // touching the chain left that end 1.31 m above the nearest iron, which is
+  // a chain pointing at nothing.
+  //
+  // Shortened to 1.2 and lowered to 2.55: the free end now hangs at 0.818
+  // out and 0.599 above the fallen rim plane, i.e. over the bell's open
+  // mouth rather than beside it, and 0.776 above the iron directly beneath.
+  // That gap is deliberate — a snapped chain ends where it broke — but it is
+  // now short enough to read as one event instead of two props.
+  const snapped = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.2, 5), iron);
+  snapped.position.set(C.x + 0.48, C.y + 2.55, C.z - 0.2);
   snapped.rotation.z = 0.55;
   group.add(snapped);
 

@@ -1096,10 +1096,27 @@ let cached = null;
 // that this door is one of the palest surfaces in the house: pale plate on pale
 // door came back at 1.03x contrast from the pose he would actually read it
 // from, which is nothing at all. So it is a dark enamel works plate with a pale
-// glyph, which is period-correct anyway, and it reads as a dark shape on a
-// light door from across the landing. Legibility is CONTRAST, not brightness:
-// what the eye needs is a difference, in whichever direction the surface
-// underneath is not.
+// glyph, which is period-correct anyway.
+//
+// BE HONEST ABOUT WHICH WAY IT READS. This used to claim "a dark shape on a
+// light door". It is the other way round, and the shipped screenshots say so:
+// the pale border, the solid pale furnace body, the pale ring and the slash
+// take enough of the sheet that the whole plate averages brighter than the
+// door it is bolted to. Measured off shots/door-sign/2-closed-close.png with
+// tools/png-luma.mjs (which reads a PNG without booting a browser), the plate
+// is 0.069 mean luminance against 0.012 for the door beside it — a LIGHT
+// rectangle on a dark door, 5.7x. From the stairs in shot 1 it is 0.047
+// against 0.006, 7.6x. Which is fine, because it is contrast either way, and
+// contrast is the only thing the law asks for.
+//
+// What was never measured before now is that ratio: the note above records
+// that pale and dark "came back the same" and that frame share is what moved.
+// If this plate ever has to be defended again, measure it, and measure it
+// from the ramp — probe-door-sign.mjs stands on the stairs now instead of
+// floating a metre above them.
+//
+// Legibility is CONTRAST, not brightness: what the eye needs is a difference,
+// in whichever direction the surface underneath is not.
 function furnaceSignPaint(g, w, h, r) {
   // enamel ground, faintly unevenly fired
   g.fillStyle = rgb(34, 33, 30);
@@ -1109,7 +1126,8 @@ function furnaceSignPaint(g, w, h, r) {
     g.fillStyle = `rgba(${70 + r.float() * 60 | 0},${66 + r.float() * 56 | 0},${58 + r.float() * 50 | 0},${0.05 + r.float() * 0.07})`;
     g.beginPath(); g.arc(x, y, rad, 0, TAU); g.fill();
   }
-  // a dark border, the way a stamped plate is edged
+  // a PALE border, the way a stamped plate is edged — mislabelled "dark" for
+  // a round, which is how the polarity above went unnoticed
   g.strokeStyle = rgb(196, 190, 172); g.lineWidth = w * 0.045;
   g.strokeRect(w * 0.055, h * 0.055, w * 0.89, h * 0.89);
 
