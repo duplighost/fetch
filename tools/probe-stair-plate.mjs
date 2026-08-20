@@ -1,5 +1,9 @@
-// probe-stair-plate.mjs -- can the works plate on the stair door actually be
+// probe-stair-plate.mjs -- can the works plate on the VOID DOOR actually be
 // read from where a player first meets it?
+//
+// The void door hangs over the stair shaft, out of reach, and is knocked open
+// with a throw much later. So the pose that matters is from the stairs BELOW,
+// looking up at a closed door — not standing in front of it on the landing.
 //
 // His idea, and a sound one: a "no furnace" glyph on the one door every player
 // must stand in front of and fail to open. But this project's recurring failure
@@ -19,9 +23,9 @@ await page.waitForFunction(() => window.__FETCH?.ready === true && window.__game
 
 const out = await page.evaluate(() => {
   const F = window.__FETCH, g = window.__game;
-  const door = g.world.doorById.stairDoor;
+  const door = g.world.doorById.voidDoor;
   const plates = [];
-  door.panel.traverse((o) => { if (o.name === 'stair door works plate') plates.push(o); });
+  door.panel.traverse((o) => { if (o.name === 'void door works plate') plates.push(o); });
 
   const grab = () => {
     const c = g.renderer.domElement;
@@ -51,9 +55,11 @@ const out = await page.evaluate(() => {
     // the highest floor at or BELOW it, which is the ground floor — the first
     // cut of this probe put the player a storey down and photographed a
     // ceiling. door.floor is the number that cannot be wrong.
-    g.player.pos.set(x, door.floor + 0.02, z);
+    // BELOW it: this door is over the stair void and is read looking up.
+    const y = door.floor - 1.35;
+    g.player.pos.set(x, y, z);
     g.player.yaw = Math.atan2(-(dp.x - x), -(dp.z - z));
-    g.player.pitch = Math.atan2(dp.y - (door.floor + 1.62), Math.abs(dist));
+    g.player.pitch = Math.atan2(dp.y - (g.player.pos.y + 1.62), Math.abs(dist));
     g.player._sync(0);
     F.stepWith(0.05, {}, false);
     const on = settle();
@@ -76,7 +82,8 @@ const out = await page.evaluate(() => {
     };
   };
 
-  const rows = [read('right at the door', 1.1), read('across the landing', 2.6), read('from the bedroom door', 4.2)];
+  // read from BELOW: the stair shaft, at three depths down the flight
+  const rows = [read('foot of the upper flight', 2.2), read('mid stair shaft', 4.0), read('bottom of the stairs', 6.0)];
   for (let i = 0; i < 3; i++) g.render();
   const shot = g.renderer.domElement.toDataURL('image/png');
   return { plates: plates.length, doorLocked: door.locked, rows, shot };

@@ -2420,48 +2420,6 @@ function nurseryAct(game) {
     keyId: 'stairKey', targetId: 'stairLock', flag: 'stairsOpen', radius: 1.2,
   });
 
-  // NO FURNACE. His idea, and the right surface for it:
-  //
-  //   "when that door is closed, we just put a sign on it with a picture of a
-  //    furnace, one of those things with a circle with a line through it. like
-  //    its saying no furnace. The player will see that sign on the door the
-  //    first time they leave the upstairs of the house. especially a new player
-  //    would see it who is looking around more."
-  //
-  // This is the one door in the house every player must stand in front of and
-  // fail to open — it is locked behind the nursery mobile's key — so it is the
-  // only surface in the game with guaranteed attention. And what it says is
-  // true and unlosable: the furnace two floors down cannot light until the
-  // skull carries fire, tested every frame, and no order of play can break it.
-  // He spent a trip upstairs and a checkpoint reload learning that rule the
-  // hard way; a plate on this door teaches it before the basement exists.
-  //
-  // A picture on an object is not a HUD, and a glyph is shape rather than hue,
-  // so both laws hold. It is bolted through the panel and shows on both faces:
-  // one draw each, in the district with the least headroom (house 339 of 450),
-  // and it swings with the door because it is a child of the panel — after it
-  // opens it lies along the wall with the rest of the door, which is where a
-  // spent warning belongs.
-  {
-    // SIZE AND HEIGHT ARE THE LEGIBILITY LEVERS HERE, NOT COLOUR. At arm's
-    // length the carried lantern clips almost any albedo to white, so a pale
-    // plate and a dark plate measured the same (1.03x and 1.02x) from the door
-    // itself. What changes the read is how much frame it occupies on the
-    // APPROACH, which is where a sign is actually read. 0.44 x 0.34 at eye line.
-    const PLATE_W = 0.44, PLATE_H = 0.34;
-    const plateGeo = new THREE.BoxGeometry(PLATE_W, PLATE_H, 0.012);
-    const panelDepth = 0.09;
-    for (const face of [1, -1]) {
-      const plate = new THREE.Mesh(plateGeo, M.furnaceSign);
-      // panel-local: centred across the stile, a little above the knob line
-      plate.position.set(0, 0.46, face * (panelDepth / 2 + 0.007));
-      if (face < 0) plate.rotation.y = Math.PI;   // glyph reads the right way round
-      plate.castShadow = false;
-      plate.receiveShadow = true;
-      plate.name = 'stair door works plate';
-      door.panel.add(plate);
-    }
-  }
 
   // the mobile over the crib, turning with no wind. while it turns you are safe.
   // when it slows, the corner is closer. hit it with the skull to spin it back up.
@@ -6941,6 +6899,51 @@ function voidDoorAct(game) {
   const { world, scene, mats: M } = game;
   const F = HOUSE_TABLES.levels.first.floor;
   const door = world.doorById.voidDoor;
+
+  // NO FURNACE. His idea, and his correction to my first attempt at it:
+  //
+  //   "when that door is closed, we just put a sign on it with a picture of a
+  //    furnace, one of those things with a circle with a line through it. like
+  //    its saying no furnace. The player will see that sign on the door the
+  //    first time they leave the upstairs of the house."
+  //
+  // I put it on the stair door. He put it here: "the right door is actually on
+  // the stairs from the second to first floor and you can't enter. the door
+  // opens during part of the puzzle and you throw your skull to hit a candle."
+  // He is right and it is a better idea than mine, because THIS is the door
+  // with the fire behind it. A works plate saying no-furnace, hung on the one
+  // door in the house you can never walk through, over the stair void where
+  // every player sees it on the way down — and when the beat finally knocks it
+  // open, the plate swings away with the panel and what is behind it is the lit
+  // candle you came for. The warning is replaced by the answer, and it costs
+  // nothing to say it that way: the plate is a child of the panel.
+  //
+  // What it claims is true and unlosable. The furnace two floors down needs a
+  // flame the skull has to steal, checked every frame by three flags none of
+  // which can be lost. He spent a trip upstairs and a checkpoint reload
+  // learning that rule; this teaches it before the basement exists.
+  //
+  // Inside both laws: a picture on an object is not a HUD, and a glyph is shape
+  // rather than hue.
+  {
+    // Sized and placed for the view it is actually read from — the stair shaft
+    // below, looking up. See tools/probe-stair-plate.mjs for the measurements,
+    // and note that colour is NOT the lever: at close range the carried lantern
+    // clips almost any albedo to white, so a pale plate and a dark one measured
+    // the same. Frame share on the approach is what moved.
+    const PLATE_W = 0.44, PLATE_H = 0.34;
+    const plateGeo = new THREE.BoxGeometry(PLATE_W, PLATE_H, 0.012);
+    const panelDepth = 0.09;
+    for (const face of [1, -1]) {
+      const plate = new THREE.Mesh(plateGeo, M.furnaceSign);
+      plate.position.set(0, 0.30, face * (panelDepth / 2 + 0.007));
+      if (face < 0) plate.rotation.y = Math.PI;
+      plate.castShadow = false;
+      plate.receiveShadow = true;
+      plate.name = 'void door works plate';
+      door.panel.add(plate);
+    }
+  }
 
   // a tall iron candle-stand just inside, dead in line with the doorway —
   // from the stairs below, its flame floats in the open door's glow
