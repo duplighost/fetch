@@ -530,14 +530,55 @@ function addFloorAndShell(game, layout) {
     if (opensIntoChamber) continue;
     // Structural backing behind the later low-poly rock skin. It is deliberately
     // not an AABB collider: diagonal wall boxes were the old forest trap bug.
-    world.box(M.rock,
-      (seg.a.x + seg.b.x) * 0.5 + nx * (avgW + 0.42), avgY + 2.35,
-      (seg.a.z + seg.b.z) * 0.5 + nz * (avgW + 0.42),
-      0.54, 5.15, seg.length + 1.1, yaw);
-    world.box(M.rock,
-      (seg.a.x + seg.b.x) * 0.5 - nx * (avgW + 0.42), avgY + 2.35,
-      (seg.a.z + seg.b.z) * 0.5 - nz * (avgW + 0.42),
-      0.54, 5.15, seg.length + 1.1, yaw);
+    //
+    // AND IT FOLLOWS THE LANE NOW, PIECE BY PIECE, INSTEAD OF ONE SLAB PER LEG.
+    //
+    // These used to be two boxes the length of the whole leg, offset from its
+    // centre line by the leg's AVERAGE width — while the thing that keeps a
+    // player on the route is a clamp using the LOCAL width, interpolated along
+    // it (state.clamp, below). On any leg that tapers the two disagree at the
+    // wide end, and the walkable lane runs straight through the drawn wall: up
+    // to 0.64 m into it between the chapel east aisle and the east ambulatory,
+    // 0.47 at the intake apse, 0.35 at the spill descent. Nothing in this
+    // district has a collider, so there is nothing to stop you — you simply
+    // walk into rock and the rock is not there. Alex, on the live build:
+    // "some of these walls you can walk right through", and worse, "some of
+    // these walls you basically are forced to walk through to get there".
+    //
+    // It was invisible until round eleven gave the cave its floor back, because
+    // an undrawn wall cannot be walked through in any way a player notices.
+    //
+    // Two changes, both here: place every piece at the LOCAL w, and drop any
+    // piece whose footprint stands in the walkable union at all. About a third
+    // of them do, at corners and at the main/secret crossing, and every one of
+    // those places already owns its enclosure from another region's flanks,
+    // roofs or chamber cap. Pushing them outward instead would shove one flank
+    // nine metres to clear the chapel disc and read as a hole. Draw cost is
+    // unchanged either way: it is all one merged batch.
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const px = lerp(seg.a.x, seg.b.x, t);
+      const pz = lerp(seg.a.z, seg.b.z, t);
+      const py = lerp(seg.a.y, seg.b.y, t);
+      const pw = lerp(seg.a.w, seg.b.w, t);
+      const depth = seg.length / n + 0.08;
+      for (const side of [1, -1]) {
+        const cx = px + side * nx * (pw + 0.42);
+        const cz = pz + side * nz * (pw + 0.42);
+        // nine points over the piece's own footprint, in its own frame
+        let intrudes = false;
+        for (let a = -1; a <= 1 && !intrudes; a++) {
+          for (let b = -1; b <= 1 && !intrudes; b++) {
+            const ox = side * nx * (a * 0.27) + tx * (b * depth * 0.5);
+            const oz = side * nz * (a * 0.27) + tz * (b * depth * 0.5);
+            const hit = projectUnderfalls(layout, cx + ox, cz + oz);
+            if (hit && hit.clearance < 0) intrudes = true;
+          }
+        }
+        if (intrudes) continue;
+        world.box(M.rock, cx, py + 2.35, cz, 0.54, 5.15, depth, yaw);
+      }
+    }
   }
 
   // THE WET LINE. One pale, slightly raised ribbon runs the whole MAIN route
@@ -1068,16 +1109,32 @@ function buildBellCistern(game, layout, state) {
     [0.18, 0.00], [0.24, 0.16], [0.38, 0.52], [0.53, 0.91],
     [0.76, 1.22], [0.98, 1.38], [1.03, 1.44],
   ].map(([x, y]) => new THREE.Vector2(x, y));
+  // IT SITS ON THE FLOOR, WHICH IS WHERE A FALLEN BELL IS.
+  //
+  // It used to hang 1.18 m clear of the floor with nothing holding it: the
+  // profile above is a bottom-origin lathe, and it inherited the +1.18 offset
+  // from the centre-origin sphere it replaced. The rim was re-based onto the
+  // new top and the base offset never was. So a two-metre dark iron object
+  // floated unattached, dead centre of the walking line, over a marked ring,
+  // under a snapped chain that misses it by half a metre — mechanism grammar,
+  // in a district whose previous lesson was that a suspended dark metal disc is
+  // a thing you throw the skull at. Alex, on the live build: "what is this, it
+  // doesn't move or do anything."
+  //
+  // Dropped by that same 1.18 so its narrow end rests on the stone. Nothing
+  // else changes, and the snapped chain overhead now reads as the reason it is
+  // down here: the bell FELL. That is the story the dressing was already
+  // telling; it just was not standing in it.
   const bell = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 16), iron);
-  bell.position.set(C.x, C.y + 1.18, C.z);
+  bell.position.set(C.x, C.y, C.z);
   bell.castShadow = true;
   group.add(bell);
   const bellRim = new THREE.Mesh(new THREE.TorusGeometry(1.03, 0.075, 7, 24), pale);
-  bellRim.position.set(C.x, C.y + 2.62, C.z);
+  bellRim.position.set(C.x, C.y + 1.44, C.z);
   bellRim.rotation.x = Math.PI / 2;
   group.add(bellRim);
   const clapper = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 6), iron);
-  clapper.position.set(C.x, C.y + 1.46, C.z);
+  clapper.position.set(C.x, C.y + 0.28, C.z);
   group.add(clapper);
   const snapped = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.8, 5), iron);
   snapped.position.set(C.x + 0.48, C.y + 3.45, C.z - 0.2);
