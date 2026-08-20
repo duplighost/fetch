@@ -2855,9 +2855,24 @@ function buildBasementPilot(game, B) {
     state.coldCd = Math.max(0, state.coldCd - dt);
     flame.scale.set(0.7, 1.32 + Math.sin(time * 15) * 0.13, 0.7);
     flame.material.opacity = lit ? 0.88 + Math.sin(time * 19) * 0.08 : 0;
+    // A COLD PILOT THAT KNOWS YOU ARE CARRYING FIRE SAYS SO.
+    //
+    // Struck empty-handed this fixture refuses, grants nothing and goes inert —
+    // flame hidden, glow zero — so it reads as a prop you already tried. Alex
+    // did exactly that, came back later with fire, and walked past it: "i think
+    // i did everything and the furnace didnt work." The furnace's only pointer
+    // at this thing is one chime and a 1.35 s glow of radius 4.8, from ten
+    // metres away behind the stair mass, which is not a pointer.
+    //
+    // So once the skull carries fire, and only then, the dead pilot keeps a
+    // slow standing breath. Empty-handed it stays exactly as dead as it was, so
+    // the authored cold refusal is untouched. Value and motion, never hue, and
+    // it costs nothing: pilotGlow is a world.candles DESCRIPTOR feeding the
+    // eight-slot pooled light rig, not a light of its own.
     pilotGlow.intensity = lit
       ? 0.94 + Math.sin(time * 9) * 0.12
-      : state.pulse * 0.7;
+      : state.pulse * 0.7
+        + (game.flags.has('ateFlame') ? 0.20 + Math.sin(time * 1.5) * 0.08 : 0);
   });
 }
 
@@ -3168,8 +3183,16 @@ function basementAct(game) {
       }
     }
     glow.intensity += (incin.glowTarget - glow.intensity) * Math.min(1, dt * 3.5);
-    const gaugeGoal = (game.flags.has('pumpGalleryLatched') && game.flags.has('archiveDraftOpened'))
-      ? -1.02 : 1.18;
+    // THE GAUGE STOPS LYING. It used to read two of the three conditions the
+    // fire actually needs — pump and archive, never the pilot — so in the one
+    // state where a player has done everything visible and the pilot is still
+    // dark, the needle swept to FULL DRAFT over a furnace that cannot light.
+    // Alex hit exactly that and spent a trip upstairs and a checkpoint reload
+    // on it: "i think i did everything and the furnace didnt work." Nothing was
+    // broken (hasDraft is re-tested every frame and no flag here can be lost),
+    // but the machine told him it was ready. A scoreboard that reports two
+    // thirds of its own requirement is worse than no scoreboard.
+    const gaugeGoal = hasDraft ? -1.02 : 1.18;
     gaugeNeedle.rotation.z += (gaugeGoal - gaugeNeedle.rotation.z) * Math.min(1, dt * 4.6);
     // furnace scoreboard, state 1: a lit pilot breathes in the door slits —
     // slow slit swell + ember brightness amplitude, readable before any
