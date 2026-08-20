@@ -1076,6 +1076,198 @@ try {
     'approaching the watched outside/sill stages resolves the committed crawl before any long limb can clip through the player',
     crawlerPreEntry);
 
+  // ---------------------------------------------------------------- THE
+  // FURNACE ORDER PAGE. His report, docs/HIS-NOTES-2026-08-19b.md: "went down
+  // the basement stairs and did all puzzles in the basement. the furnace did
+  // not have fire... went back down to the basement, made sure everything was
+  // active. still no fire. reloaded check point. and then the fire was there."
+  //
+  // The FIRE is not order-dependent and this page proves it: the last flag
+  // goes straight into the Set with no handler, no interact and no throw, and
+  // the furnace still wakes on the next frames. What WAS order-dependent is
+  // the furnace's VOICE -- the mouth answered once, at the instant the door
+  // swung, and the one state where the draft is whole and the pilot is dark
+  // had no pointer at all. Round twelve's gauge fix was pinned by nothing at
+  // all before this page; it is pinned here.
+  await freshPage();
+  const furnaceOrder = await page.evaluate(() => {
+    const F = window.__FETCH, g = window.__game;
+    F.start();
+    F.teleport('basement');
+    g.enemies.clear();
+    // The stance a confused player actually occupies: square in front of the
+    // mouth in the boiler room. Without it this page would only prove the
+    // pointer fires from a stance nobody stands in.
+    const standAt = (x, y, z) => {
+      g.player.pos.set(x, y, z);
+      g.player.vel.set(0, 0, 0);
+      g.player.fallV = 0;
+      g.player._sync(0);
+    };
+    standAt(9.8, -3, -1.7);
+    const incin = g.incinerator;
+    const pilot = g.basementPilot;
+    const incPos = g.incineratorPosition;
+    // Count only the mouth's own thud. thud is a shared verb across the whole
+    // game; filtering by position keeps this deterministic.
+    let mouthThuds = 0;
+    const originalThud = g.audio.thud;
+    g.audio.thud = function countMouthThud(opts) {
+      const p = opts && opts.pos;
+      if (p && Math.hypot(p.x - incPos.x, p.y - incPos.y, p.z - incPos.z) < 0.6) mouthThuds++;
+      return originalThud.call(g.audio, opts);
+    };
+    const camDist = () => {
+      const c = g.camera.getWorldPosition(g.player.pos.clone());
+      return Math.hypot(c.x - incPos.x, c.y - incPos.y, c.z - incPos.z);
+    };
+    // pilot.pulse is written by nudge() and by nothing else, so it is the
+    // exact signal for "the furnace called the pilot", with no audio
+    // dependency at all.
+    const runFor = (seconds, chunk = 0.2) => {
+      const thudsAtStart = mouthThuds;
+      let peakPulse = 0, peakSlit = 0, minDist = Infinity;
+      for (let t = 0; t < seconds - 1e-6; t += chunk) {
+        F.stepWith(chunk, {}, false);
+        peakPulse = Math.max(peakPulse, pilot.pulse);
+        for (const slit of incin.slits) peakSlit = Math.max(peakSlit, slit.scale.y);
+        minDist = Math.min(minDist, camDist());
+      }
+      return {
+        peakPulse, peakSlit, minDist, alive: !g.dead,
+        thuds: mouthThuds - thudsAtStart,
+        needle: incin.gaugeNeedle.rotation.z,
+      };
+    };
+    const aimAt = (x, y, z) => {
+      const dx = x - g.player.pos.x;
+      const dy = y - (g.player.pos.y + 1.62);
+      const dz = z - g.player.pos.z;
+      g.player.yaw = Math.atan2(-dx, -dz);
+      g.player.pitch = Math.max(-1.3, Math.min(1.3, Math.atan2(dy, Math.hypot(dx, dz))));
+      g.player._sync(0);
+    };
+    const waitHeld = (maxS = 4.5) => {
+      let t = 0;
+      while (g.skull.mode !== 'held' && t < maxS) { F.stepWith(0.1, {}, false); t += 0.1; }
+      return g.skull.mode === 'held';
+    };
+    const throwAt = (x, y, z, hold = 0.35) => {
+      aimAt(x, y, z);
+      F.stepWith(1 / 120, { throwPressed: true, throwHeld: true }, false);
+      const d = Math.hypot(x - g.player.pos.x, z - g.player.pos.z);
+      F.stepWith(Math.min(2.6, d / 20 + hold), { throwHeld: true }, false);
+      F.stepWith(1 / 120, { throwReleased: true }, false);
+      waitHeld();
+    };
+    const fireDoor = g.world.interactables.find((o) => o.userData.inter?.id === 'incineratorDoor');
+
+    // 1. THE NATURAL ORDER. The obvious door gets opened EARLY, cold and
+    //    empty-handed, long before anything else in the basement is done.
+    const thudsBeforeFirst = mouthThuds;
+    fireDoor.userData.inter.action();
+    const firstPress = runFor(0.4);
+    const firstPressSpoke = incin.doorOpen && mouthThuds > thudsBeforeFirst;
+
+    // 2. The rest of the house happens SOMEWHERE ELSE. Straight into the Set:
+    //    no handler, no interact, no throw, no timer, no act change -- the
+    //    same Set-level state idiom this file already uses on pilotLit.
+    g.flags.add('ateFlame');
+    g.flags.add('pumpGalleryLatched');
+    g.flags.add('archiveDraftOpened');
+
+    // 3. THE SILENT STATE, now with a voice. Draft whole, pilot dark, fire in
+    //    the skull, standing at the mouth. The gauge honestly reads EMPTY and
+    //    the slits do not breathe (breath IS pilotLit) -- and before this
+    //    round that was the whole of it, in the exact state he stood in.
+    const coldCall = runFor(11);
+
+    // 4. THE SAME STATE FROM THE FAR END OF THE BASEMENT. Same act, same
+    //    flags, twelve metres away behind the stair mass: a call you cannot
+    //    place is ambience, so it is gated on standing near the mouth.
+    standAt(-1.5, g.world.groundHeightAt(-1.5, -1.5, -2.8), -1.5);
+    F.stepWith(2, {}, false);
+    const farCall = runFor(11);
+
+    // 5. BACK AT THE MOUTH, PRESS THE DOOR AGAIN. THIS is the order bug: the
+    //    handler used to return on its first line once the door was open, so
+    //    every later press produced nothing at all, forever.
+    standAt(9.8, -3, -1.7);
+    F.stepWith(0.3, {}, false);
+    const thudsBeforeSecond = mouthThuds;
+    fireDoor.userData.inter.action();
+    const secondPress = runFor(0.4);
+    const secondPressSpoke = mouthThuds > thudsBeforeSecond;
+
+    // 6. THE FIRE IS NOT ORDER-DEPENDENT. The last precondition is written
+    //    into the Set from nowhere in particular -- no press, no throw, no
+    //    return trip -- and the furnace wakes on the next frames anyway, and
+    //    the gauge sweeps to FULL DRAFT because now it is telling the truth.
+    const awakeBefore = incin.awake;
+    g.flags.add('pilotLit');
+    const wake = runFor(2.2);
+    const wokeWithNoHandler = !awakeBefore && incin.awake
+      && g.flags.has('incineratorAwake') && incin.glowTarget === 2.4;
+
+    // 7. ...and the cold call retires the instant the pilot burns, while the
+    //    slits take up the lit-pilot breath.
+    const afterLit = runFor(11);
+
+    // 8. A SPENT FURNACE STAYS SPENT. Making the handler repeatable created a
+    //    new way to fail: a press could re-light a furnace that had already
+    //    choked on the skull back to a ready mouth. Real throw, real refusal,
+    //    then press the door again.
+    standAt(9, -3, -1.5);
+    throwAt(incPos.x, incPos.y, incPos.z, 0.35);
+    for (let t = 0; t < 6 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1, {}, false);
+    const refused = g.flags.has('fireRefused') && incin.refused && incin.offered;
+    const glowAfterRefusal = incin.glowTarget;
+    fireDoor.userData.inter.action();
+    F.stepWith(0.3, {}, false);
+    const glowAfterSpentPress = incin.glowTarget;
+
+    g.audio.thud = originalThud;
+    return {
+      firstPressSpoke, firstPress,
+      coldCall, farCall,
+      secondPressSpoke, secondPress,
+      wokeWithNoHandler, wake, afterLit,
+      refused, glowAfterRefusal, glowAfterSpentPress,
+      act: g.act, alive: !g.dead, skull: g.skull.mode,
+    };
+  });
+  report.diagnostics.furnaceOrder = furnaceOrder;
+  check(furnaceOrder.firstPressSpoke && furnaceOrder.act === 'basement' && furnaceOrder.alive,
+    'opening the fire door cold and empty-handed answers at the mouth',
+    furnaceOrder.firstPress);
+  check(furnaceOrder.coldCall.thuds >= 1
+      && furnaceOrder.coldCall.peakPulse > 1
+      && Math.abs(furnaceOrder.coldCall.peakSlit - 1) < 1e-9
+      && furnaceOrder.coldCall.needle > 0.9
+      && furnaceOrder.coldCall.alive,
+    'draft whole and pilot dark: the furnace calls back to the pilot inside one period while the gauge and slits stay honestly empty',
+    furnaceOrder.coldCall);
+  check(furnaceOrder.farCall.thuds === 0
+      && furnaceOrder.farCall.peakPulse === 0
+      && furnaceOrder.farCall.minDist > 9,
+    'the same silent state from the far end of the basement stays silent: the cold call is a pointer, not ambience',
+    furnaceOrder.farCall);
+  check(furnaceOrder.secondPressSpoke && furnaceOrder.secondPress.peakPulse > 1,
+    'the mouth answers every press, not only the press that swung the hinge',
+    furnaceOrder.secondPress);
+  check(furnaceOrder.wokeWithNoHandler
+      && furnaceOrder.wake.needle < -0.9
+      && furnaceOrder.afterLit.peakSlit > 1.2
+      && furnaceOrder.afterLit.thuds === 0
+      && furnaceOrder.afterLit.peakPulse === 0,
+    'the last precondition written straight into the flag Set wakes the furnace on the next frames, sweeps the gauge to full draft and retires the cold call',
+    { wake: furnaceOrder.wake, afterLit: furnaceOrder.afterLit, woke: furnaceOrder.wokeWithNoHandler });
+  check(furnaceOrder.refused
+      && furnaceOrder.glowAfterSpentPress === furnaceOrder.glowAfterRefusal
+      && furnaceOrder.glowAfterSpentPress < 0.5,
+    'a furnace that has already choked on the skull can never be re-lit by pressing its door again',
+    { refused: furnaceOrder.refused, glowAfterRefusal: furnaceOrder.glowAfterRefusal, glowAfterSpentPress: furnaceOrder.glowAfterSpentPress });
+
   check(report.errors.length === 0, 'all critical-path scenarios produce zero browser errors', report.errors);
 } finally {
   writeFileSync(resultsPath('house-critical-path-regression.json'), JSON.stringify(report, null, 2));

@@ -2939,6 +2939,11 @@ function buildBasementPilot(game, B) {
       game.audio.glassTink({ pos: wick.getWorldPosition(new THREE.Vector3()), gain: 0.5, rate: 0.62 });
     },
   };
+  // Deterministic observability, same precedent as game.voidDoorGlow: the
+  // cold-pilot breath round twelve added lives entirely in this descriptor,
+  // and nothing outside this closure could read it to tell whether the
+  // eight-slot pooled light rig ever gives it a slot.
+  state.glow = pilotGlow;
   game.basementPilot = state;
   game.tickers.push((dt, time) => {
     const lit = game.flags.has('pilotLit');
@@ -3126,6 +3131,11 @@ function basementAct(game) {
     awake: false, wakePlayed: false, glowTarget: 0.035,
   };
   game.incinerator = incin;
+  // Deterministic observability: the gauge and the slits are the furnace's two
+  // silent scoreboards, and round twelve's "the gauge stops lying" fix shipped
+  // with nothing in tests/ able to read either of them. Handles only.
+  incin.gaugeNeedle = gaugeNeedle;
+  incin.slits = slits;
   const incPos = new THREE.Vector3(11.0, B + 0.9, -1.5);
   game.incineratorPosition = incPos;
   let keyTarget = null;
@@ -3146,13 +3156,29 @@ function basementAct(game) {
     return true;
   };
 
+  // THE ANSWER BELONGS TO THE PRESS, NOT TO THE HINGE. This handler used to
+  // return on its first line once the door was open, so the furnace spoke
+  // exactly ONCE in the whole game — at the instant the panel swung — and what
+  // it said was latched to the circuit as it stood in that instant. The
+  // natural order is to open the obvious door EARLY, before the pilot is lit;
+  // after that the mouth was mute to every press forever. Alex did exactly
+  // that, finished the rest of the basement, came back with fire in the skull,
+  // and got nothing: "went back down to the basement, made sure everything was
+  // active. still no fire." Nothing was broken — hasDraft is re-tested every
+  // frame and no flag here can be lost — but the one thing he pressed had
+  // already spent its voice on a state that no longer existed. The hinge is
+  // still one-shot. The answer is not.
   world.registerInteract(fireDoor, 'incineratorDoor', () => {
-    if (incin.doorOpen) return;
-    incin.doorOpen = true;
-    game.audio.creak({ pos: incPos, gain: 0.7 });
-    // An open mouth always accepts the player's throw; the branches below
-    // only decide how bright the answer is.
-    fireboxTarget.enabled = true;
+    if (!incin.doorOpen) {
+      incin.doorOpen = true;
+      game.audio.creak({ pos: incPos, gain: 0.7 });
+      // An open mouth always accepts the player's throw; the branches below
+      // only decide how bright the answer is.
+      fireboxTarget.enabled = true;
+    }
+    // The fire has already tried the skull and lost. A spent furnace has
+    // nothing left to say, and a press must never re-light its mouth.
+    if (incin.offered || incin.refused) return;
     // The wake commit (incin.awake + its announcement) belongs to the ticker
     // ALONE — a stale ateFlame+pump check here used to pre-set awake and
     // swallow the archive-draft wake beat forever. The mouth reads 'ready'
@@ -3257,6 +3283,11 @@ function basementAct(game) {
 
   // ash pan slides open after the refusal; slits/embers/glow all die together
   const _vDuct = new THREE.Vector3();
+  const _vCall = new THREE.Vector3();
+  // the cold call walks the pilot's brass ladder BACKWARDS: down from the
+  // header's high east end, along the riser top, into the pilot's own chime.
+  const CALL_HIGH = new THREE.Vector3(5.38, B + 2.66, 5.8);
+  const CALL_LOW = new THREE.Vector3(3.77, B + 2.12, 5.8);
   game.tickers.push((dt, t) => {
     // the mouth never glows 'ready' before the pilot burns
     const hasDraft = game.flags.has('pilotLit')
@@ -3301,6 +3332,48 @@ function basementAct(game) {
         incin.ductKnockT = 0;
         game.audio.knock({ pos: collar.getWorldPosition(_vDuct), gain: 0.3, rate: 0.45 });
       }
+    }
+    // scoreboard, state 3: THE DRAFT IS WHOLE AND THE PILOT IS DARK. This was
+    // the one state on the entire board with no voice at all, and it is the
+    // exact state Alex stood in twice — the gauge reads empty (correctly, since
+    // round twelve), the slits do not breathe because breath IS pilotLit, and
+    // the state-2 duct knock has already retired itself. "made sure everything
+    // was active. still no fire." Every part of the machine was honest and the
+    // whole machine was silent, and silence reads as broken.
+    //
+    // So the cold furnace calls back along its own line, on state 2's period
+    // (9 s) and at state 2's gain at the mouth (0.30): a dead thud in the
+    // firebox, then two knocks walking the pilot's brass ladder BACKWARDS —
+    // header end, riser top — and the pilot's own chime at the bottom of it,
+    // where the fire actually has to come from. The two rungs are the archive
+    // pointer's first two rungs exactly — same delays (0.35, 0.70), same gains
+    // (0.40, 0.44), same rates (0.62, 0.56) as the firebox's archive refusal
+    // above — because it is the same verb aimed the other way: a pointer is a
+    // path, not a distant noise.
+    //
+    // Gated three ways. Only while the skull already carries fire — an
+    // empty-handed player is never beaconed at a fixture they cannot use, the
+    // same law nudge() enforces. Only in the basement. And only within 7 m of
+    // the mouth: the basement zone is 32.5 m wide (addZone, x -20.5..12), and
+    // a call heard from the archive end, 31 m away through the stair mass,
+    // points at nothing. It retires the instant the pilot lights, so it can
+    // never become ambience.
+    else if (game.act === 'basement'
+        && game.flags.has('pumpGalleryLatched') && game.flags.has('archiveDraftOpened')
+        && game.flags.has('ateFlame') && !game.flags.has('pilotLit')
+        && game.camera.getWorldPosition(_vCall).distanceToSquared(incPos) < 49) {
+      incin.pilotCallT = (incin.pilotCallT || 0) + dt;
+      if (incin.pilotCallT >= 9) {
+        incin.pilotCallT = 0;
+        game.audio.thud({ pos: incPos, gain: 0.3, rate: 0.5 });
+        game.after(0.35, () => game.audio.knock({ pos: CALL_HIGH, gain: 0.4, rate: 0.62 }), { global: true });
+        game.after(0.7, () => game.audio.knock({ pos: CALL_LOW, gain: 0.44, rate: 0.56 }), { global: true });
+        game.after(1.05, () => game.basementPilot?.nudge?.(), { global: true });
+      }
+    } else {
+      // walk out of earshot, or light the pilot, and the count starts over: a
+      // player who only passes through the boiler room never hears it at all.
+      incin.pilotCallT = 0;
     }
     // The fire itself, driven off the same one number the glow is. Each tongue
     // runs its own two-rate flicker so the mass never pulses as one object.
