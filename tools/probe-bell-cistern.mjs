@@ -90,11 +90,11 @@ console.log('outward normal        ', [r3(normal[0]), r3(normal[1])]);
 console.log('normal * 1.95         ', [r3(normal[0] * OFFSET), r3(normal[1] * OFFSET)]);
 
 // The shipped offset, rounded to two decimals in source.
-const OX = 1.45, OZ = -1.31;
+const OX = 1.63, OZ = -1.47;   // round fourteen: 1.95 -> 2.20 m out
 const bx = C.x + OX, bz = C.z + OZ;
 const offset = Math.hypot(OX, OZ);
 console.log('\nSHIPPED OFFSET        ', [OX, OZ], 'magnitude', r3(offset));
-const shelf = { x: C.x - 1.8, z: C.z + 2.0 };
+const shelf = { x: C.x - 1.7527, z: C.z + 1.9475 };   // round fourteen: tangential at 2.62 m
 console.log('bell/shelf separation ', r3(Math.hypot(bx - shelf.x, bz - shelf.z)), '(opposite flanks)');
 
 // ---- perpendicular distance to both secret centrelines -------------------
@@ -109,7 +109,7 @@ console.log('secret leg out (27,68)->(37,75): bell axis is',
 // tests/underfalls-expansion.mjs:167-182 samples both polylines at 0.55 m and
 // fails any underfalls collider whose AABB, grown 0.32 m in x and z, contains
 // a sample whose [y+0.55, y+1.75] band overlaps the collider's y range.
-const R = 0.75, Y0 = C.y - 0.4, Y1 = C.y + 1.44;
+const R = 1.03, Y0 = C.y - 0.4, Y1 = C.y + 1.44;   // round fourteen: 0.75 -> 1.03
 const box = { minX: bx - R, maxX: bx + R, minZ: bz - R, maxZ: bz + R, minY: Y0, maxY: Y1 };
 function samplePath(path, spacing) {
   const out = [];
@@ -231,7 +231,7 @@ const edgeAtBearing = R_DISC * Math.cos(Math.PI / 16) / Math.cos(phi);
 console.log('\nDRY RING vs the chamber floor');
 console.log('  floor disc circumradius        ', r3(R_DISC));
 console.log('  16-gon edge at the bell bearing', r3(edgeAtBearing));
-for (const [ri, ro] of [[2.05, 2.28], [1.22, 1.40]]) {
+for (const [ri, ro] of [[2.05, 2.28], [1.22, 1.40], [1.05, 1.22]]) {
   console.log('  RingGeometry(' + ri + ', ' + ro + ') moved to the bell -> far edge at',
     r3(offset + ro), ro + offset < edgeAtBearing ? '(inside the floor)' : '(OVERHANGS the floor)');
   console.log('    nearest edge to the secret centreline:',
@@ -265,7 +265,7 @@ const oldLight = { x: C.x - 0.6, y: C.y + 2.25, z: C.z + 0.5 };
 const newLight = { x: bx - 1.05, y: C.y + 2.4, z: bz + 0.85 };
 const rim = { x: bx, y: C.y + 1.44, z: bz };
 const oldRim = { x: C.x, y: C.y + 1.44, z: C.z };
-const keepsakes = { x: C.x - 1.72, y: C.y + 0.9, z: C.z + 1.85 };
+const keepsakes = { x: C.x - 1.7527, y: C.y + 0.9, z: C.z + 1.9475 };
 const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 console.log('\nBELL LIGHT (PointLight 13.5, distance 12, decay 1.15)');
 console.log('  before: light->rim', r3(d3(oldLight, oldRim)), 'm   light->keepsakes', r3(d3(oldLight, keepsakes)), 'm');
@@ -283,8 +283,12 @@ const rawLight = { x: bx - 0.55, y: C.y + 2.4, z: bz + 0.45 };
 console.log('  (raw-plan position bx-0.55/bz+0.45 would be rim x',
   r3(irradiance(d3(rawLight, rim)) / irradiance(d3(oldLight, oldRim))), ', keepsakes x',
   r3(irradiance(d3(rawLight, keepsakes)) / irradiance(d3(oldLight, keepsakes))) + ')');
-console.log('  the pooled candle at', [r3(C.x - 2.4), r3(C.z + 1.8)], 'r 4.5 is unmoved;',
-  r3(Math.hypot(C.x - 2.4 - keepsakes.x, C.z + 1.8 - keepsakes.z)), 'm from the keepsakes');
+// Round fourteen rewrote the shelf candle in the plank's own frame: 0.60 m
+// along the row and 0.62 m out into the room, so it lights the keepsakes from
+// where the player stands rather than from 0.29 m behind the plank.
+const CANDLE = { x: C.x - 1.7605, z: C.z + 1.0836 };
+console.log('  the pooled candle at', [r3(CANDLE.x), r3(CANDLE.z)], 'r 4.5;',
+  r3(Math.hypot(CANDLE.x - keepsakes.x, CANDLE.z - keepsakes.z)), 'm from the keepsakes');
 
 // ---- the earshot question -------------------------------------------------
 const strike = { x: bx, y: C.y + 1.15, z: bz };
@@ -347,13 +351,23 @@ console.log('  it stands', r3(segmentProjection(legIn, chain.x, chain.z).d), 'm 
 
 // ---- what the square collider feels like against a round bell -------------
 // addColliderCylinder writes an axis-aligned box, the same approximation the
-// pump chapel's pillars and altar already use. Against a 1.105 m rim radius:
-const RIM_OUTER = 1.03 + 0.075;
+// pump chapel's pillars and altar already use.
+//
+// ROUND FOURTEEN CORRECTS THIS SECTION, WHICH WAS WRONG WHEN IT WAS WRITTEN.
+// It printed a face gap of -0.015 m -- the camera fifteen millimetres INSIDE
+// the pale rim -- and then concluded "nothing pokes out, nothing floats". The
+// number and the sentence under it disagreed and the sentence won, which is
+// the failure this project has now paid for twice. Measured against every pose
+// that collider really permitted: 0.068 m in plan and 0.094 m in space, i.e.
+// your head inside the mouth of the bell with the rim clipped by the near
+// plane. The rim came in to 0.955 major so its outer surface is flush with the
+// 1.03 lip, the bell moved 0.20 m further out, and the box went to 1.15.
+const RIM_OUTER = 0.955 + 0.075;
 console.log('\nCOLLIDER vs the bell it stands for (half-extent', R + ', player radius', PR + ')');
 console.log('  bell rim outer radius        ', RIM_OUTER);
 console.log('  you stop this far from the axis on a face:', r3(R + PR),
   '-> gap to the rim', r3(R + PR - RIM_OUTER), 'm');
 console.log('  ...and on a corner            :', r3(Math.hypot(R, R) + PR),
   '-> gap to the rim', r3(Math.hypot(R, R) + PR - RIM_OUTER), 'm');
-console.log('  the bell is 0.18 m wide at the floor and 1.03 m at the mouth, so a');
-console.log('  0.75 box is the mid-body: nothing pokes out, nothing floats.');
+console.log('  the bell is 0.18 m wide at the floor and 1.03 m at the mouth, and');
+console.log('  the box is the MOUTH now, not the mid-body: nothing drawn pokes out.');

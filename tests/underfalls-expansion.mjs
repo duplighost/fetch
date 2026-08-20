@@ -165,48 +165,253 @@ try {
     );
 
     // LEGIBILITY, NOT FUNCTION: not "is there a wall" but "can the player
-    // stand inside it, or close enough that the near plane deletes it". The
-    // camera's near plane is 0.2 (main.js); the clamp permits a stable pose at
-    // clearance -0.04, and the head bob adds up to 0.02 of world X on top that
-    // the clamp never sees (player.js _sync). A drawn face nearer than the pad
-    // is a wall you walk through — and every one of the 81 flank pieces round
-    // twelve drew was one. Nothing in this district is a collider, so this is
-    // the only test that can catch it. layout.solids carries the drawn FACES,
-    // not AABBs: a 35-degree yawed wall box's AABB is 0.22 m fatter into the
-    // lane than the box, and believing that number is the old forest trap.
-    const NEAR = 0.2;
-    const PAD = 0.42;
+    // stand inside it, or close enough that the near plane deletes it". Round
+    // thirteen added this after all 81 drawn flank pieces turned out to sit
+    // within 0.045 m of a pose the clamp holds. It was then much too weak to
+    // see the five fixtures round fourteen found one function away, in two
+    // specific ways, and both of them are why they survived.
+    //
+    // 1. IT COULD ONLY SEE layout.solids, AND layout.solids HAD TWO PRODUCERS.
+    //    The flank walls and the sluice gate posts published; nothing else this
+    //    district draws did. So three pale doorjambs standing on open chapel
+    //    floor with a 0.000 m gap, two turn markers you could stand inside, the
+    //    keepsake shelf, the fallen bell whose mouth swallowed the camera, and
+    //    six benches were all invisible to the only gate that could have asked.
+    //    Every drawn silhouette publishes now (src/underfalls.js publishSolid),
+    //    and this gate asserts the ledger's own membership below, so a producer
+    //    cannot fall off it quietly a second time.
+    //
+    // 2. ITS POSES CAME FROM EACH POLYLINE'S OWN w, NEVER FROM THE UNION.
+    //    At main#3 mid-leg the outermost probe sat at union clearance -0.462,
+    //    so the clamp still permitted 0.422 m of lateral travel this gate never
+    //    looked at -- and chamber rims, where the union is far wider than the
+    //    leg crossing them, are exactly where every failure in this district
+    //    has actually lived. Poses are a grid over the union now, the way
+    //    tools/probe-district-walls.mjs's reachablePoses does it.
+    //
+    // AND A POSE IS SOMETHING A COLLIDER CAN TAKE AWAY. "Nothing in this
+    // district is a collider" was true when round twelve wrote it and stopped
+    // being true in round thirteen, when the fallen bell got one; the pump
+    // chapel's pillars and altar had had one all along. A pose here is
+    // clamp-legal AND collider-free, by player.js _moveAxis's own rule, and the
+    // ledger names which guard each face has, because the two guards owe
+    // different distances:
+    //   'clamp'  -- the clamp is all there is, and installClamp stably holds a
+    //               pose at clearance -0.04, so the face owes the player's
+    //               RADIUS 0.34 plus that 0.08 dead band: UNDERFALLS_SOLID_PAD.
+    //   a role   -- a collider carrying that role stands in front of it, and it
+    //               has no dead band: _moveAxis puts the player's centre at
+    //               exactly RADIUS. Less the 0.02 of world X the head bob adds
+    //               to the camera and the collider never sees, that is 0.32.
+    // Both numbers are past 0.24 -- the 0.2 near plane plus the 0.04 of slack
+    // the clamp leaves -- so a face that keeps its guard's distance is never
+    // clipped. The gate proves the named collider exists rather than believing
+    // the label.
+    //
+    // OVERHEAD SETTLES THE BODY AND SAYS NOTHING ABOUT THE NEAR PLANE. So each
+    // ledger entry is a PRISM (footprint plus y0..y1) and gets two questions:
+    // the flat gap, asked only while the prism crosses the player's head window
+    // (feet+STEP_UP .. feet+HEAD, player.js's own two collider tests), and the
+    // full 3D distance from the eye, asked always. The second is not decorative:
+    // it is what catches the hatch's long pull chain, which hung 0.093 m from
+    // the camera of a player standing where the hatch makes them stand.
+    //
+    // FACES, NOT AABBs. A 35-degree yawed 0.54 x 0.95 wall box has a 0.99 m
+    // AABB, 0.22 m fatter into the lane than the box, and believing that number
+    // is the old forest trap. Rect entries carry their own frame; cones carry
+    // {r} rather than being squared off into 0.481 m of corner they do not have.
+    //
+    // WHAT IS DELIBERATELY NOT ON THE LEDGER, and the measured numbers that say
+    // why (tools/probe-cistern-shelf.mjs builds the real fixtures and reads the
+    // triangles back; tools/probe-mica-pump.mjs does the atmosphere pass):
+    //   Floors. The walkway paving, the chamber discs, the sluice treads, the
+    //     runnels, the verge, the drowned aisle and the bell's dry ring all top
+    //     out under 0.09 m over the floor they lie on. You walk ON them.
+    //   The empty pump benches, 0.309..0.491, and their legs, -0.137..0.399.
+    //     Wholly under STEP_UP, which is what round fourteen's 0.111 m of
+    //     thinning was for: at 0.611 the seat was over that line and measured
+    //     0.001 m from a legal stand -- you stood in the bench.
+    //   Route roofs (avgY + 4.86), chamber caps (+5.68 and +6.08), the hatch
+    //     door, frame and handle (3.56..3.86), the pump's bell jar (from
+    //     2.094) and the broken nave ribs (from 2.203). Too high for the near
+    //     plane to reach: the lowest of them, the ribs, measure 0.698 m from a
+    //     pose and 0.721 m from a camera even from the raised corridor beside
+    //     the chapel. The sluice tooth bars, the sluice lintels, the culvert
+    //     lintel and the hatch pull chains are overhead too and are ON the
+    //     ledger anyway, for the reason in the paragraph above.
+    //   The spray displacement, drawn at opacity 0 until the beat reveals it.
+    //   Everything in src/atmosphere.js: the rock skin, the rings, the floor
+    //     spikes, the mica trail. That pass seats every instance itself against
+    //     this same UNDERFALLS_SOLID_PAD (buildCaveDress's clearOfRoute) and
+    //     tools/probe-mica-pump.mjs pins the result. This ledger is for the
+    //     fixtures src/underfalls.js draws.
+    const NEAR = 0.24;
+    const PAD = 0.42;        // UNDERFALLS_SOLID_PAD
+    const BODY = 0.32;       // RADIUS less the head bob a collider never sees
+    const RADIUS = 0.34, STEP_UP = 0.5, HEAD = 1.75, EYE = 1.62, BOB = 0.02;
     const solids = L.solids || [];
-    const wallFailures = [];
-    for (const s of [...mainSamples, ...secretSamples]) {
-      for (const lateral of [-1, 1]) {
-        // the outermost pose the clamp will hold...
-        const sx = s.x + s.nx * lateral * (s.w - 0.04);
-        const sz = s.z + s.nz * lateral * (s.w - 0.04);
-        if (!U.contains(sx, sz, -0.039)) continue;
-        // ...and only then the bob, which moves world X and is never clamped.
-        // Adding it before the filter silently drops both probes on every leg
-        // with nx > 0, which is most of them.
-        for (const bob of [-0.02, 0, 0.02]) {
-          const px = sx + bob, pz = sz;
-          for (const q of solids) {
-            const dx = px - q.x, dz = pz - q.z;
-            const u = Math.abs(dx * q.nx + dz * q.nz) - q.halfN;
-            const v = Math.abs(dx * q.tx + dz * q.tz) - q.halfT;
-            const gap = Math.hypot(Math.max(0, u), Math.max(0, v));
-            if (gap < PAD - 1e-3) {
-              wallFailures.push({ at: [round(px), round(pz)], gap: round(gap), clipped: gap < NEAR });
-              break;
-            }
-          }
+    const colliders = g.world.colliders;
+    const roles = new Set(colliders.map((c) => c.role).filter(Boolean));
+
+    const gapTo = (s, px, pz) => {
+      const dx = px - s.x, dz = pz - s.z;
+      if (s.r !== undefined) return Math.max(0, Math.hypot(dx, dz) - s.r);
+      const u = Math.abs(dx * s.nx + dz * s.nz) - s.halfN;
+      const v = Math.abs(dx * s.tx + dz * s.tz) - s.halfT;
+      return Math.hypot(Math.max(0, u), Math.max(0, v));
+    };
+    const halfExtent = (s) => (s.r !== undefined
+      ? { hx: s.r, hz: s.r }
+      : {
+        hx: Math.abs(s.nx) * s.halfN + Math.abs(s.tx) * s.halfT,
+        hz: Math.abs(s.nz) * s.halfN + Math.abs(s.tz) * s.halfT,
+      });
+
+    // Three passes, coarse to fine, so a 3 mm margin is still a margin: a bare
+    // 0.05 grid can understate the danger by 0.035 simply by not landing on the
+    // worst pose, and the tightest thing here (the hatch chamber's west wall,
+    // whose collider IS its drawn box) clears its number by 0.003.
+    // Pass/fail only needs need + 0.06 of search halo: the box is the
+    // footprint AABB grown by halo, so nothing closer than the owed distance
+    // can hide outside it. REPORT_REACH is the rest, and it exists only so the
+    // numbers printed below are TRUE minima rather than whatever the corner of
+    // a tight search box happened to touch -- at halo 0.38 the fallen bell
+    // prints 0.911 when its real nearest stand is 0.44, and the next round
+    // would read that and believe it. Anything past the reach prints as
+    // "> reach" instead of as a number this cannot back up.
+    const REPORT_REACH = 0.45;
+    const measureSolid = (s) => {
+      const fp = halfExtent(s);
+      const need = Math.max(s.guard === 'clamp' ? PAD : BODY, NEAR);
+      const halo = need + REPORT_REACH;
+      const box = {
+        minX: s.x - fp.hx - halo, maxX: s.x + fp.hx + halo,
+        minZ: s.z - fp.hz - halo, maxZ: s.z + fp.hz + halo,
+      };
+      const local = colliders.filter((c) => c.max.x > box.minX - RADIUS
+        && c.min.x < box.maxX + RADIUS && c.max.z > box.minZ - RADIUS
+        && c.min.z < box.maxZ + RADIUS);
+      const found = { body: Infinity, bodyAt: null, cam: Infinity, camAt: null };
+      const visit = (x, z) => {
+        const p = U.project(x, z);
+        if (!p || p.clearance > -0.04) return;
+        const feet = U.groundAt(x, z);
+        if (feet == null || !Number.isFinite(feet)) return;
+        for (const c of local) {
+          if (c.max.y <= feet + STEP_UP || c.min.y >= feet + HEAD) continue;
+          const qx = Math.min(Math.max(x, c.min.x), c.max.x);
+          const qz = Math.min(Math.max(z, c.min.z), c.max.z);
+          if (Math.hypot(x - qx, z - qz) < RADIUS) return;
         }
+        const eye = feet + EYE;
+        const vert = Math.max(0, s.y0 - eye, eye - s.y1);
+        const inWindow = s.y1 > feet + STEP_UP && s.y0 < feet + HEAD;
+        for (const bob of [-BOB, 0, BOB]) {
+          const flat = gapTo(s, x + bob, z);
+          const cam = Math.hypot(flat, vert);
+          if (cam < found.cam) { found.cam = cam; found.camAt = { x, z }; }
+          if (inWindow && flat < found.body) { found.body = flat; found.bodyAt = { x, z }; }
+        }
+      };
+      const sweep = (step, x0, x1, z0, z1) => {
+        for (let x = x0; x <= x1 + 1e-9; x += step) {
+          for (let z = z0; z <= z1 + 1e-9; z += step) visit(x, z);
+        }
+      };
+      // The last stage matters: two producers here sit EXACTLY on the number
+      // they owe, and not by luck. The pump nave pillars carry a collider of
+      // exactly their drawn base circumradius and the hatch chamber walls
+      // carry a collider that IS their drawn box, so both land at RADIUS less
+      // the bob, 0.320, as an identity between the same constants rather than
+      // as a measurement. A grid that can be 0.0014 off would flake on them;
+      // this one converges to 0.0004, inside the 1e-3 the comparisons allow.
+      sweep(0.05, box.minX, box.maxX, box.minZ, box.maxZ);
+      for (const refine of [[0.01, 0.06], [0.002, 0.012], [0.0005, 0.003]]) {
+        const [step, reach] = refine;
+        for (const anchor of [found.bodyAt, found.camAt]) {
+          if (!anchor) continue;
+          sweep(step, anchor.x - reach, anchor.x + reach, anchor.z - reach, anchor.z + reach);
+        }
+      }
+      found.reach = halo;
+      return found;
+    };
+    const shown = (v, reach) => (v <= reach ? round(v) : `> ${round(reach)}`);
+
+    const started = performance.now();
+    const wallFailures = [];
+    // Membership is counted in its own pass. The measuring loop below stops at
+    // eight failures so a broken build reports something readable instead of
+    // 224 lines, and counting inside it would make "missing" mean "we stopped".
+    const ledger = new Map();
+    const perName = new Map();
+    for (const s of solids) ledger.set(s.name, (ledger.get(s.name) || 0) + 1);
+    let worstBody = { gap: Infinity, name: null }, worstCam = { gap: Infinity, name: null };
+    for (const s of solids) {
+      const owed = s.guard === 'clamp' ? PAD : BODY;
+      if (s.guard !== 'clamp' && !roles.has(s.guard)) {
+        wallFailures.push({ name: s.name, why: `no collider carries the role ${s.guard}` });
+        continue;
+      }
+      if (!Number.isFinite(s.y0) || !Number.isFinite(s.y1)) {
+        wallFailures.push({ name: s.name, why: 'ledger entry has no vertical span' });
+        continue;
+      }
+      const m = measureSolid(s);
+      if (m.body <= m.reach && m.body < worstBody.gap) {
+        worstBody = { gap: round(m.body), name: s.name, guard: s.guard, owed };
+      }
+      // Per producer, so the next round can read what each fixture is actually
+      // holding instead of only the worst one in the district.
+      const seen = perName.get(s.name) || { owed, body: Infinity, cam: Infinity, reach: m.reach };
+      if (m.body < seen.body) seen.body = m.body;
+      if (m.cam < seen.cam) seen.cam = m.cam;
+      perName.set(s.name, seen);
+      if (m.cam <= m.reach && m.cam < worstCam.gap) {
+        worstCam = { gap: round(m.cam), name: s.name, guard: s.guard };
+      }
+      if (m.body < owed - 1e-3) {
+        wallFailures.push({
+          name: s.name, guard: s.guard, owed, gap: round(m.body),
+          at: m.bodyAt && [round(m.bodyAt.x), round(m.bodyAt.z)],
+          inside: m.body < 1e-3, clipped: m.cam < NEAR,
+        });
+      } else if (m.cam < NEAR - 1e-3) {
+        wallFailures.push({
+          name: s.name, guard: s.guard, near: NEAR, cameraGap: round(m.cam),
+          at: m.camAt && [round(m.camAt.x), round(m.camAt.z)], clipped: true,
+        });
       }
       if (wallFailures.length >= 8) break;
     }
+    // The ledger's own membership, so "it is not on the list" can never again be
+    // the reason a walk-through survives a green gate. Each name here is a
+    // producer in src/underfalls.js; deleting one has to fail this, not go quiet.
+    const expected = [
+      'cave flank wall', 'sluice gate post', 'sluice gate lintel',
+      'sluice gate tooth bar', 'underfalls chamber doorjamb',
+      'underfalls turn marker', 'culvert mouth lintel', 'pump nave pillar',
+      'pump altar drum', 'pump flywheel', 'pump piston', 'fallen bell',
+      'keepsake shelf plank', 'dry keepsakes', 'hatch chamber wall (east)',
+      'hatch chamber wall (west)', 'hatch chamber wall (north)',
+      'hatch pull chain',
+    ];
+    const missing = expected.filter((name) => !ledger.has(name));
     check(
-      'no pose the clamp accepts stands inside a drawn cave wall, or near enough for the near plane to delete it',
-      solids.length > 0 && wallFailures.length === 0,
-      { solids: solids.length, near: NEAR, pad: PAD, failures: wallFailures.slice(0, 8) },
+      'every drawn silhouette is on the ledger, and no reachable pose stands inside one or near enough for the near plane to delete it',
+      solids.length > 0 && missing.length === 0 && wallFailures.length === 0,
+      {
+        solids: solids.length,
+        ledger: Object.fromEntries([...ledger.entries()].sort()),
+        missing,
+        near: NEAR, clampPad: PAD, colliderPad: BODY,
+        worstBody, worstCam,
+        gaps: Object.fromEntries([...perName.entries()].sort()
+          .map(([name, v]) => [name,
+            `body ${shown(v.body, v.reach)} cam ${shown(v.cam, v.reach)} owed ${v.owed}`])),
+        ms: Math.round(performance.now() - started),
+        failures: wallFailures.slice(0, 8),
+      },
     );
 
     const routeColliders = g.world.colliders.filter((c) => c.underfalls);

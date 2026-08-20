@@ -82,10 +82,19 @@ const game = { scene: { add: (o) => added.push(o) } };
 const world = { box() { } };
 const M = { headstone: material(), rock: material() };
 
+// publishSolid is the district ledger (src/underfalls.js). The sliced block
+// calls it for every cone and every jamb it draws, so the real one goes in --
+// this harness owns the layout, so layout.solids ends up holding exactly what
+// the wayfinding tier published and nothing else.
+const publishSolid = (l, entry) => {
+  (l.solids || (l.solids = [])).push(entry);
+  return entry;
+};
 // eslint-disable-next-line no-new-func
 new Function('THREE', 'layout', 'game', 'world', 'M', 'projectUnderfalls',
-  'UNDERFALLS_SOLID_PAD', 'clamp', 'lerp', BODY)(
+  'UNDERFALLS_SOLID_PAD', 'publishSolid', 'clamp', 'lerp', BODY)(
     THREE, layout, game, world, M, projectUnderfalls, UNDERFALLS_SOLID_PAD,
+    publishSolid,
     (v, lo, hi) => Math.max(lo, Math.min(hi, v)),
     (a, b, t) => a + (b - a) * t);
 
@@ -173,59 +182,57 @@ for (const mesh of added) {
 console.log('\n' + (fail ? fail + ' FIXTURE(S) FAIL' : 'all wayfinding fixtures clear the pad'));
 
 // --- will the browser gate go red? -----------------------------------------
-// tests/underfalls-expansion.mjs walks layout.solids against lane-edge poses
-// and needs a real GPU, so replay its exact predicate here instead of assuming.
-// Its pose set is a strict SUBSET of the union poses measured above -- it only
-// probes s.w - 0.04 either side of a 0.55 m centreline sampling -- so this
-// cannot be worse than the numbers above, but "cannot" is not "checked".
+// tests/underfalls-expansion.mjs needs a real GPU, so replay its predicate here
+// instead of assuming. Round fourteen widened that gate twice over, and both
+// widenings are replayed: the poses come from the UNION rather than from each
+// polyline's own w (it used to probe only s.w - 0.04 either side of a 0.55 m
+// centreline sampling, which never sees the extra lateral travel the clamp
+// permits at a chamber rim -- exactly where these fixtures live), and the
+// ledger now carries CIRCLES as well as rectangles, so the cones are measured
+// as cones instead of being left off it.
 {
-  const NEAR = 0.2, PAD = 0.42;
+  const PAD = 0.42;
   const solids = layout.solids || [];
-  const samplePath = (path, spacing = 0.55) => {
-    const out = [];
-    for (let i = 0; i < path.length - 1; i++) {
-      const a = path[i], b = path[i + 1];
-      const len = Math.hypot(b.x - a.x, b.z - a.z);
-      const n = Math.max(1, Math.ceil(len / spacing));
-      const tx = (b.x - a.x) / len, tz = (b.z - a.z) / len;
-      for (let k = 0; k < n; k++) {
-        const t = k / n;
-        out.push({
-          x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t,
-          w: a.w + (b.w - a.w) * t, nx: tz, nz: -tx,
-        });
-      }
-    }
-    const end = path[path.length - 1];
-    out.push({ ...end, nx: 1, nz: 0 });
-    return out;
+  const gapTo = (q, px, pz) => {
+    const dx = px - q.x, dz = pz - q.z;
+    if (q.r !== undefined) return Math.max(0, Math.hypot(dx, dz) - q.r);
+    const u = Math.abs(dx * q.nx + dz * q.nz) - q.halfN;
+    const v = Math.abs(dx * q.tx + dz * q.tz) - q.halfT;
+    return Math.hypot(Math.max(0, u), Math.max(0, v));
   };
-  const samples = [...samplePath(layout.main), ...samplePath(layout.secret)];
   const failures = [];
-  let tightest = Infinity;
-  for (const s of samples) {
-    for (const lateral of [-1, 1]) {
-      const sx = s.x + s.nx * lateral * (s.w - 0.04);
-      const sz = s.z + s.nz * lateral * (s.w - 0.04);
-      const hit = projectUnderfalls(layout, sx, sz);
-      if (!hit || hit.clearance > -0.039) continue;
-      for (const bob of [-0.02, 0, 0.02]) {
-        const px = sx + bob, pz = sz;
-        for (const q of solids) {
-          const dx = px - q.x, dz = pz - q.z;
-          const u = Math.abs(dx * q.nx + dz * q.nz) - q.halfN;
-          const v = Math.abs(dx * q.tx + dz * q.tz) - q.halfT;
-          const gap = Math.hypot(Math.max(0, u), Math.max(0, v));
-          if (gap < tightest) tightest = gap;
-          if (gap < PAD - 1e-3) failures.push({ at: [r3(px), r3(pz)], gap: r3(gap), clipped: gap < NEAR });
-        }
-      }
+  let tightest = Infinity, tightestName = null;
+  for (const q of solids) {
+    if (!Number.isFinite(q.y0) || !Number.isFinite(q.y1)) {
+      failures.push({ name: q.name, why: 'no vertical span on the ledger entry' });
+      continue;
     }
+    const gapFn = (px, pz) => gapTo(q, px, pz);
+    let gap = Infinity, at = null;
+    for (const p of near(q.x, q.z, 3)) {
+      const g = gapFn(p.x, p.z);
+      if (g < gap) { gap = g; at = p; }
+    }
+    if (at) {
+      const fine = refine(gapFn, Math.round(at.x / 0.05) * 0.05, at.z);
+      if (fine.gap < gap) gap = fine.gap;
+    }
+    if (gap < tightest) { tightest = gap; tightestName = q.name; }
+    if (gap < PAD - 1e-3) failures.push({ name: q.name, at: [r3(q.x), r3(q.z)], gap: r3(gap) });
   }
-  console.log('\njamb solids registered on layout.solids: ' + solids.length);
+  const names = {};
+  for (const q of solids) names[q.name] = (names[q.name] || 0) + 1;
+  console.log('' + JSON.stringify(names) + ' wayfinding entries on layout.solids');
   console.log('tests/underfalls-expansion.mjs predicate replay: '
     + (failures.length ? failures.length + ' FAILURES ' + JSON.stringify(failures.slice(0, 4))
-      : 'clean') + ', tightest lane-edge gap ' + r3(tightest) + ' m');
+      : 'clean') + ', tightest ' + r3(tightest) + ' m (' + tightestName + ')');
   if (failures.length) fail++;
+  // The tier draws four cones and ten jambs; a producer falling off the ledger
+  // is the exact failure round fourteen widened the gate to stop, so count it.
+  const drawn = added.reduce((n, mesh) => n + mesh.count, 0);
+  if (solids.length !== drawn) {
+    console.log('LEDGER MISMATCH: ' + drawn + ' drawn, ' + solids.length + ' published');
+    fail++;
+  }
 }
 process.exit(fail ? 1 : 0);
