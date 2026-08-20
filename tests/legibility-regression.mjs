@@ -46,6 +46,15 @@ const FLOORS = {
   'the key-tree limb, from the top of the lane': [0.12, 1.8],
   'the key-tree limb, at throwing distance': [0.18, 1.15],
   'the key in the grass, from four metres': [0.01, 4.0],
+  // PROVISIONAL, and say so rather than pretend: these two were authored
+  // without a render -- the agent that added the second stall could not
+  // launch a browser -- so they assert only the floor of the claim, that the
+  // body is on screen at all and differs in luminance from what it hides.
+  // RAISE THEM under the first measured run: the console prints the real
+  // numbers on every pass, and a floor that nothing can ever trip is a
+  // decorative gate, which is the failure this whole file exists to end.
+  'the second stall, from the crawl doorway': [0.01, 1.02],
+  'the second stall, at the bars': [0.30, 1.05],
 };
 
 // NOT YET MEASURED. Round thirteen laid the basement pilot's feed line and
@@ -193,6 +202,31 @@ const result = await page.evaluate(() => {
   snap('basement-feed-pulse');
   pilotFeed.geometry.computeBoundingBox();
   const feedMinY = pilotFeed.geometry.boundingBox.min.y;
+  // ---- 0. the crawl wing's second stall ----------------------------------
+  // Measured FIRST, and that ordering is load-bearing: the graveyard teleport
+  // below hides every house interior root, and this stall is one of them, so
+  // read from the basement while the house district is still up.
+  //
+  // Toggle the OBJECT, never a material -- world.finishStatic() CLONES what it
+  // merges, and that trap has already cost this project four rounds. Scored on
+  // CONTRAST, which is what `read` already returns, so a dark body on a backlit
+  // wall passes on exactly the same terms a bright key does.
+  F.teleport('basement');
+  F.stepWith(0.4, {}, false);
+  g.enemies.clear();          // same reason the feed-line block clears: a wandering walker pollutes a contrast read
+  g.skull.holdNow();
+  const stall = g.cellTwo;
+  if (stall) {
+    const faceStall = (x, z) => () => {
+      seat(x, z, g.world.groundHeightAt(x, z, -3) + 0.02);
+      lookAt(stall.barMid.x, stall.barMid.y, stall.barMid.z);
+      F.stepWith(0.3, {}, false);
+    };
+    read('the second stall, from the crawl doorway', stall.occupant, faceStall(-4.6, -3.0));
+    snap('crawl-cell-two-doorway');
+    read('the second stall, at the bars', stall.occupant, faceStall(-7.6, -8.77));
+    snap('crawl-cell-two-at-the-bars');
+  }
 
   F.teleport('graveyard');
   F.stepWith(0.3, {}, false);

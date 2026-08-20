@@ -5,6 +5,12 @@ import * as THREE from 'three';
 import { clamp, damp, RNG, smoothstep, TAU } from './util.js';
 // (the foyer lag mirror is gone; house.js no longer imports from mirrors.js)
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+// The second stall's occupant runs on the enemies' held stop-motion clock -- the
+// same deterministic snap-and-hold the walkers' heads use -- so a caged body and
+// a loose one share one vocabulary and one seed. It is never an enemy: it is
+// never handed to Enemies.spawn, so it is never in enemies.list, which is the
+// only list the death path walks.
+import { steppedJerk } from './enemies.js';
 
 export const HOUSE_TABLES = {
   origin: [-12, -14],
@@ -3202,7 +3208,8 @@ function basementAct(game) {
   const { world, scene, mats: M } = game;
   const B = HOUSE_TABLES.levels.basement.floor;
 
-  buildCrawlCounterweightSecret(game, B);
+  const crawlKennel = buildCrawlCounterweightSecret(game, B);
+  buildCrawlCellTwo(game, B, crawlKennel);
   buildBasementPilot(game, B);
 
   // ---- the incinerator (Alex, playtest 3: "the player should try to burn
@@ -4136,7 +4143,332 @@ function buildCrawlCounterweightSecret(game, B) {
     // player can see there is a place back there worth opening. Dim enough
     // that the opened room still lands as a reveal.
   });
+  // The run has more than one stall. Hand the next one the same iron so its
+  // rails merge into this batch and its bars share this program.
+  return { cageIron, wornIron, collarMat, coreMat };
 }
+
+// ------------------------------------------------ the second stall
+// "the pully in the room of the basement in the first house has an empty space
+// next to it where the wall has nothing - i was thinking we could make another
+// jailcell with the mosst freaky creature every just shaking the bars or trying
+// to get out."
+//
+// The empty space is the crawl wing's -Z wall east of the kennel: 3.98 m of
+// blank stone from the kennel's front collider face (x -8.18) to the east wall
+// (x -4.20). It goes on THIS wall, the same one the kennel closes with, and it
+// must. The room's west wall is the playthrough's lane: the bot's pump throw is
+// taken flush against it at (-11.53, -5.84) and only lands because the skull's
+// 0.55 m launch offset spawns it INSIDE that 0.26 m wall and the collider
+// ejects it into the pump gallery. Hang bars on the west wall and the bot stops
+// two metres short, the skull spawns in open air, bounces, and the
+// completability gate's 'pump-restores-the-furnace-draft' beat fails. Do not
+// build there.
+//
+// THE OCCUPANT CAN NEVER GET OUT AND CAN NEVER REACH YOU, by construction and
+// not by promise. It is never handed to Enemies.spawn, so it is never in
+// enemies.list, which is the only list the death path walks. Its pen is
+// positioned once, here, and never written again; the only animated transform
+// is the body's own local one, bounded by arithmetic at 0.10 m in x, 0.035 m in
+// y and 0.04 m in z. tests/basement-foundations.mjs pins all of it.
+function buildCrawlCellTwo(game, B, kennel) {
+  const { world, scene } = game;
+  const cageIron = kennel.cageIron;          // same merged batch, same program
+
+  const cellX = -6.90;        // WEST bar plane -- the face you walk up to
+  const cellZ = -7.55;        // +Z bar plane
+  const backFace = -9.80;     // the room's -Z wall is EXTERIOR (0.40): face -9.80
+  const eastFace = -4.20;     // east wall is exterior for z -10..-6: face -4.20
+  const barY = B + 1.16;
+  const barH = 2.32;
+
+  const stall = new THREE.Group();
+  stall.name = 'crawl-cell-two';
+  scene.add(stall);
+
+  // Bars, spacing, radii, heights and rail runs are copied from the kennel so
+  // the two read as one run of cells and not as two props. 1.17 m of walkable
+  // lane is left between this cell's front collider (-7.01) and the kennel's
+  // (-8.18), so the deep end stays enterable -- the player capsule is 0.68 m
+  // wide -- and you can walk right up to both faces.
+  const barPoints = [];
+  for (let z = backFace + 0.18; z <= cellZ - 0.08; z += 0.34) barPoints.push([cellX, z]);
+  for (let x = cellX + 0.22; x <= eastFace - 0.18; x += 0.34) barPoints.push([x, cellZ]);
+  const barGeo = new THREE.CylinderGeometry(0.027, 0.034, barH, 7);
+  const bars = new THREE.InstancedMesh(barGeo, cageIron, barPoints.length);
+  bars.name = 'crawl-cell-two-bars';
+  const barMatrix = new THREE.Matrix4();
+  barPoints.forEach(([x, z], i) => {
+    barMatrix.makeTranslation(x, barY, z);
+    bars.setMatrixAt(i, barMatrix);
+  });
+  bars.instanceMatrix.needsUpdate = true;
+  bars.castShadow = true;
+  bars.receiveShadow = true;
+  stall.add(bars);
+  // Rails and post ride the merged static shell: world.box feeds the
+  // per-material batch, so these cost zero draws and no second program.
+  for (const y of [B + 0.12, B + 1.14, B + 2.25]) {
+    world.box(cageIron, cellX, y, (backFace + cellZ) / 2, 0.09, 0.09, cellZ - backFace + 0.12);
+    world.box(cageIron, (cellX + eastFace) / 2, y, cellZ, eastFace - cellX + 0.12, 0.09, 0.09);
+  }
+  world.box(cageIron, cellX, B + 1.16, cellZ, 0.12, barH + 0.2, 0.12);
+
+  // skullPass, exactly like the kennel's two, and the tag is load-bearing in
+  // both directions. _moveWithPush honours EVERY collider, so no walker gets in
+  // and nothing gets out; _segmentBlocked SKIPS skullPass, so this adds no new
+  // enemy line-of-sight blocker to the one room the playthrough fights walkers
+  // in twice. "Hardening" these by dropping the flag would change enemy sight.
+  //
+  // The FRONT face is 0.11 half-thick where the kennel's is 0.07, and the extra
+  // four centimetres are load-bearing rather than tidy: this cell has something
+  // reaching OUT of it. The player capsule is RADIUS 0.34 and the camera's near
+  // plane is 0.20 m, so this face is the thing that guarantees the jaw can
+  // never cross that plane and render itself sliced open in your face.
+  // tools/probe-cell-two-containment.mjs derives the margin: 0.235 m.
+  world.addCollider(
+    cellX - 0.11, B - 0.05, backFace,
+    cellX + 0.11, B + 2.42, cellZ,
+    { id: 'crawlCellTwoFront', skullPass: true });
+  world.addCollider(
+    cellX, B - 0.05, cellZ - 0.07,
+    eastFace, B + 2.42, cellZ + 0.07,
+    { id: 'crawlCellTwoSide', skullPass: true });
+
+  // ---- the thing in it --------------------------------------------------
+  // Fiction: the run held a dog that died curled around a ball it was never
+  // allowed to fetch. This is the next stall along, and it is still moving.
+  // Dog-shaped the way a coat is person-shaped -- a human-length spine on too
+  // many limbs, a head that is mostly jaw -- wearing the kennel dog's collar
+  // sunk into its neck, so the two stalls land as one story.
+  //
+  // ~50 primitives, ONE merged geometry, ONE material, ONE draw. The value
+  // modelling lives in a per-vertex colour attribute under a single
+  // vertexColors material, the same trick finishStatic uses. EVERY part must
+  // carry that attribute and have its uv deleted or mergeGeometries drops the
+  // merge; and EVERY part must be an INDEXED primitive, because
+  // PolyhedronGeometry (Icosahedron, Tetrahedron...) is non-indexed and
+  // mergeGeometries returns null the instant the list mixes the two --
+  // BufferGeometryUtils.js:63, silently, and a Mesh with a null geometry throws
+  // inside the renderer's frustum cull in a stack with none of this code in it.
+  // outside.js carries the same warning. Spheres, not icosahedra.
+  const HIDE = new THREE.Color(0x14171a);
+  const BONE = new THREE.Color(0x8d9692);
+  const BRASS = new THREE.Color(0x9a895e);   // the kennel dog's collar, again
+  const parts = [];
+  const M4 = new THREE.Matrix4();
+  const Q = new THREE.Quaternion();
+  const UP = new THREE.Vector3(0, 1, 0);
+  const paint = (geo, colour) => {
+    const n = geo.attributes.position.count;
+    const c = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { c[i * 3] = colour.r; c[i * 3 + 1] = colour.g; c[i * 3 + 2] = colour.b; }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(c, 3));
+    geo.deleteAttribute('uv');          // merge requires identical attribute sets
+    return geo;
+  };
+  const put = (geo, colour, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
+    paint(geo, colour);
+    M4.compose(new THREE.Vector3(x, y, z),
+      Q.setFromEuler(new THREE.Euler(rx, ry, rz)),
+      new THREE.Vector3(sx, sy, sz));
+    geo.applyMatrix4(M4);
+    parts.push(geo);
+    return geo;
+  };
+  const limb = (a, b, ra, rb, colour) => {
+    const d = b.clone().sub(a);
+    const geo = new THREE.CylinderGeometry(rb, ra, d.length(), 6);
+    paint(geo, colour);
+    M4.compose(a.clone().add(b).multiplyScalar(0.5),
+      Q.setFromUnitVectors(UP, d.clone().normalize()),
+      new THREE.Vector3(1, 1, 1));
+    geo.applyMatrix4(M4);
+    parts.push(geo);
+  };
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+  // Local frame: origin on the floor AT the bars, +x INTO the cell, so the
+  // haul axis is -x -- toward you. Its face is forced through the gap between
+  // two bars, which does three jobs: it explains the shaking, it gives a rigid
+  // body a fixed pivot so the jerk reads as straining instead of sliding, and
+  // it puts the worst part of the silhouette at your eye line at the bars.
+  limb(V(0.30, 1.02, 0), V(0.95, 0.86, 0.04), 0.115, 0.085, HIDE);       // chest
+  limb(V(0.95, 0.86, 0.04), V(1.62, 0.74, -0.03), 0.085, 0.070, HIDE);   // spine
+  limb(V(1.62, 0.74, -0.03), V(2.05, 0.55, 0.02), 0.070, 0.048, HIDE);   // hips
+  limb(V(0.30, 1.02, 0), V(0.14, 1.22, 0.01), 0.085, 0.062, HIDE);       // neck
+  for (let i = 0; i < 6; i++) {                                          // ribs, the kennel's own idiom
+    put(new THREE.TorusGeometry(0.20 + i * 0.011, 0.017, 5, 13, Math.PI * 1.55), BONE,
+      0.52 + i * 0.19, 0.92 - i * 0.015, 0.01, 0, Math.PI / 2, -0.72 + i * 0.05);
+  }
+  put(new THREE.SphereGeometry(0.20, 10, 8), BONE, 0.13, 1.30, 0.02,
+    0.12, 1.42, -0.28, 1.02, 0.62, 1.30);                                // skull, edge-on in the gap
+  put(new THREE.BoxGeometry(0.30, 0.12, 0.15), BONE,
+     0.06, 1.235, 0.02, 0.06, 0.10, -0.14);                              // jaw, out through the iron
+  for (let t = 0; t < 5; t++) {
+    put(new THREE.BoxGeometry(0.02, 0.055, 0.02), BONE,
+      -0.10 + t * 0.055, 1.30, 0.02 + (t % 2 ? 0.05 : -0.05), 0, 0, 0.1);
+  }
+  put(new THREE.TorusGeometry(0.13, 0.021, 6, 14), BRASS, 0.22, 1.10, 0.01, 0, Math.PI / 2, 0.26);
+  put(new THREE.CylinderGeometry(0.045, 0.045, 0.014, 10), BRASS, 0.245, 0.975, 0.01, 0, 0, Math.PI / 2);
+  for (const s of [-1, 1]) {
+    // The hands are ON the two bars either side of the head. That is what lets
+    // the cage answer the pull instead of the body sliding against nothing.
+    limb(V(0.30, 1.06, s * 0.16), V(0.12, 1.18, s * 0.20), 0.062, 0.048, HIDE);
+    limb(V(0.12, 1.18, s * 0.20), V(-0.02, 1.31, s * 0.168), 0.048, 0.038, HIDE);
+    put(new THREE.SphereGeometry(0.075, 6, 5), HIDE, -0.02, 1.31, s * 0.168, 0, 0, 0, 0.8, 1.1, 0.8);
+    for (let f = 0; f < 3; f++) {                                        // fingers, curling out past the iron
+      limb(V(-0.05, 1.35 - f * 0.045, s * 0.168),
+        V(-0.09, 1.30 - f * 0.05, s * 0.148), 0.016, 0.011, BONE);
+    }
+    // too many legs, and the middle pair is the tell
+    limb(V(1.10, 0.80, s * 0.12), V(1.28, 0.42, s * 0.30), 0.055, 0.042, HIDE);
+    limb(V(1.28, 0.42, s * 0.30), V(1.08, 0.08, s * 0.34), 0.042, 0.030, HIDE);
+    put(new THREE.SphereGeometry(0.075, 6, 5), HIDE, 1.05, 0.055, s * 0.345, 0, 0, 0, 1.2, 0.42, 0.7);
+    limb(V(1.98, 0.58, s * 0.10), V(2.14, 0.30, s * 0.28), 0.058, 0.044, HIDE);
+    limb(V(2.14, 0.30, s * 0.28), V(1.86, 0.08, s * 0.33), 0.044, 0.030, HIDE);
+    put(new THREE.SphereGeometry(0.10, 6, 5), HIDE, 1.80, 0.06, s * 0.34, 0, 0, 0, 1.25, 0.4, 0.65);
+  }
+  const bodyGeo = mergeGeometries(parts);
+  if (!bodyGeo) throw new Error('crawl-cell-two: mergeGeometries returned null (indexed/non-indexed mix)');
+  for (const g of parts) g.dispose();
+  // Lambert, not Standard: MeshStandardMaterial's fixed 0.04 specular plus the
+  // carried lantern's irradiance at arm's length clips almost any albedo to
+  // white up close, and this thing has to survive being looked at from thirty
+  // centimetres. It is lit, so it arrives WITH your light -- the backlight
+  // below is what carries its shape before you get there.
+  const occupant = new THREE.Mesh(bodyGeo, new THREE.MeshLambertMaterial({
+    color: 0xffffff, vertexColors: true,
+  }));
+  occupant.name = 'crawl-cell-two-occupant';
+  occupant.castShadow = true;
+  occupant.receiveShadow = true;
+
+  // Yaw 0.14, NOT -PI/2. Three maps local +x to (cos, 0, -sin), so a -PI/2 yaw
+  // lays this body along world +z: the hind quarters hang a metre out through
+  // the +Z bars and the head ends up nowhere near the west bar plane that the
+  // grip, the fetch target and the eye-line are all authored against.
+  // pen.position is written here and NEVER AGAIN.
+  const pen = new THREE.Group();
+  pen.name = 'crawl-cell-two-pen';
+  pen.position.set(cellX + 0.02, B, -8.77);
+  pen.rotation.y = 0.14;
+  pen.userData.home = pen.position.clone();
+  pen.add(occupant);
+  stall.add(pen);
+
+  // Backlight, not spotlight. A DESCRIPTOR for the pooled eight-slot rig, so
+  // the pinned light census does not move and no lit material recompiles;
+  // dropped in the cell's far corner, above and behind the body, so the thing
+  // reads as a hole moving in front of a lit wall. Contrast, not brightness.
+  // The pump gallery already paid for the lesson that an invisible source reads
+  // as magic, so bracket and hood go through world.box (zero draws) and exactly
+  // one small emissive core makes the source itself visible.
+  world.candles.push({ x: -4.72, y: B + 1.80, z: -9.34, intensity: 0.8, r: 4.0 });
+  world.box(cageIron, -4.46, B + 1.90, -9.34, 0.52, 0.05, 0.05);        // bracket, merged, 0 draws
+  world.box(cageIron, -4.72, B + 1.96, -9.34, 0.22, 0.05, 0.22);        // hood, merged, 0 draws
+  const lampCore = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xffbe86, toneMapped: false }));
+  lampCore.name = 'crawl-cell-two-lamp';
+  lampCore.position.set(-4.72, B + 1.82, -9.34);
+  stall.add(lampCore);
+
+  // ---- the motion and the sound -----------------------------------------
+  // A FIXED serial: the jerk has to be byte-identical every run or no gate can
+  // pin it. steppedJerk quantises the clock into held steps, so a bone snaps to
+  // a slightly wrong pose, sits there, and snaps again -- the walkers' own
+  // vocabulary, driven off the same clock on different channels.
+  const SERIAL = 0x2c;
+  const REST_RATE = 1.6, FIT_RATE = 11;
+  const HOME = occupant.position.clone();            // (0,0,0) -- local rest
+  const REST_ROT = occupant.rotation.clone();
+  const GRIP = [2, 3];                               // the two bars the hands hold
+  const barMid = new THREE.Vector3(cellX, B + 1.30, -8.77);
+  const look = new THREE.Vector3();
+  const toCell = new THREE.Vector3();
+  const state = { fit: 0, struck: 0, breath: 5.5, rattle: 0, wasFit: 0 };
+  game.cellTwo = {
+    stall, pen, occupant, bars, state,
+    home: pen.userData.home.clone(),
+    barMid: barMid.clone(),
+  };
+
+  // A skull that reaches the bars is noticed. No flag, no reward, no puzzle --
+  // the grammar answers and nothing is owed. 'continue' leaves the throw law
+  // completely untouched: this is a wall with a thing behind it, not a target.
+  world.addFetchTarget({
+    id: 'crawlCellTwoBars', pos: barMid.clone(), radius: 0.7,
+    onHit() {
+      state.struck = Math.max(state.struck, 1.6);
+      game.audio.thud({ pos: barMid, gain: 0.5, rate: 1.45, intensity: 0.8 });
+      return 'continue';
+    },
+  });
+
+  game.tickers.push((dt, time) => {
+    if (game.act !== 'basement') return;             // free in seven of eight districts
+    const p = game.player.pos;
+    const d = Math.hypot(p.x - barMid.x, p.z - barMid.z);
+    // getWorldDirection updates its own world matrix, so this is safe under
+    // sim-only stepping, where nothing has rendered.
+    game.camera.getWorldDirection(look);
+    toCell.set(barMid.x - p.x, 0, barMid.z - p.z);
+    const facing = d > 0.001 ? (look.x * toCell.x + look.z * toCell.z) / d : 1;
+    state.struck = Math.max(0, state.struck - dt);
+    const want = (d < 6.5 && facing > 0.35) || state.struck > 0 ? 1 : 0;
+    state.fit += (want - state.fit) * Math.min(1, dt * (want ? 3.2 : 0.7));
+
+    const rate = REST_RATE + state.fit * (FIT_RATE - REST_RATE);
+    const haul = steppedJerk(time, SERIAL, rate, 0);
+    const roll = steppedJerk(time, SERIAL, rate * 0.61, 1);
+    const yaw = steppedJerk(time, SERIAL, rate * 0.43, 2);
+    const amp = 0.028 + state.fit * 0.072;           // <= 0.10 m, hard bound
+    occupant.position.set(HOME.x - haul * amp,
+      HOME.y + Math.abs(haul) * amp * 0.35,
+      HOME.z + yaw * amp * 0.4);
+    // The pivot is the jammed head and the body is 2.4 m long, so these are
+    // set by the FAR end, not the head: 0.016 rad of yaw already swings the
+    // hindquarters 3.5 cm, and the same number in pitch would drive the hind
+    // feet through the floor. Pitch therefore only ever LIFTS (Math.abs), which
+    // is also the truer read -- a thing hauling backward rears its back end.
+    occupant.rotation.set(REST_ROT.x + roll * (0.008 + state.fit * 0.016),
+      REST_ROT.y + yaw * (0.006 + state.fit * 0.010),
+      REST_ROT.z + Math.abs(roll) * (0.008 + state.fit * 0.014));
+
+    // THE BARS ANSWER. The same jerk value rewrites the two instances the hands
+    // are on. The InstancedMesh is already one draw, so this is free, and it is
+    // the difference between a jerking body and a shaken cage.
+    for (const gi of GRIP) {
+      const [bx, bz] = barPoints[gi];
+      barMatrix.makeTranslation(
+        bx - haul * amp * 0.42,
+        barY + Math.abs(roll) * amp * 0.10,
+        bz + roll * amp * 0.30);
+      bars.setMatrixAt(gi, barMatrix);
+    }
+    bars.instanceMatrix.needsUpdate = true;
+
+    // AUDIO FIRST. You hear it working from the dark end of the wing long
+    // before you can see what is doing it: a wet breath at rest, iron in its
+    // sockets once it knows you are there. Nothing here touches the director,
+    // game.shake or game.impact -- a caged thing is a quiet thing that only
+    // gets loud when you walk up to it.
+    if (game.dead || d > 14) return;
+    state.breath -= dt;
+    if (state.breath <= 0) {
+      state.breath = 5.5 - state.fit * 3.2;
+      game.audio.whisper({ pos: barMid, gain: 0.16 + state.fit * 0.30, rate: 0.5 + state.fit * 0.12, verb: 1.0 });
+    }
+    state.rattle -= dt;
+    if (state.fit > 0.45 && state.rattle <= 0) {
+      state.rattle = 1.5 - state.fit * 0.7;
+      game.audio.lockedRattle({ pos: barMid, gain: 0.20 + state.fit * 0.26, rate: 1.15 });
+    }
+    if (state.fit > 0.6 && state.wasFit <= 0.6) game.audio.gasp({ pos: barMid, gain: 0.32, verb: 0.6 });
+    state.wasFit = state.fit;
+  });
+}
+
 // ------------------------------------------------ window-to-window relay
 // The two west windows teach the return leg as a tool. Throw through the
 // living-room aperture and HOLD: the skull bites the bright exterior mooring.
