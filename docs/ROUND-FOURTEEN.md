@@ -30,6 +30,39 @@ game again and a fresh clone is what the site serves.
 Round thirteen answered **every item** in his 2026-08-19 notes plus the coda.
 See `ROUND-THIRTEEN.md` for the item-by-item record and the honest gate table.
 
+## ROUND FOURTEEN WAS BUILT ON THREE BRANCHES AT ONCE, AND INTEGRATED
+
+`claude/r14-bell` (the hung bell), `claude/r14-walkthrough` (jambs, turn
+markers, mica, the pump's iron, the keepsake shelf, the benches, and the widened
+ledger gate) and `claude/r14-cave-audio` (the verb rack) were all cut from
+`bf7df75` without knowing about each other. Two of them edited
+`buildBellCistern` and disagreed about the bell. The integration is on
+`claude/aug24-round14`, and the rule was: **the bell's own geometry is the bell
+branch's; everything else is the walkthrough branch's.**
+
+The one thing that could not simply be picked: the walkthrough branch published
+the bell to `layout.solids` as ONE DISC AT THE 1.03 LIP for the object's whole
+height, which is correct for a bell lying on the floor and a lie about a bell
+hanging over your head. Left alone it would have handed the widened gate an
+object that is not there. The bell goes on the ledger as **four discs and a
+sling** now, rungs at the tops of head windows, radii read off the drawn
+geometry rather than typed. Measured: body 0.327 against the 0.32 a
+collider-guarded face owes, camera 0.308 against the 0.24 the near plane eats.
+
+**AND ONE MEASUREMENT WAS WRONG ON THE BELL BRANCH, IN THE DIRECTION THAT
+MATTERS.** Its collider derivation scanned the iron from the crown to
+`C.y + HEAD` — the head window of a player standing at the cistern node's own
+height. This chamber's floor is a ramp: across the three metres around the bell
+it runs C.y − 0.405 to C.y + 0.315, and the nearest stand the box allows is on
+ground 0.12 m ABOVE the node. So the widest swept iron in a real head window is
+**0.6075 m, not 0.578**, and the swept bell clears the player capsule by
+**0.0136 m, not 0.042**. The box still holds — nothing touches — but with a
+third of the air it was credited with, and the source, the gate and
+`tools/probe-bell-cistern.mjs` all say 0.0136 now. `BELL_HALF` was left at
+0.62 (it is the bell branch's number and it works); if a future round wants the
+0.042 back, that is 0.65 and the Choir cost is bounded by round thirteen's 0.75
+box having lost only the one chord.
+
 ## What is still open, in the order it matters
 
 ### 1. One of these is answered and built; two still need HIS answer
@@ -42,7 +75,10 @@ See `ROUND-THIRTEEN.md` for the item-by-item record and the honest gate table.
   gives the chain two legs so it actually holds the bell — feet on the rim ring,
   apex on the vault atmosphere.js draws — and keeps round thirteen's 1.95 m
   offset, because hanging it does NOT make the node safe: the crown still
-  bottoms out 0.57 m inside the head window. The false "floated unattached /
+  bottoms out **0.685 m** inside the head window of the nearest stand the
+  collider allows. (0.57 was the answer for a player standing at the node's own
+  height, and nobody does — this chamber's floor is a ramp. See the integration
+  note below.) The false "floated unattached /
   inherited the +1.18 offset" comment is deleted; four authored parts contradict
   it, and `tools/probe-bell-cistern.mjs` prints why. There is no skull in this
   act, so the interaction is your shoulder: walk into it and it swings, and the

@@ -270,8 +270,11 @@ console.log('THE AUTHORED HANG, AND THE CLAIM ROUND TWELVE MADE ABOUT IT');
 console.log('  base C.y +', CROWN, '| rim C.y +', RIM, '(= base + the profile\'s own 1.44 top)',
   '| clapper C.y +', CLAPPER_Y);
 {
-  // the authored snapped chain: CylinderGeometry(.035,.05,1.8,5) at
-  // (C.x+0.48, C.y+3.45, C.z-0.2), rotation.z 0.55
+  // the authored chain, as round twelve and thirteen left it hanging on its
+  // own: CylinderGeometry(.035,.05,1.8,5) at (C.x+0.48, C.y+3.45, C.z-0.2),
+  // rotation.z 0.55. It is not drawn any more -- the two-legged sling replaced
+  // it -- and it is replayed here because where its free end SAT is the
+  // evidence that the bell it was drawn for was hanging.
   const end = { x: C.x + 0.48 + Math.sin(0.55) * 0.9, y: 3.45 - Math.cos(0.55) * 0.9, z: C.z - 0.2 };
   const radial = Math.hypot(end.x - C.x, end.z - C.z);
   const toCentreLine = Math.hypot(radial - RING_R, end.y - RIM);

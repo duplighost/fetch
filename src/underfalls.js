@@ -1343,15 +1343,17 @@ function buildPumpChapel(game, layout, state) {
       // near plane, so never clipped, but inside the player's own 0.34 m body
       // radius. The stone was in you.
       //
-      // Widening the box is the right half of this fix for the fallen bell one
-      // room over and the WRONG half here, and the difference is measured.
-      // enemies.js sweeps the Choir's 0.42 m footprint against every AABB
-      // GROWN BY THAT RADIUS -- a Minkowski box, corners included, not a
+      // MOVING THE BOX WOULD HAVE BEEN THE OTHER ANSWER, AND THE NUMBERS
+      // REFUSE IT. enemies.js sweeps the Choir's 0.42 m footprint against every
+      // AABB GROWN BY THAT RADIUS -- a Minkowski box, corners included, not a
       // rounded capsule -- and at 0.63 these boxes close two chords the
       // corridor union still allows: chapel east aisle -> dry return, and a
       // second pillar taking chapel west aisle -> east ambulatory. The nave is
-      // where every chapel chord has to thread. The bell had room; this has
-      // none. So the flare comes in to 0.54 instead (see the geometry below):
+      // where every chapel chord has to thread, and there is no room here.
+      // (The bell cistern one room over went the opposite way for the opposite
+      // reason -- the bell hangs, so its box came IN, to half 0.62 -- and it is
+      // the height of the iron, not its width, that settles that one.)
+      // So the flare comes in to 0.54 instead (see the geometry below):
       // the base is the box and the box is the base, the camera stops 0.32 m
       // from drawn stone, and not one navigation edge moves.
       addColliderCylinder(world, x, z, 0.54, -0.5, 3.2, 'pump chapel pillar');
@@ -1949,11 +1951,13 @@ function buildBellCistern(game, layout, state) {
   //               through; the mouth and the pale rim are a near-plane
   //               question and nothing else.
   //
-  // Measured on this build (tools/probe-bell-cistern.mjs replays all of it):
-  // body 0.332 against the 0.32 a collider-guarded face owes, camera 0.306
-  // against the 0.24 the near plane eats at. The one-disc-at-the-lip entry the
-  // walkthrough branch wrote would have claimed 1.235 m of iron over the whole
-  // height and scored 0.000.
+  // What the gate then measures of this stack: body 0.327 against the 0.32 a
+  // collider-guarded face owes, camera 0.308 against the 0.24 the near plane
+  // eats at. That 0.007 of headroom is not the ladder being coarse -- the true
+  // triangle-level answer is 0.335, and the object itself only has 0.0136 m of
+  // air (see the collider above). The one-disc-at-the-lip entry the walkthrough
+  // branch wrote would have claimed 1.235 m of iron over the whole height and
+  // scored 0.000. tools/probe-bell-cistern.mjs replays all of it out of band.
   //
   // THE RADII ARE READ OFF THE DRAWN GEOMETRY, NEVER TYPED, so editing
   // bellProfile, the rim or the swing cap re-derives the ledger instead of
@@ -2021,10 +2025,10 @@ function buildBellCistern(game, layout, state) {
   }
   // The sling is its own fixture and gets its own entry: the box above ends at
   // the rim, so nothing holds you off these two legs but the district clamp --
-  // the stricter of the two numbers, and never asked for, because their lowest
-  // iron sits at C.y + 2.564 and the highest head window in the room tops out
-  // at C.y + 2.10. What the ledger does ask them is the near plane, which does
-  // not care which way is up: 0.944 m from the eye of the closest stand.
+  // the stricter of the two numbers, and never actually asked for, because
+  // their lowest iron sits at C.y + 2.564 and the highest head window in this
+  // room tops out at C.y + 2.065. What the ledger does ask them is the near
+  // plane, which does not care which way is up: 0.784 m from the nearest eye.
   const slingSpan = swungSpan(slingSwung);
   publishSolid(layout, {
     name: 'bell sling', guard: 'clamp',

@@ -279,9 +279,10 @@ try {
     // prints 0.911 when its real nearest stand is 0.44, and the next round
     // would read that and believe it. Anything past the reach prints as
     // "> reach" instead of as a number this cannot back up.
-    // (The 0.911/0.44 in that sentence is the fallen bell round fourteen's
-    // walkthrough branch measured; the bell hangs again and its stack now
-    // prints 0.333, but the reason for REPORT_REACH is unchanged.)
+    // (The 0.911/0.44 in that sentence is the FALLEN bell round fourteen's
+    // walkthrough branch measured. The bell hangs again, and the stack of discs
+    // that replaced that one entry prints 0.327; the reason for REPORT_REACH is
+    // unchanged.)
     const REPORT_REACH = 0.45;
     const measureSolid = (s) => {
       const fp = halfExtent(s);
@@ -546,7 +547,9 @@ try {
         boxY: bellBox ? [round(bellBox.min.y), round(bellBox.max.y)] : null,
         ironY: [round(BELL.crownY), round(BELL.rimY)],
         headWindowTop: round(floorY + HEADH),
-        crownInsideHeadWindowBy: round(floorY + HEADH - BELL.crownY),
+        // the NODE's window, which is not anybody's: check 3 below is the one
+        // that scores each pose against the ground it is actually standing on.
+        crownInsideTheNodeWindowBy: round(floorY + HEADH - BELL.crownY),
         halfExtent: BELL.half,
       },
     );
@@ -557,49 +560,96 @@ try {
     // player's centre ends at least RADIUS from the box, so that is the
     // permitted set, and every member of it has to clear the swept silhouette.
     const lathePoints = BELL.bell.geometry.parameters.points;
-    const laneRadius = (ly) => {
-      if (ly <= lathePoints[0].y) return lathePoints[0].x;
-      for (let i = 0; i < lathePoints.length - 1; i++) {
-        const a = lathePoints[i], b = lathePoints[i + 1];
-        if (ly >= a.y && ly <= b.y) return a.x + (b.x - a.x) * ((ly - a.y) / ((b.y - a.y) || 1));
-      }
-      return lathePoints[lathePoints.length - 1].x;
-    };
     // AND THE HEAD WINDOW IS THE POSE'S, NOT THE NODE'S. This scan used to run
     // to floorY + HEAD, which is the window of a player standing at the cistern
     // node's own height -- and nobody stands there. This chamber's floor runs
-    // C.y - 0.455 to C.y + 0.350 inside the bell's three metres, and the ground
-    // at the nearest stand the box allows is 0.115 m ABOVE the node, so 0.685 m
-    // of iron is in that player's window rather than 0.57. Every pose is scored
-    // against its own ground now, which is the whole point of the exercise.
-    const sweptTo = (top) => {
-      let r = 0;
-      for (let h = BELL.crownY; h <= top + 1e-9; h += 0.005) {
-        const w = laneRadius(h - BELL.crownY) + (BELL.apexY - h) * Math.sin(BELL.maxSwing);
-        if (w > r) r = w;
+    // C.y - 0.405 to C.y + 0.315 across the three metres around the bell, and
+    // the ground at the nearest stand the box allows is 0.115 m ABOVE the node,
+    // so 0.685 m of iron is in that player's window rather than 0.57. Every
+    // pose is scored against its own ground now, which is the whole exercise.
+    // SAMPLED, NOT BOUNDED. "drawn radius + depth x sin(lean)" is an upper
+    // bound on the radius and it is WRONG about height: the point of a ring
+    // that drops furthest under a lean is the one on the far side, and that
+    // point moves INWARD, not outward. Believing the bound costs a centimetre
+    // here -- it puts the widest iron at 0.617 where the swung geometry puts it
+    // at 0.608 -- and a centimetre is most of what this object has. So walk
+    // every drawn circle at the cap lean and take where each point of it
+    // actually goes. src/underfalls.js publishes its ledger from exactly this
+    // construction; tools/probe-bell-cistern.mjs replays it a third time.
+    const swungBell = [];
+    {
+      const cl = Math.cos(BELL.maxSwing), sl = Math.sin(BELL.maxSwing);
+      const ring = (rho, restY) => {
+        const drop = BELL.apexY - restY;
+        for (let k = 0; k <= 24; k++) {
+          const u = k / 12 - 1;
+          swungBell.push([
+            BELL.apexY - drop * cl + rho * u * sl,
+            Math.hypot(rho * u * cl + drop * sl, rho * Math.sqrt(Math.max(0, 1 - u * u))),
+          ]);
+        }
+      };
+      for (let i = 0; i < lathePoints.length - 1; i++) {
+        const a = lathePoints[i], b = lathePoints[i + 1];
+        const steps = Math.ceil((b.y - a.y) / 0.01);
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          ring(a.x + (b.x - a.x) * t, BELL.crownY + a.y + (b.y - a.y) * t);
+        }
       }
+      const tube = BELL.rim.geometry.parameters.tube;
+      for (let k = 0; k < 24; k++) {
+        const a = (k / 24) * Math.PI * 2;
+        ring(BELL.ringR + Math.cos(a) * tube, BELL.rimY + Math.sin(a) * tube);
+      }
+      const clapR = BELL.clapper.geometry.parameters.radius;
+      for (let k = 0; k <= 16; k++) {
+        const a = (k / 16) * Math.PI;
+        ring(Math.sin(a) * clapR + 0.045, BELL.strikePos.y - Math.cos(a) * clapR);
+      }
+    }
+    const sweptCache = new Map();
+    const sweptTo = (top) => {
+      const key = Math.round(top * 1000);
+      if (sweptCache.has(key)) return sweptCache.get(key);
+      let r = 0;
+      for (const [y, h] of swungBell) if (y <= top + 1e-9 && h > r) r = h;
+      sweptCache.set(key, r);
       return r;
     };
     let swept = 0, sweptAt = 0, requiredClear = 0, worstMargin = Infinity;
-    let closest = Infinity, closestPose = null, poses = 0;
+    let closest = Infinity, closestPose = null, worstPose = null, poses = 0;
+    const visitPose = (x, z) => {
+      if (!U.contains(x, z, -0.039)) return;
+      const cx = Math.min(Math.max(x, bellBox.min.x), bellBox.max.x);
+      const cz = Math.min(Math.max(z, bellBox.min.z), bellBox.max.z);
+      if (Math.hypot(x - cx, z - cz) < CAPSULE_R - 1e-9) return;
+      const feet = U.groundAt(x, z);
+      if (feet == null || !Number.isFinite(feet)) return;
+      poses++;
+      const d = Math.hypot(x - bellAxis.x, z - bellAxis.z);
+      if (d < closest) { closest = d; closestPose = [round(x), round(z)]; }
+      const reach = sweptTo(feet + HEADH);
+      if (reach > swept) { swept = reach; sweptAt = feet + HEADH; }
+      const margin = d - CAPSULE_R - reach;
+      if (margin < worstMargin) {
+        worstMargin = margin;
+        requiredClear = reach + CAPSULE_R;
+        worstPose = { x, z, feet };
+      }
+    };
     for (let x = bellAxis.x - 3.4; x <= bellAxis.x + 3.4; x += 0.025) {
-      for (let z = bellAxis.z - 3.4; z <= bellAxis.z + 3.4; z += 0.025) {
-        if (!U.contains(x, z, -0.039)) continue;
-        const cx = Math.min(Math.max(x, bellBox.min.x), bellBox.max.x);
-        const cz = Math.min(Math.max(z, bellBox.min.z), bellBox.max.z);
-        if (Math.hypot(x - cx, z - cz) < CAPSULE_R - 1e-9) continue;
-        const feet = U.groundAt(x, z);
-        if (feet == null || !Number.isFinite(feet)) continue;
-        poses++;
-        const d = Math.hypot(x - bellAxis.x, z - bellAxis.z);
-        if (d < closest) { closest = d; closestPose = [round(x), round(z)]; }
-        const reach = sweptTo(feet + HEADH);
-        if (reach > swept) { swept = reach; sweptAt = feet + HEADH; }
-        const margin = d - CAPSULE_R - reach;
-        if (margin < worstMargin) {
-          worstMargin = margin;
-          requiredClear = reach + CAPSULE_R;
-        }
+      for (let z = bellAxis.z - 3.4; z <= bellAxis.z + 3.4; z += 0.025) visitPose(x, z);
+    }
+    // and then refine, because on a 0.025 grid the reported air is whatever the
+    // grid happened to land on rather than the least there is. The stand that
+    // holds the least is a face of the box, and the box's faces are not on the
+    // grid: 0.019 at 0.025 is 0.014 once the search can reach them.
+    for (const step of [0.005, 0.001]) {
+      if (!worstPose) break;
+      const { x: ax, z: az } = worstPose;
+      for (let x = ax - step * 12; x <= ax + step * 12 + 1e-9; x += step) {
+        for (let z = az - step * 12; z <= az + step * 12 + 1e-9; z += step) visitPose(x, z);
       }
     }
     check(
@@ -609,6 +659,8 @@ try {
         poses, requiredClear: round(requiredClear), sweptReach: round(swept),
         widestAtY: round(sweptAt), maxSwing: BELL.maxSwing,
         closestAllowedPose: closestPose, closestDistance: round(closest),
+        worstPose: worstPose && [round(worstPose.x), round(worstPose.z)],
+        worstPoseGround: worstPose && round(worstPose.feet),
         // the worst pose, not the closest one: on a sloping floor the pose that
         // holds least air is not always the pose that stands nearest.
         worstAirToCapsule: round(worstMargin),

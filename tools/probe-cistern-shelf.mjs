@@ -385,13 +385,20 @@ for (const c of colliders) {
 // measured and accepted (pump undercroft -> service climb, 0.57 m of detour
 // through the cistern node). This list is that baseline. A new entry is a
 // navigation edge round fourteen spent, and it has to be argued, not
-// discovered later: at half-extent 1.15 the bell also closed
-// 'bell cistern -> service climb', which cuts the culvert corridor in half
-// rather than lengthening a path through it, and at 0.63 the pillars closed
-// 'chapel east aisle -> dry return'. Both are why those two numbers are what
-// they are.
+// discovered later: at 0.63 the pillars closed 'chapel east aisle -> dry
+// return', which is why that number is 0.54.
+//
+// THE BELL'S LINE SAYS 'hung bell' NOW, AND IT IS THE SAME CHORD. This baseline
+// was taken while the bell lay on the floor behind a role called 'fallen bell'
+// with a 1.03 box 2.20 m off the node. Round fourteen's bell branch hung it
+// back on its chain, which took the box to half 0.62 at round thirteen's
+// 1.95 m -- SMALLER than the 0.75 round thirteen shipped, so it cannot cost a
+// chord that box did not. The set is unchanged, entry for entry; only the role
+// name moved. (The old note here about half-extent 1.15 also closing
+// 'bell cistern -> service climb' was measured at the 2.20 m offset and is
+// deleted with it rather than left standing over geometry that is gone.)
 const KNOWN = [
-  'fallen bell: pump undercroft -> service climb',
+  'hung bell: pump undercroft -> service climb',
   'pump chapel pillar: undertow throat -> bell cistern',
   'pump chapel pillar: pump approach -> chapel north transept',
   'pump chapel pillar: chapel west aisle -> east ambulatory',
