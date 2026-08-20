@@ -1,3 +1,157 @@
+# ROUND THIRTEEN — the record
+
+**This is what round thirteen did. The brief it was built from is kept below
+the line, because it was right about nearly every mechanism it named.
+`ROUND-FOURTEEN.md` is the say-fetch doc now.**
+
+Branch `claude/aug23-round13`, 16 commits off `origin/main` (503dfce), 45 files,
++7.7k lines. **Not pushed, not deployed.** `main` is still round twelve.
+
+## How it was built, because the method was the point
+
+He said, on 2026-08-19: *"like, we are crawling along slowly through these
+fixes lol. at this rate we'll never actually get to the area that needs the
+most work lol."*
+
+So this round fanned out. **Eleven items were built concurrently, each by its
+own agent in its own git worktree on its own branch**, then cherry-picked onto
+one branch. Ten agents on the game (2.47M tokens, 66 minutes, zero failures)
+and three on the coda. Nothing waited behind a shared file.
+
+Two things made it work, and both are worth keeping:
+
+1. **The diagnosis was already done.** Every agent was handed a challenged
+   "Execute THIS" plan with verbatim anchors and its blockers. No agent spent
+   its budget re-deriving what was already known.
+2. **No agent was allowed to launch Chrome.** Browser work does not
+   parallelise — it contends, and it flakes. Source reading and pure-node
+   arithmetic parallelise perfectly. The whole gate battery was run centrally
+   afterwards, serially.
+
+The cost of that trade is real and is recorded honestly below: **the agents
+could measure geometry but could not see anything.**
+
+## What landed
+
+| item | what a player gets |
+|---|---|
+| **walls** | Lean on a cave wall and it stays where it is instead of vanishing and letting you see the black behind it. The sluice gate frames the climb instead of standing in it — you no longer walk through iron to leave the overflow gallery. |
+| **walls, part 2** | Fifteen of the district's seventeen corridors have a wall on both hands, where five did. *Separate commit, deliberately revertable.* |
+| **walkway** | The path under the falls is laid in wet flagstones — stones you can count, dark joints, value falling from the middle out to a broken kerb. |
+| **water** | The path glosses as you look down the corridor and darkens under your boots; steam sits low along the edges and never on the path; drips land on lit stone with the sound that has been playing for rounds with nothing to see; every curtain you walk through beads on your eyes. |
+| **cone** | The fallen bell is alive: it tolls on its own slow cadence, rocks when the water strikes it, brightens as it rings — and it stands beside the walking line instead of on it, so you bump into it like the iron it is. |
+| **furnace** | It answers every time you open its door, not only the first time. When the draft is whole but the pilot is dark it thuds and calls back down its own brass line — the one state that used to be completely silent. |
+| **bell** | A brass feed line runs the basement bell to the furnace: out of the riser, west along its wall, over the storeroom door, across the storeroom, over the boiler door, onto the furnace crown. Light the pilot and a pulse walks it with knocks running ahead. |
+| **jailcell** | The blank wall beside the pulley is a second stall, and there is something in it — a long dog-shaped thing on too many legs, its face forced between two bars, hands on the iron either side of its head. It breathes from the dark, and when you come close and look, it hauls, and the bars move. |
+| **ball** | The ball over the sand trap creaks every few seconds while the crossing is unmade and swings wide on the beat it speaks; its line is lit, the right length, and ends on the beam. |
+| **audit** | Spiders stop wandering off their webs, and one web moves out of a cage nobody can enter. |
+| **coda** | The catch, the breath, and then his rhythm game. |
+
+## The primary item, in numbers
+
+His notes 4/5/6 — *"some of these walls you basically have to walk through"* —
+measured on the live build and after:
+
+| | drawn flank pieces | closest reachable face |
+|---|---|---|
+| round twelve (live) | 81 | **0.045 m** — all 81 inside the 0.2 m near plane |
+| round thirteen | 179 | **0.736 m** |
+
+Round twelve fixed the average-vs-local width bug but seated the pieces against
+their own leg instead of the walkable union, so leaning into a wall still
+clipped the whole face away. The offset is found against the union now, the
+piece grows to meet the overburden roof (closing 0.43 m and 0.44 m black slots
+up both flights of the sluice climb), and a skirt bridges the floor edge to the
+wall face. The overflow-gallery gate, whose posts stood **2.045 m inside the
+walkable disc**, is gone — that node is a chamber, and a flood gate across a
+room is the bell's mistake one district over.
+
+**Pinned**, so it cannot come back: `tests/underfalls-expansion.mjs` now walks
+every pose the clamp will hold and fails any that stands inside a drawn wall or
+near enough for the near plane to delete it. 185 solids, zero failures.
+
+## The coda
+
+His rhythm game runs at `ending/` as its own page: seven plain ES modules and
+one HTML file, no build step, no dependencies, served off `serve.mjs`.
+`types`/`songs`/`engine`/`audio`/`render` are his files with the TypeScript
+stripped and nothing else changed; the React shell was rewritten to plain DOM;
+the p2p, auth, database, routes, PWA, Vite and Tailwind scaffolding is gone.
+It keeps his taglines, his beat and his club-video title screen.
+
+**His stated worry was the transition lagging. It does not.** The seam is one
+line — the ending screen's click handler already navigated — and `_warmCoda()`
+pulls all seven media files from `_enterCave`, one district before the mirror
+room, so the cost is paid while the player is busy. Measured end to end in a
+real browser: the warm completes 7/7, and **every media file the coda requests
+then comes back `transferSize: 0` — six files, 6.0 MB, zero bytes at the seam.**
+
+The posters were cut from 1.85 MB to 614 KB (16.4% of total media) at a
+measured PSNR of 39.96 to 41.57 dB against a native-resolution control. The
+videos are untouched: ffmpeg is not on this machine and none was installed.
+
+## Gates — run SERIALLY, because that is the only way these numbers mean anything
+
+**31 of 33 green.** The two reds are the exact pre-existing pair, confirmed
+identical on the live build in the same session.
+
+* `underfalls-expansion` — 2 checks, pre-existing.
+* `house-chase-doors-regression` — 1 check, pre-existing.
+* `netlify-release-integrity` — red on a fresh worktree because it has no
+  `release/fetch-netlify.zip`. Built one: **7/7 green**, which also exercises
+  the coda's `shippingRoots` change end to end for the first time.
+* `warm-start-regression` — red **in a batch**, **21/21 green alone**.
+* `choir-route-occlusion-regression` — red in the batch that was running while a
+  cherry-pick landed. Green on the same tree run properly. My process error, not
+  the code's.
+* `perf-pool-regression` — **green**, though round twelve shipped it knowingly
+  red. It does not reproduce. Not the same as fixed.
+* `playthrough` — COMPLETE. `district-culling` — every district under 450.
+* `coda-seam-regression` — new, 22 checks, green.
+
+Inside `warm-start`: every district links **+0 shader programs**, the cave's
+first draw is **33 ms**, the worst frame across the whole tour is **0 ms**, and
+a warmed boot walks the entire game without linking a single program (270 to
+270). **This round's cave geometry costs nothing on arrival.**
+
+## What was actually looked at, and what was not
+
+The agents could not see anything. These were checked afterwards in a real
+browser, and they are the only visual claims in this document:
+
+* the flagstone walkway reads as stones with joints, where there was one flat
+  slab;
+* walls stand on both hands down the entry corridor;
+* the camera beading appears in the veil and **clears once you walk out of it**
+  — it is zone-driven, not a permanent overlay;
+* the deeper cave reads: pillars, warm candle light, no black gutters;
+* the coda plays — video crossfades on live decode, the AudioContext genuinely
+  unlocks after a navigation (`state: "running"`), and a press timed to a note
+  judges `perfect`, scores 1000, and the HUD reads 1,000.
+
+**Not looked at:** the fallen bell's toll and rock from the lane, the steam
+bands, the sluice climb, the jail cell in motion. Those are in the next round's
+first hour.
+
+## Legibility: seven floors that were decoration are now gates
+
+Seven of the eleven subjects in `tests/legibility-regression.mjs` were carrying
+floors nobody had measured — four from arithmetic, three not set at all —
+because no agent had a GPU. **A subject with no floor passes vacuously, which
+is the decorative gate that file exists to end.** All eleven are now pinned to
+numbers a GPU printed, at 0.6x the share of frame and 0.7x the contrast, the
+rule the table already followed. The blind floors were 5x to 30x too low: the
+second stall at the bars reads 4.82% / 1.95x against a placeholder of
+0.3% / 1.05x.
+
+That measurement is also what produced the round's one real miss — see
+`ROUND-FOURTEEN.md` section 2, the basement feed line.
+
+---
+---
+
+# The brief this round was built from, kept because it was right
+
 # ROUND THIRTEEN — say "fetch" and start here
 
 **Read this first, then `THE-TRUE-ENDING.md`, then get to work. Do not wait for
