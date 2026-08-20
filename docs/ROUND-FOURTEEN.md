@@ -1,3 +1,140 @@
+# ROUND FOURTEEN — the record
+
+**This is what round fourteen did. The brief it was built from is kept below the
+line. `ROUND-FIFTEEN.md` is the say-fetch doc now.**
+
+Branch `claude/aug24-round14`, 7 commits off `origin/main` (`bf7df75`).
+**Not pushed, not deployed.** `main` is still round thirteen.
+
+## Where it came from
+
+Round thirteen shipped, and forty minutes later — without having played it — he
+answered the bell question from memory of an older build, at 4am, and went to
+sleep:
+
+> "sure, hang it. if you can make it swing and stuff sure, let it swing or
+> whatever if it's interactable by hitting it with the skull. make sure that's
+> not what is causing the sound bug where that areas sound can completely go bad
+> though. that last area really needed some walk through last time with all the
+> walls you had to walk through even though you basically just had to walk
+> straight forward. I don't remember when the walls came back. probably at the
+> same time as that bell a wall came back that you have to walk through. I dont
+> remember that being a side room. I remember it being more of a straight walk
+> through through the cave since there are just two walls you can walk through
+> ane one of them is at the end of the path after the bell. maybe it's all
+> redone now. I don't know. I have to got to sleep anyway"
+
+Three instructions, one condition, and a description of the cave that disagreed
+with the code. All four were taken literally.
+
+## HE WAS RIGHT ABOUT THE CAVE AND THE CODE WAS WRONG ABOUT THE PLAYER
+
+He said the cave is *"more of a straight walk through"*, that he does **not**
+remember the bell being in a side room, and that there are *"just two walls you
+can walk through and one of them is at the end of the path after the bell."*
+
+Every part of that checks out, and it took measuring the route tables to see it:
+
+* **The culvert IS the straight-ahead read.** Arriving at the fork your heading
+  is 60.3 deg. The culvert leaves at 45.0 deg — a 15.3 deg drift. The MAIN route
+  leaves at 11.3 deg, a **48.9 deg turn**. Walking forward puts you in the
+  culvert.
+* **It is also objectively the straighter route**: 54.30 m, 5 legs, sinuosity
+  1.093, largest turn 45 deg — against the main route's 66.70 m containing a
+  **135.6 deg hairpin**.
+* **No "side room" is ever drawn.** The culvert's first 22.3 m lies inside the
+  drowned pump chapel's disc, so the flank-wall loop skips it and the atmosphere
+  pass only dresses the main route. The "culvert mouth" is a name, not a hole in
+  a wall.
+* **And his count of two is exactly right.** Pre-round-thirteen, only five legs
+  had drawn flank pieces. A player who branches at the fork and rejoins later
+  never walks three of them. That leaves **precisely two**: the first leg inside
+  the falls (0.163 m) and **the last culvert leg, at the end of the path after
+  the bell** (0.045 m — the worst face in the district). His count and his
+  placement only reconcile if he took the culvert. He did.
+
+Both are fixed and live as of round thirteen (0.753 m and 0.774 m). **He was
+describing a build he had not played.**
+
+## What landed
+
+| item | what a player gets |
+|---|---|
+| **the bell** | It hangs on its chain again, on a two-legged sling whose feet sit on the rim ring and whose apex meets the vault the cave actually draws. Walk into it and it swings; the loose clapper strikes at the bottom of the swing, so the motion makes the sound. |
+| **doorjambs + turn markers** | The pale stones that tell you which way to go stop being walls you walk through. |
+| **mica + pump iron** | The glowing trail and the pump's iron stop being things you stand inside. |
+| **shelf + benches + the pin** | The shelf, the bell and the benches stop being things you stand inside — and the gate that missed them can see them now. |
+| **reverb** | The Underfalls stops paying for reverb it can't hear. |
+| **the playthrough** | It stops shutting the boiler door in its own face. |
+
+## The five that were still walk-through, in numbers
+
+Round thirteen fixed the flank walls and gate posts and pinned them. **Five more
+drawn objects in the same district were never covered by anything**, and the
+audit under-counted two of them:
+
+| object | before | after |
+|---|---|---|
+| three doorjambs | **0.000 m** — the post's own centre was a legal stand | 0.442 m (four dropped) |
+| two turn markers | **−0.337 m** — the pose is inside the cone | 0.449 m |
+| mica trail | **all 71** on occupiable floor, 15 inside the near plane | 57 crystals, worst 0.501 m |
+| pump flywheel | 0.100 m camera gap | 0.440 m |
+| **the piston** | **no collider at all** — camera 0.257 m inside it | 0.430 m |
+
+The piston was not in the audit. It was found by auditing the colliders around
+the flywheel rather than taking the list as complete.
+
+## The bell, and what the merge caught
+
+Two branches edited `buildBellCistern` concurrently without knowing about each
+other, and they disagreed about the bell. The walk-through branch had widened
+its collider "to the width of the mouth" and shoved it 0.25 m further out —
+correct for a bell lying on the floor presenting its 1.105 m mouth at body
+height, **wrong for one hanging overhead**. It had also published the bell into
+`layout.solids` as **one disc at the mouth's width for the object's whole
+height**: a metre-wide lie about a hanging bell, which the widened gate would
+then have measured and passed.
+
+Resolved to four stacked discs plus the sling, rungs placed at the tops of real
+head windows. And re-deriving it found the bell branch's own headline number was
+wrong **in the unsafe direction**: `BELL_HALF` was derived from a head window at
+the *node's* height, but the chamber floor is a ramp and the nearest legal stand
+is 0.12 m higher. True capsule clearance **13.6 mm, not 42**. The box still
+holds — nothing ever touches it — but every quotation of the wrong figure was
+corrected.
+
+## Sound: his condition was treated as a gate
+
+He said *"make sure that's not what is causing the sound bug."* It is not — the
+toll postdates every report he has filed. But round thirteen **had** made that
+district louder into the reverb, so rather than defend it, it was cut:
+
+* the paired `caveDrip` that fired at the same instant deleted (it was fiction —
+  the nearest real drip site is 8.55 m away through rock);
+* the toll's reverb send **0.96 → 0.34**;
+* the free-running cadence replaced by an amplitude gate plus an inelastic
+  strike, so the sound costs the bell its own swing energy and the rate
+  self-regulates;
+* round thirteen's 7.3 s minimum kept as a hard floor.
+
+Reverb drive per second **down 64.6% worst case, 82.1% ordinary**, and the
+single-event proxy fell from 2.4x the previous cave maximum to below it. Pinned
+with thresholds written as literals in the test, so widening them in `src` turns
+the gate red.
+
+## Gates
+
+Run **serially**. `playthrough` **0 failures in 25 runs** (was 6 in 50).
+`underfalls-expansion` 18 checks with the 2 known pre-existing reds, verified
+byte-identical against `origin/main` in a separate worktree. Everything else
+green, including the new `verb-rack-regression` (13/13) and every probe both
+branches shipped.
+
+---
+---
+
+# The brief this round was built from
+
 # ROUND FOURTEEN — say "fetch" and start here
 
 **Read this first, then `ROUND-THIRTEEN.md` for what round thirteen actually

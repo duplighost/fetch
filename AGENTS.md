@@ -25,10 +25,10 @@ the same commit.
   superseded once main caught up — closed, not deleted.
 - **Work in a fresh `git worktree`, never in a shared checkout.**
   `C:\Users\Alex\Projects\fetch-claude` is stale and shared; do not use it.
-- **When Alex says "fetch," read `docs/ROUND-FOURTEEN.md` first and follow it.**
+- **When Alex says "fetch," read `docs/ROUND-FIFTEEN.md` first and follow it.**
   It carries what is still open, what needs his answer rather than more work,
-  the measured gate baseline, and the traps. `docs/ROUND-THIRTEEN.md` is the
-  newest record — what round thirteen did, in numbers, with the brief it was
+  the measured gate baseline, and the traps. `docs/ROUND-FOURTEEN.md` is the
+  newest record — what round fourteen did, in numbers, with the brief it was
   built from kept underneath. His own words on the live build
   (`docs/HIS-NOTES-2026-08-19.md`) outrank every brief in this repo, and every
   item in them was answered by round thirteen. The older round records carry

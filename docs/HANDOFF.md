@@ -742,7 +742,7 @@ list is the order and the intent.
    warning literals move; choir-route-occlusion gets the new gate
    suppressed. Then run the playthrough TWICE — the walking-survivability
    beat is the acceptance test, and the known 'fire-refused-the-skull'
-   flake (~1 in 3, unrelated) means one red run proves nothing. Last in the
+   flake (FIXED 2026-08-20; was ~1 in 8, and NOT the Resident) — see below. Last in the
    order because it is the only task that can destabilise the long gate.
 
 ## Gates, ship, deploy
@@ -752,7 +752,7 @@ list is the order and the intent.
   named per task. Known pre-existing failure that is NOT yours:
   underfalls-expansion's mirror-room reflected-body check (the 1.6 s fade;
   documented last round). Known flake: playthrough 'fire-refused-the-skull'
-  ~1 in 3 — re-run before believing it.
+  FIXED 2026-08-20 — was ~1 in 8, a blind door press, not the Resident chase.
 - Record the new clearing draw number and the new maxGeometries in this
   file when you close the round, the way 203→210 was recorded.
 - Commit style: repo default identity, `Co-Authored-By:` your model tag,
@@ -1091,8 +1091,8 @@ order and the intent.
     pins) / smoke / playthrough (48 beats will change; re-pin the count) plus
     district-culling and render-perf after the dressing tasks. Cadence: full
     four gates once after task 7 and once at the end; targeted probes
-    between. Known flake: playthrough 'fire-refused-the-skull' fails ~1 in 3
-    (Resident chase) — re-run before believing it.
+    between. FIXED 2026-08-20: playthrough 'fire-refused-the-skull' was ~1 in 8,
+    caused by a blind press on an already-drifted-open door, NOT the Resident.
 
 11. **VISUAL VERIFICATION** — tools/shot-areas + shot-three-routes (route 3's
     money shot changed) + shot-opening on touched acts; OPEN THE PNGS AND
@@ -1219,10 +1219,14 @@ since been resculpted. Ask Alex which rock he means before hunting further.
    this. Hard-refresh first, always.
 2. **He may be CLICKING, not pressing E.** LMB has no meaning before the skull
    arrives. This is not a bug report, it is a controls question.
-3. **KNOWN FLAKE:** `tests/playthrough.mjs` fails at `fire-refused-the-skull`
-   in the basement roughly one run in three — the Resident chase kills the bot.
-   It failed twice during this session and passed clean on re-run with no code
-   change between. Re-run before believing a failure there.
+3. **FIXED 2026-08-20, and the explanation below was wrong for several rounds.**
+   `tests/playthrough.mjs` did fail at `fire-refused-the-skull` — measured at 6
+   runs in 50, not one in three — but **the Resident chase had nothing to do
+   with it**: `dead` is false and there are zero enemies in every failing run.
+   director.js drifts the basement's one closed unlocked door open on a ~28 s
+   cycle, the gate then pressed E on it blind, and `Door.tryUse` TOGGLES, so
+   the bot shut the door on itself and threw at a shut firebox. Both presses
+   are state-checked now. 10 of 10 after. Never affected a player.
 
 `tools/probe-epick.mjs` aims the crosshair at all 43 interactables in turn and
 reports which collider rejected any that fail — written for trap 1, kept for
