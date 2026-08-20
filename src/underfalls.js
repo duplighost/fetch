@@ -1436,11 +1436,10 @@ function buildBellCistern(game, layout, state) {
   // profile above is a bottom-origin lathe, and it inherited the +1.18 offset
   // from the centre-origin sphere it replaced. The rim was re-based onto the
   // new top and the base offset never was. So a two-metre dark iron object
-  // floated unattached, dead centre of the walking line, over a marked ring,
-  // under a snapped chain that misses it by half a metre — mechanism grammar,
-  // in a district whose previous lesson was that a suspended dark metal disc is
-  // a thing you throw the skull at. Alex, on the live build: "what is this, it
-  // doesn't move or do anything."
+  // floated unattached, dead centre of the walking line, over a marked ring —
+  // mechanism grammar, in a district whose previous lesson was that a
+  // suspended dark metal disc is a thing you throw the skull at. Alex, on the
+  // live build: "what is this, it doesn't move or do anything."
   //
   // Dropped by that same 1.18 so its narrow end rests on the stone. Nothing
   // else changes, and the snapped chain overhead now reads as the reason it is
@@ -1483,6 +1482,13 @@ function buildBellCistern(game, layout, state) {
   const bellPivot = new THREE.Group();
   bellPivot.position.set(bx, C.y, bz);
   group.add(bellPivot);
+  //
+  // ONE CORRECTION TO THE RECORD, from the audit of round twelve: that round
+  // said the snapped chain "missed the bell by half a metre". It did not. At
+  // length 1.8 tilted 0.55 about z its free end sat 0.971 out from the axis
+  // and 0.086 from the centre-line of the rim ring -- 1 cm off touching it,
+  // i.e. hung ON it. The claim was wrong, not the geometry. It is moot now
+  // that the bell has moved off the node, and the chain stays where it broke.
   const bell = new THREE.Mesh(new THREE.LatheGeometry(bellProfile, 16), iron);
   bell.castShadow = true;
   bellPivot.add(bell);
