@@ -4721,6 +4721,15 @@ function buildGraveyardBodies(game) {
 // ------------------------------------------------------------------- forest
 const SEAL_TRAIL = 10;
 const _lookA = new THREE.Vector3(), _lookB = new THREE.Vector3(), _lookC = new THREE.Vector3();
+// How far the ball over the mire is allowed to be heard from, and how it fades
+// getting there. Identical to KEY_TREE_REF/ROLL, deliberately: 4.5/0.55 leaves
+// 0.352 of source gain at thirty metres (the panner's 2.4/1.5 default leaves
+// 0.023) while still being 1.94x louder at three metres than at fifteen, so
+// walking toward it still tells you that you are. A wide ref alone would have
+// made every one of those distances identical.
+const RAVINE_REF = 4.5;
+const RAVINE_ROLL = 0.55;
+const _ravineV = new THREE.Vector3();
 
 export class Forest {
   constructor(game) {
@@ -6255,6 +6264,13 @@ export class Forest {
       this.ravineKnot.material = knotMat;
       this.ravineKnot.geometry = knotGeo;
       this.ravineKnot.scale.set(1, 1.5, 1);
+      // ...AND THE LINE IT HANGS ON, which round twelve left behind. Every
+      // chain knot reads as a hanging ASSEMBLY - a 1.35-emissive dropped line
+      // into a 2.4-emissive knot - and this one read as a lone dot with a dark
+      // thread above it. The line is 1.69 m tall against a 0.38 m ball: it is
+      // most of the silhouette, and it was carrying none of the value. No new
+      // material, no new draw call; the mesh already existed.
+      if (this.ravineLine) this.ravineLine.material = ropeMat;
       const halo = new THREE.Sprite(new THREE.SpriteMaterial({
         map: coronaTex, transparent: true, blending: THREE.AdditiveBlending,
         depthWrite: false, opacity: 0.8,
@@ -6262,6 +6278,11 @@ export class Forest {
       halo.scale.set(1.6, 1.6, 1);
       halo.position.copy(this.ravineKnotAt);
       coronas.add(halo);
+      // it is a world-space sprite in the shared corona group, so once the ball
+      // swings it has to be TOLD where the ball went, or the glow detaches from
+      // the thing it is announcing. `coronas.children` is a live array, so it
+      // still gets its pulse from _chainCoronas; this is only its position.
+      this._ravineHalo = halo;
     }
 
     // Link only the five consecutive road knots. The seed knot teaches the
@@ -6686,6 +6707,69 @@ export class Forest {
           0.66 + 0.18 * Math.sin(this._chainPulseT * 2.4 + i * 0.35);
       }
     }
+    // THE BALL OVER THE MIRE SPEAKS AND SWINGS.
+    //
+    // Alex, screenshot 11: "if we could get this hanging ball to be even more
+    // visible above the sand trap in the forest, it would be great."
+    //
+    // Round twelve gave it the LOOK half of the key-tree kit - knotMat, the
+    // dodecahedron, the corona. This is the other half, and it is the half that
+    // actually failed for the key tree: a thing the player has not looked at
+    // yet cannot be helped by being brighter. Sound points the head; motion
+    // holds it. Same idiom, same constants, nothing invented for this one: a
+    // deterministic irregular call (never a metronome, never Math.random),
+    // carried on RAVINE_REF/RAVINE_ROLL, and it MOVES when it speaks.
+    //
+    // It goes quiet when the CROSSING is made, not when the rope is latched.
+    // `ropeLatched` is set the instant the skull catches (the _setpieces
+    // onHit above) and nothing ever clears it, so gating on it would silence
+    // the ball for ever for a player who latched, swung short, drowned in the
+    // mire and respawned at the near bank — the one player who most needs the
+    // invitation. director.js spends `ravineRopeTarget.enabled` only once the
+    // player is grounded on the firm far side, and never re-enables it: that
+    // is the terminal, authoritative "this crossing is done" signal.
+    if (this.ravineHang && this.ravineKnot) {
+      const g = this.game;
+      // a hanging thing in a forest is never a fixture, so the sway never stops;
+      // only the CALL kicks it into an arc a head turns for. 2.41 rad/s is the
+      // natural rate of a 1.69 m pendulum, sqrt(9.81 / 1.69).
+      //
+      // 0.34, not the 0.55 the plan proposed, and the reason is measured
+      // (tools/probe-ravine-ball.mjs, 400 starting phases): a 1/0.55 = 1.82 s
+      // arc is SHORTER than the pendulum's own 2.61 s period, so on an unlucky
+      // phase the struck swing never completes one wide oscillation and the
+      // beat measures only 9 cm wider than the idle sway (2.4 cm if the gate
+      // samples at half-second steps). 1/0.34 = 2.94 s outlives the period, so
+      // the beat is 17-47 cm wider at EVERY phase swept — visible to a human,
+      // and pinnable. It still dies well inside the 5.8-9.2 s call cycle, so
+      // the wide arc stays coupled to the voice instead of becoming a
+      // permanent wobble.
+      this._ravineSwing = Math.max(0, (this._ravineSwing || 0) - dt * 0.34);
+      const breath = this._ravineSwing * this._ravineSwing;
+      const t = this._chainPulseT;
+      this.ravineHang.rotation.z =
+        Math.sin(t * 2.41) * (0.035 + 0.15 * breath) + Math.sin(t * 0.62) * 0.045;
+      const knotPos = this.ravineKnot.getWorldPosition(_ravineV);
+      if (this._ravineHalo) this._ravineHalo.position.copy(knotPos);
+      const live = g.act === 'forest' && !g.dead
+        && g.ravineRopeTarget?.enabled !== false
+        && g.player.pos.distanceTo(knotPos) < 30;
+      if (live) {
+        this._ravineCallT -= dt;
+        if (this._ravineCallT <= 0) {
+          this._ravineCalls++;
+          // 5.8-9.2 s. The 2.399963 stride is the key tree's, and it is
+          // irrational against 2*PI, so the cycle never repeats audibly.
+          this._ravineCallT = 5.8 + (Math.sin(this._ravineCalls * 2.399963) * 0.5 + 0.5) * 3.4;
+          this._ravineSwing = 1;
+          g.audio?.creak?.({
+            pos: knotPos.clone(), gain: 0.5,
+            rate: 0.88 + (this._ravineCalls % 3) * 0.07, verb: 0.7,
+            ref: RAVINE_REF, roll: RAVINE_ROLL,
+          });
+        }
+      }
+    }
     const mtx = this._sealMtx, v = this._sealPos, sv = this._sealScale, q = this._sealQuat;
     let dirty = false;
     this.sealAnim.forEach((a, i) => {
@@ -6931,19 +7015,51 @@ export class Forest {
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3.4, 5), M.bark);
     beam.rotation.z = 1.1;
     beam.position.y = 3.4;
-    const line = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.2, 4), M.curtain);
-    line.position.set(0.9, 2.3, 0);
+    // WHERE THE LINE ACTUALLY MEETS THE BEAM, not where it used to stop. The
+    // beam is a 3.4 m cylinder through local (0, 3.4) rolled 1.1 rad about Z,
+    // so its ends are (-1.5151, 4.1711) and (1.5151, 2.6289) and its axis
+    // crosses the hang lateral x=0.9 at y=2.9419. The old line ran 1.2 -> 3.4:
+    // it overshot the beam by 0.46 m and hung in air above it. Nobody saw that
+    // while the line was unlit and everybody would see it now that it is not.
+    const HANG_Y = 2.94;                    // the beam's axis at x = 0.9
+    const KNOT_Y = 1.25;                    // unchanged - ravineKnotAt/ropeAnchor depend on it
+    const HANG_LEN = HANG_Y - KNOT_Y;       // 1.69
+    // ONE PIVOT for the line and the ball, so the thing swings as one object
+    // rather than a ball sliding off a static thread. Yawed onto the lane
+    // tangent so the arc crosses the corridor - the widest screen-space motion
+    // for a player walking toward it - and yawing costs nothing, because both
+    // children sit ON this group's Y axis and a Y rotation cannot move them.
+    const ropeSample = this.samples[clamp(Math.round(rs + 4), 0, this.length - 1)];
+    const hang = new THREE.Group();
+    hang.position.set(0.9, HANG_Y, 0);
+    hang.rotation.y = Math.atan2(ropeSample.tx, ropeSample.tz);
+    // 0.042 and five sides: the chain's own rope gauge, so the one hanging line
+    // in the forest that is not part of the chain stops being visibly thinner
+    // than the six that are.
+    const line = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, HANG_LEN, 5), M.curtain);
+    line.position.set(0, -HANG_LEN / 2, 0);
     const knot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 6, 5), M.curtain);
-    knot.position.set(0.9, 1.25, 0);
-    rope.add(beam, line, knot);
+    knot.position.set(0, -HANG_LEN, 0);
+    hang.add(line, knot);
+    rope.add(beam, hang);
     rope.position.set(far.x, 0, far.z);
     scene.add(rope);
     // ...and this is the ONE hanging knot in the forest that never got the kit
     // every other one wears. _buildChain runs after this and upgrades it there,
     // where the material, the geometry and the corona texture already exist.
     this.ravineKnot = knot;
-    this.ravineKnotAt = new THREE.Vector3(far.x + 0.9, 1.25, far.z);
+    this.ravineLine = line;
+    this.ravineHang = hang;
+    this._ravineCallT = 2.2;
+    this._ravineCalls = 0;
+    this._ravineSwing = 0;
+    this.ravineKnotAt = new THREE.Vector3(far.x + 0.9, KNOT_Y, far.z);
     this.ropeAnchor = new THREE.Vector3(far.x + 0.9, 1.4, far.z);
+    // `this` inside onHit is the fetch target, not the Forest. The confirmation
+    // that a throw took has to come from the BALL: rope.position is y=0, 1.25 m
+    // below it and 0.9 m to the side, and at the panner's 2.4/1.5 default an
+    // 8 m latch retains 0.164 of source gain.
+    const knotAt = this.ravineKnotAt;
     const landing = this.posAt(rs + 7);   // clear of the gash, not on its lip
     const ravineRopeTarget = world.addFetchTarget({
       id: 'ravineRope', pos: this.ropeAnchor, radius: 1.1,
@@ -6973,7 +7089,7 @@ export class Forest {
         // anchored in the air over a player already walking away.
         skull.anchorAt(pivot, { swing: true, maxHold: 6 });
         game.flag('ropeLatched');
-        audio.creak({ pos: rope.position, gain: 0.6 });
+        audio.creak({ pos: knotAt, gain: 0.6, ref: RAVINE_REF, roll: RAVINE_ROLL });
         game.player.beginSwing(pivot);
         return 'anchor';
       },

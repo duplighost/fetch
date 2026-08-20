@@ -46,6 +46,20 @@ const FLOORS = {
   'the key-tree limb, from the top of the lane': [0.12, 1.8],
   'the key-tree limb, at throwing distance': [0.18, 1.15],
   'the key in the grass, from four metres': [0.01, 4.0],
+  // THESE TWO ARE NOT MEASURED YET, and they say so on purpose. Every other
+  // pair in this table is 0.5-0.6x a number this gate printed; these two come
+  // from arithmetic, because the round that added them had no GPU to run on.
+  // tools/probe-ravine-ball.mjs section 5 derives it: the ball is 25.3 m away
+  // at the first pose and 8.3 m at the second, its 1.6 m corona is 41 px and
+  // 124 px across at 1280x800 under a 71-degree vertical FOV, so the object is
+  // about 0.14% and 1.26% of frame at full alpha — and even if only the inner
+  // 60% of the gradient clears this file's |dL| > 4 gate, 0.05% and 0.45%.
+  // The floors below sit 5x and 9x under THAT, i.e. they fire only if the ball
+  // is drawn nowhere at all. FIRST RUN ON A MACHINE WITH A GPU: read the two
+  // measured values off the console below and raise these to 0.6x the pct and
+  // 0.7x the contrast, the same rule the rest of the table follows.
+  'the ravine ball and its line, up the approach': [0.01, 1.10],
+  'the ravine ball and its line, at the near lip': [0.05, 1.30],
 };
 
 const server = await ensureServer();
@@ -204,6 +218,123 @@ const result = await page.evaluate(() => {
   });
   snap('key-in-the-grass');
 
+  // ---- 1b. the ball over the mire ----------------------------------------
+  // Alex, screenshot 11: "if we could get this hanging ball to be even more
+  // visible above the sand trap in the forest, it would be great." Same kit as
+  // the limb, same two questions: can it be READ from where you decide to
+  // throw, and does it ANNOUNCE itself to a player who has not looked yet.
+  //
+  // This has to run BEFORE the ossuary block, not after: descend() seals every
+  // scene child that is not routeRoot, and that is not cheaply reversible from
+  // in here. It teleports back to the graveyard on the way out.
+  F.teleport('forest');
+  F.stepWith(0.3, {}, false);              // one forest.update reveals the detail roots
+  const f = g.forest;
+  const RAVINE_S = f.ravineS();
+  const ballAt = () => f.ravineKnot.getWorldPosition(f.ravineKnotAt.clone());
+  const REST = f.ravineKnotAt.clone();     // where the ball hangs with no swing on it
+  // The halo is a world-space sprite in the shared corona group, NOT a child of
+  // the hang. Toggling the hang alone would leave the glow burning in both
+  // frames and under-report the read. Toggle the whole announced object.
+  const ballToggle = {
+    get visible() { return f.ravineHang.visible; },
+    set visible(v) { f.ravineHang.visible = v; if (f._ravineHalo) f._ravineHalo.visible = v; },
+  };
+  // Poses stand at s = RAVINE_S - 5, not - 3.6: the mire's suction starts at
+  // 3.08 and drowns you at depth 1.48, and 0.52 m of margin under a 30 s
+  // stationary window is not margin. `entered` stays TRUE — forcing it false
+  // here re-fires the whole gate-slam beat (outside.js: hard seal placement 6 m
+  // behind you, brushCrash, stoneGrind, a 5 s look-window) once per pose.
+  const faceBall = (s) => () => {
+    const p = f.posAt(s);
+    f._lastIdx = Math.round(s);
+    f.entered = true; f._idleT = 0;        // already inside; do not re-fire the gate-slam
+    seat(p.x, p.z, f.heightAt(p.x, p.z) + 0.02);
+    const b = ballAt();
+    lookAt(b.x, b.y, b.z);
+    F.stepWith(0.05, {}, false);
+  };
+  read('the ravine ball and its line, up the approach', ballToggle, faceBall(RAVINE_S - 22));
+  snap('ravine-ball-approach');
+  read('the ravine ball and its line, at the near lip', ballToggle, faceBall(RAVINE_S - 5));
+  snap('ravine-ball-near-lip');
+
+  // ---- THE BALL'S ANNOUNCE -----------------------------------------------
+  // Three things this needs that the limb's block above does not.
+  //
+  //  1. IT FILTERS BY POSITION. The graveyard is silent apart from the limb, so
+  //     that block can assert calls.every(atTheLimb). The forest is not: the
+  //     seal frontier and the fork closures both creak while a player stands
+  //     still. A 2 m sphere around the ball's rest point contains neither.
+  //  2. IT SAMPLES AT 0.1 s, NOT 0.5 s. The struck arc lives 1/0.34 = 2.94 s
+  //     and the pendulum's period is 2.61 s, so at half-second steps the
+  //     sampled extremes depend on which phase the window happens to open in —
+  //     swept over 400 starting phases in tools/probe-ravine-ball.mjs the beat
+  //     can read as little as 2.4 cm wider than the idle sway that way. At
+  //     0.1 s it is 17-47 cm wider at every one of those phases.
+  //  3. IT REUSES THE SPENT-CROSSING WINDOW as a free at-rest baseline, so the
+  //     "it moves MORE when it speaks" row has something to be more than.
+  const spy = (sink) => (opts = {}) => {
+    sink.push({
+      ref: opts.ref ?? 2.4, roll: opts.roll ?? 1.5,
+      pos: opts.pos ? [opts.pos.x, opts.pos.y, opts.pos.z] : null,
+    });
+    return realCreak(opts);
+  };
+  const near = (c, r) => !!c.pos
+    && Math.hypot(c.pos[0] - REST.x, c.pos[1] - REST.y, c.pos[2] - REST.z) < r;
+  const mine = (list) => list.filter((c) => near(c, 2.0));
+  const spread = (list) => {
+    let r = 0;
+    for (const p of list) for (const q2 of list) r = Math.max(r, p.distanceTo(q2));
+    return r;
+  };
+  const sampleFor = (steps, sink) => {
+    for (let i = 0; i < steps; i++) { F.stepWith(0.1, {}, false); sink.push(ballAt()); }
+  };
+
+  faceBall(RAVINE_S - 5)();
+  const ballCalls = [];
+  g.audio.creak = spy(ballCalls);
+  const beatPos = [];
+  sampleFor(300, beatPos);                 // 30 s, the same window the limb gets
+  // ...and it goes quiet once the invitation is spent. `ropeLatched` is the
+  // WRONG flag to test that with: it is set the instant the skull catches, and
+  // nothing ever clears it, so a player who latched, swung short, drowned in
+  // the mire and respawned at the near bank would find the ball permanently
+  // silent — the one player who most needs it. The terminal signal is the fetch
+  // target, which the director spends only on the firm far bank and never
+  // re-enables.
+  g.ravineRopeTarget.enabled = false;
+  const afterCalls = [];
+  g.audio.creak = spy(afterCalls);
+  F.stepWith(3.5, {}, false);              // let the last struck arc die all the way out
+  const restPos = [];
+  sampleFor(300, restPos);
+  g.audio.creak = realCreak;
+
+  const beatCalls = mine(ballCalls);
+  const carryOf = (d, ref, roll) => Math.pow(Math.max(d, ref) / ref, -roll);
+  const ballAnnounce = {
+    calls: beatCalls.length,
+    ref: beatCalls[0]?.ref ?? null,
+    roll: beatCalls[0]?.roll ?? null,
+    carry30: beatCalls.length ? +carryOf(30, beatCalls[0].ref, beatCalls[0].roll).toFixed(3) : 0,
+    nearFalloff: beatCalls.length
+      ? +(carryOf(3, beatCalls[0].ref, beatCalls[0].roll) / carryOf(15, beatCalls[0].ref, beatCalls[0].roll)).toFixed(2)
+      : 1,
+    // 0.6 m, and the number is load-bearing. The ball's own arc never carries it
+    // more than 0.39 m from rest, while the ground-level position this creak
+    // used to play from (the rope group's origin: y = 0 and 0.9 m to the side)
+    // is 1.54 m away. This row is what fails if that regresses.
+    atTheBall: beatCalls.length > 0 && beatCalls.every((c) => near(c, 0.6)),
+    swingRange: +spread(beatPos).toFixed(4),
+    restRange: +spread(restPos).toFixed(4),
+    afterCrossing: mine(afterCalls).length,
+  };
+  F.teleport('graveyard');                 // the ossuary block starts where it expects to
+  F.stepWith(0.3, {}, false);
+
   // ---- 2. the ossuary conduit --------------------------------------------
   // Round nine's wire: 1.64% of frame at 6.2x, and it is the reason this file
   // exists — it was laid with world.box, which merges into the world SHELL,
@@ -221,7 +352,7 @@ const result = await page.evaluate(() => {
   });
   snap('ossuary-conduit');
 
-  return { measured, shots, announce, conduitInRouteRoot: !!conduit && conduit.parent === g.ossuary.root };
+  return { measured, shots, announce, ballAnnounce, conduitInRouteRoot: !!conduit && conduit.parent === g.ossuary.root };
 });
 
 await browser.close();
@@ -257,6 +388,36 @@ for (const [name, ok] of announceChecks) {
   if (!ok) failures.push(name);
 }
 console.log(`        measured: ${a.calls} calls, ref ${a.ref} m / roll ${a.roll}, ${a.carry30} of source gain left at 30 m, ${a.nearFalloff}x louder at 3 m than 15 m, far end travels ${a.swingRange} m`);
+
+// THE BALL OVER THE MIRE. His screenshot 11. The pixels were never the whole
+// problem here either: it hangs 0.75 m past the far lip of a mire that kills
+// you, so the read has to happen from the near bank, BEFORE the decision, and
+// what reaches a player who has not looked yet is sound and motion.
+//
+// The last two rows are the ones the limb does not carry. The limb's
+// `swingRange >= 0.15` can be satisfied by idle sway alone; a ball that hangs
+// in a forest sways whether or not anything is asking you to throw at it, so
+// the coupling has to be measured as a DIFFERENCE. The floors come from
+// tools/probe-ravine-ball.mjs, which replays the ticker's own arithmetic over
+// 400 starting phases: the beat travels 0.431-0.732 m and the idle sway
+// 0.257-0.267 m, a difference of 0.171-0.469 m, floored here at 0.10 on this
+// file's usual ~0.6x-the-worst-case rule.
+const b = result.ballAnnounce || {};
+const ballChecks = [
+  ['the ball keeps calling while the crossing is unmade (3+ times in 30 s)', b.calls >= 3],
+  ['it calls FROM the ball, not from the ground under it, so HRTF can point a head at it', !!b.atTheBall],
+  ['it carries: a quarter of it survives 30 m of lane', b.carry30 >= 0.25],
+  ['and it still fades in the near field, so walking toward it reads as approach', b.nearFalloff >= 1.4],
+  ['and it MOVES: the ball travels 15 cm+', b.swingRange >= 0.15],
+  ['and it moves MORE when it speaks: 10 cm+ wider on a beat than at rest', (b.swingRange - b.restRange) >= 0.10],
+  ['and it goes quiet once the crossing has been made', b.afterCrossing === 0],
+];
+console.log('');
+for (const [name, ok] of ballChecks) {
+  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  if (!ok) failures.push(name);
+}
+console.log(`        measured: ${b.calls} calls, ref ${b.ref} m / roll ${b.roll}, ${b.carry30} of source gain left at 30 m, ${b.nearFalloff}x louder at 3 m than 15 m, ball travels ${b.swingRange} m on a beat and ${b.restRange} m at rest, ${b.afterCrossing} calls after the crossing`);
 
 for (const [name, data] of Object.entries(result.shots || {})) {
   writeFileSync(shotPath(`legibility-${name}`), Buffer.from(String(data).split(',')[1], 'base64'));
