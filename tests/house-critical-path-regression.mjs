@@ -586,7 +586,23 @@ try {
     walkLeg(-4.8, -3, 8);
     walkLeg(-1.5, -1.5, 10);
     walkLeg(3.2, -3, 10);
-    useAt(4, -1.9, -3);
+    // THE BOILER DOOR MAY ALREADY BE OPEN, AND E TOGGLES.
+    //
+    // director.js _updateScares drifts "the nearest closed door on your floor"
+    // open on a ~28 s cycle, and in the basement there is exactly one closed
+    // unlocked door -- this one. A blind press therefore SHUT it in the bot's
+    // own face about 1 run in 8, it wedged in the storeroom, the throw landed
+    // on the shut-door branch and the beat read "the fire refused the skull".
+    // Measured: 26/26 correlation between door-already-open and the failure,
+    // plus a forced-open causal control. Never a player problem -- the door is
+    // never locked, so a human just presses again. Press until it is open,
+    // which is what a human does.
+    const boilerDoor = g.world.doors.find((d) =>
+      Math.abs(d.center.x - 4) < 0.4 && Math.abs(d.center.z + 3) < 0.4);
+    for (let i = 0; i < 3 && boilerDoor && !boilerDoor.open; i++) {
+      useAt(4, -1.9, -3);
+      F.stepWith(0.5, {}, false);
+    }
     F.stepWith(1.4, {}, false);
     walkLeg(5, -3, 6);
     walkLeg(9.8, -1.7, 10);

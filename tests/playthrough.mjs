@@ -434,16 +434,36 @@ try {
     walkTo(-12.6, -3, 14, true); walkTo(-9.2, -3, 8, true);
     walkTo(-4.8, -3, 8, true); walkTo(-1.5, -1.5, 10, true);
 
-    walkTo(3.2, -3, 10);                             // the boiler door is shut
-    useAt(4, -1.9, -3);
+    walkTo(3.2, -3, 10);
+    // THE BOILER DOOR MAY ALREADY BE OPEN, AND E TOGGLES.
+    //
+    // director.js _updateScares drifts "the nearest closed door on your floor"
+    // open on a ~28 s cycle, and in the basement there is exactly one closed
+    // unlocked door -- this one. A blind press therefore SHUT it in the bot's
+    // own face about 1 run in 8, it wedged in the storeroom, the throw landed
+    // on the shut-door branch and the beat read "the fire refused the skull".
+    // Measured: 26/26 correlation between door-already-open and the failure,
+    // plus a forced-open causal control. Never a player problem -- the door is
+    // never locked, so a human just presses again. Press until it is open,
+    // which is what a human does.
+    const boilerDoor = g.world.doors.find((d) =>
+      Math.abs(d.center.x - 4) < 0.4 && Math.abs(d.center.z + 3) < 0.4);
+    for (let i = 0; i < 3 && boilerDoor && !boilerDoor.open; i++) {
+      useAt(4, -1.9, -3);
+      F.stepWith(0.5);
+    }
     F.stepWith(1.4);
-    walkTo(5, -3, 6); walkTo(9.8, -1.7, 10);         // boiler room; the one warm thing in it
+    walkTo(5, -3, 6);
+    // named, so the next failure here reports ITS OWN cause instead of
+    // surfacing three steps later as "the fire refused the skull"
+    const inBoilerRoom = walkTo(9.8, -1.7, 10);      // the one warm thing in it
     useAt(10.71, -2.1, -1.52);                       // open the incinerator's mouth
     F.stepWith(0.7);
     throwAt(11.0, -2.1, -1.5, 0.35);                 // try to burn it. try.
     for (let t = 0; t < 5 && !g.flags.has('fireRefused'); t += 0.1) F.stepWith(0.1);
     waitHeld(5);
-    beat('fire-refused-the-skull', g.flags.has('fireRefused') && g.skull.mode === 'held', g.skull.getState());
+    beat('fire-refused-the-skull', g.flags.has('fireRefused') && g.skull.mode === 'held',
+      { ...g.skull.getState(), inBoilerRoom, boilerDoorOpen: !!boilerDoor?.open, incinDoorOpen: !!g.incinerator?.doorOpen });
     throwAt(10.5, -2.65, -1.5, 0.35);                // the key was in the ash all along
     ok = false;
     for (let t = 0; t < 4 && !ok; t += 0.1) { F.stepWith(0.1); ok = !!(g.skull.carry && g.skull.carry.id === 'hatchKey'); }
