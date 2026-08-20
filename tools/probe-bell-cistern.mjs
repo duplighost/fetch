@@ -68,7 +68,10 @@ function segmentProjection(seg, x, z) {
   const cx = seg.a.x + seg.dx * t, cz = seg.a.z + seg.dz * t;
   const d = Math.hypot(x - cx, z - cz);
   const w = lerp(seg.a.w, seg.b.w, t);
-  return { type: 'segment', kind: seg.kind, name: seg.kind + '[' + seg.index + ']', d, w, clearance: d - w };
+  return {
+    type: 'segment', kind: seg.kind, name: seg.kind + '[' + seg.index + ']',
+    d, w, y: lerp(seg.a.y, seg.b.y, t), clearance: d - w,
+  };
 }
 function chamberProjection(c, x, z) {
   const d = Math.hypot(x - c.x, z - c.z);
@@ -80,6 +83,26 @@ function projectUnderfalls(x, z) {
   for (const c of CHAMBERS) { const p = chamberProjection(c, x, z); if (!best || p.clearance < best.clearance) best = p; }
   return best;
 }
+// underfallsGroundAt, re-modelled off the same tables (src/underfalls.js:297).
+// It is here because the head window is measured from the player's FEET, and
+// this chamber's floor is not flat: the service ramp climbs across the disc,
+// so where you stand decides how much of a hanging bell is in your window.
+function groundAt(x, z) {
+  let nearest = null;
+  for (const s of segments) {
+    const q = segmentProjection(s, x, z);
+    if (!nearest || q.d < nearest.d) nearest = q;
+  }
+  if (nearest && nearest.d <= nearest.w + 0.38) return nearest.y;
+  let floor = null;
+  for (const c of CHAMBERS) {
+    const d = Math.hypot(x - c.x, z - c.z);
+    if (d <= c.r && (!floor || d / c.r < floor.score)) floor = { y: c.y, score: d / c.r };
+  }
+  if (floor) return floor.y;
+  return nearest ? nearest.y : 0;
+}
+
 function samplePath(path, spacing) {
   const out = [];
   for (let i = 0; i < path.length - 1; i++) {
@@ -113,6 +136,135 @@ const APEX = 5.18 - 0.17;                    // atmosphere.js chamber vault unde
 const VAULT_R = C.r * 0.96;
 const OX = 1.45, OZ = -1.31;
 const bx = C.x + OX, bz = C.z + OZ;
+const BELL_MAX = 0.055, BELL_HALF = 0.62;              // src/underfalls.js
+
+// THE RESEATED KEEPSAKE SHELF. Round fourteen's walkthrough branch lifted the
+// 3.8 m plank at (C.x-1.8, C.z+2.0) yawed 0.28 -- a third of which hung over
+// the background -- and put a 3.0 m one TANGENTIAL to the disc at 2.62 m on
+// the same bearing, with the keepsake row and the shelf's pooled candle
+// written in the plank's own frame. Re-modelled here from the same numbers.
+const SHELF_RADIUS = 2.62;
+const SHELF_OUT = (() => {
+  const len = Math.hypot(1.8, 2.0);
+  return { x: -1.8 / len, z: 2.0 / len };
+})();
+const SHELF_ALONG = { x: SHELF_OUT.z, z: -SHELF_OUT.x };
+const SHELF = {
+  x: C.x + SHELF_OUT.x * SHELF_RADIUS, y: C.y + 0.72, z: C.z + SHELF_OUT.z * SHELF_RADIUS,
+};
+const KEEPSAKES = { x: SHELF.x, y: C.y + 0.9, z: SHELF.z };
+const SHELF_CANDLE = {
+  x: SHELF.x + SHELF_ALONG.x * -0.60 + SHELF_OUT.x * -0.62,
+  y: C.y + 1.05,
+  z: SHELF.z + SHELF_ALONG.z * -0.60 + SHELF_OUT.z * -0.62,
+};
+
+// THE SWEPT SILHOUETTE, sampled rather than bounded. "radius + depth x sin"
+// is an upper bound on the radius and it is WRONG about height: the point of
+// a ring that drops furthest under a lean is the one on the far side, and
+// that point moves INWARD, not outward. So walk every drawn circle at the
+// lean and take where each point of it actually goes. src/underfalls.js
+// publishes its ledger from the same construction; this is the replay of it.
+function swungPoints(lean) {
+  const cl = Math.cos(lean), sl = Math.sin(lean);
+  const bell = [], sling = [];
+  const ring = (into, rho, restY) => {
+    const drop = APEX - restY;
+    for (let k = 0; k <= 24; k++) {
+      const u = k / 12 - 1;
+      into.push([
+        APEX - drop * cl + rho * u * sl,
+        Math.hypot(rho * u * cl + drop * sl, rho * Math.sqrt(Math.max(0, 1 - u * u))),
+      ]);
+    }
+  };
+  for (let i = 0; i < PROFILE.length - 1; i++) {
+    const [r0, y0] = PROFILE[i], [r1, y1] = PROFILE[i + 1];
+    const steps = Math.ceil((y1 - y0) / 0.01);
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      ring(bell, lerp(r0, r1, t), CROWN + lerp(y0, y1, t));
+    }
+  }
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2;
+    ring(bell, RING_R + Math.cos(a) * RING_TUBE, RIM + Math.sin(a) * RING_TUBE);
+  }
+  for (let k = 0; k <= 16; k++) {
+    const a = (k / 16) * Math.PI;
+    ring(bell, Math.sin(a) * 0.24 + 0.045, CLAPPER_Y - Math.cos(a) * 0.24);
+  }
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16;
+    ring(sling, RING_R * (1 - t) + 0.05, RIM + (APEX - RIM) * t);
+  }
+  return { bell, sling };
+}
+const bandRadius = (pts, y0, y1) => {
+  let r = 0;
+  for (const [y, h] of pts) if (y >= y0 && y <= y1 && h > r) r = h;
+  return r;
+};
+const spanOf = (pts) => {
+  let lo = Infinity, hi = -Infinity, widest = 0;
+  for (const [y, h] of pts) { if (y < lo) lo = y; if (y > hi) hi = y; if (h > widest) widest = h; }
+  return { lo, hi, widest };
+};
+const SWUNG = swungPoints(BELL_MAX);
+const BELL_SPAN = spanOf(SWUNG.bell), SLING_SPAN = spanOf(SWUNG.sling);
+
+// WHERE THE PLAYER CAN ACTUALLY STAND, AND ON WHAT. Poses the clamp holds and
+// the bell box does not push out of, reduced to the only two numbers a body of
+// revolution can see: the ground under the pose, which sets the head window,
+// and the distance to the axis. Kept as a frontier -- per ground height, the
+// nearest such stand -- because the two constrain each other.
+const FRONTIER = (() => {
+  const map = new Map();
+  for (let dx = -2.9; dx <= 2.9 + 1e-9; dx += 0.005) {
+    for (let dz = -2.9; dz <= 2.9 + 1e-9; dz += 0.005) {
+      const d = Math.hypot(dx, dz);
+      if (d > 2.9) continue;
+      const x = bx + dx, z = bz + dz;
+      const q = projectUnderfalls(x, z);
+      if (!q || q.clearance > -0.04) continue;          // the clamp would not hold it
+      const feet = groundAt(x, z);
+      const boxLive = !(C.y + RIM <= feet + STEP_UP || C.y + CROWN >= feet + HEAD);
+      if (boxLive) {
+        const cx = clamp(x, bx - BELL_HALF, bx + BELL_HALF);
+        const cz = clamp(z, bz - BELL_HALF, bz + BELL_HALF);
+        if (Math.hypot(x - cx, z - cz) < PLAYER_R - 1e-9) continue;
+      }
+      const key = Math.round((feet - C.y) / 0.005);
+      const cur = map.get(key);
+      if (cur === undefined || d < cur) map.set(key, d);
+    }
+  }
+  return [...map.entries()].map(([k, d]) => ({ f: k * 0.005, d })).sort((a, b) => a.f - b.f);
+})();
+const FLOOR_LO = Math.min(...FRONTIER.map((s) => s.f));
+const FLOOR_HI = Math.max(...FRONTIER.map((s) => s.f));
+const NEAREST = FRONTIER.reduce((a, s) => {
+  if (s.d < a.d - 1e-9) return s;
+  return (Math.abs(s.d - a.d) <= 1e-9 && s.f > a.f) ? s : a;
+});
+const NEAREST_STAND = NEAREST.d;
+const WINDOW_TOP = NEAREST.f + HEAD;                   // C-relative
+const HIGHEST_WINDOW = FLOOR_HI + HEAD;
+// The pose that holds the LEAST air is not always the nearest one: on a ramp,
+// a stand a centimetre further out can be on ground high enough to take more
+// of the cone into its window. Found once, used by both sections below.
+const WORST_POSE = (() => {
+  let best = null;
+  for (const s of FRONTIER) {
+    let reach = 0, at = 0;
+    for (const [y, h] of SWUNG.bell) {
+      if (y <= s.f + HEAD + 1e-9 && h > reach) { reach = h; at = y; }
+    }
+    const air = s.d - PLAYER_R - reach;
+    if (!best || air < best.air) best = { ...s, reach, at, air };
+  }
+  return best;
+})();
 
 console.log('THE AUTHORED HANG, AND THE CLAIM ROUND TWELVE MADE ABOUT IT');
 console.log('  base C.y +', CROWN, '| rim C.y +', RIM, '(= base + the profile\'s own 1.44 top)',
@@ -134,9 +286,11 @@ console.log('');
 console.log('DOES A HUNG BELL NEED A COLLIDER?  (player.js: RADIUS', PLAYER_R,
   ', STEP_UP', STEP_UP, ', HEAD', HEAD + ')');
 console.log('  _moveAxis ignores a box whose min.y >= feet + HEAD. The crown bottoms out at',
-  CROWN, 'so it reaches', r3(HEAD - CROWN), 'm INTO the head window.');
-console.log('  bell radius at head height', r3(radiusAt(HEAD - CROWN)),
-  '-> YES. It would take a crown at C.y +', HEAD, 'to need none, and a bell you cannot');
+  CROWN, 'so it reaches', r3(HEAD - CROWN), "m into the window of a player standing at the NODE's height");
+console.log('  -- and nobody stands there: this floor runs C.y', r3(FLOOR_LO), 'to C.y +', r3(FLOOR_HI),
+  "inside the bell's own three metres, so the real figure at the nearest stand is", r3(WINDOW_TOP - CROWN) + '.');
+console.log('  bell radius at that height', r3(radiusAt(WINDOW_TOP - CROWN)),
+  '-> YES. It would take a crown at C.y +', r3(WINDOW_TOP), 'to need none, and a bell you cannot');
 console.log('  reach is a bell you cannot ring.');
 
 console.log('');
@@ -161,7 +315,8 @@ console.log('  interior bisector', [r3(normal[0]), r3(normal[1])], 'x 1.95 =',
 console.log('  perpendicular to secret leg in ', r3(segmentProjection(legIn, bx, bz).d), 'm');
 console.log('  perpendicular to secret leg out', r3(segmentProjection(legOut, bx, bz).d), 'm');
 console.log('  the shelf sits on the opposite flank,',
-  r3(Math.hypot(bx - (C.x - 1.8), bz - (C.z + 2.0))), 'm away');
+  r3(Math.hypot(bx - SHELF.x, bz - SHELF.z)), 'm away (reseated tangential at',
+  SHELF_RADIUS, 'm this same round -- the old 3.8 m plank at C.x-1.8 / C.z+2.0 is gone)');
 
 // ---- the sling -----------------------------------------------------------
 const slingLen = Math.hypot(RING_R, APEX - RIM);
@@ -188,32 +343,44 @@ console.log('  ONE leg cannot hold it: the lathe shell\'s centroid is on the axi
 }
 
 // ---- the swing cap and the collider that follows from it -----------------
-function worstReach(th) {
+// AGAINST THE REAL WINDOW, NOT THE NODE'S. Every version of this arithmetic
+// before now scanned the iron from the crown to C.y + HEAD, which is the
+// window of a player standing at the cistern node's own height. This chamber's
+// floor is a ramp, and the nearest stand the box permits is on ground above
+// the node, so its window reaches higher and takes more of the cone in. That
+// is most of the air this collider was credited with.
+function worstReach(th, top = WINDOW_TOP) {
   let w = 0, at = 0;
-  for (let h = CROWN; h <= HEAD + 1e-9; h += 0.001) {
-    const r = radiusAt(h - CROWN) + (APEX - h) * Math.sin(th);
-    if (r > w) { w = r; at = h; }
+  for (const [y, h] of swungPoints(th).bell) {
+    if (y <= top + 1e-9 && h > w) { w = h; at = y; }
   }
   return { w, at };
 }
-const BELL_MAX = 0.055, BELL_HALF = 0.62;
 console.log('');
 console.log('THE CAP, AND THE COLLIDER DERIVED FROM IT');
+console.log('  reachable floor C.y', r3(FLOOR_LO), 'to C.y +', r3(FLOOR_HI),
+  '| nearest stand', r3(NEAREST_STAND), 'm out, on ground C.y +', r3(NEAREST.f),
+  '-> its window tops out at C.y +', r3(WINDOW_TOP));
 for (const H of [0.40, 0.50, 0.60, 0.62, 0.75]) {
   let th = 0;
-  for (let t = 0; t <= 0.2; t += 0.0001) { if (worstReach(t).w <= H) th = t; else break; }
+  for (let t = 0; t <= 0.2; t += 0.0005) { if (worstReach(t).w <= H) th = t; else break; }
   console.log('  half-extent', H, '-> face stop', r3(H + PLAYER_R), ', corner stop',
     r3(Math.hypot(H, H) + PLAYER_R), ', largest safe swing', r4(th), 'rad');
 }
-const wr = worstReach(BELL_MAX);
+console.log('  (that table holds the stands still. A wider box pushes them further out too,');
+console.log('   so it guides the choice rather than promising it; the shipped row is measured.)');
+const wr = { w: WORST_POSE.reach, at: WORST_POSE.at };
 console.log('  SHIPPED: BELL_MAX', BELL_MAX, 'rad, BELL_HALF', BELL_HALF);
-console.log('    widest iron inside the head window at full lean', r4(wr.w), 'm at C.y +', r3(wr.at));
-console.log('    the capsule\'s surface stands at', BELL_HALF, '->', r4(BELL_HALF - wr.w), 'm clear, always');
+console.log('    the pose that holds the least air stands', r4(WORST_POSE.d), 'm out on ground C.y +',
+  r3(WORST_POSE.f), '-> window top C.y +', r3(WORST_POSE.f + HEAD));
+console.log('    widest iron inside THAT head window at full lean', r4(wr.w), 'm at C.y +', r3(wr.at));
+console.log('    the capsule surface stands at', r4(WORST_POSE.d - PLAYER_R), '->',
+  r4(WORST_POSE.air), 'm clear, always (0.0416 was the node-height answer this line printed)');
 console.log('    crown travel', r3(2 * (APEX - CROWN) * Math.sin(BELL_MAX)), 'm peak-to-peak');
 console.log('    rim travel  ', r3(2 * (APEX - RIM) * Math.sin(BELL_MAX)),
   'm peak-to-peak (round thirteen\'s rocking bell managed 0.250)');
-console.log('    the mouth (radius', RING_R + RING_TUBE + ') is', r3(RIM - HEAD),
-  'm above the top of the capsule, so it can never be touched: an AABB drawn to it');
+console.log('    the mouth (radius', RING_R + RING_TUBE + ') is', r3(RIM - WINDOW_TOP),
+  'm above the top of that capsule, so it can never be touched: an AABB drawn to it');
 console.log('    would be a metre of invisible wall around a thin iron cone.');
 
 // ---- gate 1: colliders never clip either centreline ----------------------
@@ -263,25 +430,18 @@ console.log('  the cistern node stands',
   'm clear of the collider face');
 
 // ---- gate 3: nothing the collider permits stands inside the iron ---------
-const required = wr.w + PLAYER_R;
-let closest = Infinity, closestPose = null, poses = 0;
-for (let x = bx - 3.4; x <= bx + 3.4; x += 0.025) {
-  for (let z = bz - 3.4; z <= bz + 3.4; z += 0.025) {
-    const p = projectUnderfalls(x, z);
-    if (!p || p.clearance > -0.039) continue;              // the clamp would not hold this pose
-    const cx = clamp(x, box.minX, box.maxX), cz = clamp(z, box.minZ, box.maxZ);
-    if (Math.hypot(x - cx, z - cz) < PLAYER_R - 1e-9) continue;   // the collider pushes it out
-    poses++;
-    const d = Math.hypot(x - bx, z - bz);
-    if (d < closest) { closest = d; closestPose = [r3(x), r3(z)]; }
-  }
-}
+// EVERY POSE AGAINST ITS OWN GROUND. A single "required clearance" is only
+// meaningful on a flat floor, and this one is not flat: the pose that holds
+// the least air is not the pose that stands nearest.
+const worstAir = WORST_POSE.air, worstAt = { s: WORST_POSE, reach: WORST_POSE.reach };
 console.log('');
 console.log('GATE "no pose the clamp and the collider both accept stands inside the bell"');
-console.log('  clamp-legal AND collider-legal poses tested:', poses);
-console.log('  required clearance (swept iron + player radius)', r4(required));
-console.log('  closest such pose', closestPose, 'at', r4(closest), '->',
-  closest >= required ? 'PASS' : 'FAIL', 'by', r4(closest - required), 'm');
+console.log('  ground heights the frontier found:', FRONTIER.length,
+  '| nearest stand overall', r4(NEAREST_STAND), 'm');
+console.log('  worst pose: ground C.y +', r3(worstAt.s.f), 'at', r4(worstAt.s.d),
+  'm out, window top C.y +', r3(worstAt.s.f + HEAD), ', swept iron', r4(worstAt.reach), 'm');
+console.log('  air between that iron and the capsule', r4(worstAir), '->',
+  worstAir > 0 ? 'PASS' : 'FAIL');
 
 // ---- enemy navigation ----------------------------------------------------
 function unionChordOpen(a, b, pad = 0.2, spacing = 0.32) {
@@ -334,7 +494,7 @@ const toRingIron = (L, rimY) => {
   const h = Math.hypot(L.x - bx, L.z - bz);
   return Math.max(0, Math.hypot(Math.abs(h - RING_R), Math.abs(L.y - rimY)) - RING_TUBE);
 };
-const keepsakes = { x: C.x - 1.72, y: C.y + 0.9, z: C.z + 1.85 };
+const keepsakes = KEEPSAKES;
 const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 const LIVE_LIGHT = { x: bx - 1.05, y: C.y + 2.4, z: bz + 0.85 };
 const NEW_LIGHT = { x: bx - 1.42, y: C.y + 2.0, z: bz + 1.15 };
@@ -348,9 +508,96 @@ console.log('  the SAME light with the bell re-hung:      ',
 console.log('  SHIPPED (bx-1.42 / C.y+2.0 / bz+1.15):     ',
   r3(toRingIron(NEW_LIGHT, C.y + RIM)), 'm, irradiance', r3(irr(toRingIron(NEW_LIGHT, C.y + RIM))),
   '-> x' + r4(irr(toRingIron(NEW_LIGHT, C.y + RIM)) / irr(toRingIron(LIVE_LIGHT, C.y + 1.44))), 'of live');
-console.log('  keepsakes:', r3(d3(LIVE_LIGHT, keepsakes)), '->', r3(d3(NEW_LIGHT, keepsakes)),
+console.log('  keepsakes, on the RESEATED plank:', r3(d3(LIVE_LIGHT, keepsakes)), '->',
+  r3(d3(NEW_LIGHT, keepsakes)),
   'm, irradiance x' + r3(irr(d3(NEW_LIGHT, keepsakes)) / irr(d3(LIVE_LIGHT, keepsakes))));
-console.log('  it stays', r3(NEW_LIGHT.y - C.y - 1.62), 'm above EYE, so nobody can stand inside it');
+console.log('  (the x1.249 this line printed before was measured against the 3.8 m plank the',
+  'walkthrough branch replaced this same round)');
+console.log('  the shelf\'s own pooled candle travelled with the plank:',
+  r3(Math.hypot(SHELF_CANDLE.x - SHELF.x, SHELF_CANDLE.y - SHELF.y, SHELF_CANDLE.z - SHELF.z)),
+  'm off the plank centre,', r3(d3(NEW_LIGHT, SHELF_CANDLE)), 'm from this lamp');
+{
+  let highest = -Infinity, nearestEye = Infinity;
+  for (let dx = -3; dx <= 3 + 1e-9; dx += 0.02) {
+    for (let dz = -3; dz <= 3 + 1e-9; dz += 0.02) {
+      const x = NEW_LIGHT.x + dx, z = NEW_LIGHT.z + dz;
+      const q = projectUnderfalls(x, z);
+      if (!q || q.clearance > -0.04) continue;
+      const feet = groundAt(x, z);
+      const cx = clamp(x, bx - BELL_HALF, bx + BELL_HALF), cz = clamp(z, bz - BELL_HALF, bz + BELL_HALF);
+      if (Math.hypot(x - cx, z - cz) < PLAYER_R - 1e-9) continue;
+      const eye = feet + 1.62;
+      if (Math.hypot(dx, dz) < 1.2 && eye > highest) highest = eye;
+      nearestEye = Math.min(nearestEye, Math.hypot(dx, eye - NEW_LIGHT.y, dz));
+    }
+  }
+  console.log('  the lamp is at', r3(NEW_LIGHT.y), 'and the highest eye within 1.2 m of it is',
+    r3(highest), '->', r3(NEW_LIGHT.y - highest), 'm over it;', r3(nearestEye),
+    'm from the nearest eye in space, so nobody can stand inside it');
+  console.log('  ("0.38 m above EYE" was the node-height answer, and this floor is a ramp)');
+}
+
+// ---- the ledger the gate walks -------------------------------------------
+// tests/underfalls-expansion.mjs measures what src/underfalls.js publishes to
+// layout.solids. A prism reports ONE radius for its whole height, and a hung
+// bell is a cone, so the bell goes on as a stack of discs whose rungs are the
+// tops of head windows. This replays that stack off this file's own PROFILE
+// and scores it the way the gate does: the flat gap while a rung crosses a
+// pose's window (owed RADIUS less the 0.02 of head bob a collider never sees)
+// and the 3D distance from that pose's eye, always (owed the 0.24 the 0.2 near
+// plane eats at).
+const LEDGER_BOB = 0.02, LEDGER_BODY = PLAYER_R - LEDGER_BOB, LEDGER_NEAR = 0.24, EYE = 1.62;
+const RUNGS = [BELL_SPAN.lo, 1.87, 1.90, 2.10, BELL_SPAN.hi];
+const LEDGER = [];
+for (let i = 0; i < RUNGS.length - 1; i++) {
+  LEDGER.push({
+    name: 'hung bell', guard: 'collider', y0: RUNGS[i], y1: RUNGS[i + 1],
+    r: bandRadius(SWUNG.bell, RUNGS[i], RUNGS[i + 1]),
+  });
+}
+LEDGER.push({
+  name: 'bell sling', guard: 'clamp', y0: SLING_SPAN.lo, y1: SLING_SPAN.hi, r: SLING_SPAN.widest,
+});
+console.log('');
+console.log('THE LEDGER (layout.solids), replayed and scored the way the gate scores it');
+console.log('  the swept bell spans C.y +', r3(BELL_SPAN.lo), 'to C.y +', r3(BELL_SPAN.hi),
+  'and is', r4(BELL_SPAN.widest), 'm wide at its rim');
+console.log('  the highest head window anything the gate can reach here raises tops out at C.y +',
+  r3(HIGHEST_WINDOW) + ', under the last rung: nothing over that can be a wall you walk through');
+for (const y of [1.86, 1.87, 1.88, 1.90, 1.95, 2.00, 2.10]) {
+  let nearest = Infinity;
+  for (const q of FRONTIER) if (q.f + HEAD > y) nearest = Math.min(nearest, q.d);
+  console.log('    nearest stand whose window passes C.y +', y, ':',
+    Number.isFinite(nearest) ? r4(nearest) + ' m' : 'none');
+}
+let worstBody = { gap: Infinity }, worstCam = { gap: Infinity };
+for (const s of LEDGER) {
+  const owed = s.guard === 'clamp' ? 0.42 : LEDGER_BODY;
+  let body = Infinity, cam = Infinity;
+  for (const q of FRONTIER) {
+    const eye = q.f + EYE;
+    const flat = Math.max(0, (q.d - LEDGER_BOB) - s.r);
+    const vert = Math.max(0, s.y0 - eye, eye - s.y1);
+    if (s.y1 > q.f + STEP_UP && s.y0 < q.f + HEAD) body = Math.min(body, flat);
+    cam = Math.min(cam, Math.hypot(flat, vert));
+  }
+  console.log('  ' + s.name.padEnd(10), 'y C.y +' + r3(s.y0), '.. C.y +' + r3(s.y1),
+    '| r', r4(s.r), '| body', Number.isFinite(body) ? r4(body) : 'never in a window',
+    '| cam', r4(cam), '| owes', owed);
+  if (Number.isFinite(body) && body - owed < worstBody.gap - (worstBody.owed || 0)) {
+    worstBody = { gap: body, owed, name: s.name };
+  }
+  if (cam < worstCam.gap) worstCam = { gap: cam, name: s.name };
+}
+console.log('  worst body', r4(worstBody.gap), 'against', worstBody.owed, '->',
+  worstBody.gap >= worstBody.owed - 1e-3 ? 'PASS' : 'FAIL');
+console.log('  worst camera', r4(worstCam.gap), 'against', LEDGER_NEAR, '->',
+  worstCam.gap >= LEDGER_NEAR - 1e-3 ? 'PASS' : 'FAIL');
+console.log('  a ONE-DISC entry at the lip, which is what a FALLEN bell owes and what round');
+console.log('  fourteen\'s walkthrough branch wrote here, would claim', r4(BELL_SPAN.widest),
+  'm of iron across the whole');
+console.log('  height and score', r4(Math.max(0, (NEAREST_STAND - LEDGER_BOB) - BELL_SPAN.widest)),
+  '-> a gate measuring an object that is not there.');
 
 // ---- earshot: unchanged from round thirteen, re-checked ------------------
 const strike = { x: bx, y: C.y + CLAPPER_Y, z: bz };
