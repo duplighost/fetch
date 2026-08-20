@@ -479,6 +479,19 @@ console.log('  steps 1+2+3+3b  ' + JSON.stringify(pinFail([...step3.rects, ...ga
 
 // Box census -> draw calls. world.box merges by material into ONE mesh per
 // material in finishStatic, so more boxes is more vertices and zero more calls.
+// world.js: seg(s) = clamp(round(s / AO_SEG 0.85), 1, 8); a BoxGeometry with
+// (a,b,c) segments carries 2*((a+1)(b+1) + (b+1)(c+1) + (a+1)(c+1)) vertices.
+const segOf = (s) => Math.max(1, Math.min(8, Math.round(s / 0.85)));
+const boxVerts = (w, h, d) => {
+  const a = segOf(w), b = segOf(h), c = segOf(d);
+  return 2 * ((a + 1) * (b + 1) + (b + 1) * (c + 1) + (a + 1) * (c + 1));
+};
+const vertexCost = (r, oldStyle) => {
+  let v = 0;
+  for (const q of r.rects) v += boxVerts(0.54, oldStyle ? 5.15 : q.height, q.halfT * 2);
+  for (const q of r.skirts) v += boxVerts(q.halfN * 2, 0.22, q.halfT * 2);
+  return v;
+};
 const boxCount = (r) => r.rects.length + r.skirts.length;
 console.log('\nbox census (all M.rock, one merged static mesh -> zero draw-call change):');
 console.log('  round twelve ' + old.rects.length + ' walls + 0 skirts = ' + old.rects.length);
@@ -486,3 +499,8 @@ console.log('  steps 1+2    ' + step2.rects.length + ' walls + ' + step2.skirts.
   + ' skirts = ' + boxCount(step2) + ' (+' + (boxCount(step2) - old.rects.length) + ')');
 console.log('  + step 3     ' + step3.rects.length + ' walls + ' + step3.skirts.length
   + ' skirts = ' + boxCount(step3) + ' (+' + (boxCount(step3) - old.rects.length) + ')');
+const v0 = vertexCost(old, true), v2 = vertexCost(step2), v3 = vertexCost(step3);
+console.log('vertices in those boxes: round twelve ' + v0 + ', steps 1+2 ' + v2
+  + ' (+' + (v2 - v0) + '), + step 3 ' + v3 + ' (+' + (v3 - v0) + ')');
+console.log('legs still without backing after step 3: '
+  + (step3.perLeg.filter((e) => e.drawn === 0).map((e) => e.leg).join(', ') || 'none'));

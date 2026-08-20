@@ -527,9 +527,6 @@ function addFloorAndShell(game, layout) {
       const w = lerp(seg.a.w, seg.b.w, t);
       world.box(M.rock, x, y - 0.11, z, w * 2.0, 0.22, seg.length / n + 0.08, yaw);
     }
-    const opensIntoChamber = layout.chambers.some((chamber) =>
-      Math.hypot(seg.a.x - chamber.x, seg.a.z - chamber.z) < chamber.r * 0.94
-      || Math.hypot(seg.b.x - chamber.x, seg.b.z - chamber.z) < chamber.r * 0.94);
     const avgY = (seg.a.y + seg.b.y) * 0.5;
     const avgW = (seg.a.w + seg.b.w) * 0.5;
     // Every route leg owns continuous overburden, including the long joins
@@ -545,7 +542,16 @@ function addFloorAndShell(game, layout) {
     // them partitions the landmark into black slabs and makes a broad room
     // look like several accidental closets. The floor remains continuous;
     // the chamber's outer rock ring and cap provide the actual enclosure.
-    if (opensIntoChamber) continue;
+    //
+    // BUT THAT IS A TEST ON THE PIECE, NOT ON THE LEG. It used to be checked
+    // against the leg's two ENDPOINTS, so one endpoint brushing a chamber
+    // deleted the backing for the whole leg: twelve of seventeen legs had no
+    // structural side wall at all — the chapel approach, the whole spill
+    // descent, the whole culvert — while the atmosphere pass went on dressing
+    // them per sample (atmosphere.js, buildCaveDress). The two layers
+    // disagreed about where a wall existed, and where the structure was
+    // missing there was nothing behind the skin but the 0x03050c background:
+    // "the rest black". They agree now; the per-piece test is in the loop.
     // Structural backing behind the later low-poly rock skin. It is deliberately
     // not an AABB collider: diagonal wall boxes were the old forest trap bug.
     //
@@ -580,6 +586,9 @@ function addFloorAndShell(game, layout) {
       const py = lerp(seg.a.y, seg.b.y, t);
       const pw = lerp(seg.a.w, seg.b.w, t);
       const depth = seg.length / n + 0.08;
+      // the atmosphere skin's own rule, verbatim (atmosphere.js, buildCaveDress)
+      if (layout.chambers.some((chamber) =>
+        Math.hypot(px - chamber.x, pz - chamber.z) < chamber.r * 0.94)) continue;
       for (const side of [1, -1]) {
         // ROUND TWELVE PUT THESE AT THE LOCAL WIDTH. THAT WAS HALF THE FIX.
         //
