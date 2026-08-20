@@ -2654,8 +2654,17 @@ function buildOssuaryRoute(game) {
   // thing in the district that could never deliver. Deleting it costs the
   // player nothing and gives the climb its real payoff: the key, hanging under
   // ordinary stone. One continuous deck, no aperture, no dressing to frame.
+  // ...and when the mouth went, its FRAME did not. Deleting the hatch widened
+  // this plate from 5.35 to 5.9 and re-centred it to span the whole shaft,
+  // which swallowed a leftover framing plate ('hatch deck south') whole: two
+  // surfaces at the same DECK_Y sharing a plane bit-for-bit, which is what
+  // z-fighting is. Alex, on the live build: "texture above the key in the
+  // ostuary flashes in and out with a brick texrue" — and it read as BRICK
+  // rather than stone because BoxGeometry UVs are 0..1 PER FACE, so a 0.9 m
+  // panel wears the same map at four to six times the tiling of the 5.9 m one.
+  // Deleted, not hidden: batchStaticGroup traverses invisible children and
+  // would have baked it into the merge anyway.
   addMeshBox(wallMat, OX - 0.05, DECK_Y, OZ + 34.7, 5.9, 0.2, 2.0, 'hatch deck');
-  addMeshBox(wallMat, OX - 2.45, DECK_Y, OZ + 33.93, 0.9, 0.2, 0.46, 'hatch deck south');
 
   // Kept from the retired lid kit because both REAL hatches wear it: "things
   // you can activate look distinct." Pale worn metal, bright by VALUE — and
@@ -6232,6 +6241,29 @@ export class Forest {
     this._chainCoronas = coronas.children;
     this._chainPulseT = 0;
 
+    // THE RAVINE KNOT JOINS THE FAMILY IT WAS ALWAYS PART OF.
+    //
+    // Alex: "if we could get this hanging ball to be even more visible above the
+    // sand trap in the forest, it would be great." It was not that it needed
+    // MORE than the others — it had never had what the others have. Every knot
+    // above wears knotMat (headstone x1.28 with 2.4 of emissive), a 0.19
+    // dodecahedron, and an additive corona; the ravine knot was a 0.09 sphere
+    // in raw shared M.curtain: about a fifth of the albedo, none of the
+    // self-light, no halo, and a silhouette several times smaller. So it gets
+    // the same three things, and nothing invented for it. Cost: one sprite.
+    if (this.ravineKnot) {
+      this.ravineKnot.material = knotMat;
+      this.ravineKnot.geometry = knotGeo;
+      this.ravineKnot.scale.set(1, 1.5, 1);
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: coronaTex, transparent: true, blending: THREE.AdditiveBlending,
+        depthWrite: false, opacity: 0.8,
+      }));
+      halo.scale.set(1.6, 1.6, 1);
+      halo.position.copy(this.ravineKnotAt);
+      coronas.add(halo);
+    }
+
     // Link only the five consecutive road knots. The seed knot teaches the
     // verb into a side pocket and should not call across half the forest.
     for (let i = 1; i < links.length - 1; i++) links[i].nextPivot = links[i + 1].pivot;
@@ -6906,6 +6938,11 @@ export class Forest {
     rope.add(beam, line, knot);
     rope.position.set(far.x, 0, far.z);
     scene.add(rope);
+    // ...and this is the ONE hanging knot in the forest that never got the kit
+    // every other one wears. _buildChain runs after this and upgrades it there,
+    // where the material, the geometry and the corona texture already exist.
+    this.ravineKnot = knot;
+    this.ravineKnotAt = new THREE.Vector3(far.x + 0.9, 1.25, far.z);
     this.ropeAnchor = new THREE.Vector3(far.x + 0.9, 1.4, far.z);
     const landing = this.posAt(rs + 7);   // clear of the gash, not on its lip
     const ravineRopeTarget = world.addFetchTarget({
