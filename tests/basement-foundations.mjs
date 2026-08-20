@@ -186,6 +186,88 @@ try {
       );
     }
 
+    // THE SECOND STALL, AND THE THING IN IT, GOES NOWHERE.
+    //
+    // Four properties that must never drift: the pen's world position is
+    // byte-identical to its authored home after thirty seconds of stepping with
+    // the player stood at the bars; the body's local excursion stays inside the
+    // constructed bound; nothing in the cell is ever registered as an enemy;
+    // and both cell colliders exist and are skullPass, so no new enemy
+    // line-of-sight blocker was introduced into the room the playthrough fights
+    // walkers in twice.
+    //
+    // The excursion bound ALONE would not catch a body rotated the wrong way --
+    // it would sit a metre outside the bars and still report a tiny excursion --
+    // so the body's world envelope is asserted as well. Every number here is
+    // floored under the construction maxima derived by
+    //   node tools/probe-cell-two-containment.mjs
+    // which sweeps the real ticker over the entire [-1,1] cube steppedJerk can
+    // return: body x -7.135..-4.580, y -2.980.., z -9.446..-8.458.
+    {
+      const cell = g.cellTwo;
+      const home = cell?.home?.clone();
+      const wasEnemy = !!cell && g.enemies.list.some((e) =>
+        e.mesh === cell.pen || e.mesh === cell.occupant || e.mesh === cell.stall);
+      g.player.pos.set(-5.6, -3, -6.6);
+      g.player.yaw = 0.54;                 // yaw 0 is -z, so PI would face AWAY
+      g.player.pitch = 0;
+      g.player._sync(0);
+      const o = cell?.occupant;
+      if (o && !o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      const verts = o ? o.geometry.attributes.position.array : new Float32Array(0);
+      const vertCount = o ? o.geometry.attributes.position.count : 0;
+      const env = { minX: Infinity, maxX: -Infinity, minY: Infinity, minZ: Infinity, maxZ: -Infinity };
+      let worst = 0;
+      for (let i = 0; i < 300; i++) {
+        // Nothing may interrupt thirty seconds of standing still at the bars.
+        g.enemies.list.length = 0;
+        F.stepWith(0.1, {}, false);
+        if (!o) break;
+        worst = Math.max(worst, cell.occupant.position.length());
+        o.updateWorldMatrix(true, false);
+        const e = o.matrixWorld.elements;
+        for (let v = 0; v < vertCount; v++) {
+          const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
+          const wx = e[0] * x + e[4] * y + e[8] * z + e[12];
+          const wy = e[1] * x + e[5] * y + e[9] * z + e[13];
+          const wz = e[2] * x + e[6] * y + e[10] * z + e[14];
+          if (wx < env.minX) env.minX = wx;
+          if (wx > env.maxX) env.maxX = wx;
+          if (wy < env.minY) env.minY = wy;
+          if (wz < env.minZ) env.minZ = wz;
+          if (wz > env.maxZ) env.maxZ = wz;
+        }
+      }
+      const cellColliders = g.world.colliders.filter((c) =>
+        c.id === 'crawlCellTwoFront' || c.id === 'crawlCellTwoSide');
+      const barTarget = g.world.fetchTargets.find((t) => t.id === 'crawlCellTwoBars');
+      // 'continue' and nothing else: the bars are a wall with a thing behind
+      // them, not a fetch target, and the throw grammar stays untouched.
+      const barDirective = barTarget ? barTarget.onHit(g.skull) : null;
+      check(
+        'the caged thing shakes its bars, is never an enemy, and never leaves the cell',
+        !!cell && !!home && cell.pen.position.distanceTo(home) === 0
+          && worst > 0.001 && worst <= 0.116
+          && !wasEnemy
+          && !g.dead
+          && env.minX < -6.95                                  // it DOES reach through the iron
+          && env.minX >= -7.14 && env.maxX <= -4.20            // ...and no further, either way
+          && env.minZ >= -9.80 && env.maxZ <= -7.55
+          && env.minY >= -3.00
+          && cellColliders.length === 2
+          && cellColliders.every((c) => c.skullPass)
+          && barDirective === 'continue',
+        {
+          home: home?.toArray().map((v) => +v.toFixed(3)),
+          pen: cell?.pen.position.toArray().map((v) => +v.toFixed(3)),
+          worstExcursion: +worst.toFixed(4),
+          envelope: [env.minX, env.maxX, env.minY, env.minZ, env.maxZ].map((v) => +v.toFixed(3)),
+          wasEnemy, dead: g.dead, barDirective,
+          colliders: cellColliders.map((c) => ({ id: c.id, skullPass: c.skullPass })),
+        },
+      );
+    }
+
     return checks;
   });
 

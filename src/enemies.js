@@ -459,7 +459,7 @@ function addEyes(head, spread, y, z, sx = 0.025, sy = 0.018) {
 
 // Deterministic held noise: a secondary bone snaps to a slightly wrong pose,
 // holds it, then snaps again. Root movement and attack clocks never see this.
-function steppedJerk(time, serial, rate, channel = 0) {
+export function steppedJerk(time, serial, rate, channel = 0) {
   const step = Math.floor(time * rate + serial * 0.731 + channel * 3.17);
   const n = Math.sin(step * 12.9898 + serial * 78.233 + channel * 37.719) * 43758.5453;
   return (n - Math.floor(n)) * 2 - 1;
