@@ -79,7 +79,8 @@ node tests/playthrough.mjs   # plays the ENTIRE game via real inputs (10+ min)
 ```
 
 Plus the focused regressions the rounds left behind — warm-start, basin-shore,
-choir-surfacing, district-culling, render-perf, grip-contact, grave-arena, and
+choir-surfacing, district-culling, render-perf, grip-contact, grave-arena,
+**`tests/coda-seam-regression.mjs`** (the hand-off to the coda at `ending/`), and
 **`tests/legibility-regression.mjs`**, which asks the question the other gates
 cannot: not "did it work" but "could it be seen or heard".
 

@@ -23,7 +23,12 @@ const outputPath = resolve(outputArg || join(projectRoot, 'release', 'fetch-netl
 // Keep the title artwork inside the deterministic archive alongside the code.
 // The content-addressed filename prevents a hosted update from reusing a stale
 // immutable asset while still letting the same image serve standalone builds.
-const shippingRoots = ['index.html', 'assets', 'src', 'vendor'];
+// 'ending' is his coda: a page of its own with its own modules and its own
+// media. It must stay byte-identical to the list in
+// tools/verify-netlify-release.mjs -- the verifier throws 'Archive entry set
+// does not exactly match current shipping roots' the moment the two disagree,
+// and both throw ENOENT if the directory is not there.
+const shippingRoots = ['index.html', 'assets', 'src', 'vendor', 'ending'];
 
 if (extname(outputPath).toLowerCase() !== '.zip') {
   throw new Error(`Release output must be a .zip file: ${outputPath}`);

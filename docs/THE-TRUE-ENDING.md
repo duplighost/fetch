@@ -156,3 +156,63 @@ Neither is a blocker. Both are his call, and he should make it knowingly.
 3. Wire the ending: the warm fetch in the final act, then the hand-off.
 4. Gate it: a boot check like the site's `fetch-boot-check.mjs`, plus a
    transition check that asserts the media is warm before the seam.
+
+---
+
+## Where this actually landed (round thirteen)
+
+The port is at `ending/` — seven plain ES modules and one HTML file, no build
+step and no dependencies. The media is at `ending/media/` under the exact
+basenames the coda asks for. The FETCH-side seam is three things and no more:
+
+- **`src/main.js`, the ending screen's click handler** answers with
+  `this._leaveForCoda()` instead of `location.reload()`. That one line is the
+  entire hand-off. It routes through `this._navigate` — a plain field — because
+  `location.assign` is `[LegacyUnforgeable]` and no gate can stub it, and a gate
+  that really navigated would destroy its own page mid-assertion.
+- **`src/main.js`, `_warmCoda()`** fetches all seven media files (`r.blob()`,
+  not `r.arrayBuffer()`), kicked from `director._enterCave` — one district
+  before the mirror room, while he is still walking. Guarded
+  `(TEST_MODE || HITCH_LOG) && !Q.has('warmup')`, because
+  `tests/warm-start-regression.mjs` boots `?mute=1&hitch=1`, which is NOT test
+  mode, and its tour teleports through `cave`.
+- **`serve.mjs`** learns `.mp4`/`.webm`, and serves `ending/media/` cacheable
+  instead of `no-store` — a warm fetch into a `no-store` response populates
+  nothing, so the dev server would otherwise defeat the prefetch by
+  construction.
+
+Measured here, over localhost: the warm moves **6,302,275 B** — every byte of
+the seven files, checked against their sizes on disk — and reaches `ready`
+**150.8 ms** after the cave arrival. The cave's own arrival cost in
+`tests/warm-start-regression.mjs` is unchanged: 30 ms first draw, worst frame
+0 ms, zero console errors. `tests/coda-seam-regression.mjs` is the new gate, 22
+checks, and it also pins both guarded modes (`skipped/test-mode`,
+`skipped/hitch-mode`, 0 bytes).
+
+**NOT measured, and it cannot be from here:** what the seam feels like over a
+real network, and whether the browser genuinely re-uses the warmed bytes for
+the coda's `<video>` rather than re-requesting them. Localhost is not a
+network, and this dev server has no Range support.
+
+### Shipping this is a change in a DIFFERENT repository
+
+Nothing in this repo deploys (`AGENTS.md`). The live game is a copy of `src/`
+into `duplighost/qualiacology` under `fetch/`. **A page at `fetch/ending/` has
+to be registered THERE**, in that repo, following its own `AGENTS.md`: its
+route-smoke gate asserts a fixed route count with a fixed number of intentional
+404s, so a new route fails that gate until it is taught about it, and
+validate-site has to pass with the page present. The `'ending'` entries added
+to `tools/package-netlify.mjs` and `tools/verify-netlify-release.mjs` here
+cover the standalone zip only — that is a convenience build, not the shipping
+path. Until the site repo learns the route, the coda exists on this branch and
+nowhere a player can reach.
+
+### One open design question for Alex
+
+**The click is invisible.** The ending screen carries no words and no control —
+`showEnd()` blanks `.tag` and `.go` on purpose — so nothing tells a player the
+screen is clickable. It was already undiscoverable when the click only
+reloaded; pointing it at the coda means a player who never clicks never sees
+the coda at all. That is a real problem, not a virtue of restraint. Law 3
+governs *play*, and `DESIGN.md:211` says "Screen text ok" for the ending, so one
+quiet word is permitted. His call whether the ending earns one.

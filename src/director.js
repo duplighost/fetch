@@ -305,6 +305,12 @@ export class Director {
     const C = g.clearingCenter;
     const layout = g.underfalls?.layout || null;
     g.checkpoint('cave');
+    // Pay for the coda HERE, one district before the mirror room. His rhythm
+    // game is a separate page carrying 6.0 MB of video, and the walk through
+    // the Underfalls is minutes of him being busy; the seam itself is the one
+    // moment that must cost nothing. Guarded and fenced inside, and idempotent
+    // -- a second entry to the cave re-uses the first warm.
+    g._warmCoda?.();
     g.baseTension = 0.2;
     this.dread = 0.72;
     this._mirrorTransition = false;

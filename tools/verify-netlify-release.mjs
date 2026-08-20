@@ -27,7 +27,9 @@ import { launchBrowser, openPage } from '../tests/lib/harness.mjs';
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const archiveArg = process.argv.find((arg) => arg.startsWith('--archive='))?.slice(10);
 const archivePath = resolve(archiveArg || join(projectRoot, 'release', 'fetch-netlify.zip'));
-const shippingRoots = ['index.html', 'assets', 'src', 'vendor'];
+// Byte-identical to tools/package-netlify.mjs by contract -- see the note
+// there. Changing one without the other makes every archive fail verification.
+const shippingRoots = ['index.html', 'assets', 'src', 'vendor', 'ending'];
 const TITLE_ART_SHA256 = '5ab7c65b0e3ecc50d96454ee5f3393284d02d521ed7f1af2dcfc2691b1cff998';
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRIES = 4096;
@@ -45,6 +47,11 @@ const MIME = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  // The coda is video-backed. Without these, this file's own in-process boot
+  // server hands its <video> application/octet-stream and playback refuses --
+  // the identical omission serve.mjs used to have.
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
 };
 
 function safeName(rawName) {
