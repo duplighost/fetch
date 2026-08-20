@@ -1,4 +1,10 @@
-# ROUND FIFTEEN — say "fetch" and start here
+# ROUND FIFTEEN — superseded, read ROUND-SIXTEEN.md instead
+
+> **SUPERSEDED 2026-08-20.** Alex cancelled the work list below the same day
+> ("Read the notes as history. They are not a task list."), the last bug (the
+> phantom key — it was the locket) was root-fixed and shipped, and **the game
+> is finished**. `ROUND-SIXTEEN.md` is the say-fetch doc now. This file stays
+> as the record it became.
 
 ## READ THIS PARAGRAPH BEFORE ANYTHING ELSE
 
