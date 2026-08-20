@@ -18,14 +18,14 @@ await page.waitForFunction(() => window.__FETCH?.ready === true && window.__game
 const out = await page.evaluate(() => {
   const g = window.__game;
   const V = g.skull.pos.constructor;                    // THREE.Vector3, via a live one
-  const foot = { x: 10.0, y: -2.4, z: 3.4 };            // basement, under the cellar stair
+  const BOX = { x0: 2, x1: 13, y0: -3.1, y1: -0.4, z0: 1.5, z1: 6.5 };  // the basement corridor, foot of the stair to before the webs
   const near = [];
   const seen = new Set();
   g.scene.traverse((o) => {
     if (!o.isMesh && !o.isGroup) return;
     const p = o.getWorldPosition(new V());
-    const d = Math.hypot(p.x - foot.x, p.y - foot.y, p.z - foot.z);
-    if (d > 6) return;
+    if (p.x < BOX.x0 || p.x > BOX.x1 || p.y < BOX.y0 || p.y > BOX.y1 || p.z < BOX.z0 || p.z > BOX.z1) return;
+    const d = Math.hypot(p.x - 8, p.y + 2.4, p.z - 4);
     const label = o.name || o.parent?.name || o.material?.name || o.geometry?.type || '(anon)';
     const key = label + '|' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ',' + p.z.toFixed(1);
     if (seen.has(key)) return;
@@ -45,14 +45,14 @@ const out = await page.evaluate(() => {
     let p = null;
     try { p = t.object ? t.object.getWorldPosition(new V()) : t.pos; } catch (e) { p = null; }
     if (!p) return null;
-    const d = Math.hypot(p.x - foot.x, p.y - foot.y, p.z - foot.z);
-    return d < 14 ? { id: t.id, d: +d.toFixed(2), enabled: t.enabled !== false, at: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)] } : null;
+    const d = Math.hypot(p.x - 8, p.y + 2.4, p.z - 4);
+    return d < 9 ? { id: t.id, d: +d.toFixed(2), enabled: t.enabled !== false, at: [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)] } : null;
   }).filter(Boolean).sort((a, b) => a.d - b.d);
 
-  return { near: near.slice(0, 40), targets };
+  return { near: near.slice(0, 120), targets };
 });
 
-console.log('Within 6 m of the foot of the cellar stair (10.0, -2.4, 3.4):');
+console.log('Inside the basement corridor box x2..13 y-3.1..-0.4 z1.5..6.5:');
 for (const n of out.near) console.log(`  ${String(n.d).padStart(5)}m  ${n.kind.padEnd(5)} ${n.label.slice(0, 40).padEnd(40)} ${n.geo.padEnd(18)} ${n.colorHex.padEnd(8)} @ ${n.at.join(',')}`);
 console.log('\nFetch targets within 14 m:');
 for (const t of out.targets) console.log(`  ${String(t.d).padStart(5)}m  ${t.id.padEnd(26)} enabled=${t.enabled} @ ${t.at.join(',')}`);
