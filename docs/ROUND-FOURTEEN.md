@@ -3,8 +3,11 @@
 **This is what round fourteen did. The brief it was built from is kept below the
 line. `ROUND-FIFTEEN.md` is the say-fetch doc now.**
 
-Branch `claude/aug24-round14`, 7 commits off `origin/main` (`bf7df75`).
-**Not pushed, not deployed.** `main` is still round thirteen.
+**SHIPPED 2026-08-20. Site PR #82 merged (site main `20e40ce`); game `main`
+fast-forwarded to `0cf8a11`, so main IS the live game again.** Production
+verified: all 22 src files fetched back off qualiacology.com and diffed
+byte-identical, `fetch-boot-check` PASSED (hand-lit 44.8%, zero errors).
+**HE HAS NOT PLAYED IT — tell him to hard-refresh.**
 
 ## Where it came from
 
