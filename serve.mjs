@@ -12,6 +12,10 @@ const MIME = {
   '.json': 'application/json', '.svg': 'image/svg+xml', '.webp': 'image/webp',
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.ico': 'image/x-icon',
   '.woff2': 'font/woff2', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+  // The coda at ending/ is video-backed. Without these a <video> is handed
+  // application/octet-stream and refuses to play, and the failure looks like
+  // a coda bug rather than a one-line server omission.
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.m4v': 'video/mp4',
 };
 
 createServer(async (req, res) => {
