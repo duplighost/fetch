@@ -264,6 +264,179 @@ try {
       },
     );
 
+    // ---- THE BELL, MEASURED ---------------------------------------------
+    // This object has moved twice on reasons nobody checked. Round twelve took
+    // it down 1.18 m on a claim about an inherited lathe offset that four
+    // authored parts contradict; round thirteen moved it 1.95 m sideways and
+    // left the chain holding nothing, 1.217 m away. Nothing in this file ever
+    // measured it, which is exactly how it drifted. These four checks measure
+    // the DRAWN object -- the lathe's own profile, the rim torus, the sling's
+    // instance matrices, the vault atmosphere.js draws over it, and the calls
+    // the audio engine actually receives -- never the constants that made it.
+    const BELL = U.secret;
+    const bellAxis = { x: BELL.axis.x, z: BELL.axis.z };
+    const HEADH = 1.75, CAPSULE_R = 0.34;   // player.js HEAD, RADIUS
+    const floorY = BELL.position.y;
+
+    // 1. THE CHAIN ACTUALLY MEETS THE BELL, AND THE CEILING.
+    const sling = BELL.sling;
+    const legLen = sling.geometry.parameters.height;
+    const slingEnd = (i, sign) => {
+      const a = sling.instanceMatrix.array, o = i * 16, h = sign * legLen * 0.5;
+      return { x: a[o + 4] * h + a[o + 12], y: a[o + 5] * h + a[o + 13], z: a[o + 6] * h + a[o + 14] };
+    };
+    const ringR = BELL.rim.geometry.parameters.radius;
+    const ringTube = BELL.rim.geometry.parameters.tube;
+    const rimLocalY = BELL.rim.position.y;
+    const slingFeet = [], slingTops = [];
+    for (let i = 0; i < sling.count; i++) {
+      const f = slingEnd(i, -1), t = slingEnd(i, 1);
+      slingFeet.push(round(Math.hypot(Math.hypot(f.x, f.z) - ringR, f.y - rimLocalY)));
+      slingTops.push(round(Math.hypot(t.x, t.y, t.z)));
+    }
+    const vaults = g.scene.getObjectByName('underfalls chamber ceiling vaults');
+    const vaultIndex = L.chambers.findIndex((c) => c.name === 'bell cistern');
+    let vaultUnder = null, vaultReach = null, vaultOffset = null;
+    if (vaults && vaultIndex >= 0) {
+      const a = vaults.instanceMatrix.array, o = vaultIndex * 16;
+      vaultUnder = a[o + 13] - Math.hypot(a[o + 4], a[o + 5], a[o + 6]) * 0.5;
+      vaultReach = Math.hypot(a[o], a[o + 1], a[o + 2]) * Math.cos(Math.PI / 12);
+      vaultOffset = Math.hypot(bellAxis.x - a[o + 12], bellAxis.z - a[o + 14]);
+    }
+    const drawnCrown = BELL.pivot.position.y + BELL.bell.position.y;
+    check(
+      'the bell hangs on its chain: both sling feet sit on the rim ring, both tops meet the drawn vault',
+      sling.count === 2
+        && slingFeet.every((d) => d <= 0.01) && slingTops.every((d) => d <= 0.01)
+        && vaultUnder !== null && Math.abs(BELL.pivot.position.y - vaultUnder) <= 0.01
+        && vaultOffset < vaultReach
+        && Math.abs(drawnCrown - BELL.crownY) <= 1e-6,
+      {
+        legs: sling.count, footToRimCentreLine: slingFeet, rimTube: round(ringTube),
+        topToApex: slingTops, apexY: round(BELL.pivot.position.y),
+        vaultUnderside: vaultUnder === null ? null : round(vaultUnder),
+        axisOffChamberCentre: vaultOffset === null ? null : round(vaultOffset),
+        vaultReach: vaultReach === null ? null : round(vaultReach),
+        crownY: round(BELL.crownY), rimY: round(BELL.rimY), floorY: round(floorY),
+      },
+    );
+
+    // 2. AND IT CARRIES A COLLIDER, BECAUSE A HUNG BELL AT THIS HEIGHT MUST.
+    // The crown bottoms out inside the head window, so player.js cannot skip
+    // the box as overhead; the box has to start and end at the iron.
+    const bellBox = g.world.colliders.find((c) => c.role === 'hung bell');
+    check(
+      'the hung bell is solid from its crown to its rim, and its crown really is inside the head window',
+      !!bellBox && bellBox.underfalls === true
+        && Math.abs(bellBox.min.y - BELL.crownY) <= 1e-6
+        && Math.abs(bellBox.max.y - BELL.rimY) <= 1e-6
+        && BELL.crownY < floorY + HEADH
+        && round(bellBox.max.x - bellBox.min.x) === round(BELL.half * 2),
+      {
+        role: bellBox?.role || null,
+        boxY: bellBox ? [round(bellBox.min.y), round(bellBox.max.y)] : null,
+        ironY: [round(BELL.crownY), round(BELL.rimY)],
+        headWindowTop: round(floorY + HEADH),
+        crownInsideHeadWindowBy: round(floorY + HEADH - BELL.crownY),
+        halfExtent: BELL.half,
+      },
+    );
+
+    // 3. NO POSE THE CLAMP AND THE COLLIDER BOTH ACCEPT STANDS INSIDE THE IRON,
+    // AT ANY PHASE OF THE SWING. The profile comes off the drawn lathe, the
+    // lever arm off the drawn pivot. _moveAxis guarantees only that the
+    // player's centre ends at least RADIUS from the box, so that is the
+    // permitted set, and every member of it has to clear the swept silhouette.
+    const lathePoints = BELL.bell.geometry.parameters.points;
+    const laneRadius = (ly) => {
+      if (ly <= lathePoints[0].y) return lathePoints[0].x;
+      for (let i = 0; i < lathePoints.length - 1; i++) {
+        const a = lathePoints[i], b = lathePoints[i + 1];
+        if (ly >= a.y && ly <= b.y) return a.x + (b.x - a.x) * ((ly - a.y) / ((b.y - a.y) || 1));
+      }
+      return lathePoints[lathePoints.length - 1].x;
+    };
+    let swept = 0, sweptAt = 0;
+    for (let h = BELL.crownY; h <= floorY + HEADH + 1e-9; h += 0.005) {
+      const r = laneRadius(h - BELL.crownY) + (BELL.apexY - h) * Math.sin(BELL.maxSwing);
+      if (r > swept) { swept = r; sweptAt = h; }
+    }
+    const requiredClear = swept + CAPSULE_R;
+    let closest = Infinity, closestPose = null, poses = 0;
+    for (let x = bellAxis.x - 3.4; x <= bellAxis.x + 3.4; x += 0.025) {
+      for (let z = bellAxis.z - 3.4; z <= bellAxis.z + 3.4; z += 0.025) {
+        if (!U.contains(x, z, -0.039)) continue;
+        const cx = Math.min(Math.max(x, bellBox.min.x), bellBox.max.x);
+        const cz = Math.min(Math.max(z, bellBox.min.z), bellBox.max.z);
+        if (Math.hypot(x - cx, z - cz) < CAPSULE_R - 1e-9) continue;
+        poses++;
+        const d = Math.hypot(x - bellAxis.x, z - bellAxis.z);
+        if (d < closest) { closest = d; closestPose = [round(x), round(z)]; }
+      }
+    }
+    check(
+      'no pose the clamp and the collider both accept stands inside the bell at any phase of its swing',
+      Number.isFinite(closest) && closest >= requiredClear,
+      {
+        poses, requiredClear: round(requiredClear), sweptReach: round(swept),
+        widestAtY: round(sweptAt), maxSwing: BELL.maxSwing,
+        closestAllowedPose: closestPose, closestDistance: round(closest),
+        margin: round(closest - requiredClear),
+      },
+    );
+
+    // 4. HIS ONE CONDITION ON THIS ROUND, PINNED. "make sure that's not what is
+    // causing the sound bug where that areas sound can completely go bad." The
+    // cistern bell is the largest single reverb-bus event in the game, so what
+    // is pinned is its DRIVE: the send any toll may use, and the floor between
+    // tolls. Both literals live HERE, not in src, so widening them in src turns
+    // this red. The caveDrip round thirteen fired at the same instant and the
+    // same point -- a water sound with no drop anywhere in this chamber -- must
+    // stay gone. Filtered by position, because bellRing is a shared one-shot.
+    const strike = BELL.strikePos;
+    const atStrike = (o) => !!o?.pos && Math.hypot(o.pos.x - strike.x, o.pos.z - strike.z) < 0.05;
+    const tolls = [];
+    let dripAtStrike = 0, simT = 0;
+    const realBell = g.audio.bellRing.bind(g.audio);
+    const realDrip = g.audio.caveDrip.bind(g.audio);
+    g.audio.bellRing = (o = {}) => {
+      if (atStrike(o)) tolls.push({ t: simT, verb: o.verb ?? null });
+      return realBell(o);
+    };
+    g.audio.caveDrip = (o = {}) => {
+      if (atStrike(o)) dripAtStrike++;
+      return realDrip(o);
+    };
+    placeAt({ x: bellAxis.x - 1.7, z: bellAxis.z, y: floorY });
+    g.player.yaw = Math.atan2(-(bellAxis.x - g.player.pos.x), -(bellAxis.z - g.player.pos.z));
+    g.player._sync(0);
+    let peakLean = 0, closestApproach = Infinity;
+    for (let i = 0; i < 120 && !(tolls.length >= 3 && simT >= 20); i++) {
+      F.stepWith(0.5, { moveZ: 1, run: true }, false);
+      simT += 0.5;
+      peakLean = Math.max(peakLean, Math.hypot(U.secret.ax, U.secret.az));
+      closestApproach = Math.min(closestApproach,
+        Math.hypot(g.player.pos.x - bellAxis.x, g.player.pos.z - bellAxis.z));
+    }
+    g.audio.bellRing = realBell;
+    g.audio.caveDrip = realDrip;
+    const tollGaps = tolls.slice(1).map((v, i) => round(v.t - tolls[i].t));
+    check(
+      'shoving the hung bell rings it, and no toll drives the cave reverb harder or oftener than the live build',
+      tolls.length >= 2 && !g.dead
+        && tolls.every((v) => v.verb !== null && v.verb <= 0.34 + 1e-9)
+        && tollGaps.every((gap) => gap >= 7.3 - 0.51)
+        && dripAtStrike === 0
+        && peakLean <= BELL.maxSwing + 1e-6,
+      {
+        seconds: simT, tolls: tolls.length, sends: [...new Set(tolls.map((v) => v.verb))],
+        gaps: tollGaps, floor: 7.3, dripsAtTheStrikePoint: dripAtStrike,
+        peakLean: round(peakLean), maxSwing: BELL.maxSwing,
+        closestApproach: round(closestApproach), faceStop: round(BELL.half + CAPSULE_R),
+        dead: g.dead,
+      },
+    );
+
     const sprayCalls = [];
     const realCaveSpray = g.enemies.caveSpray.bind(g.enemies);
     g.enemies.caveSpray = (pos, radius, strength) => {

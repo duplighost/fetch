@@ -32,16 +32,26 @@ See `ROUND-THIRTEEN.md` for the item-by-item record and the honest gate table.
 
 ## What is still open, in the order it matters
 
-### 1. Three things need HIS answer, not more work
+### 1. One of these is answered and built; two still need HIS answer
 
-* **Does the fallen bell hang or lie?** Round twelve dropped it to the floor on
-  the strength of *"what is this, it doesn't move or do anything"* — but that is
-  a complaint about PURPOSE, not height, and the original was deliberately
-  authored as suspended and inverted with the chain meeting its rim (0.086 m
-  from the ring centre-line — it was hung ON it, not missing it by half a metre
-  as round twelve's commit message claimed). It now lies on the stone, rocks,
-  tolls, and is solid, and it has moved 1.95 m off the walking line. Re-hanging
-  it is one constant and is written into the source comment.
+* **ANSWERED, AND DONE — the bell hangs again.** He said, 2026-08-19: "sure,
+  hang it. if you can make it swing and stuff sure, let it swing or whatever if
+  it's interactable by hitting it with the skull. make sure that's not what is
+  causing the sound bug where that areas sound can completely go bad though."
+  Round fourteen restores the authored height (crown C.y+1.18, rim C.y+2.62),
+  gives the chain two legs so it actually holds the bell — feet on the rim ring,
+  apex on the vault atmosphere.js draws — and keeps round thirteen's 1.95 m
+  offset, because hanging it does NOT make the node safe: the crown still
+  bottoms out 0.57 m inside the head window. The false "floated unattached /
+  inherited the +1.18 offset" comment is deleted; four authored parts contradict
+  it, and `tools/probe-bell-cistern.mjs` prints why. There is no skull in this
+  act, so the interaction is your shoulder: walk into it and it swings, and the
+  loose clapper strikes at the bottom of the swing. **His sound condition is a
+  gate now**: the toll's reverb send drops 0.96 -> 0.34, the paired `caveDrip`
+  (a water sound with no drop within 8.55 m) is deleted, the strike is inelastic
+  so the swing pays for the sound, and `tests/underfalls-expansion.mjs` pins
+  send <= 0.34 and a 7.3 s floor with literals that live in the test.
+
 * **The cave is more enclosed than it was.** Legs with a wall on both hands went
   5 → 15. That is the fix working, but it is a look change he will notice, so it
   is a **separate, revertable commit** (`f5762c7`, steps 3+3b). Reverting it

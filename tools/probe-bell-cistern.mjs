@@ -1,11 +1,17 @@
 // probe-bell-cistern.mjs — pure-node replay of the bell-cistern arithmetic.
 //
-// Round thirteen, his note 8: "what is this, it doesnt move or do anything."
-// The fix steps the fallen bell off the secret lane so it can carry a real
-// collider, moves its dry ring and its light with it, and gives it a toll that
-// only sounds to someone standing in the culvert. Every number that fix asserts
-// is derived here from the same authored tables src/underfalls.js uses, so the
-// claims in the commit body are checked rather than guessed.
+// ROUND FOURTEEN. Alex: "sure, hang it. if you can make it swing and stuff sure,
+// let it swing or whatever if it's interactable by hitting it with the skull.
+// make sure that's not what is causing the sound bug where that areas sound can
+// completely go bad though."
+//
+// So the bell goes back to the height it was authored at, the chain goes back to
+// holding it, the collider is re-sized for the bell that hangs there, and the
+// toll is re-tuned to drive the cave's reverb bus LESS than the build he has
+// already played. Every number the source comments and the commit body claim is
+// derived here from the same authored tables src/underfalls.js uses, so the
+// claims are checked rather than guessed. This object has moved twice on
+// unchecked reasons; that is the whole reason this file exists.
 //
 //   node tools/probe-bell-cistern.mjs
 
@@ -43,16 +49,15 @@ const CHAMBERS = [
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const r3 = (n) => +n.toFixed(3);
+const r4 = (n) => +n.toFixed(4);
 
 function makeSegments(path, kind) {
   const out = [];
-  let distance = 0;
   for (let i = 0; i < path.length - 1; i++) {
     const a = path[i], b = path[i + 1];
     const dx = b.x - a.x, dz = b.z - a.z;
     const length = Math.hypot(dx, dz);
-    out.push({ a, b, dx, dz, length, length2: length * length, distance, kind, index: i });
-    distance += length;
+    out.push({ a, b, dx, dz, length, length2: length * length, kind, index: i });
   }
   return out;
 }
@@ -75,42 +80,6 @@ function projectUnderfalls(x, z) {
   for (const c of CHAMBERS) { const p = chamberProjection(c, x, z); if (!best || p.clearance < best.clearance) best = p; }
   return best;
 }
-
-// ---- the placement -------------------------------------------------------
-const C = CHAMBERS.find((c) => c.name === 'bell cistern');
-const prev = SECRET[2], next = SECRET[4];
-const unit = (ax, az) => { const L = Math.hypot(ax, az); return [ax / L, az / L]; };
-const [inX, inZ] = unit(C.x - prev.x, C.z - prev.z);
-const [outX, outZ] = unit(next.x - C.x, next.z - C.z);
-const [mx, mz] = unit(inX + outX, inZ + outZ);
-const normal = [mz, -mx];                       // outward, away from the shelf side
-const OFFSET = 1.95;
-console.log('mean heading          ', [r3(mx), r3(mz)]);
-console.log('outward normal        ', [r3(normal[0]), r3(normal[1])]);
-console.log('normal * 1.95         ', [r3(normal[0] * OFFSET), r3(normal[1] * OFFSET)]);
-
-// The shipped offset, rounded to two decimals in source.
-const OX = 1.45, OZ = -1.31;
-const bx = C.x + OX, bz = C.z + OZ;
-const offset = Math.hypot(OX, OZ);
-console.log('\nSHIPPED OFFSET        ', [OX, OZ], 'magnitude', r3(offset));
-const shelf = { x: C.x - 1.8, z: C.z + 2.0 };
-console.log('bell/shelf separation ', r3(Math.hypot(bx - shelf.x, bz - shelf.z)), '(opposite flanks)');
-
-// ---- perpendicular distance to both secret centrelines -------------------
-const legIn = makeSegments([prev, C], 's')[0];
-const legOut = makeSegments([C, next], 's')[0];
-console.log('secret leg in  (22,59)->(27,68): bell axis is',
-  r3(segmentProjection(legIn, bx, bz).d), 'm from the centreline');
-console.log('secret leg out (27,68)->(37,75): bell axis is',
-  r3(segmentProjection(legOut, bx, bz).d), 'm from the centreline');
-
-// ---- gate 1: authored colliders never clip either centreline -------------
-// tests/underfalls-expansion.mjs:167-182 samples both polylines at 0.55 m and
-// fails any underfalls collider whose AABB, grown 0.32 m in x and z, contains
-// a sample whose [y+0.55, y+1.75] band overlaps the collider's y range.
-const R = 0.75, Y0 = C.y - 0.4, Y1 = C.y + 1.44;
-const box = { minX: bx - R, maxX: bx + R, minZ: bz - R, maxZ: bz + R, minY: Y0, maxY: Y1 };
 function samplePath(path, spacing) {
   const out = [];
   for (let i = 0; i < path.length - 1; i++) {
@@ -125,59 +94,196 @@ function samplePath(path, spacing) {
   out.push({ ...path[path.length - 1] });
   return out;
 }
+
+// ---- the authored object -------------------------------------------------
+const C = CHAMBERS.find((c) => c.name === 'bell cistern');
+const PLAYER_R = 0.34, HEAD = 1.75, STEP_UP = 0.5;     // player.js
+const PROFILE = [[0.18, 0.00], [0.24, 0.16], [0.38, 0.52], [0.53, 0.91], [0.76, 1.22], [0.98, 1.38], [1.03, 1.44]];
+const radiusAt = (ly) => {
+  if (ly <= 0) return PROFILE[0][0];
+  if (ly >= 1.44) return 1.03;
+  for (let i = 0; i < PROFILE.length - 1; i++) {
+    const [r0, y0] = PROFILE[i], [r1, y1] = PROFILE[i + 1];
+    if (ly >= y0 && ly <= y1) return lerp(r0, r1, (ly - y0) / (y1 - y0));
+  }
+  return 1.03;
+};
+const CROWN = 1.18, RIM = CROWN + 1.44, CLAPPER_Y = 1.46, RING_R = 1.03, RING_TUBE = 0.075;
+const APEX = 5.18 - 0.17;                    // atmosphere.js chamber vault underside
+const VAULT_R = C.r * 0.96;
+const OX = 1.45, OZ = -1.31;
+const bx = C.x + OX, bz = C.z + OZ;
+
+console.log('THE AUTHORED HANG, AND THE CLAIM ROUND TWELVE MADE ABOUT IT');
+console.log('  base C.y +', CROWN, '| rim C.y +', RIM, '(= base + the profile\'s own 1.44 top)',
+  '| clapper C.y +', CLAPPER_Y);
+{
+  // the authored snapped chain: CylinderGeometry(.035,.05,1.8,5) at
+  // (C.x+0.48, C.y+3.45, C.z-0.2), rotation.z 0.55
+  const end = { x: C.x + 0.48 + Math.sin(0.55) * 0.9, y: 3.45 - Math.cos(0.55) * 0.9, z: C.z - 0.2 };
+  const radial = Math.hypot(end.x - C.x, end.z - C.z);
+  const toCentreLine = Math.hypot(radial - RING_R, end.y - RIM);
+  console.log('  the chain\'s free end sat', r4(toCentreLine), 'm from the rim ring\'s centre-line ->',
+    r4(toCentreLine - RING_TUBE), 'm off its iron. It was hung ON it.');
+  console.log('  FOUR parts agreed with each other. An inherited lathe offset moves ONE.');
+  console.log('  and that same chain end is', r3(Math.hypot(end.x - bx, end.z - bz)),
+    'm from where round thirteen left the bell — holding nothing.');
+}
+
+console.log('');
+console.log('DOES A HUNG BELL NEED A COLLIDER?  (player.js: RADIUS', PLAYER_R,
+  ', STEP_UP', STEP_UP, ', HEAD', HEAD + ')');
+console.log('  _moveAxis ignores a box whose min.y >= feet + HEAD. The crown bottoms out at',
+  CROWN, 'so it reaches', r3(HEAD - CROWN), 'm INTO the head window.');
+console.log('  bell radius at head height', r3(radiusAt(HEAD - CROWN)),
+  '-> YES. It would take a crown at C.y +', HEAD, 'to need none, and a bell you cannot');
+console.log('  reach is a bell you cannot ring.');
+
+console.log('');
+console.log('THE VAULT (atmosphere.js: a 0.34-tall cap at chamber.y + 5.18, radius r * 0.96)');
+console.log('  underside C.y +', r3(APEX), '| radius', r3(VAULT_R),
+  '| 12-gon apothem', r3(VAULT_R * Math.cos(Math.PI / 12)));
+console.log('  the bell axis stands', r3(Math.hypot(OX, OZ)), 'm off the node ->',
+  Math.hypot(OX, OZ) < VAULT_R * Math.cos(Math.PI / 12) ? 'covered' : 'NOT COVERED');
+
+// ---- the axis, kept from round thirteen ----------------------------------
+const unit = (ax, az) => { const L = Math.hypot(ax, az); return [ax / L, az / L]; };
+const prev = SECRET[2], next = SECRET[4];
+const [inX, inZ] = unit(C.x - prev.x, C.z - prev.z);
+const [outX, outZ] = unit(next.x - C.x, next.z - C.z);
+const [mx, mz] = unit(inX + outX, inZ + outZ);
+const normal = [mz, -mx];
+const legIn = makeSegments([prev, C], 's')[0], legOut = makeSegments([C, next], 's')[0];
+console.log('');
+console.log('THE AXIS — round thirteen\'s offset, re-derived and kept');
+console.log('  interior bisector', [r3(normal[0]), r3(normal[1])], 'x 1.95 =',
+  [r3(normal[0] * 1.95), r3(normal[1] * 1.95)], '-> shipped', [OX, OZ]);
+console.log('  perpendicular to secret leg in ', r3(segmentProjection(legIn, bx, bz).d), 'm');
+console.log('  perpendicular to secret leg out', r3(segmentProjection(legOut, bx, bz).d), 'm');
+console.log('  the shelf sits on the opposite flank,',
+  r3(Math.hypot(bx - (C.x - 1.8), bz - (C.z + 2.0))), 'm away');
+
+// ---- the sling -----------------------------------------------------------
+const slingLen = Math.hypot(RING_R, APEX - RIM);
+const slingTilt = Math.atan2(RING_R, APEX - RIM);
+console.log('');
+console.log('THE SLING — two legs, apex on the bell axis at the vault, feet on the rim ring');
+console.log('  leg length', r4(slingLen), '| tilt from vertical', r4(slingTilt), 'rad =',
+  r3(slingTilt * 180 / Math.PI), 'deg | foot-to-ring-centre-line 0 by construction');
+console.log('  ONE leg cannot hold it: the lathe shell\'s centroid is on the axis, so a bell hung');
+{
+  let sA = 0, sAy = 0;
+  for (let i = 0; i < PROFILE.length - 1; i++) {
+    const [r0, y0] = PROFILE[i], [r1, y1] = PROFILE[i + 1];
+    const slant = Math.hypot(r1 - r0, y1 - y0), a = Math.PI * (r0 + r1) * slant;
+    sA += a; sAy += a * (y0 + y1) / 2;
+  }
+  const com = sAy / sA;
+  const tilt = Math.atan2(RING_R, 1.44 - com);
+  console.log('  by one rim point settles at', r3(tilt * 180 / Math.PI),
+    'deg (centroid local y', r3(com) + ') and everything inside slides out.');
+  const L = APEX - (CROWN + com);
+  console.log('  PENDULUM: apex to centroid', r3(L), 'm -> g/L', r4(9.81 / L),
+    ', period', r3(2 * Math.PI * Math.sqrt(L / 9.81)), 's');
+}
+
+// ---- the swing cap and the collider that follows from it -----------------
+function worstReach(th) {
+  let w = 0, at = 0;
+  for (let h = CROWN; h <= HEAD + 1e-9; h += 0.001) {
+    const r = radiusAt(h - CROWN) + (APEX - h) * Math.sin(th);
+    if (r > w) { w = r; at = h; }
+  }
+  return { w, at };
+}
+const BELL_MAX = 0.055, BELL_HALF = 0.62;
+console.log('');
+console.log('THE CAP, AND THE COLLIDER DERIVED FROM IT');
+for (const H of [0.40, 0.50, 0.60, 0.62, 0.75]) {
+  let th = 0;
+  for (let t = 0; t <= 0.2; t += 0.0001) { if (worstReach(t).w <= H) th = t; else break; }
+  console.log('  half-extent', H, '-> face stop', r3(H + PLAYER_R), ', corner stop',
+    r3(Math.hypot(H, H) + PLAYER_R), ', largest safe swing', r4(th), 'rad');
+}
+const wr = worstReach(BELL_MAX);
+console.log('  SHIPPED: BELL_MAX', BELL_MAX, 'rad, BELL_HALF', BELL_HALF);
+console.log('    widest iron inside the head window at full lean', r4(wr.w), 'm at C.y +', r3(wr.at));
+console.log('    the capsule\'s surface stands at', BELL_HALF, '->', r4(BELL_HALF - wr.w), 'm clear, always');
+console.log('    crown travel', r3(2 * (APEX - CROWN) * Math.sin(BELL_MAX)), 'm peak-to-peak');
+console.log('    rim travel  ', r3(2 * (APEX - RIM) * Math.sin(BELL_MAX)),
+  'm peak-to-peak (round thirteen\'s rocking bell managed 0.250)');
+console.log('    the mouth (radius', RING_R + RING_TUBE + ') is', r3(RIM - HEAD),
+  'm above the top of the capsule, so it can never be touched: an AABB drawn to it');
+console.log('    would be a metre of invisible wall around a thin iron cone.');
+
+// ---- gate 1: colliders never clip either centreline ----------------------
+const box = {
+  minX: bx - BELL_HALF, maxX: bx + BELL_HALF, minZ: bz - BELL_HALF, maxZ: bz + BELL_HALF,
+  minY: C.y + CROWN, maxY: C.y + RIM,
+};
 const allSamples = [...samplePath(MAIN, 0.55), ...samplePath(SECRET, 0.55)];
-let worstPad = Infinity, worstSample = null;
+let worstPad = Infinity, worstSample = null, banded = 0;
 for (const s of allSamples) {
   if (!(box.maxY > s.y + 0.55 && box.minY < s.y + 1.75)) continue;
-  // how far outside the raw AABB the sample sits, per axis — the gate fails
-  // only when BOTH axes are within 0.32, so the larger of the two decides.
+  banded++;
   const padX = Math.max(box.minX - s.x, s.x - box.maxX, 0);
   const padZ = Math.max(box.minZ - s.z, s.z - box.maxZ, 0);
   const pad = Math.max(padX, padZ);
   if (pad < worstPad) { worstPad = pad; worstSample = s; }
 }
-console.log('\nGATE tests/underfalls-expansion.mjs:167 (threshold 0.32 m)');
-console.log('  closest route sample sits', r3(worstPad), 'm outside the collider AABB ->',
-  worstPad > 0.32 ? 'PASS' : 'FAIL', 'at', [r3(worstSample.x), r3(worstSample.z)]);
+console.log('');
+console.log('GATE "authored landmark colliders never counterfeit or clip either centerline" (0.32 m)');
+console.log('  samples whose y band overlaps the box:', banded, 'of', allSamples.length);
+console.log('  closest sits', r3(worstPad), 'm outside the AABB ->', worstPad > 0.32 ? 'PASS' : 'FAIL',
+  'at', [r3(worstSample.x), r3(worstSample.z)]);
 
-// ---- gate 2: the secret walk still arrives within 0.62 m of every node ----
-// The walker steers straight at the next node; the player is a 0.34 m capsule.
-const PR = 0.34;
+// ---- gate 2: the secret walk ---------------------------------------------
 function chordClearsBox(a, b, inflate) {
   const minX = box.minX - inflate, maxX = box.maxX + inflate;
   const minZ = box.minZ - inflate, maxZ = box.maxZ + inflate;
   let near = 0, far = 1;
   const dx = b.x - a.x, dz = b.z - a.z;
-  const axes = [[a.x, dx, minX, maxX], [a.z, dz, minZ, maxZ]];
-  for (const [o, d, lo, hi] of axes) {
+  for (const [o, d, lo, hi] of [[a.x, dx, minX, maxX], [a.z, dz, minZ, maxZ]]) {
     if (Math.abs(d) < 1e-9) { if (o < lo || o > hi) return true; continue; }
     let t0 = (lo - o) / d, t1 = (hi - o) / d;
     if (t0 > t1) { const s = t0; t0 = t1; t1 = s; }
     near = Math.max(near, t0); far = Math.min(far, t1);
     if (near > far) return true;
   }
-  return false;                       // the chord enters the inflated box
+  return false;
 }
-console.log('\nGATE tests/underfalls-expansion.mjs:203 (secret walk, node to node)');
+console.log('');
+console.log('GATE "the optional culvert is physically reachable" (secret walk, node to node)');
 for (let i = 0; i < SECRET.length - 1; i++) {
-  const a = SECRET[i], b = SECRET[i + 1];
-  console.log('  ' + a.name + ' -> ' + b.name + ': straight walk '
-    + (chordClearsBox(a, b, PR) ? 'never touches' : 'CROSSES') + ' the bell capsule');
+  console.log('  ' + SECRET[i].name + ' -> ' + SECRET[i + 1].name + ': straight walk '
+    + (chordClearsBox(SECRET[i], SECRET[i + 1], PLAYER_R) ? 'never touches' : 'CROSSES') + ' the bell box');
 }
-for (const n of SECRET) {
-  if (n.x >= box.minX - PR && n.x <= box.maxX + PR && n.z >= box.minZ - PR && n.z <= box.maxZ + PR) {
-    console.log('  !! node ' + n.name + ' is inside the collider + player radius');
+console.log('  the cistern node stands',
+  r3(Math.max(Math.max(box.minX - C.x, C.x - box.maxX), Math.max(box.minZ - C.z, C.z - box.maxZ))),
+  'm clear of the collider face');
+
+// ---- gate 3: nothing the collider permits stands inside the iron ---------
+const required = wr.w + PLAYER_R;
+let closest = Infinity, closestPose = null, poses = 0;
+for (let x = bx - 3.4; x <= bx + 3.4; x += 0.025) {
+  for (let z = bz - 3.4; z <= bz + 3.4; z += 0.025) {
+    const p = projectUnderfalls(x, z);
+    if (!p || p.clearance > -0.039) continue;              // the clamp would not hold this pose
+    const cx = clamp(x, box.minX, box.maxX), cz = clamp(z, box.minZ, box.maxZ);
+    if (Math.hypot(x - cx, z - cz) < PLAYER_R - 1e-9) continue;   // the collider pushes it out
+    poses++;
+    const d = Math.hypot(x - bx, z - bz);
+    if (d < closest) { closest = d; closestPose = [r3(x), r3(z)]; }
   }
 }
-console.log('  bell-cistern node stands',
-  r3(Math.max(Math.max(box.minX - C.x, C.x - box.maxX), Math.max(box.minZ - C.z, C.z - box.maxZ))),
-  'm clear of the collider face (player radius', PR + ')');
+console.log('');
+console.log('GATE "no pose the clamp and the collider both accept stands inside the bell"');
+console.log('  clamp-legal AND collider-legal poses tested:', poses);
+console.log('  required clearance (swept iron + player radius)', r4(required));
+console.log('  closest such pose', closestPose, 'at', r4(closest), '->',
+  closest >= required ? 'PASS' : 'FAIL', 'by', r4(closest - required), 'm');
 
-// ---- enemy navigation: the Choir's chords ---------------------------------
-// findUnderfallsRoute only ever offers a chord that underfallsLineOfSight has
-// already accepted, and that test's dominant filter is the corridor-union one:
-// every 0.32 m sample must sit at clearance <= -0.2. A chord my collider blocks
-// but the union test already rejected costs the Choir nothing.
+// ---- enemy navigation ----------------------------------------------------
 function unionChordOpen(a, b, pad = 0.2, spacing = 0.32) {
   const distance = Math.hypot(b.x - a.x, b.z - a.z);
   const steps = Math.max(1, Math.ceil(distance / spacing));
@@ -189,10 +295,11 @@ function unionChordOpen(a, b, pad = 0.2, spacing = 0.32) {
   return true;
 }
 const CHOIR_R = 0.42;
-console.log('\nCHOIR nav chords (enemies.js:2060 swept footprint, r =', CHOIR_R + ')');
+console.log('');
+console.log('CHOIR nav chords (enemies.js swept footprint, r =', CHOIR_R + ')');
 const navKeys = new Map();
 for (const p of [...MAIN, ...SECRET, ...CHAMBERS, { x: 29.25, z: 55.75, y: 0, name: 'chapel north transept' }]) {
-  const key = p.x.toFixed(3) + ',' + p.y.toFixed(3) + ',' + p.z.toFixed(3);
+  const key = p.x.toFixed(3) + ',' + (p.y ?? 0).toFixed(3) + ',' + p.z.toFixed(3);
   if (!navKeys.has(key)) navKeys.set(key, p);
 }
 const navNodes = [...navKeys.values()];
@@ -206,154 +313,135 @@ for (let i = 0; i < navNodes.length; i++) {
       + navNodes[i].name + ' -> ' + navNodes[j].name);
   }
 }
-console.log('  live chords lost:', blockedLive, '| chords the corridor union already refused:', blockedDead);
 {
   const a = SECRET[2], b = SECRET[4];
   const direct = Math.hypot(b.x - a.x, b.z - a.z, b.y - a.y);
   const viaBell = Math.hypot(C.x - a.x, C.z - a.z, C.y - a.y) + Math.hypot(b.x - C.x, b.z - C.z, b.y - C.y);
-  console.log('  the one lost chord costs the Choir', r3(viaBell - direct),
-    'm of detour (' + r3(direct), '->', r3(viaBell) + ') via the bell-cistern node');
+  console.log('  the one lost chord costs the Choir', r3(viaBell - direct), 'm of detour, via the cistern node');
 }
+console.log('  live chords lost:', blockedLive, '| already refused by the corridor union:', blockedDead,
+  '(round thirteen\'s 0.75 box lost the same one; this box is smaller)');
 console.log('  every consecutive polyline chord still open:',
   [...MAIN.slice(1).map((n, i) => chordClearsBox(MAIN[i], n, CHOIR_R)),
     ...SECRET.slice(1).map((n, i) => chordClearsBox(SECRET[i], n, CHOIR_R))].every(Boolean));
 
-// ---- the dry ring vs the chamber floor disc -------------------------------
-// underfalls.js:620-627 draws each chamber floor as CylinderGeometry(1,1,1,16)
-// scaled to chamber.r * 1.02 — a 16-gon, so the real edge at a given bearing is
-// R*cos(pi/16)/cos(phi), phi being the offset from the nearest facet midpoint.
-const R_DISC = C.r * 1.02;
-const theta = Math.atan2(OX, OZ);                 // three.js lays vertices out as (sin, cos)
-const step = (2 * Math.PI) / 16;
-const facetMid = (Math.floor(theta / step) + 0.5) * step;
-const phi = Math.abs(theta - facetMid);
-const edgeAtBearing = R_DISC * Math.cos(Math.PI / 16) / Math.cos(phi);
-console.log('\nDRY RING vs the chamber floor');
-console.log('  floor disc circumradius        ', r3(R_DISC));
-console.log('  16-gon edge at the bell bearing', r3(edgeAtBearing));
-for (const [ri, ro] of [[2.05, 2.28], [1.22, 1.40]]) {
-  console.log('  RingGeometry(' + ri + ', ' + ro + ') moved to the bell -> far edge at',
-    r3(offset + ro), ro + offset < edgeAtBearing ? '(inside the floor)' : '(OVERHANGS the floor)');
-  console.log('    nearest edge to the secret centreline:',
-    r3(segmentProjection(legIn, bx, bz).d - ro), 'm');
-}
-
-// ---- the clapper cannot leave the bell ------------------------------------
-const profile = [[0.18, 0.00], [0.24, 0.16], [0.38, 0.52], [0.53, 0.91], [0.76, 1.22], [0.98, 1.38], [1.03, 1.44]];
-const clapperY = 0.28, clapperR = 0.24;
-let inner = null;
-for (let i = 0; i < profile.length - 1; i++) {
-  const [r0, y0] = profile[i], [r1, y1] = profile[i + 1];
-  if (clapperY >= y0 && clapperY <= y1) inner = lerp(r0, r1, (clapperY - y0) / (y1 - y0));
-}
-console.log('\nCLAPPER');
-console.log('  lathe inner radius at y =', clapperY, '->', r3(inner));
-console.log('  free travel before it pokes through the wall:', r3(inner - clapperR), 'm');
-for (const amp of [0.11, 0.04]) {
-  console.log('  swing amplitude ' + amp + ' ->',
-    amp <= inner - clapperR ? 'stays inside' : 'BREAKS THE SILHOUETTE');
-}
-
-// ---- the light ------------------------------------------------------------
-// PointLight(0xd7a468, 13.5, distance 12, decay 1.15). Three.js physical
-// falloff: 1/d^decay windowed by (1 - (d/cutoff)^4)^2.
-const irradiance = (d, cutoff = 12, decay = 1.15) => {
+// ---- the light -----------------------------------------------------------
+const irr = (d, cutoff = 12, decay = 1.15) => {
   const w = Math.max(0, 1 - Math.pow(d / cutoff, 4));
   return Math.pow(Math.max(d, 1e-4), -decay) * w * w;
 };
-const oldLight = { x: C.x - 0.6, y: C.y + 2.25, z: C.z + 0.5 };
-const newLight = { x: bx - 1.05, y: C.y + 2.4, z: bz + 0.85 };
-const rim = { x: bx, y: C.y + 1.44, z: bz };
-const oldRim = { x: C.x, y: C.y + 1.44, z: C.z };
+const toRingIron = (L, rimY) => {
+  const h = Math.hypot(L.x - bx, L.z - bz);
+  return Math.max(0, Math.hypot(Math.abs(h - RING_R), Math.abs(L.y - rimY)) - RING_TUBE);
+};
 const keepsakes = { x: C.x - 1.72, y: C.y + 0.9, z: C.z + 1.85 };
 const d3 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-console.log('\nBELL LIGHT (PointLight 13.5, distance 12, decay 1.15)');
-console.log('  before: light->rim', r3(d3(oldLight, oldRim)), 'm   light->keepsakes', r3(d3(oldLight, keepsakes)), 'm');
-console.log('  if the light had NOT moved: light->rim', r3(d3(oldLight, rim)), 'm');
-console.log('  after : light->rim', r3(d3(newLight, rim)), 'm   light->keepsakes', r3(d3(newLight, keepsakes)), 'm');
-const rimRatio = irradiance(d3(newLight, rim)) / irradiance(d3(oldLight, oldRim));
-console.log('  rim irradiance x', r3(rimRatio),
-  '(vs leaving the light behind: x', r3(irradiance(d3(oldLight, rim)) / irradiance(d3(oldLight, oldRim))) + ')');
-console.log('  keepsake irradiance from THIS light x', r3(irradiance(d3(newLight, keepsakes)) / irradiance(d3(oldLight, keepsakes))));
-// The tick ramps this light 13.5 -> 24.0 on a strike, decaying over ~3 s.
-console.log('  on a strike the tick lifts it to 24.0, so the rim reads at x',
-  r3(rimRatio * 24 / 13.5), 'of its old resting level, falling back to x', r3(rimRatio));
-// The raw plan's un-pulled-back position, for the record.
-const rawLight = { x: bx - 0.55, y: C.y + 2.4, z: bz + 0.45 };
-console.log('  (raw-plan position bx-0.55/bz+0.45 would be rim x',
-  r3(irradiance(d3(rawLight, rim)) / irradiance(d3(oldLight, oldRim))), ', keepsakes x',
-  r3(irradiance(d3(rawLight, keepsakes)) / irradiance(d3(oldLight, keepsakes))) + ')');
-console.log('  the pooled candle at', [r3(C.x - 2.4), r3(C.z + 1.8)], 'r 4.5 is unmoved;',
-  r3(Math.hypot(C.x - 2.4 - keepsakes.x, C.z + 1.8 - keepsakes.z)), 'm from the keepsakes');
+const LIVE_LIGHT = { x: bx - 1.05, y: C.y + 2.4, z: bz + 0.85 };
+const NEW_LIGHT = { x: bx - 1.42, y: C.y + 2.0, z: bz + 1.15 };
+console.log('');
+console.log('THE CISTERN LIGHT (PointLight 13.5, distance 12, decay 1.15)');
+console.log('  round thirteen, bell on the floor: nearest pale rim iron',
+  r3(toRingIron(LIVE_LIGHT, C.y + 1.44)), 'm, irradiance', r3(irr(toRingIron(LIVE_LIGHT, C.y + 1.44))));
+console.log('  the SAME light with the bell re-hung:      ',
+  r3(toRingIron(LIVE_LIGHT, C.y + RIM)), 'm, irradiance', r3(irr(toRingIron(LIVE_LIGHT, C.y + RIM))),
+  '<- a lantern at arm\'s length; it would clip the one pale thing in the room to white');
+console.log('  SHIPPED (bx-1.42 / C.y+2.0 / bz+1.15):     ',
+  r3(toRingIron(NEW_LIGHT, C.y + RIM)), 'm, irradiance', r3(irr(toRingIron(NEW_LIGHT, C.y + RIM))),
+  '-> x' + r4(irr(toRingIron(NEW_LIGHT, C.y + RIM)) / irr(toRingIron(LIVE_LIGHT, C.y + 1.44))), 'of live');
+console.log('  keepsakes:', r3(d3(LIVE_LIGHT, keepsakes)), '->', r3(d3(NEW_LIGHT, keepsakes)),
+  'm, irradiance x' + r3(irr(d3(NEW_LIGHT, keepsakes)) / irr(d3(LIVE_LIGHT, keepsakes))));
+console.log('  it stays', r3(NEW_LIGHT.y - C.y - 1.62), 'm above EYE, so nobody can stand inside it');
 
-// ---- the earshot question -------------------------------------------------
-const strike = { x: bx, y: C.y + 1.15, z: bz };
-console.log('\nEARSHOT — straight-line distance from the strike point to MAIN route nodes');
-const near25 = [];
-for (const n of MAIN) {
-  const d = Math.hypot(n.x - strike.x, n.z - strike.z);
-  if (d < 25) near25.push(n.name + ' ' + r3(d));
-}
-console.log('  within 25 m:', near25.join(' | '));
-console.log('  -> a 22 m radius gate would toll at the main route from',
-  r3(Math.min(...MAIN.map((n) => Math.hypot(n.x - strike.x, n.z - strike.z)))),
-  'm, through solid rock. Rejected.');
-
-// The shipped gate is membership, not radius: projectUnderfalls().kind must be
-// 'secret' AND clearance <= 0. Check no MAIN centreline sample satisfies it.
+// ---- earshot: unchanged from round thirteen, re-checked ------------------
+const strike = { x: bx, y: C.y + CLAPPER_Y, z: bz };
 let leaks = 0;
 for (const s of samplePath(MAIN, 0.35)) {
   const p = projectUnderfalls(s.x, s.z);
-  if (p && p.kind === 'secret' && p.clearance <= 0) { leaks++; console.log('  LEAK at', [r3(s.x), r3(s.z)], p.name); }
+  if (p && p.kind === 'secret' && p.clearance <= 0) leaks++;
 }
-console.log('  main-route samples that would hear the toll under the membership gate:', leaks);
 const secretSamples = samplePath(SECRET, 0.35);
 let heard = 0;
 for (const s of secretSamples) {
   const p = projectUnderfalls(s.x, s.z);
   if (p && p.kind === 'secret' && p.clearance <= 0) heard++;
 }
+console.log('');
+console.log('EARSHOT (membership, not radius — round thirteen\'s rule, kept)');
+console.log('  nearest MAIN node to the strike point:',
+  r3(Math.min(...MAIN.map((n) => Math.hypot(n.x - strike.x, n.z - strike.z)))),
+  'm through solid rock — which is why a radius gate was refused');
+console.log('  main-route samples that would hear the toll:', leaks);
 console.log('  secret-route samples that DO hear it: ' + heard + '/' + secretSamples.length);
-// Where along the walk in does it start? The chapel chamber's r 10.5 disc
-// swallows the first two culvert legs, so the toll opens partway up the last
-// one: that is how far out the landmark becomes walkable-toward.
-let onset = null;
-for (const s of samplePath(SECRET, 0.05)) {
-  const p = projectUnderfalls(s.x, s.z);
-  const inside = !!p && p.kind === 'secret' && p.clearance <= 0;
-  if (inside && !onset) onset = s;
-  if (!inside) onset = null;
-  if (onset && Math.hypot(s.x - strike.x, s.z - strike.z) < 3) break;
+
+// ---- the reverb drive, which is his one condition ------------------------
+// audio.js: bellRing({dark:true}) -> _bus duration 5.9 s, longest partial decay
+// 4.85 s (+0.04 stop) = 4.89 s of tone. WET.cave 0.32, cave impulse 2.4 s.
+// The proxy below is arithmetic on those source constants, NOT a measured DSP
+// figure — it compares this object against itself before and after.
+const TONE = 4.89;
+const R13 = { verb: 0.96, mean: (7.3 + 11.6 + 9.1 + 13.8) / 4, min: 7.3 };
+const R14 = { verb: 0.34, mean: 20.7, min: 7.3 };   // mean from the swing sim; min is the floor
+console.log('');
+console.log('REVERB DRIVE — "make sure that\'s not what is causing the sound bug"');
+console.log('  send x tone / interval:');
+console.log('    round thirteen  worst', r3(R13.verb * TONE / R13.min), '/s  | mean',
+  r3(R13.verb * TONE / R13.mean), '/s   (+ a paired caveDrip at verb 0.9 on the same instant)');
+console.log('    round fourteen  worst', r3(R14.verb * TONE / R14.min), '/s  | mean',
+  r3(R14.verb * TONE / R14.mean), '/s   (nothing paired)');
+console.log('    -> worst case', r3(100 * (1 - (R14.verb * TONE / R14.min) / (R13.verb * TONE / R13.min))) + '% lower,',
+  'ordinary case', r3(100 * (1 - (R14.verb * TONE / R14.mean) / (R13.verb * TONE / R13.mean))) + '% lower.');
+console.log('  single-event proxy (send x tone x zone wet 0.32 x impulse 2.4):');
+console.log('    r13 toll', r3(0.96 * TONE * 0.32 * 2.4), '| r14 toll', r3(0.34 * TONE * 0.32 * 2.4),
+  '| drownedCall, the next largest in the district, 1.484');
+console.log('  no new voice type, no new send, no new loop, no new spray zone, no new drip site,');
+console.log('  no new light. One call was DELETED (the paired caveDrip) and one send was cut.');
+
+// ---- the swing, simulated on the shipped constants -----------------------
+const DT = 1 / 120, W2 = 3.4045, W = Math.sqrt(W2), DAMP = 0.14;
+const GUST = 0.054, TOLL = 0.028, GAP = 7.3, LOSS = 0.55, PUSH = 0.024;
+function simulate(seconds, shove) {
+  let ax = 0.008, az = 0, avx = 0, avz = 0.004;
+  let gustT = 3.4, gi = 0, cd = 0, prev = ax * ax + az * az, toward = false;
+  const tolls = [];
+  let peak = 0;
+  for (let t = 0; t < seconds; t += DT) {
+    gustT -= DT; cd -= DT;
+    if (gustT <= 0) {
+      gustT = [7.3, 11.6, 9.1, 13.8][gi % 4];
+      avx += GUST * Math.cos(gi * 2.399963); avz += GUST * Math.sin(gi * 2.399963); gi++;
+    }
+    if (shove && t >= shove.from && t < shove.to) {
+      avx += PUSH * shove.speed * DT;
+    }
+    avx -= (W2 * Math.sin(ax) + DAMP * avx) * DT;
+    avz -= (W2 * Math.sin(az) + DAMP * avz) * DT;
+    ax += avx * DT; az += avz * DT;
+    const amp = Math.hypot(Math.hypot(ax, az), Math.hypot(avx, avz) / W);
+    if (amp > BELL_MAX) { const k = BELL_MAX / amp; ax *= k; az *= k; avx *= k; avz *= k; }
+    peak = Math.max(peak, Math.hypot(ax, az));
+    const lean2 = ax * ax + az * az;
+    if (lean2 < prev) toward = true;
+    else if (toward) {
+      toward = false;
+      if (amp >= TOLL && cd <= 0) { tolls.push(t); cd = GAP; avx *= LOSS; avz *= LOSS; }
+    }
+    prev = lean2;
+  }
+  const gaps = tolls.slice(1).map((v, i) => v - tolls[i]);
+  return { n: tolls.length, mean: seconds / Math.max(1, tolls.length), peak,
+    worstGap: gaps.length ? Math.min(...gaps) : Infinity };
 }
-console.log('  walking in, the toll opens at', [r3(onset.x), r3(onset.z)], '-',
-  r3(Math.hypot(onset.x - strike.x, onset.z - strike.z)), 'm short of the bell');
-
-// ---- what the rock actually moves -----------------------------------------
-const rimHeight = 1.44;
-for (const [label, amp] of [['idle  ', 0.012], ['struck', 0.012 + 0.075]]) {
-  console.log('ROCK ' + label + ': pivot angle ' + r3(amp) + ' rad -> rim travel',
-    r3(Math.sin(amp) * rimHeight), 'm peak,', r3(2 * Math.sin(amp) * rimHeight), 'm peak-to-peak');
+console.log('');
+console.log('THE SWING, simulated on the shipped constants at the shipped 1/120 step');
+for (const [label, sec, shove] of [
+  ['draught only, 10 minutes        ', 600, null],
+  ['one 1.5 s shove at a walk       ', 90, { from: 20, to: 21.5, speed: 2.7 }],
+  ['leaning on it for 20 s at a run ', 90, { from: 20, to: 40, speed: 4.7 }],
+]) {
+  const s = simulate(sec, shove);
+  console.log('  ' + label, '->', String(s.n).padStart(3), 'tolls,', r3(s.mean).toFixed(1).padStart(6),
+    's mean gap, worst gap', (Number.isFinite(s.worstGap) ? r3(s.worstGap) : '--'),
+    's, peak lean', r4(s.peak), 'rad');
 }
-
-// ---- the snapped chain now hangs beside the bell, not over it -------------
-const chain = { x: C.x + 0.48, y: C.y + 3.45, z: C.z - 0.2 };
-const chainBottomY = chain.y - Math.cos(0.55) * 0.9;   // 1.8 m rod, rotation.z 0.55
-console.log('\nSNAPPED CHAIN');
-console.log('  offset from the bell axis  ', r3(Math.hypot(chain.x - bx, chain.z - bz)), 'm');
-console.log('  its lowest point clears the bell rim by',
-  r3(chainBottomY - (C.y + 1.44)), 'm');
-console.log('  it stands', r3(segmentProjection(legIn, chain.x, chain.z).d), 'm off the walking line, at',
-  r3(chainBottomY - C.y), 'm above the chamber floor');
-
-// ---- what the square collider feels like against a round bell -------------
-// addColliderCylinder writes an axis-aligned box, the same approximation the
-// pump chapel's pillars and altar already use. Against a 1.105 m rim radius:
-const RIM_OUTER = 1.03 + 0.075;
-console.log('\nCOLLIDER vs the bell it stands for (half-extent', R + ', player radius', PR + ')');
-console.log('  bell rim outer radius        ', RIM_OUTER);
-console.log('  you stop this far from the axis on a face:', r3(R + PR),
-  '-> gap to the rim', r3(R + PR - RIM_OUTER), 'm');
-console.log('  ...and on a corner            :', r3(Math.hypot(R, R) + PR),
-  '-> gap to the rim', r3(Math.hypot(R, R) + PR - RIM_OUTER), 'm');
-console.log('  the bell is 0.18 m wide at the floor and 1.03 m at the mouth, so a');
-console.log('  0.75 box is the mid-body: nothing pokes out, nothing floats.');
+console.log('  the floor is', GAP, 's, and the inelastic strike (x' + LOSS + ' on the swing) is what');
+console.log('  keeps the true rate well under it: the swing pays for the sound.');
