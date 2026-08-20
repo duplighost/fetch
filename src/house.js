@@ -1882,30 +1882,65 @@ function bedroomAct(game) {
   // the skull KEEPS it. It wears it on its jaw for the rest of the game.
   // (Playtest 3: "not everything has to be a fucking key.")
   world.addCollider(2.2, 6.3, 8.6, 8.8, 11.5, 12.0);   // the front boughs, solid to a thrown thing
-  const brassMat = new THREE.MeshStandardMaterial({ color: 0xb9a06a, metalness: 0.85, roughness: 0.3, emissive: 0x4a3c14, emissiveIntensity: 0.6 });
+  // Moon-silver, and it hangs OUT of the leaves. He has reported this object
+  // as a key twice — "there actually looks like another key all the way up
+  // against the top of the tree", and again on Aug 20 as the one bug left in
+  // the game — and round eleven's jewellery chime changed nothing the EYE
+  // gets at 25 m: a single warm glint turning in place is a key's exact
+  // signature under one lantern. So every channel it owns says necklace
+  // instead: a visible CHAIN of links below the canopy (a line, where every
+  // key is a point), a pendulum swing about its hang point (keys yaw in
+  // place), and a sharp cool twinkle at the ends of the arc (keys glow warm
+  // and steady). The canopy underside sits at y≈7.50 at the locket's x/z
+  // (ellipsoid, 2.35 m off its centre), so the old pendant at 7.39 was
+  // flush against the dark leaves — "stuck to the underside" — and the hang
+  // point now lives exactly ON that surface so the whole dangle stays clear.
+  const moonMat = new THREE.MeshStandardMaterial({
+    color: 0xd8dbe6, metalness: 0.92, roughness: 0.22,
+    emissive: 0xaab6d8, emissiveIntensity: 0.12,
+  });
   const locket = new THREE.Group();
   const twig = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.02, 0.9, 5), M.bark);
-  twig.position.y = 0.62;
+  twig.position.y = 0.62;   // the attachment fiction, up inside the leaves
   locket.add(twig);
-  const chainL = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.34, 4),
-    new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
-  chainL.position.y = 0.05;
-  locket.add(chainL);
-  const oval = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), brassMat);
+  // the swing owns everything that hangs; its origin IS the hang point, the
+  // way the key-tree limb swings about its shoulder
+  const swing = new THREE.Group();
+  swing.position.y = -0.05;
+  locket.add(swing);
+  const linkParts = [];
+  for (let i = 0; i < 8; i++) {
+    const link = new THREE.TorusGeometry(0.02, 0.007, 5, 10);
+    if (i & 1) link.rotateY(Math.PI / 2);
+    link.translate(0, -0.03 - i * 0.05, 0);
+    linkParts.push(link);
+  }
+  const chain = new THREE.Mesh(mergeGeometries(linkParts), moonMat);
+  swing.add(chain);
+  const oval = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), moonMat);
   oval.scale.set(0.8, 1, 0.34);
-  oval.position.y = -0.16;
-  locket.add(oval);
+  oval.position.y = -0.46;
+  swing.add(oval);
   locket.position.set(5.2, 7.55, 13.85);
   scene.add(locket);
-  // it glints and chimes faintly in the night air — the eye finds it from the window
-  let chimeT = 4;
+  // it twinkles and chimes faintly in the night air — the eye still finds it
+  // from the window, and from the yard it reads as jewellery, never as a key
+  let chimeT = 4, swingKick = 0;
   game.tickers.push((dt, t) => {
     if (game.flags.has('keepsake')) return;
-    brassMat.emissiveIntensity = 0.45 + Math.max(0, Math.sin(t * 2.1)) * 0.75;
-    locket.rotation.y = Math.sin(t * 0.7) * 0.5;
+    swingKick = Math.max(0, swingKick - dt * 0.55);
+    const arc = Math.sin(t * 2.2);
+    swing.rotation.z = (0.16 + swingKick * 0.34) * arc;
+    swing.rotation.x = (0.07 + swingKick * 0.12) * Math.sin(t * 1.83 + 0.9);
+    // catching the light at the ends of the arc: a short bright flash on a
+    // mostly-dark object — the opposite duty cycle of a key's steady glow
+    const catchLight = Math.max(Math.abs(arc), swingKick);
+    const glint = (Math.max(0, catchLight - 0.86) / 0.14) ** 2;
+    moonMat.emissiveIntensity = 0.12 + glint * 1.4;
     chimeT -= dt;
     if (chimeT <= 0) {
       chimeT = 5 + Math.random() * 4;
+      swingKick = 1;   // sound and motion on the same beat — the branch's grammar
       // IT HAS TO CARRY OUT OF THE BEDROOM, because that is where he found it.
       // This chimed at 0.16 through a 2.4 m reference distance — audible at the
       // window it was authored for and inaudible everywhere else. He met it
@@ -1940,10 +1975,14 @@ function bedroomAct(game) {
         new THREE.MeshLambertMaterial({ color: 0x8a8578 }));
       c1.position.y = -0.02;
       dangle.add(c1);
-      const worn = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), brassMat);
+      const worn = new THREE.Mesh(new THREE.SphereGeometry(0.024, 10, 8), moonMat);
       worn.scale.set(0.8, 1, 0.34);
       worn.position.y = -0.055;
       dangle.add(worn);
+      // the ticker above early-returns once 'keepsake' is set, so whatever
+      // intensity the last twinkle left would freeze on the worn charm — pin
+      // it to a steady jewellery glint instead
+      moonMat.emissiveIntensity = 0.5;
       // Its own place on the jaw. The marrow relic hangs at (0.052, -0.035,
       // 0.05) — 8 mm away on two objects 2-4 cm across, so a player carrying
       // both saw one lump and could not tell the keepsake was there at all
