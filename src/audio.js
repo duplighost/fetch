@@ -28,6 +28,15 @@ const ZONES = {
 };
 const WET = { interior: 0.18, outdoor: 0.22, cave: 0.32 };
 
+// How long an outgoing reverb character keeps RECEIVING signal after the zone
+// has changed. The wet crossfade below is a setTargetAtTime with tau 0.6, so six
+// time constants puts the outgoing character at e^-6 = 0.25% of its level
+// (-52 dB) before its input is cut. Cutting the input is what makes the saving;
+// it can never truncate a tail, because the convolver's OUTPUT stays wired to
+// its wet gain forever and rings out under the falling ramp.
+const VERB_XFADE_TAU = 0.6;
+const VERB_RELEASE_HOLD = 3.6;   // = 6 * VERB_XFADE_TAU, written out so it reads exactly
+
 // Enemy presence tuning (Behind You law). floor: the 'exponential' distance model
 // never reaches zero, so audibility is governed by these explicit volume floors —
 // the kneeler, like Behind You's boss, must always be trackable on the sound stage.
@@ -114,11 +123,28 @@ export class GameAudio {
     this.comp.threshold.value = -18; this.comp.ratio.value = 4; this.comp.knee.value = 12;
     this.master.connect(this.lp).connect(this.comp).connect(ctx.destination);
 
-    // three reverb characters share one send bus; setZone crossfades the wets
+    // Three reverb characters share one send bus; setZone crossfades the wets.
+    //
+    // ONE OF THEM CONVOLVES AT A TIME. All three inputs used to be wired here at
+    // init and nothing ever disconnected them, while setZone silenced the two
+    // inactive characters at their WET GAIN — which sits DOWNSTREAM of the
+    // convolution. So from the cave onward, the only district where all three
+    // impulses have been built, the engine convolved 4.4 seconds of impulse
+    // response every quantum and then multiplied 2.0 seconds of that by 0.0001.
+    // Measured, in this game's own 24 kHz Chrome: 61% of the district's
+    // convolution work was inaudible by construction (tools/probe-verb-cost.mjs).
+    // It is the Underfalls that paid it, because the Underfalls is the only
+    // district that has built all three AND holds a reverb send open
+    // continuously (the Drowned Choir, below) — a silent send lets Chrome skip a
+    // convolver entirely, and the cave never gives it the chance.
+    //
+    // The OUTPUT side is wired forever and never touched. Only the input moves.
     this.verbBus = ctx.createGain(); this.verbBus.gain.value = 1;
     this._wet = {};
     this._impulseSpecs = { interior: [0.6, 4.5], outdoor: [1.4, 2.8], cave: [2.4, 2.2] };
     this._convolvers = {};
+    this._verbFed = new Set();       // characters whose input is connected
+    this._verbRelease = new Map();   // character -> ctx-time its input may be cut
     for (const k of Object.keys(this._impulseSpecs)) {
       const conv = ctx.createConvolver();
       // Bedroom/house need the interior tail on the first frame. Later-act
@@ -131,7 +157,7 @@ export class GameAudio {
       }
       const wet = ctx.createGain();
       wet.gain.value = 0.0001;
-      this.verbBus.connect(conv); conv.connect(wet).connect(this.master);
+      conv.connect(wet).connect(this.master);
       this._wet[k] = wet;
       this._convolvers[k] = conv;
     }
@@ -924,6 +950,7 @@ export class GameAudio {
 
     this._updateChatter(dt);
     this._updateBoneApproach(dt);
+    this._updateVerbRack();
   }
 
   _thump(vol) {
@@ -949,14 +976,88 @@ export class GameAudio {
       const spec = this._impulseSpecs[z.verb];
       convolver.buffer = this._impulse(spec[0], spec[1]);
     }
+    // The incoming character has to be receiving signal BEFORE its wet starts
+    // to rise, or the first second of the new space arrives dry.
+    this._feedVerb(z.verb);
     this._windBase = z.wind;
     this.windGain.gain.setTargetAtTime(Math.max(0.0001, z.wind * this._windMul), t, 1.5);
     this.droneGain.gain.setTargetAtTime(Math.max(0.0001, z.drone), t, 1.5);
     this.cricketGain.gain.setTargetAtTime(Math.max(0.0001, z.crickets), t, 1.5);
     this.fallsGain.gain.setTargetAtTime(Math.max(0.0001, z.falls), t, 1.5);
     for (const kind of Object.keys(this._wet)) {
-      this._wet[kind].gain.setTargetAtTime(kind === z.verb ? WET[kind] : 0.0001, t, 0.6);
+      this._wet[kind].gain.setTargetAtTime(kind === z.verb ? WET[kind] : 0.0001, t, VERB_XFADE_TAU);
+      // the outgoing character keeps its input for the whole crossfade; update()
+      // cuts it once the ramp has run out, never before
+      if (kind !== z.verb) this._releaseVerb(kind, t);
     }
+  }
+
+  // Connect a reverb character's input. Idempotent — WebAudio ignores a repeat
+  // connect() of the same pair — and it cancels any pending release, so a
+  // there-and-back zone change (house -> basement -> house) never cuts a
+  // character that is about to be wanted again.
+  _feedVerb(kind) {
+    const conv = this._convolvers?.[kind];
+    if (!conv) return;
+    this._verbRelease.delete(kind);
+    if (this._verbFed.has(kind)) return;
+    this.verbBus.connect(conv);
+    this._verbFed.add(kind);
+  }
+
+  // Schedule the end of an outgoing character's input. Deadlines are in
+  // AudioContext time, never wall clock, so a suspended context (pause, tab
+  // switch) freezes the hold exactly the way it freezes the ramp it waits on.
+  _releaseVerb(kind, t) {
+    if (!this._verbFed.has(kind)) return;
+    if (this._verbRelease.has(kind)) return;   // already counting down
+    this._verbRelease.set(kind, t + VERB_RELEASE_HOLD);
+  }
+
+  // Driven from update(), so it inherits the game's clock and stops when the
+  // game stops. Missing a tick can only ever cost CPU, never a tail.
+  _updateVerbRack() {
+    if (!this._verbRelease?.size) return;
+    const t = this.ctx.currentTime;
+    for (const [kind, due] of Array.from(this._verbRelease)) {
+      if (t < due) continue;
+      this._verbRelease.delete(kind);
+      if (!this._verbFed.has(kind)) continue;
+      try { this.verbBus.disconnect(this._convolvers[kind]); } catch { /* already gone */ }
+      this._verbFed.delete(kind);
+    }
+  }
+
+  // What the reverb rack is actually doing. voiceStats() is structurally blind
+  // to everything routed through _bus() — every cave one-shot, in other words —
+  // so it has never been able to answer a question about this district. This one
+  // reports the number that governs the Underfalls' DSP cost: how many seconds
+  // of impulse response this machine is convolving right now.
+  verbStats() {
+    const specs = this._impulseSpecs || {};
+    const convs = this._convolvers || {};
+    const fed = this._verbFed ? Array.from(this._verbFed) : [];
+    const secs = (list) => +list.reduce((a, k) => a + (specs[k]?.[0] || 0), 0).toFixed(2);
+    return {
+      zone: this._zone,
+      character: (ZONES[this._zone] || ZONES.forest).verb,
+      fed,
+      releasing: this._verbRelease ? Array.from(this._verbRelease.keys()) : [],
+      convolvingSeconds: secs(fed),
+      builtSeconds: secs(Object.keys(convs).filter((k) => convs[k].buffer)),
+      // the clock the release runs on, so a gate can prove a tail was held
+      // rather than trust the arithmetic. Reading a wet gain's .value cannot do
+      // that job: when nothing is feeding verbBus, Chrome stops processing the
+      // whole idle convolver -> wet chain and every AudioParam on it freezes at
+      // its last computed sample. (That skip is also exactly why this district's
+      // cost is what it is — see the note on the rack in init().)
+      now: this.ctx ? +this.ctx.currentTime.toFixed(3) : 0,
+      xfadeTau: VERB_XFADE_TAU,
+      holdSeconds: VERB_RELEASE_HOLD,
+      releaseAt: this._verbRelease
+        ? Object.fromEntries(Array.from(this._verbRelease, ([k, v]) => [k, +v.toFixed(3)]))
+        : {},
+    };
   }
 
   setTension(x) { this._tension = clamp01(x); }
@@ -2216,6 +2317,19 @@ export class GameAudio {
     const farP = this._panner(pos, 12, 1.18);
     const pressureP = this._panner(pos, 5.5, 0.92);
     farP.connect(this.master); pressureP.connect(this.master);
+    // The send that stays open. This and forestStoryLoop (which holds at most
+    // two, and only in the forest) are the only continuous feeds into verbBus;
+    // this one is unconditional for the whole district. It was considered for a
+    // proximity gate when the reverb rack was fixed, and kept, because:
+    //   - it is not waste. The two inactive reverb characters were convolved and
+    //     then multiplied by 0.0001; every sample of THIS send lands in the
+    //     character you are actually listening to, at full wet.
+    //   - it is the distance cue. farWet RISES as reveal falls (setState below):
+    //     wet is how this thing says still far, still in the dark. Gate it by
+    //     proximity and the choir walks forward in the mix — that is a change to
+    //     what the player hears, which was never what needed fixing.
+    //   - the saving is already taken. A continuous send used to hold three
+    //     convolutions open at once. It now holds one.
     const farWet = ctx.createGain(); farWet.gain.value = 0.68;
     const pressureWet = ctx.createGain(); pressureWet.gain.value = 0.5;
     farP.connect(farWet).connect(this.verbBus);
