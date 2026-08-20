@@ -1842,7 +1842,10 @@ class Game {
     for (const w of this.webs) {
       if (w.userData.torn) continue;
       const d = w.position.distanceTo(this.camera.position);
-      if (d < 0.7) {
+      // the reach is the web's own — a corner web built at half scale is half
+      // the size, and tearing one from further away than it is wide reads as
+      // the room grabbing at you
+      if (d < 0.7 * (w.userData.scale0 || 1)) {
         w.userData.torn = true;
         this.audio.webTear({ pos: w.position, gain: 0.5 });
         this.tickers.push((dt2) => { if (w.scale.y > 0.05) w.scale.y -= dt2 * 2; w.position.y -= dt2 * 0.4; });
