@@ -150,6 +150,10 @@ class Game {
     this._shake = 0;
     this.baseTension = 0;
     this.fx = { fear: 0 };
+    // 0..1 water on the first-person lens. Cosmetic only: nothing reads it but
+    // the grain shader, nothing writes it but splashLens() and step()'s
+    // dry-off, and Underfalls is the only district that currently sets it.
+    this.lensWet = 0;
     this.fogTarget = 0.028;
     this.snapBuffer = 0;
     this.lastCheckpoint = 'bedroom';
@@ -410,12 +414,13 @@ class Game {
     this.grainMat = new THREE.ShaderMaterial({
       transparent: true, depthTest: false, depthWrite: false,
       uniforms: {
-        uTime: { value: 0 }, uFear: { value: 0 },
+        uTime: { value: 0 }, uFear: { value: 0 }, uWet: { value: 0 },
         uResolution: { value: new THREE.Vector2(1280, 720) },
       },
       vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.,1.); }',
       fragmentShader: `
         varying vec2 vUv; uniform float uTime; uniform float uFear;
+        uniform float uWet;
         uniform vec2 uResolution;
         float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
         void main(){
@@ -441,7 +446,50 @@ class Game {
           // them up for free. Invisible to every measured mean in the suite;
           // MARROW ships exactly this.
           float d = (hash(vUv*uResolution + 7.13) - 0.5) / 255.0;
-          gl_FragColor = vec4(tint + d, clamp(a + d, 0., 0.88));
+          vec3 col = tint + d;
+          float alpha = clamp(a + d, 0., 0.88);
+          // WATER ON THE LENS. There is no render target anywhere in this game
+          // -- render() draws the world pass, the held pass and this quad
+          // straight to the default framebuffer -- so a REFRACTIVE droplet is
+          // not available at any price: introducing a target would give every
+          // material a second linear-colour-space program key and undo the
+          // whole freeze effort. These are drawn beads instead: a bright rim
+          // and a slightly lifted body, which is what a bead on glass looks
+          // like in a black cave anyway. One hashed cell per pixel, no
+          // neighbourhood loop, behind a uniform branch that is coherent
+          // across the entire draw -- a dry lens costs one compare.
+          if (uWet > 0.001) {
+            float aspect = uResolution.x / max(1.0, uResolution.y);
+            vec2 grid = vec2(vUv.x * aspect, vUv.y) * 9.0;
+            vec2 cellId = floor(grid);
+            vec2 f = fract(grid);
+            float h1 = hash(cellId + 0.5);
+            float h2 = hash(cellId + 11.7);
+            float h3 = hash(cellId + 31.3);
+            float live = step(h1, uWet * 0.72);   // wetter lens, more cells hold a bead
+            // the creep rate is quantised to k/300 because uTime wraps at 300
+            // -- an unquantised rate pops every five minutes
+            float creep = fract(uTime * ((3.0 + floor(h2 * 7.0)) / 300.0) + h3);
+            vec2 cell = vec2(0.22 + h2 * 0.56, 0.86 - creep * 0.72);
+            float rad = (0.13 + h3 * 0.16) * (0.55 + 0.45 * uWet);
+            float rr = length((f - cell) * vec2(1.0, 1.15)) / max(0.02, rad);
+            float rim = smoothstep(0.62, 0.97, rr) * (1.0 - smoothstep(0.97, 1.22, rr));
+            float body = 1.0 - smoothstep(0.55, 1.0, rr);
+            float ex = live * uWet * (1.0 - smoothstep(0.75, 1.0, creep));
+            // A PROPER OVER, not a max(). The bead is a layer in FRONT of the
+            // vignette, so each colour is weighted by its own alpha. Writing
+            // mix(col, bead) and then alpha = max(alpha, beadAlpha) paints the
+            // bead's pale grey at the VIGNETTE's alpha, which turns every dark
+            // corner of the frame grey the moment the lens gets wet.
+            float beadA = clamp(rim * 0.52 * ex + body * 0.14 * ex, 0.0, 1.0);
+            vec3 beadC = vec3(0.60, 0.71, 0.75);
+            float outA = beadA + alpha * (1.0 - beadA);
+            col = outA > 0.0001
+              ? (beadC * beadA + col * alpha * (1.0 - beadA)) / outA
+              : col;
+            alpha = outA;
+          }
+          gl_FragColor = vec4(col, alpha);
         }`,
     });
     const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.grainMat);
@@ -1476,6 +1524,11 @@ class Game {
     };
   }
   shake(v) { this._shake = Math.max(this._shake, v); }
+  // Water arrives on the lens. It accumulates, so standing under a fall
+  // saturates the glass while a brisk walk-through only beads it. step() dries
+  // it off. Same kind of thing as shake(): a cosmetic camera verb any district
+  // may call, owning no state anything else reads.
+  splashLens(amount = 1) { this.lensWet = clamp(this.lensWet + amount, 0, 1); }
   residentHeard(n) { this.director.residentHeard(n); }
 
   impact(kind, pos) {
@@ -1836,6 +1889,14 @@ class Game {
     // before the frame was drawn. This is the last word on visibility.
     if (this.forest) this.forest.syncHouseInteriorCulling();
     this._updateGore(dt);
+    // The lens dries. In the cave it takes about seven seconds, so a curtain
+    // is still beaded on the glass at the next corner; anywhere else it is
+    // gone in half a second, so a death, an act change or a debug teleport can
+    // never carry water out of the district. dt-driven inside the fixed step,
+    // never a setTimeout, per the beats law.
+    if (this.lensWet > 0) {
+      this.lensWet = Math.max(0, this.lensWet - dt * (this.act === 'cave' ? 0.145 : 2.2));
+    }
     for (const st of this.bridgeStones) {
       if (st.userData.rise && st.position.y < 0.12) st.position.y = Math.min(0.12, st.position.y + dt * 0.7);
     }
@@ -2105,6 +2166,7 @@ class Game {
     };
     this.grainMat.uniforms.uTime.value = REDUCED_MOTION ? 0 : this.time % 300;
     this.grainMat.uniforms.uFear.value = this.fx.fear;
+    this.grainMat.uniforms.uWet.value = this.lensWet;
     // the drawing buffer, not the CSS size — this is the grid the grain and the
     // dither are quantised against
     this.grainMat.uniforms.uResolution.value.set(
