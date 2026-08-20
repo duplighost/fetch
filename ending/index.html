@@ -95,7 +95,13 @@
   /* ---- the door back to FETCH ---- */
   #back {
     position: absolute; z-index: 14;
-    top: max(1rem, env(safe-area-inset-top)); left: max(1rem, env(safe-area-inset-left));
+    /* BOTTOM right, not top left. Top left is where his eyebrow line lives
+       ("Dance with death"), and this chip -- which is not his, it is the exit
+       door the port owes the player -- sat straight on top of it and covered
+       all but its last two letters. A door added for the player must not eat
+       the author's copy. Bottom right is empty on the title, bridge and
+       results screens, and this hides itself entirely during play. */
+    bottom: max(1rem, env(safe-area-inset-bottom)); right: max(1rem, env(safe-area-inset-right));
     display: inline-flex; align-items: baseline; gap: .5rem;
     padding: .5rem .8rem; border: 1px solid rgba(238, 233, 222, .22);
     background: rgba(5, 6, 7, .5); color: var(--ash);
