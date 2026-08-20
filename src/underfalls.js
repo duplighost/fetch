@@ -6,7 +6,7 @@
 // Every floor sample and lateral clamp comes from one route description so a
 // beautiful ledge can never secretly be a hole.
 import * as THREE from 'three';
-import { clamp, lerp, smoothstep, TAU } from './util.js';
+import { clamp, lerp, smoothstep, TAU, RNG } from './util.js';
 
 const MAIN_LOCAL = Object.freeze([
   Object.freeze({ x: 0,  z: 22,  y: 0.00, w: 2.30, name: 'stone veil' }),
@@ -128,6 +128,36 @@ export function createUnderfallsLayout(center) {
       strength: 0.72,
     },
   ];
+  // THE CURTAINS YOU WALK THROUGH, one entry per drawn sheet. Six of them span
+  // the route (atmosphere.js's curtainAt), and until now only two had any
+  // player-facing consequence at all -- the entry and hatch veils, which also
+  // happen to be spray zones. The other four were scenery you walked through
+  // and nothing happened.
+  //
+  // A curtain is a SLAB, not a disc: the sheet is one plane across its leg, so
+  // the test is 0.9 m either side of that plane and half its drawn width
+  // across. A 3 m disc would soak you standing a corridor's width away from
+  // any water.
+  //
+  // COUPLED TO atmosphere.js: the leg index list below is the same one the
+  // drawn sheets are built from (search curtainAt). If one list changes and
+  // the other does not, the lens gets wet where no water is drawn. Change both
+  // in the same edit.
+  const curtainSlab = (a, b) => {
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const len = Math.hypot(dx, dz) || 1;
+    return {
+      x: (a.x + b.x) / 2,
+      y: ((a.y || 0) + (b.y || 0)) / 2 + 1.3,
+      z: (a.z + b.z) / 2,
+      tx: dx / len, tz: dz / len,                        // the slab's thin axis
+      half: ((a.w || 2.5) + (b.w || 2.5)) * 0.5 + 0.3,   // the sheet's own reach
+      depth: 0.9,
+    };
+  };
+  const curtains = [[0, 1], [1, 2], [8, 9], [9, 10], [11, 12]]
+    .map(([i, j]) => curtainSlab(main[i], main[j]));
+  if (secret[0] && secret[1]) curtains.push(curtainSlab(secret[0], secret[1]));
   const bounds = {
     minX: C.x - 10,
     maxX: C.x + 74,
@@ -156,6 +186,7 @@ export function createUnderfallsLayout(center) {
     upperSluice,
     overflow,
     sprayZones,
+    curtains,
   };
 }
 
@@ -1218,6 +1249,451 @@ function buildSprayDisplacement(game, layout, state) {
   };
 }
 
+// --------------------------------------------------------------- water, seen
+//
+// His notes: steam in the air, water on the camera when you get splashed,
+// drips off the ceiling, a wet rock path, "a bit of steam towards the sides of
+// the area but not on the path", and the Drowned Choir standing in it. Three
+// of those four live here. The fourth is a branch in the grain quad main.js
+// already draws on top of every frame (main.js splashLens/uWet), fed from the
+// two places in this file where the player is physically in water.
+//
+// ALL THREE ARE GPU-PHASE SYSTEMS, NOT PARTICLE POOLS. Every position is
+// authored once at build time into a static buffer, and every motion is a
+// function of ONE uniform clock evaluated in the vertex shader. Tickers run
+// inside step() at the FIXED 1/120 timestep, so a per-particle CPU loop here
+// would be paid twice per displayed frame at 60 Hz and up to ten times after a
+// hitch. Between them these three cost six uniform writes and 29 Math.floor
+// calls per step, and allocate nothing after boot.
+//
+// FOG IS MANUAL IN ALL THREE. A ShaderMaterial gets none of three's fog
+// chunks, so without an explicit exp(-(density*d)^2) term these would be the
+// only things in a FogExp2 district that never fade, and a corridor forty
+// metres off would read as a lit tunnel. The density is read live off
+// scene.fog every step, because the act change eases it over about a second.
+//
+// NOTHING HERE ADDS A LIGHT OR A CANDLE DESCRIPTOR. The shader light census is
+// pinned (World.pinLightCensus) and the candle pool is eight slots the cave
+// already half-spends on its curtains; either would relink the whole game.
+
+// The shared clock is wrapped at t % 600 the way atmosphere.js wraps its own,
+// so fract() cannot lose precision in a long session. Every phase rate below
+// is therefore an exact multiple of TAU/600 (for a sin) or 1/600 (for a
+// fract), because a rate that is not lands the wrap mid-cycle and the whole
+// district pops once every ten minutes.
+const WATER_WRAP = 600;
+const SWAY_A = 11 * TAU / WATER_WRAP;    // 0.115192 rad/s
+const SWAY_B = 7 * TAU / WATER_WRAP;     // 0.073304 rad/s
+// Real gravity. The CPU tick that voices a landing re-derives the same fall
+// time from the same constant; if one moves the other moves in the same edit
+// or the drip sound walks off its own splash.
+const DRIP_G = 9.81;
+// The route roof is one slab per leg centred at avgY + 4.86, 0.46 thick, so
+// its underside is avgY + 4.63 (addFloorAndShell, above). The decorative
+// chamber vault is a 0.34-tall cylinder centred at chamber.y + 5.18, or 5.72
+// at the chapel (atmosphere.js).
+const ROUTE_ROOF_UNDER = 4.63;
+const CHAMBER_VAULT_UNDER = 5.18 - 0.17;
+const CHAPEL_VAULT_UNDER = 5.72 - 0.17;
+// Clear air over the drawn path, and never a puff over an unfloored void.
+const STEAM_RIBBON_GAP = 0.20;
+const STEAM_FLOOR_GAP = 0.15;
+
+// The wet ribbon's own half-width, from addFloorAndShell. COUPLED: if the
+// walkway's paving ever changes that expression, change it here too, or the
+// steam creeps onto the path and the drips stop landing on lit stone.
+function ribbonHalfWidth(w) {
+  return clamp(w * 0.46, 0.94, 1.72);
+}
+
+// -------------------------------------------------------------- the wet path
+//
+// AND IT HAS TO READ WET, WHICH A LAMBERT RIBBON CANNOT.
+//
+// Wetness is a specular phenomenon, and MeshLambertMaterial in this three
+// build has no specular term at all: RE_Direct_Lambert is irradiance *
+// BRDF_Lambert and nothing else. The ribbon's material is a clone of
+// M.headstone, which is lam(), so it can only ever have been a PALE line --
+// which is what Alex photographed. (The wetStone.roughness assignment up in
+// addFloorAndShell is dead code guarded into silence: Lambert has no such
+// property, so nobody has ever been looking at a roughness-0.16 surface.)
+//
+// This sheet supplies the missing term with no light, no lantern and no render
+// target: a grazing-angle band computed from cameraPosition, broken by two
+// slow crossing rivulets. It is brightest looking DOWN the corridor and is
+// held at zero under your own feet -- exactly how a wet floor behaves, and it
+// keeps the additive term out of the near field where a pale albedo would
+// clip. It therefore ADDS to the ribbon-against-shoulder contrast that carries
+// the district's wayfinding, instead of washing it out.
+//
+// One InstancedMesh, one draw call, 145 unit quads, 290 triangles, no collider
+// (underfallsGroundAt is analytic and never reads this).
+//
+// DIALS, in order: uGain, then the Fresnel exponent -- raising it toward 5.0
+// narrows the band toward the horizon, which is the fix if it reads as a
+// glowing runway rather than as gloss.
+const SHEEN_LIFT = 0.075;   // 33 mm over the ribbon's top face at y + 0.042
+
+function buildPathSheen(game, layout, state) {
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  geometry.rotateX(-Math.PI / 2);
+  const material = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: true,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+    side: THREE.FrontSide,
+    uniforms: {
+      uTime: { value: 0 },
+      uFog: { value: 0.055 },
+      uGain: { value: 0.9 },
+    },
+    vertexShader: `
+      varying vec3 vW;
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
+        vW = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vW;
+      varying vec2 vUv;
+      uniform float uTime;
+      uniform float uFog;
+      uniform float uGain;
+      void main(){
+        vec3 V = cameraPosition - vW;
+        float d = length(V);
+        V /= max(0.001, d);
+        // the sheet is flat and faces up, so N = (0,1,0) and the grazing term
+        // is just 1 - |V.y|. No light is consulted; there is none down here.
+        float fres = pow(clamp(1.0 - abs(V.y), 0.0, 1.0), 3.4);
+        // two slow crossing rivulets, so the band is broken water and not a
+        // painted strip
+        float r1 = sin(vW.x * 1.7 + vW.z * 1.1 + uTime * ${SWAY_A.toFixed(6)});
+        float r2 = sin(vW.z * 2.3 - vW.x * 0.9 - uTime * ${SWAY_B.toFixed(6)});
+        float riv = 0.62 + 0.38 * (0.5 + 0.5 * r1 * r2);
+        // Fade the tread ACROSS the corridor only, so the sheet dies inside
+        // the ribbon instead of drawing its own rectangle on it. Never along
+        // the tread: that would put a dim band at every joint, 0.85 m apart,
+        // and down a grazing corridor 145 of those compress into a
+        // shimmering ladder -- the artefact class this district has already
+        // paid for. Treads butt end to end and the 17 mm gap is sub-pixel.
+        float edge = smoothstep(0.0, 0.17, vUv.x) * smoothstep(0.0, 0.17, 1.0 - vUv.x);
+        float fog = exp(-(uFog * d) * (uFog * d));
+        // dark at your feet: a wet floor reflects the far end of the room, not
+        // the stone you are standing on
+        float near = smoothstep(1.1, 4.5, d);
+        float a = fres * riv * edge * fog * near * uGain;
+        if (a < 0.004) discard;
+        gl_FragColor = vec4(vec3(0.52, 0.62, 0.66), clamp(a, 0.0, 0.62));
+      }
+    `,
+  });
+  const matrices = [];
+  for (const seg of layout.mainSegments) {
+    const n = Math.max(2, Math.ceil(seg.length / 0.9));
+    const yaw = Math.atan2(seg.dx, seg.dz);
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n;
+      const w = lerp(seg.a.w, seg.b.w, t);
+      matrices.push(transformMatrix(
+        lerp(seg.a.x, seg.b.x, t),
+        lerp(seg.a.y, seg.b.y, t) + SHEEN_LIFT,
+        lerp(seg.a.z, seg.b.z, t),
+        0, yaw, 0,
+        // the ribbon's own width, and a tread 2% SHORT of its pitch. The
+        // ribbon underneath overlaps its neighbour by 0.08 m; an ADDITIVE
+        // sheet doing the same would draw a bright seam every 0.85 m all the
+        // way down the corridor.
+        2 * ribbonHalfWidth(w), 1, (seg.length / n) * 0.98));
+    }
+  }
+  const mesh = addInstances(game.scene, geometry, material, matrices, {
+    name: 'underfalls wet path sheen',
+  });
+  if (!mesh) return;
+  markUnderfalls(mesh);
+  mesh.frustumCulled = false;   // unit-geometry bounds sit at the origin
+  state.pathSheen = mesh;
+}
+
+// ----------------------------------------------------------------- low steam
+//
+// "a bit of steam towards the sides of the area but not on the path", and "the
+// bottom of the level could be in [steam]" -- with the Choir standing in it.
+// One Points batch, one draw call, two uniform writes a step.
+//
+// NOT ON THE PATH IS ENFORCED, NOT INTENDED. Corridor puffs are authored into
+// the band between the wet ribbon's edge and the corridor's edge, and then
+// every candidate -- corridor and chamber alike -- goes through two build-time
+// tests: it must clear the MAIN route's drawn ribbon by STEAM_RIBBON_GAP, and
+// it must stand at least STEAM_FLOOR_GAP inside the walkable union, so no puff
+// can hang over a stretch of floor that was never drawn. (An earlier draft
+// pushed the puffs to w + 0.8 and beyond, which is where the corridor's
+// side-wall backing stands: a third of them would have been buried in five
+// metres of solid rock and the rest suspended over nothing.)
+//
+// Chamber puffs ARE allowed inside the disc -- that is where the Choir stands
+// and where "the bottom of the level" is -- but only in the outer annulus and
+// only ankle-to-knee, so the walking line through a room stays clear air.
+function buildLowSteam(game, layout, state) {
+  const rng = new RNG(0x57ea3fa1);
+  const pos = [], phase = [], span = [], rate = [], sway = [];
+  const push = (x, y, z) => {
+    pos.push(x, y, z);
+    phase.push(rng.float());
+    span.push(rng.range(0.55, 1.25));
+    // rise cycles per second, quantised to k/600 so the t % 600 wrap is exact
+    rate.push(Math.round(WATER_WRAP / rng.range(12, 26)) / WATER_WRAP);
+    sway.push(rng.range(0.45, 1.0));
+  };
+  const clearOfPath = (x, z) => {
+    const onPath = projectUnderfallsMain(layout, x, z);
+    if (!onPath || onPath.d < ribbonHalfWidth(onPath.w) + STEAM_RIBBON_GAP) return false;
+    const floor = projectUnderfalls(layout, x, z);
+    return !!floor && floor.clearance <= -STEAM_FLOOR_GAP;
+  };
+  for (const seg of layout.mainSegments) {
+    const stations = Math.max(2, Math.round(seg.length / 2.2));
+    const spacing = seg.length / stations;
+    const reach = Math.min(0.9, spacing * 0.5);   // never wander into the next station
+    const tx = seg.dx / seg.length, tz = seg.dz / seg.length;
+    const nx = tz, nz = -tx;
+    for (let i = 0; i < stations; i++) {
+      const t = (i + 0.5) / stations;
+      const cx = seg.a.x + seg.dx * t;
+      const cz = seg.a.z + seg.dz * t;
+      const cy = lerp(seg.a.y, seg.b.y, t);
+      const w = lerp(seg.a.w, seg.b.w, t);
+      const inner = ribbonHalfWidth(w) + STEAM_RIBBON_GAP;
+      const outer = w - STEAM_FLOOR_GAP;
+      if (outer <= inner) continue;
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < 3; k++) {
+          const off = lerp(inner, outer, (k + rng.range(0.15, 0.85)) / 3);
+          const along = rng.range(-reach, reach);
+          const x = cx + nx * side * off + tx * along;
+          const z = cz + nz * side * off + tz * along;
+          if (!clearOfPath(x, z)) continue;
+          push(x, cy + rng.range(0.02, 0.30), z);
+        }
+      }
+    }
+  }
+  for (const chamber of layout.chambers) {
+    // density, not count: the chapel is a room and the bell cistern is a closet
+    const count = Math.round(chamber.r * chamber.r * 0.553);
+    for (let i = 0; i < count; i++) {
+      const a = rng.range(0, TAU);
+      const rr = chamber.r * rng.range(0.63, 1.0);
+      const x = chamber.x + Math.cos(a) * rr;
+      const z = chamber.z + Math.sin(a) * rr;
+      if (!clearOfPath(x, z)) continue;
+      push(x, chamber.y + rng.range(0.02, 0.26), z);
+    }
+  }
+  if (!pos.length) return;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(phase, 1));
+  geometry.setAttribute('aSpan', new THREE.Float32BufferAttribute(span, 1));
+  geometry.setAttribute('aRate', new THREE.Float32BufferAttribute(rate, 1));
+  geometry.setAttribute('aSway', new THREE.Float32BufferAttribute(sway, 1));
+  const material = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: true,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uFog: { value: 0.055 },
+      uSize: { value: 17.0 },
+      uOpacity: { value: 0.20 },
+      uTint: { value: new THREE.Color(0x4d616a) },
+    },
+    vertexShader: `
+      attribute float aPhase;
+      attribute float aSpan;
+      attribute float aRate;
+      attribute float aSway;
+      varying float vAlpha;
+      uniform float uTime;
+      uniform float uFog;
+      uniform float uSize;
+      void main(){
+        float u = fract(uTime * aRate + aPhase);
+        vec3 p = position;
+        p.y += u * aSpan;
+        p.x += sin(uTime * ${SWAY_A.toFixed(6)} + aPhase * ${TAU.toFixed(6)}) * 0.22 * aSway;
+        p.z += cos(uTime * ${SWAY_B.toFixed(6)} + aPhase * ${TAU.toFixed(6)}) * 0.18 * aSway;
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        float d = -mv.z;
+        float fog = exp(-(uFog * d) * (uFog * d));
+        // in off the floor, gone before the top of its own span
+        float life = smoothstep(0.0, 0.22, u) * (1.0 - smoothstep(0.52, 1.0, u));
+        vAlpha = life * fog;
+        gl_PointSize = clamp(uSize * (44.0 / max(1.0, d)), 1.0, 68.0);
+        // LOAD-BEARING, not a nicety: a zero point size rasterizes nothing, so
+        // every puff the fog has already killed costs vertex work only.
+        gl_PointSize *= step(0.004, vAlpha);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying float vAlpha;
+      uniform vec3 uTint;
+      uniform float uOpacity;
+      void main(){
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        if (d > 1.0) discard;
+        float core = pow(max(0.0, 1.0 - d), 2.4);
+        gl_FragColor = vec4(uTint, core * uOpacity * vAlpha);
+      }
+    `,
+  });
+  const points = new THREE.Points(geometry, material);
+  points.name = 'underfalls low steam';
+  points.frustumCulled = false;   // the vertex shader displaces every puff
+  markUnderfalls(points);
+  game.scene.add(points);
+  state.steam = points;
+}
+
+// ------------------------------------------------------------- ceiling drips
+//
+// The drip SOUND has been playing for rounds with nothing to see: director.js
+// fires audio.caveDrip on a 2.7/4.05/3.25/4.8 s cadence around route nodes and
+// chamber centres, and nothing has ever fallen. These are the drops that sound
+// has been waiting for. Two points per site -- the bead and its splash -- one
+// draw call, all motion in the vertex shader off one clock.
+//
+// Every site lands ON the wet ribbon on purpose. A splash in the black gutter
+// either side is a splash nobody sees; on the district's one pale surface it
+// reads.
+//
+// HEADROOM IS CLAMPED, NOT ASSUMED. The route roof is one slab per leg placed
+// at the leg's AVERAGE elevation, while a site takes the LOCAL one, so on the
+// sluice rise (1.6 m of climb over 10.8 m) an unclamped 4.4 m site would start
+// inside or above the rock. Each site's fall is capped 0.15 m below its own
+// leg's roof underside, and below the chamber vault where one hangs lower.
+function buildCeilingDrips(game, layout, state) {
+  const rng = new RNG(0x0d719b3d);
+  const segs = layout.mainSegments;
+  const last = segs[segs.length - 1];
+  const total = last.distance + last.length;
+  const SITES = 29;
+  const sites = [];
+  const pos = [], kind = [], phase = [], period = [], fall = [];
+  for (let i = 0; i < SITES; i++) {
+    const s = (i + 0.5) * (total / SITES);
+    let seg = last;
+    for (const c of segs) { if (s <= c.distance + c.length) { seg = c; break; } }
+    const t = clamp((s - seg.distance) / (seg.length || 1), 0, 1);
+    const nx = seg.dz / seg.length, nz = -seg.dx / seg.length;
+    const w = lerp(seg.a.w, seg.b.w, t);
+    const off = rng.range(-0.72, 0.72) * ribbonHalfWidth(w);
+    const x = seg.a.x + seg.dx * t + nx * off;
+    const z = seg.a.z + seg.dz * t + nz * off;
+    const y = lerp(seg.a.y, seg.b.y, t);
+    let ceiling = (seg.a.y + seg.b.y) * 0.5 + ROUTE_ROOF_UNDER;
+    for (const chamber of layout.chambers) {
+      if (Math.hypot(x - chamber.x, z - chamber.z) > chamber.r * 0.96) continue;
+      ceiling = Math.min(ceiling, chamber.y + (chamber.name === 'drowned pump chapel'
+        ? CHAPEL_VAULT_UNDER : CHAMBER_VAULT_UNDER));
+    }
+    const headroom = Math.min(rng.range(3.3, 4.4), ceiling - y - 0.15);
+    // quantised so the ten-minute clock wrap lands on a cycle boundary
+    const per = WATER_WRAP / Math.round(WATER_WRAP / rng.range(2.6, 6.2));
+    const ph = rng.float();
+    if (headroom < 1.2) continue;
+    sites.push({
+      x, z, period: per, phase: ph, lastCycle: -1,
+      fallFrac: Math.sqrt(2 * headroom / DRIP_G) / per,
+      landing: new THREE.Vector3(x, y + 0.05, z),
+    });
+    for (const k of [0, 1]) {
+      pos.push(x, y + 0.035, z);
+      kind.push(k); phase.push(ph); period.push(per); fall.push(headroom);
+    }
+  }
+  if (!sites.length) return;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geometry.setAttribute('aKind', new THREE.Float32BufferAttribute(kind, 1));
+  geometry.setAttribute('aPhase', new THREE.Float32BufferAttribute(phase, 1));
+  geometry.setAttribute('aPeriod', new THREE.Float32BufferAttribute(period, 1));
+  geometry.setAttribute('aFall', new THREE.Float32BufferAttribute(fall, 1));
+  const material = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, depthTest: true,
+    blending: THREE.AdditiveBlending, toneMapped: false,
+    uniforms: {
+      uTime: { value: 0 },
+      uFog: { value: 0.055 },
+      uSize: { value: 5.5 },
+      uOpacity: { value: 0.62 },
+    },
+    vertexShader: `
+      attribute float aKind;
+      attribute float aPhase;
+      attribute float aPeriod;
+      attribute float aFall;
+      varying float vAlpha;
+      varying float vKind;
+      uniform float uTime;
+      uniform float uFog;
+      uniform float uSize;
+      void main(){
+        float fallT = sqrt(2.0 * aFall / ${DRIP_G.toFixed(2)});
+        float fallFrac = fallT / aPeriod;
+        float fr = fract(uTime / aPeriod + aPhase);
+        vec3 p = position;
+        vKind = aKind;
+        float a = 0.0;
+        float grow = 1.0;
+        if (aKind < 0.5) {
+          float tt = fr * aPeriod;
+          p.y += max(0.0, aFall - 0.5 * ${DRIP_G.toFixed(2)} * tt * tt);
+          a = step(fr, fallFrac) * smoothstep(0.0, 0.07, fr / max(fallFrac, 0.0001));
+          // the bead fattens as it accelerates: a crude motion smear, and the
+          // only thing that makes a 9 m/s drop legible without a streak quad
+          grow = 1.0 + 0.9 * clamp(fr / max(fallFrac, 0.0001), 0.0, 1.0);
+        } else {
+          float since = (fr - fallFrac) * aPeriod;
+          a = step(0.0, since) * (1.0 - smoothstep(0.0, 0.30, since));
+          grow = 2.3;
+        }
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        float d = -mv.z;
+        float fog = exp(-(uFog * d) * (uFog * d));
+        vAlpha = a * fog;
+        gl_PointSize = clamp(uSize * grow * (44.0 / max(1.0, d)), 1.0, 26.0);
+        gl_PointSize *= step(0.004, vAlpha);
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      varying float vAlpha;
+      varying float vKind;
+      uniform float uOpacity;
+      void main(){
+        float d = length(gl_PointCoord - 0.5) * 2.0;
+        if (d > 1.0) discard;
+        // the bead is a hard little glint; the splash is a soft opening ring
+        float core = vKind < 0.5
+          ? pow(max(0.0, 1.0 - d), 1.4)
+          : smoothstep(0.35, 0.86, d) * (1.0 - smoothstep(0.86, 1.0, d));
+        gl_FragColor = vec4(vec3(0.62, 0.72, 0.76), core * uOpacity * vAlpha);
+      }
+    `,
+  });
+  const points = new THREE.Points(geometry, material);
+  points.name = 'underfalls ceiling drips';
+  points.frustumCulled = false;   // the vertex shader lifts every bead
+  markUnderfalls(points);
+  game.scene.add(points);
+  state.drips = { points, material, sites, cooldown: 0 };
+}
+
 function buildHatchCistern(game, layout, state) {
   const { world, scene, mats: M } = game;
   const H = layout.hatch;
@@ -1487,6 +1963,32 @@ function installBeats(game, layout, state) {
       state.lightsActive = dressed;
       for (const light of state.lights) light.visible = dressed;
     }
+    // Six uniform writes for three whole effects. The clock is wrapped the way
+    // atmosphere.js wraps its own so a long session cannot lose float
+    // precision in fract(); every rate in those shaders is quantised against
+    // this same 600 s so the wrap lands on a cycle boundary, and the drip tick
+    // below wraps identically so the audio never drifts off the splash. Fog is
+    // read live rather than pinned, because a ShaderMaterial gets none of
+    // three's fog chunks and the act change eases scene.fog.density over about
+    // a second. Driven in the DRESSED branch, not after the act line, so the
+    // steam is already moving during the nearMouth pre-dress -- the entrance
+    // must never load in two stages again.
+    const gt = t % WATER_WRAP;
+    if (dressed) {
+      const fogD = game.scene.fog?.density ?? 0.055;
+      if (state.steam) {
+        state.steam.material.uniforms.uTime.value = gt;
+        state.steam.material.uniforms.uFog.value = fogD;
+      }
+      if (state.drips) {
+        state.drips.material.uniforms.uTime.value = gt;
+        state.drips.material.uniforms.uFog.value = fogD;
+      }
+      if (state.pathSheen) {
+        state.pathSheen.material.uniforms.uTime.value = gt;
+        state.pathSheen.material.uniforms.uFog.value = fogD;
+      }
+    }
     // Underfalls is a sealed district, not nine global point lights and a set
     // of machines animating beneath every other act. Pause all of its visual
     // work while the player is elsewhere; the cave resumes from monotonic game
@@ -1516,6 +2018,34 @@ function installBeats(game, layout, state) {
     }
     const player = game.player.pos;
     const choir = game.enemies?.choir;
+    // THE DROP YOU JUST WATCHED LAND. The GPU owns the fall; the CPU only
+    // re-evaluates the same wrap to place the tick. floor(u - fallFrac)
+    // increments exactly at the landing, because the shader's splash begins at
+    // fract(u) == fallFrac. 29 sites, one Math.floor each, per 1/120 step.
+    // (Named DRIPS, not D: the displacement figure below already owns `const
+    // D` in this same block scope, and two of them is a SyntaxError that would
+    // take the whole game down at boot, not just the cave.)
+    const DRIPS = state.drips;
+    if (DRIPS) {
+      DRIPS.cooldown -= dt;
+      for (let i = 0; i < DRIPS.sites.length; i++) {
+        const s = DRIPS.sites[i];
+        const cycle = Math.floor(gt / s.period + s.phase - s.fallFrac);
+        if (cycle === s.lastCycle) continue;
+        // fire only on a true +1 step: entering the district and the t % 600
+        // wrap both jump the index, and both must stay silent
+        const stepped = s.lastCycle >= 0 && cycle === s.lastCycle + 1;
+        s.lastCycle = cycle;
+        if (!stepped || DRIPS.cooldown > 0) continue;
+        const ddx = player.x - s.x, ddz = player.z - s.z;
+        if (ddx * ddx + ddz * ddz > 36) continue;   // 6 m -- dial for chatter
+        DRIPS.cooldown = 2.0;                       // dial for chatter
+        // quieter and higher than the director's blind cave ecology on
+        // purpose: that one is the far, unseen cave; this is the small drop
+        // you just watched land two metres away.
+        game.audio.caveDrip({ pos: s.landing, gain: 0.19, rate: 1.26, verb: 0.82 });
+      }
+    }
     for (let i = 0; i < state.sprayZones.length; i++) {
       const zone = state.sprayZones[i];
       const pulse = state.sprayPulse[i];
@@ -1532,6 +2062,11 @@ function installBeats(game, layout, state) {
         sprayed = true;
         if (state.sluice) state.sluice.sprayKick = 1;
       }
+      // WATER ON THE LENS. Cosmetic only, and deliberately NOT a new spray
+      // zone: adding one would change caveSpray's reveal cadence for the
+      // Choir. It calls nothing on the enemies and reads nothing they own.
+      if (inside && !pulse.inside) game.splashLens?.(0.55);
+      if (inside) game.splashLens?.(dt * 0.6);
       pulse.inside = inside;
       // The Choir walks the player's own breadcrumbs through the same
       // curtains: its OWN crossing lights it (reveal + audio only — no slow,
@@ -1552,6 +2087,23 @@ function installBeats(game, layout, state) {
         // a curtain cannot self-reveal at birth — the warning stays audio-only
         c.inside = true;
       }
+    }
+    // EVERY curtain wets you now, not just the two that happen to be spray
+    // zones. Six slab tests, about forty flops a step, no allocation.
+    for (let i = 0; i < state.curtains.length; i++) {
+      const c = state.curtains[i];
+      const cdx = player.x - c.x, cdz = player.z - c.z;
+      const along = cdx * c.tx + cdz * c.tz;
+      const inCurtain = Math.abs(along) <= c.depth
+        && Math.abs(cdx * c.tz - cdz * c.tx) <= c.half;
+      const was = state.curtainInside[i];
+      state.curtainInside[i] = inCurtain;
+      if (!inCurtain) continue;
+      // the burst is what makes a brisk walk-through read at all: crossing a
+      // 1.8 m slab at walking pace is 0.6 s, and the top-up alone would only
+      // bead the glass after you were already out the other side
+      if (!was) game.splashLens?.(0.30);
+      game.splashLens?.(dt * 0.35);
     }
     if (!state.beats.pump && player.distanceToSquared(state.pump.position) < 11.5 * 11.5) {
       state.beats.pump = true;
@@ -1627,6 +2179,10 @@ export function buildUnderfalls(game) {
     // the CHOIR's own zone edges, tracked separately: its crossings reveal it
     // without touching the player-pulse semantics above
     choirPulse: layout.sprayZones.map(() => ({ inside: false, nextAt: 0 })),
+    // the drawn water sheets you physically walk through, and one edge flag
+    // each so a crossing beads the lens once instead of every step inside
+    curtains: layout.curtains,
+    curtainInside: layout.curtains.map(() => false),
     groundAt(x, z) { return underfallsGroundAt(layout, x, z); },
     contains(x, z, pad = 0) { return underfallsContains(layout, x, z, pad); },
     project(x, z) { return projectUnderfalls(layout, x, z); },
@@ -1648,6 +2204,9 @@ export function buildUnderfalls(game) {
   buildSluice(game, layout, state);
   buildBellCistern(game, layout, state);
   buildSprayDisplacement(game, layout, state);
+  buildPathSheen(game, layout, state);
+  buildLowSteam(game, layout, state);
+  buildCeilingDrips(game, layout, state);
   buildHatchCistern(game, layout, state);
   // The district exists under the exterior coordinates, but none of its
   // chapel, sluice, hatch or spray geometry belongs in an exterior render.
