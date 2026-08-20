@@ -42,7 +42,21 @@ createServer(async (req, res) => {
     if (!file.startsWith(normalize(ROOT))) { res.writeHead(403); return res.end('forbidden'); }
     try { const s = await stat(file); if (s.isDirectory()) file = join(file, 'index.html'); } catch {}
     const body = await readFile(file);
-    res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' });
+    // no-store EVERYWHERE EXCEPT the coda's media. FETCH's own source must never
+    // be cached in dev -- the whole workflow is edit-and-reload, and a cached
+    // src/ file is twenty minutes spent debugging a fix that already landed. But
+    // ending/media/ is 6.0 MB of video that src/main.js deliberately warms one
+    // district early, and a warm fetch into a no-store response populates
+    // nothing: the coda would re-download every byte at the seam, which is the
+    // one thing Alex asked us to prevent.
+    // NOTE: there is still no Range support here (plain readFile + 200). A
+    // <video> that wants to seek is handed the whole file. Fine for 10 s clips
+    // that play start to finish; this is not a general media server.
+    const codaMedia = path.startsWith('/ending/media/');
+    res.writeHead(200, {
+      'content-type': MIME[extname(file)] || 'application/octet-stream',
+      'cache-control': codaMedia ? 'public, max-age=3600' : 'no-store',
+    });
     res.end(body);
   } catch {
     res.writeHead(404, { 'content-type': 'text/plain' });

@@ -28,6 +28,23 @@ const _impV = new THREE.Vector3();
 const OCC_AXES = ['x', 'y', 'z'];   // slab-test order for the E-pick occlusion
 const VERSION = '0.5.0-intruder';
 const GORE_CAP = 64;
+// ---------------------------------------------------------------- the coda
+// His rhythm game -- "FETCH: The True Ending", the one he made with Grok --
+// ships as its own page at ending/. Going there is a real navigation, so this
+// entire Three.js scene dies in one go and the two games never coexist: the
+// coda costs FETCH zero draw calls, zero per-frame CPU and no district budget.
+const CODA_PATH = 'ending/';
+// The seven files the coda plays on, warmed one district early (see _warmCoda).
+// dancer-club is in this list because the coda MOUNTS on it -- its title and
+// its results screen are the club clip -- so it is precisely the media the
+// player is looking at one frame after the seam. Warming the other six and not
+// this one would pay 3.5 MB early and still stall on 2.7 MB at the click.
+const CODA_WARM_FILES = [
+  'media/dancer-club.mp4', 'media/dancer-club.jpg',
+  'media/dancer-stage.mp4', 'media/dancer-stage.jpg',
+  'media/dancer-spin.mp4', 'media/dancer-spin.jpg',
+  'media/skull-close.jpg',
+];
 
 // ------------------------------------------------------------------- input
 class InputState {
@@ -161,6 +178,13 @@ class Game {
     this._lockPending = false;       // a pointer-lock request is in flight
     this._lockEverHeld = false;
     this.longFrames = [];            // ?hitch=1 — every frame over 150 ms
+    this._coda = null;               // the coda's warm-fetch state (see _warmCoda)
+    this._codaLeft = null;           // the URL the hand-off actually left for
+    // location.assign is [LegacyUnforgeable]: no gate can stub it, spy on it or
+    // replace it, and a gate that really navigated would destroy its own page
+    // mid-assertion. Routing the hand-off through a plain field is the only
+    // thing that makes the seam testable at all.
+    this._navigate = (url) => location.assign(url);
     this.goreGeo = new THREE.IcosahedronGeometry(0.08, 0);
     this.goreMat = new THREE.MeshStandardMaterial({ color: 0x3a3236, roughness: 0.75 });   // must read in the dark
 
@@ -815,6 +839,79 @@ class Game {
     return texture === 'ready' || texture === 'degraded' || texture === 'skipped';
   }
 
+  // ---- the coda's bytes, paid for while he is still walking ---------------
+  // His one stated worry about this hand-off was that it lags: "we just have to
+  // make sure the transition between the other stuff doesn't like, lag into
+  // this part or something." The coda is 6.0 MB of video and stills. Nothing
+  // else in FETCH loads at runtime, so if this does not run, every one of those
+  // bytes is downloaded at the exact instant of the click.
+  //
+  // So it is kicked from director._enterCave -- one district before the mirror
+  // room, minutes of Underfalls walking before the ending can even exist. Pay
+  // while he is busy; never at the seam.
+  //
+  // r.blob(), not r.arrayBuffer(). The point is the HTTP cache entry that the
+  // coda's <video src> and <img> read on the next page; blob() lets the browser
+  // keep the bytes where it already put them, while arrayBuffer() would copy
+  // six megabytes into the JS heap of a page that is about to be destroyed.
+  // Nothing is retained here on purpose -- only the sizes, for the gate.
+  //
+  // Fenced end to end. A failed warm is a slower seam, never a broken game:
+  // the coda simply fetches whatever is missing when it mounts.
+  _warmCoda() {
+    if (this._coda) return this._coda;              // one district, one warm
+    const state = this._coda = {
+      status: 'scheduled', total: CODA_WARM_FILES.length,
+      done: 0, failed: 0, bytes: 0, spentMs: 0, files: [], errors: [],
+    };
+    // NOT just TEST_MODE, and this is the whole reason the guard has a comment.
+    // tests/warm-start-regression.mjs boots ?mute=1&hitch=1 -- which is NOT test
+    // mode -- and its tour teleports through 'cave'. An unguarded fetch there
+    // 404s into that gate's check(errors.length === 0) if ending/ is ever
+    // missing, and lands megabytes of real transfer inside its worst-frame-under
+    // -500 ms arrival window either way. HITCH_LOG is exactly the flag that
+    // marks a page which is measuring rather than playing. ?warmup=1 opts back
+    // in -- that is how tests/coda-seam-regression.mjs exercises this at all.
+    if ((TEST_MODE || HITCH_LOG) && !Q.has('warmup')) {
+      state.status = 'skipped';
+      state.reason = TEST_MODE ? 'test-mode' : 'hitch-mode';
+      return state;
+    }
+    let base;
+    try {
+      base = this.codaTarget();
+    } catch (error) {
+      state.status = 'failed';
+      state.errors.push('' + (error && error.message || error));
+      return state;
+    }
+    state.status = 'fetching';
+    const t0 = performance.now();
+    const warmOne = async (name) => {
+      try {
+        const response = await fetch(new URL(name, base).href);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const blob = await response.blob();
+        state.bytes += blob.size;
+        state.files.push({ name, bytes: blob.size });
+        state.done += 1;
+      } catch (error) {
+        state.failed += 1;
+        state.errors.push(name + ': ' + (error && error.message || error));
+      }
+    };
+    try {
+      Promise.all(CODA_WARM_FILES.map(warmOne)).then(() => {
+        state.spentMs = +(performance.now() - t0).toFixed(1);
+        state.status = state.failed ? 'partial' : 'ready';
+      });
+    } catch (error) {
+      state.status = 'failed';
+      state.errors.push('' + (error && error.message || error));
+    }
+    return state;
+  }
+
   // ------------------------------------------------- first-draw warm-up
   // THE OTHER HALF OF THE FREEZE, and the older half. compile() links a program
   // and initTexture() uploads pixels — but ANGLE/D3D11 does the rest of its work
@@ -1228,7 +1325,10 @@ class Game {
       sr: document.getElementById('srState'),
     };
     this.el.title.addEventListener('click', (event) => {
-      if (this.flags.has('ended')) { location.reload(); return; }
+      // THE SEAM. This click used to reload FETCH, and was the player's only
+      // exit -- restartFromCheckpoint refuses once 'ended' is set. It hands off
+      // to his coda now; the coda owes them a door back to ../ and has one.
+      if (this.flags.has('ended')) { this._leaveForCoda(); return; }
       if (event.target.closest('[data-action="start"]')) this.startGame();
     });
     this.el.die.addEventListener('click', () => {
@@ -1704,6 +1804,30 @@ class Game {
     t.classList.remove('hidden');
     this._syncPauseUi();
     document.exitPointerLock && document.exitPointerLock();
+  }
+
+  // Relative, exactly like index.html's own <script src="src/main.js">: FETCH
+  // is served from / here and from /fetch/ on the live site, and one relative
+  // hop resolves correctly in both. Anything absolute would be wrong in one.
+  codaTarget() { return new URL(CODA_PATH, location.href).href; }
+
+  // The hand-off itself. Everything about FETCH stops existing the moment this
+  // navigation commits -- scene, renderer, audio graph, tickers, the RAF loop --
+  // so there is nothing to tear down by hand and nothing left to leak.
+  //
+  // Audio is suspended first anyway: the click can land in the ~2.25 s between
+  // showEnd() and _finishEnd(), when the ending beats are still scheduled and
+  // the context is still running. One less thing for the browser to unwind
+  // underneath the coda's own AudioContext.
+  //
+  // It navigates through this._navigate for the [LegacyUnforgeable] reason
+  // given in the constructor; that field is the only seam a gate can hold.
+  _leaveForCoda() {
+    const url = this.codaTarget();
+    this._codaLeft = url;
+    try { this.audio.stopAll({ suspend: true }); } catch { /* the page is going anyway */ }
+    this._navigate(url);
+    return url;
   }
 
   _finishEnd() {
@@ -2247,6 +2371,17 @@ class Game {
         };
       },
       hitches() { return g.longFrames.slice(); },
+      // The coda hand-off, readable from a gate: where it goes, whether the
+      // click has fired, and how the one-district-early warm actually did.
+      coda() {
+        const warm = g._coda;
+        return {
+          target: g.codaTarget(),
+          left: g._codaLeft,
+          warm: warm ? { ...warm, files: warm.files.slice(), errors: warm.errors.slice() } : null,
+        };
+      },
+      codaTarget() { return g.codaTarget(); },
       pause(reason = 'debug') { return g.pauseGame(reason); },
       resume() { return g.resumeGame(); },
       restartCheckpoint() { return g.restartFromCheckpoint(); },
