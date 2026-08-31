@@ -149,6 +149,7 @@ class InputState {
 // -------------------------------------------------------------------- game
 class Game {
   constructor() {
+    this._bootStartedAt = performance.now();
     this.act = 'bedroom';
     this.flags = new Set();
     this.keys = new Set();          // held key-items (rarely used; teeth carry keys)
@@ -877,6 +878,20 @@ class Game {
     this._forceShaderWarmupNow();
     if (this._shaderWarmupCreated) await this._shaderWarmupCreated;
     if (!this.textureWarmup) this._warmTexturesNow();
+    // compile() is allowed to return while ANGLE is still linking on its own
+    // threads. Drawing in that interval turns the background work back into a
+    // multi-second foreground freeze. Keep the DOM title alive and poll the
+    // non-blocking KHR status until a world draw is safe.
+    if (!this._bootRenderReady()) {
+      await new Promise((resolve) => {
+        const poll = () => {
+          if (this.terminal || this._bootRenderReady()) resolve();
+          else requestAnimationFrame(poll);
+        };
+        requestAnimationFrame(poll);
+      });
+    }
+    if (!this.terminal && this._bootRenderReady()) this._markBootReady();
   }
 
   _warmGateSettled() {
@@ -885,6 +900,26 @@ class Game {
     if (shader !== 'created' && shader !== 'ready' && shader !== 'degraded') return false;
     const texture = this.textureWarmup?.status;
     return texture === 'ready' || texture === 'degraded' || texture === 'skipped';
+  }
+
+  // The title is HTML and can keep moving while WebGL links off-thread. A 3D
+  // draw may begin only after BOTH the authored warm coverage exists and the
+  // driver says those programs have settled. This is deliberately separate
+  // from _warmGateSettled(): _warmDrawTick uses that first half before doing
+  // the same link poll itself.
+  _bootRenderReady() {
+    return this._warmGateSettled() && this._warmLinksSettled();
+  }
+
+  _markBootReady() {
+    if (this._bootReady) return;
+    this._bootReady = true;
+    this.bootReadyMs = performance.now() - this._bootStartedAt;
+    const title = this.el?.title;
+    if (title) {
+      title.classList.remove('booting');
+      title.setAttribute('aria-busy', 'false');
+    }
   }
 
   // ---- the coda's bytes, paid for while he is still walking ---------------
@@ -1574,7 +1609,7 @@ class Game {
     this._entering = true;
     this._pressedAt = performance.now();
     this._acknowledgeStart();
-    if (this._warmGateSettled()) { this._enterGame(); return; }
+    if (this._bootRenderReady()) { this._markBootReady(); this._enterGame(); return; }
     this.entryPromise = this._warmGate()
       .catch(() => {})                  // a degraded warm pass still enters
       .then(() => { if (!this.terminal) this._enterGame(); });
@@ -2333,6 +2368,16 @@ class Game {
         if (!this.terminal) requestAnimationFrame(tick);
         return;
       }
+      // Before play, the title is the frame. Do not force a WebGL draw merely
+      // because RAF fired: that would synchronously wait on background shader
+      // links and make the animated title look frozen. Tests skip the warm pass
+      // and fall through immediately; production keeps polling without drawing.
+      if (!this.started && !this._bootRenderReady()) {
+        acc = 0;
+        if (!this.terminal) requestAnimationFrame(tick);
+        return;
+      }
+      if (!this.started) this._markBootReady();
       // Ahead of every render path, and cheap by construction: it spends a
       // fixed few milliseconds and stops. Behind the title it runs at a wide
       // budget because nothing there can be spoiled by a long frame; in play it
@@ -2427,6 +2472,8 @@ class Game {
             ? { status: g._warmLinks.status, linked: g._warmLinks.cursor, total: g._warmLinks.total ?? 0, pollMs: g._warmLinks.pollMs, settledMs: g._warmLinks.settledMs ?? null }
             : null,
           settled: g._warmGateSettled(),
+          renderReady: g._bootRenderReady(),
+          bootReadyMs: g.bootReadyMs ?? null,
           entryLatencyMs: g.entryLatencyMs ?? null,
           programsAtEntry: g._programsAtEntry ?? null,
           programsNow: g.renderer.info.programs.length,
@@ -2658,16 +2705,26 @@ async function runAutotest(game) {
 }
 
 // ----------------------------------------------------------------- launch
-const game = new Game();
-window.__game = game;
-if (TEST_MODE) {
-  game._selfStep = false;
-  game.run();
-  if (Q.has('autotest')) runAutotest(game).catch((e) => {
-    document.body.dataset.autotestDetails = JSON.stringify([{ name: 'suite-crashed', passed: false, error: String(e) }]);
-    document.body.dataset.autotestResult = 'fail';
-    console.error(e);
-  });
-} else {
-  game.run();
-}
+// Let the parsed title reach the compositor before world construction takes
+// its one unavoidable main-thread turn. Without this yield, a cold first visit
+// can finish parsing the beautiful loading frame and then block for seconds
+// before the browser ever paints it. The start control is disabled in markup
+// for precisely these two frames and the constructor; once its listener exists
+// it becomes a real early press that the warm gate can acknowledge.
+requestAnimationFrame(() => requestAnimationFrame(() => {
+  const game = new Game();
+  window.__game = game;
+  const start = document.querySelector('#title [data-action="start"]');
+  if (start) start.disabled = false;
+  if (TEST_MODE) {
+    game._selfStep = false;
+    game.run();
+    if (Q.has('autotest')) runAutotest(game).catch((e) => {
+      document.body.dataset.autotestDetails = JSON.stringify([{ name: 'suite-crashed', passed: false, error: String(e) }]);
+      document.body.dataset.autotestResult = 'fail';
+      console.error(e);
+    });
+  } else {
+    game.run();
+  }
+}));

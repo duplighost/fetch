@@ -394,7 +394,81 @@ try {
       },
     );
 
-    return { checks, diagnostics: { earlierZone: earlierZone?.zone.name ?? null, barrierStop } };
+    // THE LATE PULL: inspect the real resolver, then advance only its own
+    // presentation clock. This is intentionally in the existing progression
+    // page so protecting the helper does not buy another expensive GPU boot.
+    g.dead = false;
+    g.paused = false;
+    g.enemies.clear();
+    F.teleport('house');
+    for (const flag of ['stairsOpen', 'gotStairKey', 'voidDoorTried', 'windowRelaySolved', 'ateFlame']) {
+      g.flags.delete(flag);
+    }
+    g.skull.dropCarry?.();
+    g.skull.holdNow();
+    const firstGuide = g.director._guidanceCandidates().map((item) => item.id);
+    check(
+      'wordless guidance names only the mandatory stair key at the first house gate',
+      firstGuide.length === 1 && firstGuide[0] === 'stairKey',
+      firstGuide,
+    );
+
+    g.flags.add('stairsOpen');
+    g.flags.add('voidDoorTried');
+    const relayGuide = g.director._guidanceCandidates();
+    const relayIds = relayGuide.map((item) => item.id);
+    const relayPoint = relayGuide[0]
+      ? g.director._guidancePoint(relayGuide[0], g.director._guidePoint).clone()
+      : null;
+    check(
+      'after the sealed door answers, the next late pull selects the relay mooring',
+      relayIds.length === 1 && relayIds[0] === 'livingWindowMooring',
+      relayIds,
+    );
+    check(
+      'an objective on another floor first resolves through the stair mouth',
+      !!relayPoint && Math.abs(relayPoint.x - 1) < 0.01 && Math.abs(relayPoint.z + 8.75) < 0.01,
+      relayPoint?.toArray?.() ?? null,
+    );
+
+    g.director._guide.scanT = 0;
+    g.director._updateGuidance(0.25);            // establish objective signature
+    g.director._guide.age = 73;
+    g.director._updateGuidance(0.01);
+    const calmPull = {
+      id: g.director._guide.activeId,
+      strength: g.skull.guideStrength,
+    };
+    check(
+      'a stable unresolved objective earns a bounded pulse only after the grace period',
+      calmPull.id === 'livingWindowMooring' && calmPull.strength > 0 && calmPull.strength <= 1,
+      calmPull,
+    );
+    g.skull.setThreat(1, g.skull.threatDir);
+    g.director._updateGuidance(0.01);
+    check(
+      'threat immediately suppresses wayfinding so combat expression stays sovereign',
+      g.skull.guideStrength === 0 && g.director._guide.activeId === null,
+      { strength: g.skull.guideStrength, activeId: g.director._guide.activeId },
+    );
+    g.skull.setThreat(0, g.skull.threatDir);
+
+    F.teleport('clearing');
+    g.flags.delete('fallsThawed');
+    g.flags.delete('fallsFireEast');
+    if (g.frozenFalls) g.frozenFalls.wheelSolved = false;
+    const clearingGuide = g.director._guidanceCandidates().map((item) => item.id).sort();
+    check(
+      'the two clearing machines remain an order-free guidance cluster',
+      clearingGuide.length === 2
+        && clearingGuide[0] === 'fallsPlate' && clearingGuide[1] === 'fallsWheel',
+      clearingGuide,
+    );
+
+    return {
+      checks,
+      diagnostics: { earlierZone: earlierZone?.zone.name ?? null, barrierStop, firstGuide, relayIds, calmPull, clearingGuide },
+    };
   });
 
   await scenario('input-and-no-hud', () => {

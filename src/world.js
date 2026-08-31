@@ -1117,13 +1117,19 @@ export class World {
   }
 
   freezeMoonShadow(renderer, scene, camera) {
-    renderer.shadowMap.needsUpdate = true;
-    renderer.render(scene, camera);
-    // Freeze the MOON only. This used to switch renderer.shadowMap.autoUpdate
-    // off globally, from the bedroom, at boot — which baked the house's shadow
-    // map forever and meant nothing in the rest of the game could ever cast a
-    // shadow again, including the light the player carries in their hands.
-    if (this.moon) this.moon.shadow.autoUpdate = false;
+    if (!this.moon) return;
+    // Arm exactly one moon-shadow update on the first REAL world frame. The old
+    // version called renderer.render() here, inside Game's constructor, before
+    // the controlled warm pass had even been scheduled. On ANGLE/D3D11 that
+    // cold draw asked the driver about hundreds of unlinked programs and held
+    // the main thread for nine seconds before the title could answer at all.
+    //
+    // LightShadow owns the same one-shot pair as the global shadow map: with
+    // autoUpdate false and needsUpdate true, three renders this light once and
+    // clears the request. Other shadow casters remain live, and no gameplay
+    // frame, camera, light census or baked result changes.
+    this.moon.shadow.autoUpdate = false;
+    this.moon.shadow.needsUpdate = true;
   }
 
   _buildCandlePool() {
