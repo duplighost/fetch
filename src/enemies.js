@@ -3,6 +3,7 @@
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
 import { clamp, lerp, damp, hash2, smoothstep, TAU } from './util.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const KIND = {
   walker: {
@@ -274,10 +275,27 @@ FIGURE_GEO.malformedSlab = malformShared(FIGURE_GEO.slab, 0.12, 18.2);
   jaw.lineTo(-0.055, -0.035);
   jaw.closePath();
   FIGURE_GEO.walkerJaw = new THREE.ShapeGeometry(jaw, 2);
+
+  // One shared, merged lower body per walker: two mismatched shins and feet
+  // break the old floating-poncho silhouette without multiplying graveyard
+  // draw calls or entering the gait/hit-volume contracts.
+  const leftShin = new THREE.CylinderGeometry(0.075, 0.11, 0.72, 5);
+  leftShin.rotateZ(-0.1);
+  leftShin.translate(-0.17, 0.34, -0.015);
+  const rightShin = new THREE.CylinderGeometry(0.09, 0.12, 0.62, 5);
+  rightShin.rotateZ(0.16);
+  rightShin.translate(0.16, 0.29, -0.035);
+  const leftFoot = new THREE.BoxGeometry(0.19, 0.1, 0.34);
+  leftFoot.rotateY(-0.14);
+  leftFoot.translate(-0.2, 0.045, 0.1);
+  const rightFoot = new THREE.BoxGeometry(0.22, 0.11, 0.29);
+  rightFoot.rotateY(0.2);
+  rightFoot.translate(0.19, 0.05, 0.075);
+  FIGURE_GEO.walkerLegs = mergeGeometries([leftShin, rightShin, leftFoot, rightFoot]);
 }
 const GLINT_MAT = new THREE.MeshBasicMaterial({ color: 0xe8ecef });
 const WALKER_BONE_MAT = new THREE.MeshStandardMaterial({
-  color: 0x716f67, roughness: 0.96, metalness: 0, flatShading: true,
+  color: 0x55554f, roughness: 0.96, metalness: 0, flatShading: true,
   side: THREE.DoubleSide,
 });
 const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x39343b });
@@ -540,6 +558,8 @@ function buildWalker(g, mat, limbs) {
   // against it. Forearms live outside that outline even before the lunge.
   const shroud = addPart(g, FIGURE_GEO.walkerShroud, mat,
     0, 0.91, -0.17, 1.06, 1.05, 2.25, -0.13, 0, -0.035);
+  addPart(g, FIGURE_GEO.walkerLegs, WALKER_WRAP_MAT,
+    0, 0, -0.055, 1, 1, 1, 0, 0, -0.035);
   addPart(g, FIGURE_GEO.walkerPallFold, WALKER_FOLD_MAT,
     -0.035, 0.91, -0.073, 1.06, 1.02, 1, -0.03, 0, -0.07);
   addPart(g, FIGURE_GEO.sphere, mat,
@@ -555,7 +575,7 @@ function buildWalker(g, mat, limbs) {
   head.position.set(0.045, 1.75, 0.16);
   head.rotation.set(-0.14, 0, 0.19);
   addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
-    0, 0, 0, 0.84, 0.84, 1.08, 0, 0.03, -0.025);
+    0, 0, 0, 0.78, 0.8, 1.04, 0, 0.03, -0.025);
   const mouth = addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
     0.005, -0.145, 0.045, 0.64, 0.48, 1, 0, 0, -0.08);
   const jaw = addPart(head, FIGURE_GEO.walkerJaw, WALKER_BONE_MAT,
@@ -626,7 +646,7 @@ function buildResident(g, mat, limbs) {
     0.075, 1.04, 0.382, 0.042, 0.14, 0.035, 0, 0, Math.PI / 2 - 0.19);
 
   const head = new THREE.Group();
-  head.position.set(0.1, 1.79, 0.1);
+  head.position.set(0.09, 1.75, 0.1);
   head.rotation.set(-0.18, 0.06, -0.2);
   addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.23, 0.28, 0.2, 0.02);
   addPart(head, FIGURE_GEO.malformedSlab, mat, 0.015, -0.2, 0.045, 0.2, 0.13, 0.15, -0.04, 0, 0.08);
@@ -635,10 +655,10 @@ function buildResident(g, mat, limbs) {
   // lintel: the same shared dimensional mask as the walkers, smaller, split by
   // a real void and lit only by the player's existing skull lamp.
   addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
-    0.01, -0.015, 0.17, 0.58, 0.62, 0.76, 0.01, 0.05, -0.08);
+    0.01, -0.02, 0.17, 0.51, 0.57, 0.74, 0.01, 0.05, -0.1);
   addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
-    0.015, -0.12, 0.305, 0.48, 0.34, 0.72, 0, 0.02, -0.1);
-  addEyes(head, 0.072, 0.035, 0.31, 0.014, 0.009);
+    0.015, -0.12, 0.305, 0.41, 0.3, 0.7, 0, 0.02, -0.12);
+  addEyes(head, 0.064, 0.025, 0.31, 0.011, 0.008);
   g.add(head);
 
   for (const s of [-1, 1]) {
