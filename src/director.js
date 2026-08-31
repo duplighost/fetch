@@ -101,6 +101,17 @@ export class Director {
     this._companyPending = 0;
     this._chaser1 = null;          // null | 'scheduled' | 'spawned'
     this._chaser2 = null;
+    // Progress-sensitive, wordless help. Seventy-two unchanged seconds earn a
+    // six-second lean, followed by twelve seconds of rest. A cluster can have
+    // several valid next jobs; the nearest is selected once and held until the
+    // underlying objective set changes, which prevents multi-floor twitching.
+    this._guide = {
+      age: 0, scanT: 0, signature: '', candidates: [], lockedId: null,
+      activeId: null, strength: 0,
+    };
+    this._guidePoint = new THREE.Vector3();
+    this._guideFrom = new THREE.Vector3();
+    this._guideDir = new THREE.Vector3();
   }
 
   after(t, fn, { global = false } = {}) {
@@ -435,6 +446,7 @@ export class Director {
     this._updateGesture(dt);
     this._updateCaveHorror(dt);
     this._updateSilence(dt);
+    this._updateGuidance(dt);
 
     // the ravine takes what falls in it
     if (g.act === 'forest' && g.player.pos.y < -4 && !g.dead) this.death(null);
@@ -452,6 +464,254 @@ export class Director {
     // fear display: vignette breathes with tension; fog eases toward the act's density
     g.fx.fear = damp(g.fx.fear,
       clamp(Math.max(this.dread * 0.4, g.lastThreat || 0, g.baseTension * 0.7), 0, 0.85), 2.2, dt);
+  }
+
+  // ------------------------------------------------------- lost-player pull
+  _guideFetch(id) {
+    const target = this.game.world.fetchTargets.find((item) => item.id === id && item.enabled !== false);
+    return target ? { id, target } : null;
+  }
+
+  _guideFetchPrefix(prefix) {
+    return this.game.world.fetchTargets
+      .filter((item) => item.enabled !== false && item.id.startsWith(prefix))
+      .map((target) => ({ id: target.id, target }));
+  }
+
+  _guideInteract(id) {
+    const object = this.game.world.interactables.find((item) => {
+      const inter = item.userData?.inter;
+      return inter?.id === id && inter.enabled !== false;
+    });
+    return object ? { id: `use:${id}`, object } : null;
+  }
+
+  _guideObject(id, object) {
+    return object ? { id, object } : null;
+  }
+
+  _guideStatic(id, point) {
+    return point ? { id, point } : null;
+  }
+
+  _guidanceCandidates() {
+    const g = this.game;
+    const one = (...items) => items.filter(Boolean);
+    const has = (flag) => g.flags.has(flag);
+    const carried = g.skull?.carry?.id || null;
+
+    if (g.act === 'bedroom') {
+      // Before the bell there is no skull to gesture. After the catch, the
+      // opening remains its exact two physical statements: tree, then lock.
+      if (g.skull?.mode !== 'held' || g.skull.introFlicker) return [];
+      if (!has('bedroomOpen')) {
+        return one(carried === 'bedroomKey' || has('gotBedroomKey')
+          ? this._guideFetch('bedroomLock')
+          : this._guideFetch('treeKey'));
+      }
+      return one(this._guideObject('bedroom:doorway', g.world.doorById.bedroomDoor?.group));
+    }
+
+    if (g.act === 'house') {
+      if (!has('stairsOpen')) {
+        return one(carried === 'stairKey' || has('gotStairKey')
+          ? this._guideFetch('stairLock')
+          : this._guideFetch('stairKey'));
+      }
+      if (!has('windowRelaySolved')) {
+        // First let the sealed door state its problem; only then does the pull
+        // follow the answer it physically sent along the window mechanism.
+        return one(has('voidDoorTried')
+          ? this._guideFetch('livingWindowMooring')
+          : this._guideFetch('voidDoor'));
+      }
+      if (!has('ateFlame')) return one(this._guideFetch('guestFlame'));
+      if (!has('cellarBoardsCleared')) return this._guideFetchPrefix('board');
+      return one(this._guideObject('house:cellar-door', g.world.doorById.cellarDoor?.group));
+    }
+
+    if (g.act === 'basement') {
+      if (has('hatchUnlocked')) return one(this._guideInteract('hatch'));
+      if (carried === 'hatchKey' || has('gotHatchKey')) return one(this._guideFetch('hatchLock'));
+      if (has('fireRefused')) return one(this._guideFetch('hatchKey'));
+
+      const work = [];
+      if (!has('pilotLit')) work.push(this._guideFetch('basementPilotFlame'));
+      if (!has('crawlSecretSolved')) work.push(this._guideFetch('crawlCounterweightCradle'));
+      if (has('crawlSecretSolved') && !has('pumpGalleryLatched')) {
+        work.push(this._guideFetch('pumpWinchCradle'));
+      }
+      if (has('pumpGalleryLatched') && !has('archiveDraftOpened')) {
+        work.push(this._guideFetch('archiveDraftLamp'));
+      }
+      const unresolved = work.filter(Boolean);
+      if (unresolved.length) return unresolved;
+      if (!g.incinerator?.doorOpen) return one(this._guideInteract('incineratorDoor'));
+      return one(this._guideFetch('firebox'));
+    }
+
+    if (g.act === 'graveyard') {
+      const resolved = has('graveyardResolved') || has('graveyardCleared');
+      if (!resolved) {
+        const credits = this.graveRitual?.credits || new Set();
+        // Combat and the resonant rite are both complete solutions. The skull
+        // never points at a body; in a quiet lull it can disclose one of the
+        // three already-authored funeral instruments instead.
+        return [0, 1, 2]
+          .filter((index) => !credits.has(index))
+          .map((index) => this._guideFetch(`resonantGrave:${index + 1}`))
+          .filter(Boolean);
+      }
+
+      if (/^gateKey[123]$/.test(carried || '')) return one(this._guideFetch('gateSockets'));
+      if (has('graveyardCleared')) {
+        return one(this._guideStatic('graveyard:forest-gate', new THREE.Vector3(FOREST_GATE.x, 1.2, FOREST_GATE.z)));
+      }
+
+      if (g.ossuary?.inOssuary) {
+        if (!has('ossuaryKennelSolved')) return one(this._guideFetch('ossuaryKennelCradle'));
+        if (!has('ossuaryCleared')) return one(this._guideFetch('ossuaryCounterweight'));
+        if (!has('gotgateKey1')) return one(this._guideFetch('gateKey1'));
+        return one(this._guideInteract('ossuaryClimbBack'));
+      }
+      if (g.marrow?.inMarrow) {
+        if (!g.marrow.yielded) return one(this._guideObject('marrow:guardian', g.marrow.presence));
+        if (!has('gotgateKey2')) return one(this._guideFetch('gateKey2'));
+        return one(this._guideInteract('marrowAscend'));
+      }
+
+      // Once the funeral resolves, all three errands are legitimate in any
+      // order. Only unbanked routes participate; nearest wins after the grace.
+      const routes = [];
+      if (!has('gateKeyBanked:1') && !has('gotgateKey1')) {
+        routes.push(has('ossuaryCleared') ? this._guideFetch('gateKey1') : this._guideInteract('ossuaryDescend'));
+      }
+      if (!has('gateKeyBanked:2') && !has('gotgateKey2')) {
+        routes.push(this._guideInteract('marrowDescend'));
+      }
+      if (!has('gateKeyBanked:3') && !has('gotgateKey3')) {
+        routes.push(this._guideFetch(g.keyTreeClimb?.hit ? 'gateKey3' : 'keyTreeBranch'));
+      }
+      return routes.filter(Boolean);
+    }
+
+    if (g.act === 'forest') {
+      const tree = this._guideFetch('fallenTree');
+      if (tree) return [tree];
+      const rope = this._guideFetch('ravineRope');
+      if (rope) return [rope];
+      if (g.forest?.project && g.forest?.posAt) {
+        const projection = g.forest.project(g.player.pos.x, g.player.pos.z);
+        return [this._guideStatic('forest:path', g.forest.posAt(projection.s + 12))];
+      }
+      return [];
+    }
+
+    if (g.act === 'clearing') {
+      if (!has('fallsThawed')) {
+        return one(
+          g.frozenFalls?.wheelSolved ? null : this._guideFetch('fallsWheel'),
+          has('fallsFireEast') ? null : this._guideFetch('fallsPlate'),
+        );
+      }
+      return one(this._guideFetch('waterfall'));
+    }
+
+    // The skull is absent in the cave, and the finale owns its own gaze.
+    return [];
+  }
+
+  _guidancePoint(candidate, out) {
+    if (!candidate) return null;
+    if (candidate.point) out.copy(candidate.point);
+    else if (candidate.target?.object?.getWorldPosition) candidate.target.object.getWorldPosition(out);
+    else if (candidate.target?.pos) out.copy(candidate.target.pos);
+    else if (candidate.object?.getWorldPosition) candidate.object.getWorldPosition(out);
+    else return null;
+
+    // A target on another floor does not ask the skull to point through the
+    // ceiling. It first leans toward the authored stair mouth and only resumes
+    // the exact target once player and target share a level.
+    const g = this.game;
+    if (g.act === 'house') {
+      // Compare authored LEVELS, not raw Y distance. A ground-floor target's
+      // world point is commonly at chest height (~1.7 m), while the player's
+      // first-floor capsule stands at 3.6 m: subtracting those says 1.9 m and
+      // falsely calls them co-planar. The floor bands are unambiguous here.
+      const playerUpstairs = g.player.pos.y > 2.4;
+      const targetUpstairs = out.y > 2.8;
+      if (playerUpstairs === targetUpstairs) return out;
+      if (playerUpstairs) out.set(1.0, 4.25, -8.75);
+      else out.set(1.0, 1.15, -9.15);
+    }
+    return out;
+  }
+
+  _updateGuidance(dt) {
+    const g = this.game;
+    const state = this._guide;
+    state.scanT -= dt;
+    if (state.scanT <= 0) {
+      state.scanT = 0.25;
+      state.candidates = this._guidanceCandidates();
+      const signature = `${g.act}|${state.candidates.map((item) => item.id).sort().join('|')}`;
+      if (signature !== state.signature) {
+        state.signature = signature;
+        state.age = 0;
+        state.lockedId = null;
+        state.activeId = null;
+      }
+    }
+
+    if (!state.candidates.length) {
+      state.strength = 0;
+      g.skull?.setGuide(null, 0);
+      return;
+    }
+    state.age += dt;
+
+    const enemiesNear = g.enemies?.list?.some((enemy) => enemy.state !== 'dying'
+      && Math.hypot(enemy.pos.x - g.player.pos.x, enemy.pos.z - g.player.pos.z) < 10);
+    const encounterLive = (this.graveArena?.engaged && !this.graveArena.done)
+      || (this.arena && !this.arena.done);
+    const unsafe = g.dead || g.paused || g.skull?.mode !== 'held' || g.skull?.introFlicker
+      || g.skull?.charging || g.skull?.charge > 0.02 || g.skull?.threat > 0.06
+      || (g.lastThreat || 0) > 0.08 || enemiesNear || encounterLive;
+    if (unsafe || state.age < 72) {
+      state.strength = 0;
+      state.activeId = null;
+      g.skull?.setGuide(null, 0);
+      return;
+    }
+
+    if (!state.lockedId) {
+      let best = null;
+      let bestDistance = Infinity;
+      for (const candidate of state.candidates) {
+        const point = this._guidancePoint(candidate, this._guidePoint);
+        if (!point) continue;
+        const distance = point.distanceToSquared(g.player.pos);
+        if (distance < bestDistance) { best = candidate; bestDistance = distance; }
+      }
+      state.lockedId = best?.id || null;
+    }
+    const chosen = state.candidates.find((item) => item.id === state.lockedId);
+    const point = this._guidancePoint(chosen, this._guidePoint);
+    if (!point) {
+      state.strength = 0;
+      g.skull?.setGuide(null, 0);
+      return;
+    }
+
+    const phase = (state.age - 72) % 18;
+    const strength = phase < 1.2 ? smoothstep(0, 1.2, phase)
+      : phase < 4.8 ? 1
+        : phase < 6 ? 1 - smoothstep(4.8, 6, phase) : 0;
+    g.camera.getWorldPosition(this._guideFrom);
+    this._guideDir.copy(point).sub(this._guideFrom);
+    state.activeId = strength > 0.01 ? chosen.id : null;
+    state.strength = strength;
+    g.skull.setGuide(this._guideDir, strength);
   }
 
   // the mimic step: your footfalls, echoed one beat late from behind you.

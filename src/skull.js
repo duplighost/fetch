@@ -106,6 +106,15 @@ export class Skull {
     // threat radar (set each frame by enemies/director)
     this.threat = 0;
     this.threatDir = new THREE.Vector3(0, 0, -1);
+    // A late, wordless wayfinding nudge. The director owns WHAT is useful and
+    // WHEN the player has been without progress long enough to deserve help;
+    // the skull owns only this bounded viewmodel lean. It never touches aim,
+    // launch vectors, charge, collision, range, return or target checks.
+    this.guideDir = new THREE.Vector3(0, 0, -1);
+    this.guideStrength = 0;
+    this._guideX = 0;
+    this._guideY = 0;
+    this._guideShown = 0;
     this._gazeWander = 0;
     this._idleT = 0;
     this._jawSnapT = 2.5;
@@ -1389,6 +1398,11 @@ export class Skull {
     if (dir) this.threatDir.copy(dir);
   }
 
+  setGuide(dir, strength = 0) {
+    this.guideStrength = clamp(strength, 0, 1);
+    if (dir && dir.lengthSq() > 1e-8) this.guideDir.copy(dir).normalize();
+  }
+
   // ---------------------------------------------------------------- update
   update(dt, ctx) {
     this._sfxClock += dt;
@@ -1445,6 +1459,23 @@ export class Skull {
     this.hold.position.z = HOLD_POSE.z + c * 0.11;
     this.hold.rotation.z = Math.sin(t * 0.5) * 0.02 - c * 0.25;
     this.hold.rotation.x = c * 0.4;
+
+    // The pull is deliberately smaller than the ordinary charging pose and
+    // slower than hand sway. Camera matrix columns are its world-space right
+    // and up vectors, so these two dots turn the objective direction into a
+    // stable screen-space lean without worldToLocal allocations or eye jitter.
+    const me = this.camera.matrixWorld.elements;
+    const wantGuide = this.mode === 'held' && !this.charging && c < 0.02 && !this.introFlicker
+      ? this.guideStrength : 0;
+    const gx = (this.guideDir.x * me[0] + this.guideDir.y * me[1] + this.guideDir.z * me[2]) * wantGuide;
+    const gy = (this.guideDir.x * me[4] + this.guideDir.y * me[5] + this.guideDir.z * me[6]) * wantGuide;
+    this._guideX = damp(this._guideX, clamp(gx, -1, 1), 3.8, dt);
+    this._guideY = damp(this._guideY, clamp(gy, -0.8, 0.8), 3.8, dt);
+    this._guideShown = damp(this._guideShown, wantGuide, 4.2, dt);
+    this.hold.position.x += this._guideX * 0.026;
+    this.hold.position.y += this._guideY * 0.012;
+    this.hold.rotation.z -= this._guideX * 0.075;
+    this.hold.rotation.x += this._guideY * 0.035;
 
     // A normal catch does not teleport from world space into a perfect grip.
     // It crosses the last hand-span, overshoots by a few millimetres, and the

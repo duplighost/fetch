@@ -118,7 +118,7 @@
   .return-mark {
     display: block; margin-top: .15em; color: var(--old-gold);
     font: 300 clamp(2rem, 3.5vw, 3.5rem)/1 Georgia, serif;
-    transform: rotate(-18deg); opacity: .9;
+    transform: rotate(-18deg); opacity: .9; will-change: transform, opacity;
   }
   #title .tag {
     margin: 1.15rem 0 0; max-width: 28rem; color: #d4d0c7;
@@ -136,6 +136,7 @@
     letter-spacing: .19em; text-transform: uppercase;
   }
   #title .go:hover { color: #0b0b0a; background: var(--paper); border-color: var(--paper); transform: translateX(3px); text-shadow: none; }
+  #title.booting .go:disabled { opacity: .72; cursor: wait; }
   .button-return { color: var(--old-gold); font: 400 1.35rem/1 Georgia, serif; }
   #title .go:hover .button-return { color: #29251e; }
 
@@ -153,6 +154,12 @@
     transform: translateX(3px); text-shadow: none; cursor: default; pointer-events: none;
   }
   #title.waking .go .button-return { color: #29251e; }
+  /* Starts in markup, before the module builds the world. This one compositor
+     motion survives a busy main thread, so the title remains visibly alive on
+     the exact machines that need the warm gate most. Once links settle,
+     _markBootReady removes booting; an early press keeps the same motion under
+     waking until the bedroom can enter without a hitch. */
+  #title.booting .return-mark,
   #title.waking .return-mark { animation: waking-turn 1.9s ease-in-out infinite; }
   @keyframes waking-turn {
     0%, 100% { transform: rotate(-18deg); opacity: .55; }
@@ -255,6 +262,7 @@
     .go, .menu-button, #crosshair, #vignette, #fade { transition-duration: .01ms !important; }
     /* The waking state still has to READ. Motion is off, so the value drop
        carries it alone, and the mark holds its brightest pose. */
+    #title.booting .return-mark,
     #title.waking .return-mark { animation: none; opacity: 1; }
   }
 </style>
@@ -273,7 +281,7 @@
   <span class="pause-glyph" aria-hidden="true"></span>
 </button>
 
-<div id="title" class="overlay" role="dialog" aria-labelledby="fetchTitle" aria-describedby="fetchTag fetchKeys">
+<div id="title" class="overlay booting" role="dialog" aria-busy="true" aria-labelledby="fetchTitle" aria-describedby="fetchTag fetchKeys">
   <div class="title-shell">
     <p class="eyebrow">The house throws nothing away</p>
     <div class="title-wordmark">
@@ -281,7 +289,7 @@
       <span class="return-mark" aria-hidden="true">&#8630;</span>
     </div>
     <p class="tag" id="fetchTag">Throw it. Hold on. Let go.</p>
-    <button class="go" type="button" data-action="start">
+    <button class="go" type="button" data-action="start" disabled>
       <span>Wake up</span><span class="button-return" aria-hidden="true">&#8627;</span>
     </button>
     <p class="keys" id="fetchKeys">

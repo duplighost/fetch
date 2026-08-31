@@ -916,21 +916,32 @@ function furnish(game) {
     // through the floor. -0.006 is the lying-under-the-rug pose (5 mm proud at
     // the tip) and the rug's finish() lifts it to a clearly openable -0.075.
     boardPivot.rotation.z = -0.006;
-    const board = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.016, 0.11), M.woodFloor);
+    // This is a small HATCH disguised as one floor plank, not a hairline UV
+    // accident. The wider cross-grain slab, proud edge and paired iron hinges
+    // make its affordance readable the instant the rug leaves it; pivot,
+    // interaction point and opening animation remain exactly where they were.
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.024, 0.19), M.woodFloor);
     board.position.set(-0.425, 0, 0);
     board.castShadow = board.receiveShadow = true;
     boardPivot.add(board);
+    const hingeGeo = mergeGeometries([
+      new THREE.BoxGeometry(0.14, 0.012, 0.034).translate(-0.09, 0.02, -0.065),
+      new THREE.BoxGeometry(0.14, 0.012, 0.034).translate(-0.09, 0.02, 0.065),
+    ]);
+    const hinges = new THREE.Mesh(hingeGeo, D.iron);
+    hinges.castShadow = true;
+    boardPivot.add(hinges);
     scene.add(boardPivot);
 
     // The seam. A board you are meant to lift has to LOOK liftable before you
     // lift it: three merged shadow slivers ring the loose board's free end and
     // long edges, so once the rug flap is off, the eye finds an outline in the
     // floor instead of a floor. Merged geometry — zero extra draws.
-    world.box(darkLine, 10.16, F + 0.004, 2.16, 0.05, 0.008, 0.13);
-    world.box(darkLine, 10.605, F + 0.004, 2.222, 0.9, 0.008, 0.022);
-    world.box(darkLine, 10.605, F + 0.004, 2.098, 0.9, 0.008, 0.022);
+    world.box(darkLine, 10.16, F + 0.004, 2.16, 0.06, 0.008, 0.23);
+    world.box(darkLine, 10.605, F + 0.004, 2.268, 0.9, 0.008, 0.026);
+    world.box(darkLine, 10.605, F + 0.004, 2.052, 0.9, 0.008, 0.026);
 
-    const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.008, 0.16), new THREE.MeshBasicMaterial({ color: 0x040404 }));
+    const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.008, 0.24), new THREE.MeshBasicMaterial({ color: 0x040404 }));
     cavity.position.set(10.62, F + 0.008, 2.16);
     cavity.visible = false;
     scene.add(cavity);

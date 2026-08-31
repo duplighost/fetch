@@ -3,6 +3,7 @@
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
 import { clamp, lerp, damp, hash2, smoothstep, TAU } from './util.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const KIND = {
   walker: {
@@ -89,7 +90,7 @@ const CHOIR_SURFACE = Object.freeze({
 // lantern, leaving only two eyes and a pale jaw. Lift the neutral surface just
 // enough for the malformed silhouette and planted limbs to exist; eye motion
 // and the long windup still carry state, so no meaning depends on this value.
-const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x2b2930 };
+const BASE_COLOR = { walker: 0x29262d, resident: 0x252127, kneeler: 0x2b2930 };
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 // More than the whole authored graveyard fight, with room for the house and
@@ -274,14 +275,31 @@ FIGURE_GEO.malformedSlab = malformShared(FIGURE_GEO.slab, 0.12, 18.2);
   jaw.lineTo(-0.055, -0.035);
   jaw.closePath();
   FIGURE_GEO.walkerJaw = new THREE.ShapeGeometry(jaw, 2);
+
+  // One shared, merged lower body per walker: two mismatched shins and feet
+  // break the old floating-poncho silhouette without multiplying graveyard
+  // draw calls or entering the gait/hit-volume contracts.
+  const leftShin = new THREE.CylinderGeometry(0.075, 0.11, 0.72, 5);
+  leftShin.rotateZ(-0.1);
+  leftShin.translate(-0.17, 0.34, -0.015);
+  const rightShin = new THREE.CylinderGeometry(0.09, 0.12, 0.62, 5);
+  rightShin.rotateZ(0.16);
+  rightShin.translate(0.16, 0.29, -0.035);
+  const leftFoot = new THREE.BoxGeometry(0.19, 0.1, 0.34);
+  leftFoot.rotateY(-0.14);
+  leftFoot.translate(-0.2, 0.045, 0.1);
+  const rightFoot = new THREE.BoxGeometry(0.22, 0.11, 0.29);
+  rightFoot.rotateY(0.2);
+  rightFoot.translate(0.19, 0.05, 0.075);
+  FIGURE_GEO.walkerLegs = mergeGeometries([leftShin, rightShin, leftFoot, rightFoot]);
 }
 const GLINT_MAT = new THREE.MeshBasicMaterial({ color: 0xe8ecef });
 const WALKER_BONE_MAT = new THREE.MeshStandardMaterial({
-  color: 0x30312f, roughness: 0.96, metalness: 0, flatShading: true,
+  color: 0x55554f, roughness: 0.96, metalness: 0, flatShading: true,
   side: THREE.DoubleSide,
 });
-const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x242126 });
-const WALKER_FOLD_MAT = new THREE.MeshLambertMaterial({ color: 0x0d0c11, side: THREE.DoubleSide });
+const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x39343b });
+const WALKER_FOLD_MAT = new THREE.MeshLambertMaterial({ color: 0x17151c, side: THREE.DoubleSide });
 const WALKER_VOID_MAT = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
 // One corpse-mass, three drowned faces. All geometry is shared across the one
@@ -539,7 +557,9 @@ function buildWalker(g, mat, limbs) {
   // offset ribcage, hunch, and two separately sloped shoulders make a body push
   // against it. Forearms live outside that outline even before the lunge.
   const shroud = addPart(g, FIGURE_GEO.walkerShroud, mat,
-    0, 0.91, -0.15, 1.13, 1.03, 1.08, -0.13, 0, -0.035);
+    0, 0.91, -0.17, 1.06, 1.05, 2.25, -0.13, 0, -0.035);
+  addPart(g, FIGURE_GEO.walkerLegs, WALKER_WRAP_MAT,
+    0, 0, -0.055, 1, 1, 1, 0, 0, -0.035);
   addPart(g, FIGURE_GEO.walkerPallFold, WALKER_FOLD_MAT,
     -0.035, 0.91, -0.073, 1.06, 1.02, 1, -0.03, 0, -0.07);
   addPart(g, FIGURE_GEO.sphere, mat,
@@ -552,10 +572,10 @@ function buildWalker(g, mat, limbs) {
   ];
 
   const head = new THREE.Group();
-  head.position.set(0.045, 1.72, 0.095);
+  head.position.set(0.045, 1.75, 0.16);
   head.rotation.set(-0.14, 0, 0.19);
   addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
-    0, 0, 0, 0.72, 0.72, 1, 0, 0.03, -0.025);
+    0, 0, 0, 0.78, 0.8, 1.04, 0, 0.03, -0.025);
   const mouth = addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
     0.005, -0.145, 0.045, 0.64, 0.48, 1, 0, 0, -0.08);
   const jaw = addPart(head, FIGURE_GEO.walkerJaw, WALKER_BONE_MAT,
@@ -570,7 +590,7 @@ function buildWalker(g, mat, limbs) {
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * (s < 0 ? 0.48 : 0.46), s < 0 ? 1.42 : 1.39, 0.105);
+    armP.position.set(s * (s < 0 ? 0.48 : 0.46), s < 0 ? 1.42 : 1.39, 0.19);
     armP.rotation.z = s < 0 ? 0.15 : -0.075;
     addPart(armP, FIGURE_GEO.limb, WALKER_WRAP_MAT,
       0, s < 0 ? -0.53 : -0.59, 0.09,
@@ -613,7 +633,7 @@ function buildResident(g, mat, limbs) {
   addPart(g, FIGURE_GEO.malformedCapsule, mat,
     -0.04, 1.3, -0.12, 0.5, 0.54, 0.35, -0.2, 0, 0.055);
   const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
-    -0.035, 1.54, -0.055, 0.29, 0.78, 0.29, 0, 0, Math.PI / 2 + 0.055);
+    -0.035, 1.54, -0.055, 0.27, 0.62, 0.31, 0, 0, Math.PI / 2 + 0.11);
   const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
     -0.18, 1.59, -0.24, 0.7, 0.43, 0.35, -0.12, 0.04, 0.11);
 
@@ -626,18 +646,26 @@ function buildResident(g, mat, limbs) {
     0.075, 1.04, 0.382, 0.042, 0.14, 0.035, 0, 0, Math.PI / 2 - 0.19);
 
   const head = new THREE.Group();
-  head.position.set(0.09, 1.77, 0.09);
+  head.position.set(0.09, 1.75, 0.1);
   head.rotation.set(-0.18, 0.06, -0.2);
   addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.23, 0.28, 0.2, 0.02);
   addPart(head, FIGURE_GEO.malformedSlab, mat, 0.015, -0.2, 0.045, 0.2, 0.13, 0.15, -0.04, 0, 0.08);
-  addEyes(head, 0.07, 0.015, 0.19, 0.028, 0.012);
+  // The old two dots on a black pebble were unreadable at the distance this
+  // first appears. A crooked funerary face is now physically wedged under the
+  // lintel: the same shared dimensional mask as the walkers, smaller, split by
+  // a real void and lit only by the player's existing skull lamp.
+  addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
+    0.01, -0.02, 0.17, 0.51, 0.57, 0.74, 0.01, 0.05, -0.1);
+  addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
+    0.015, -0.12, 0.305, 0.41, 0.3, 0.7, 0, 0.02, -0.12);
+  addEyes(head, 0.064, 0.025, 0.31, 0.011, 0.008);
   g.add(head);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
     const longSide = s < 0;
-    armP.position.set(s * (longSide ? 0.48 : 0.43), longSide ? 1.56 : 1.47, 0.025);
-    armP.rotation.z = longSide ? 0.11 : -0.27;
+    armP.position.set(s * (longSide ? 0.45 : 0.4), longSide ? 1.53 : 1.45, 0.09);
+    armP.rotation.z = longSide ? 0.2 : -0.34;
     addPart(armP, FIGURE_GEO.malformedLimb, mat,
       0, longSide ? -0.61 : -0.49, 0.065,
       longSide ? 0.12 : 0.15, longSide ? 0.66 : 0.53, longSide ? 0.1 : 0.13,
