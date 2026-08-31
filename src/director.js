@@ -633,8 +633,15 @@ export class Director {
     // ceiling. It first leans toward the authored stair mouth and only resumes
     // the exact target once player and target share a level.
     const g = this.game;
-    if (g.act === 'house' && Math.abs(out.y - g.player.pos.y) > 2.2) {
-      if (g.player.pos.y > 2.4) out.set(1.0, 4.25, -8.75);
+    if (g.act === 'house') {
+      // Compare authored LEVELS, not raw Y distance. A ground-floor target's
+      // world point is commonly at chest height (~1.7 m), while the player's
+      // first-floor capsule stands at 3.6 m: subtracting those says 1.9 m and
+      // falsely calls them co-planar. The floor bands are unambiguous here.
+      const playerUpstairs = g.player.pos.y > 2.4;
+      const targetUpstairs = out.y > 2.8;
+      if (playerUpstairs === targetUpstairs) return out;
+      if (playerUpstairs) out.set(1.0, 4.25, -8.75);
       else out.set(1.0, 1.15, -9.15);
     }
     return out;
