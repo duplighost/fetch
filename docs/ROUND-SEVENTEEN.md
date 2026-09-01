@@ -1,23 +1,20 @@
-# ROUND SEVENTEEN — patient boot, late pull, creature polish
+# ROUND SEVENTEEN — patient boot and creature polish
 
 This round is a polish-only pass over the shipped game. It does not change the
 throw grammar, collision, damage, puzzle commits, checkpoints, encounter
-counts, route geometry or ending. Its three bounded changes are:
+counts, route geometry or ending. Its two retained changes are:
 
 1. The parsed HTML title paints before world construction. Shader programs and
    textures are still warmed once, but no WebGL world draw is allowed to force
    unresolved ANGLE links onto the main thread. The return mark is a compositor
    animation during that wait. The moon shadow is armed for its first real
    frame instead of causing a constructor-time render.
-2. A held skull can lean toward one mandatory, currently actionable objective
-   only after 72 seconds with the same objective set. The lean lasts at most six
-   seconds, rests for twelve, locks one nearest choice in order-free clusters,
-   routes cross-floor targets through the house stairs, and is suppressed by
-   combat, threat, charging, throwing, anchoring, death and the arrival flicker.
-   It is viewmodel presentation only; aim and all throw constants are untouched.
-3. The bedroom hatch-board has a wider outline and physical hinges. Walkers and
+2. The bedroom hatch-board has a wider outline and physical hinges. Walkers and
    the Resident use more legible material values and stronger dimensional faces
    while retaining the same hit volumes, animation contracts and AI.
+
+The experimental lost-player skull lean was removed after player review. No
+objective resolver, delayed pull or objective-driven viewmodel motion remains.
 
 ## Exact mandatory player path
 
@@ -26,8 +23,9 @@ counts, route geometry or ending. Its three bounded changes are:
 The rug must be searched, then the loose board, then the bell under it must be
 struck. The skull arrives through the window only after that bell sequence. The
 player then fetches `treeKey`, carries `bedroomKey` in the jaw, strikes
-`bedroomLock`, and leaves through `bedroomDoor`. There is deliberately no skull
-guidance before the bell because the skull does not exist in the player's hand.
+`bedroomLock`, and leaves through `bedroomDoor`. Discovery rests on the clearer
+hinged floor section; the skull does not provide objective guidance before or
+after the bell.
 
 ### House
 
@@ -75,13 +73,3 @@ to the clearing. At the frozen falls, the west `fallsWheel` hold and three east
 falls. Throw the skull into `waterfall`; it does not return. The remaining cave
 route and hatch are deliberately skull-less and linear. The mirror sequence owns
 the finale from there.
-
-## Guidance objective policy
-
-Optional searches, relics, destructible side graves, the wreck, powerups,
-ambient props and enemies are never guidance candidates. An objective-set
-change resets the full 72-second grace. In a multi-job cluster the nearest
-candidate is selected once and held until progress changes the cluster; this is
-what prevents flicker between floors or between two valid machines. The forest
-fallback follows a point twelve samples ahead on the authored spline rather
-than pulling through trees toward the distant endpoint.
