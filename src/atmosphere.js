@@ -2025,7 +2025,7 @@ function buildCaveDress(game, track, own, tickers) {
       curtainAt(layout.main[1], layout.main[2]),
       curtainAt(layout.main[8], layout.main[9]),
       curtainAt(layout.main[9], layout.main[10]),
-      curtainAt(layout.main[11], layout.main[12]),
+      curtainAt(layout.main[layout.main.length - 2], layout.main[layout.main.length - 1]),
     );
     if (layout.secret?.[0] && layout.secret?.[1]) {
       drops.push(curtainAt(layout.secret[0], layout.secret[1]));

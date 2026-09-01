@@ -2,7 +2,7 @@
 // every beat runs on accumulated dt so the whole game can be stepped by tests.
 // Scare law: dread first; teach a rule, break it once; silence is a weapon.
 import * as THREE from 'three';
-import { clamp, lerp, damp, smoothstep, TAU } from './util.js';
+import { clamp, lerp, damp, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
@@ -56,7 +56,7 @@ const AMBIENT_BY_ACT = {
   // far hatch disappeared between local fixtures, turning navigation into a
   // wall-feeling exercise. 0.42 still leaves it darker than the forest while
   // preserving enough floor/wall value for the physical route grammar to read.
-  forest: 0.54, clearing: 0.68, cave: 0.42, mirror: 0.6,
+  forest: 0.60, clearing: 0.68, cave: 0.42, mirror: 0.6,
 };
 // The graveyard's haze came up from 0x050b16 to 0x0b141c (fog and background
 // together — the equality is the district's own law, and breaking it puts a
@@ -635,7 +635,7 @@ export class Director {
     const g = this.game;
     this.residentPressure += n;
     const live = this._liveResident();
-    if (!live && g.act === 'house') {
+    if (!live && isPhysicalHouseInterior(g)) {
       this.resident = g.enemies.spawn('resident', -3, -12, 'stalk');
       g.audio.sting(0.5);
       this.after(0.8, () => g.audio.footstep('wood', { pos: this.resident.pos, gain: 0.9, rate: 0.7 }));
@@ -644,6 +644,7 @@ export class Director {
       live.state = 'wind';
       live.windT = 0;
     }
+    return this.resident || live || null;
   }
 
   _updateResident(dt) {
@@ -670,7 +671,7 @@ export class Director {
       }
     }
     if (!this._liveResident()) return;
-    if (g.act !== 'house') return;
+    if (!isPhysicalHouseInterior(g)) return;
     // the Resident loses interest if it can't reach you, returns to pacing
     const e = this.resident;
     if (e.state === 'chase' && e.windT > 9) { e.state = 'stalk'; e.windT = 0; }
@@ -1305,7 +1306,7 @@ export class Director {
     // economy as destructible sound props; inside the house it immediately
     // tells the Resident that the player chose violence.
     if (g.act === 'forest') this.forestNoise(e.pos, 1, 'pop');
-    else if (g.act === 'house') this.residentHeard(1);
+    else if (isPhysicalHouseInterior(g)) this.residentHeard(1);
     if (g.act === 'graveyard') g.enemies.wakeAll(e.pos.x, e.pos.z, 40);
   }
 

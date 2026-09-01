@@ -593,6 +593,25 @@ try {
     }
     beat('graveyard-funeral-resolved', g.flags.has('graveyardResolved') && !g.dead,
       { dead: g.dead, waves: g.director.graveArena && g.director.graveArena.wave, guard: graveGuard });
+    // Throws through the funeral can strike the parked car incidentally. That
+    // is now a real authored consequence, not disposable arena ownership: if
+    // the cargo passenger woke, finish the body before turning our back on it
+    // for the mausoleum walk. A human sees/hears this; the route bot has to
+    // acknowledge it too instead of silently assuming the resolved wave made
+    // the entire yard safe.
+    const funeralPassenger = g.wreck.passenger.actor;
+    let passengerGuard = 0;
+    while (funeralPassenger && g.enemies.list.includes(funeralPassenger)
+      && funeralPassenger.state !== 'dying' && !g.dead && passengerGuard < 8) {
+      graveThrowPoint(funeralPassenger.pos.x, funeralPassenger.pos.y + 1.2, funeralPassenger.pos.z);
+      F.stepWith(0.16, {});
+      passengerGuard++;
+    }
+    const passengerResolved = !funeralPassenger
+      || !g.enemies.list.includes(funeralPassenger)
+      || funeralPassenger.state === 'dying';
+    beat('any-awakened-wreck-passenger-is-resolved', passengerResolved && !g.dead,
+      { awakened: !!funeralPassenger, resolved: passengerResolved, guard: passengerGuard, dead: g.dead });
     // Combat can finish inside a mausoleum OR exactly one capsule radius along
     // its side wall. Clear either shell through visible floor before crossing
     // the open yard. The old narrow "inside" test missed that edge pose, then
@@ -804,17 +823,20 @@ try {
     F.stepWith(2.0, {});
     beat('the-guardian-yields-to-a-body-not-a-throw', M.yielded === true);
 
-    // THE KEY, alone on the altar now — the relic went up to the yard's hero
-    // grave, so there is one throw here and no second aimed one to make while
-    // the mourners are already coming.
+    // THE KEY, alone on the altar now. The keepsake belongs to the wrecked
+    // wagon in the yard, so there is one throw here and no second aimed one to
+    // make while the mourners are already coming.
     const key2 = g.gateKeys.list[1];
-    // the relic still exists — it moved up to the yard's hero grave beside the
-    // canine — it is just not standing on top of the key any more
-    const relicMesh = g.scene.getObjectByName('the relic');
+    const relicTarget = g.world.fetchTargets.find((target) => target.id === 'marrowRelic');
+    const relicMesh = relicTarget?.object || null;
     beat('the-altar-holds-the-key-and-nothing-else',
       key2.revealed === true && key2.key.visible === true && key2.target.enabled === true
-      && (!relicMesh || Math.abs(relicMesh.position.z - (M.origin.z + 23.8)) > 20),
+      && !!relicMesh && relicMesh.visible === false && relicTarget.enabled === false
+      && !g.flags.has('relicKept'),
       { revealed: key2.revealed, fetchable: key2.target.enabled,
+        relicVisible: relicMesh?.visible ?? null, relicFetchable: relicTarget?.enabled ?? null,
+        relicPhase: g.graveyardCarRelic?.phase || null,
+        wreckHits: g.wreck?.hits ?? null,
         relicAt: relicMesh ? relicMesh.position.toArray().map((v) => +v.toFixed(1)) : null });
     g.player.pos.set(M.origin.x, M.origin.floor, M.origin.z + 26 - 4.6);
     const keyY = M.origin.floor + 1.24, keyZ = M.origin.z + 26 - 2.2;
