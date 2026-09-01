@@ -1664,7 +1664,7 @@ class Game {
   // it off. Same kind of thing as shake(): a cosmetic camera verb any district
   // may call, owning no state anything else reads.
   splashLens(amount = 1) { this.lensWet = clamp(this.lensWet + amount, 0, 1); }
-  residentHeard(n) { this.director.residentHeard(n); }
+  residentHeard(n) { return this.director.residentHeard(n); }
 
   impact(kind, pos) {
     // THE IMPACT LANGUAGE (kick-ball law): the load-bearing distinction is

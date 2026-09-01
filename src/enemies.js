@@ -2,7 +2,7 @@
 // skull's chatter long before they're seen. Faster than you. Stun is quiet;
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
-import { clamp, lerp, damp, hash2, smoothstep, TAU } from './util.js';
+import { clamp, lerp, damp, hash2, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const KIND = {
@@ -1484,7 +1484,7 @@ export class Enemies {
               game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
             }
           } else if (dist > 1 && !sameLevel
-            && (game.act === 'house' || game.act === 'bedroom')) {
+            && isPhysicalHouseInterior(game)) {
             // The stalk climbs now — quietly. Stalk pace, stalk cadence, the
             // stairs' own wood underfoot as the tell; the wind-up mercy-tell
             // below still cannot begin until it shares your storey.
@@ -1537,7 +1537,7 @@ export class Enemies {
           // meant a statue at the foot of the stairs — or worse, ON them —
           // whenever you climbed. Indoors the graph now spans the storeys,
           // so only the outdoor acts keep the patient wait.
-          const inHouse = game.act === 'house' || game.act === 'bedroom';
+          const inHouse = isPhysicalHouseInterior(game);
           if (!sameLevel && !inHouse) { e.windT += dt; break; }   // it waits below. it hears you.
           e._besiegeHold = false;
           if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
