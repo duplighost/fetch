@@ -126,6 +126,16 @@ New probes this round, all in `tools/`:
 
 **There are no known red gates.** If one goes red, it is new.
 
+## Shipped
+
+2026-09-02. Game `main` = `337e2c9` (PR #37). Site `main` = `537f0b5`
+(qualiacology PR #165). Deploy preview boot-checked before the merge; production
+verified **22/22 byte-identical** and `fetch-boot-check` PASSED against
+qualiacology.com itself; /fetch/, /fetch/ending/ and / all 200. Round nineteen
+shipped the same way earlier the same day (game `cda37e6`, site `ff04ff0`).
+
+**He has not played either build — hard-refresh (Ctrl+Shift+R).**
+
 ## Laws
 
 Everything in ROUND-NINETEEN still holds. One earned here:
