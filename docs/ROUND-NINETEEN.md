@@ -269,8 +269,11 @@ approval** → merge → verify production byte-identical and boot-check it →
 fast-forward the game's `main`. The site's `AGENTS.md` is canonical for anything
 site-side.
 
-**He did not say "ship it" this round.** The game branch is pushed and the PR is
-open; the live site has not been touched.
+**He said "ship it", and it shipped, 2026-09-02.** Game `main` = `cda37e6`
+(PR #35). Site `main` = `ff04ff0` (PR #163). Deploy preview boot-checked before
+the merge; production verified **22/22 byte-identical** and `fetch-boot-check`
+PASSED against qualiacology.com itself; /fetch/, /fetch/ending/ and / all 200.
+**He has not played this build — hard-refresh (Ctrl+Shift+R).**
 
 ## Where old context lives
 
