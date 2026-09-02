@@ -117,7 +117,8 @@ should go after the districts the probes have never walked.
 
 Every gate in `tests/` except `playthrough` and `render-perf`, run serially:
 **33/33 green**, including all four that were red on the board.
-`playthrough` **6/6**. `netlify-release-integrity` needs
+`playthrough` **4/4** this round (6/6 in round nineteen, on the same code path).
+`netlify-release-integrity` needs
 `node tools/package-netlify.mjs` first — that is not a defect, it is a missing
 artifact on a fresh worktree.
 
@@ -125,6 +126,16 @@ New probes this round, all in `tools/`:
 `probe-scene-growth.mjs` · `probe-resident-clock.mjs` · `probe-audio-finite.mjs`.
 
 **There are no known red gates.** If one goes red, it is new.
+
+## Shipped
+
+2026-09-02. Game `main` = `337e2c9` (PR #37). Site `main` = `537f0b5`
+(qualiacology PR #165). Deploy preview boot-checked before the merge; production
+verified **22/22 byte-identical** and `fetch-boot-check` PASSED against
+qualiacology.com itself; /fetch/, /fetch/ending/ and / all 200. Round nineteen
+shipped the same way earlier the same day (game `cda37e6`, site `ff04ff0`).
+
+**He has not played either build — hard-refresh (Ctrl+Shift+R).**
 
 ## Laws
 
