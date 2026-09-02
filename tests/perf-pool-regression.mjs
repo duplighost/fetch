@@ -132,13 +132,32 @@ try {
     window.__game.render();
   });
 
+  // THE BASELINE IS TAKEN BESIDE THE BURST, NOT BEFORE THE GAME STARTED.
+  //
+  // Both scene-object checks below used to compare against `initial`, which is
+  // captured before the title is ever clicked (it asserts !initial.started).
+  // Between the two lives the whole boot, and in particular the warm-DRAW pass
+  // -- a different pass from the shader warm-up this file already waits on,
+  // with its own status on __FETCH.warm().draw. It parks one invisible Group,
+  // 'warm-draw staging', in the scene for as long as it runs, and once the
+  // game has started it draws ONE item per frame: measured, it is `running` at
+  // 4 of 561 when these checks fire (tools/probe-scene-growth.mjs). So the
+  // gate was reporting a boot-time staging group as a fragment-pool leak, and
+  // it went red through rounds seventeen and eighteen and shipped that way.
+  //
+  // The pool is not leaking: three consecutive bursts hold the scene at 723,
+  // 723, 723, 723. Each check now takes its own before/after inside ONE
+  // page.evaluate -- a synchronous block no rAF pass can interleave with --
+  // so it measures the sentence it is named after and nothing else.
   const first = await page.evaluate(() => {
     const g = window.__game;
+    const sceneBefore = g.scene.children.length;
     g.gore(g.player.pos, 100, 40);
     g.render();
     return {
       pool: g.goreState(),
       drawCount: g.goreMesh.count,
+      sceneBefore,
       sceneChildren: g.scene.children.length,
       geometries: g.renderer.info.memory.geometries,
     };
@@ -147,11 +166,13 @@ try {
     'a 100-fragment burst caps at 64 visible instances');
   check(first.pool.dropped === 36 && first.pool.emitted === 64,
     'overflow is counted and discarded without recycling live fragments');
-  check(first.sceneChildren === initial.sceneChildren,
-    'a full burst adds no scene objects');
+  check(first.sceneChildren === first.sceneBefore,
+    'a full burst adds no scene objects',
+    `${first.sceneBefore} -> ${first.sceneChildren}`);
 
   const second = await page.evaluate(() => {
     const g = window.__game;
+    const sceneBefore = g.scene.children.length;
     g._updateGore(1.8);
     const expired = g.goreState();
     g.gore(g.player.pos, 100, 40);
@@ -161,6 +182,7 @@ try {
       expired,
       pool: g.goreState(),
       drawCount: g.goreMesh.count,
+      sceneBefore,
       sceneChildren: g.scene.children.length,
       geometries: g.renderer.info.memory.geometries,
       samePool: refs.pool === g.gorePool,
@@ -176,8 +198,9 @@ try {
     'a second 100-fragment burst reuses the same bounded capacity');
   check(second.samePool && second.sameMesh && second.sameSlots && second.sameVectors,
     'the second burst reuses every pool object and Vector3');
-  check(second.sceneChildren === initial.sceneChildren,
-    'repeated bursts keep scene-object count flat');
+  check(second.sceneChildren === second.sceneBefore,
+    'repeated bursts keep scene-object count flat',
+    `${second.sceneBefore} -> ${second.sceneChildren}`);
   check(second.geometries === first.geometries,
     'GPU geometry count plateaus after the first burst',
     `${first.geometries} -> ${second.geometries}`);
