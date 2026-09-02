@@ -2,7 +2,7 @@
 // skull's chatter long before they're seen. Faster than you. Stun is quiet;
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
-import { clamp, lerp, damp, hash2, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
+import { clamp, lerp, damp, hash2, inHouseShell, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const KIND = {
@@ -1324,6 +1324,10 @@ export class Enemies {
     const camPos = game.camera.getWorldPosition(V.a);
     const camFwd = game.camera.getWorldDirection(V.b);
     camFwd.y = 0; camFwd.normalize();
+    // Which building the EARS are in, once per frame; each loop below asks
+    // the same question about its own body and drops the presence floor when
+    // the two answers disagree.
+    const listenerInHouse = inHouseShell(game, camPos);
 
     // CINDERBLOOM's useful crowd law, reduced to FETCH scale: an attack token
     // persists through approach and strike. A stun, pop, or missed commitment
@@ -1336,6 +1340,29 @@ export class Enemies {
     const graveClaimBudget = graveWave >= 2 ? 2 : 1;
     const claimableState = (e) => e.state === 'standing' || e.state === 'wind' ||
       e.state === 'chase' || e.state === 'strike';
+    // THE WRECK'S PASSENGER IS A FIGHT BODY, AND THE FIGHT HAS A BUDGET.
+    //
+    // Round eighteen spawned it with none of the graveyard's flags, so the
+    // crowd law did not own it: while the funeral ran it closed and struck
+    // whenever it liked, ON TOP of the one or two attackers the arena had
+    // budgeted. Measured against e166da4 in matched worktrees, that took
+    // tests/playthrough.mjs from 4/4 survived to 2/6 -- the bot reaches wave
+    // three and dies, and every beat after the funeral fails behind it.
+    // (Alex, 2026-09-01: "Make the graveyard work correctly again.")
+    //
+    // It cannot be wave bookkeeping either: `alive` gates wave progression,
+    // so counting it there would let one unkilled body freeze the funeral.
+    //
+    // THE FUNERAL'S TWO HANDS BELONG TO THE FUNERAL. It is not added to
+    // graveCandidates, so it can never hold one of the wave's attack tokens:
+    // while the yard is fighting it takes the Standing Kind's job and walks
+    // the ring -- present, lit, audible, and not a third hand nobody
+    // budgeted for. The moment the waves are done graveArenaActive goes
+    // false, this predicate stops owning it, and it comes for you with
+    // nothing in its way. Break the car over a quiet yard and that is
+    // immediate, which is the beat exactly as round eighteen authored it.
+    const graveCrowd = (e) => e.graveArena || e.gravePressure
+      || (e.wreckPassenger && graveArenaActive);
     const graveCandidates = graveArenaActive
       ? this.list.filter((e) => e.graveArena && e.kind === 'walker' && claimableState(e))
       : [];
@@ -1540,7 +1567,7 @@ export class Enemies {
           const inHouse = isPhysicalHouseInterior(game);
           if (!sameLevel && !inHouse) { e.windT += dt; break; }   // it waits below. it hears you.
           e._besiegeHold = false;
-          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
+          if (graveCrowd(e) && !graveClaims.has(e)) {
             const angle = e.orbitAngle + game.time * e.orbitSign * 0.22;
             const ring = 3.3 + (e.orbitAngle % 1.4);
             const tx = player.pos.x + Math.cos(angle) * ring;
@@ -1561,7 +1588,7 @@ export class Enemies {
             // one-touch house chase. Claimed attackers remain faster than a
             // walking player but just slower than a committed run, so spatial
             // mastery and a clean throw can actually create breathing room.
-            const arenaPace = (e.graveArena || e.gravePressure) ? 0.8 : 1;
+            const arenaPace = graveCrowd(e) ? 0.8 : 1;
             // The acceleration ramp and the lose-interest clock used to be
             // one number (windT). Split: _chaseT carries the ramp, seeded in
             // the wind-up so the old curve is preserved; in the house windT
@@ -1684,12 +1711,33 @@ export class Enemies {
               e._unstuck1 = false; e._unstuck2 = false;
             }
             if (e._stallT > 0.8) {
-              if (e.graveArena || e.gravePressure) {
-                // House doorway nodes are poison for outdoor enemies: a risen
-                // body stalled against the rear wall used to route south into
-                // the house and leave the arena forever. Give graveyard bodies
-                // a short in-yard avoidance leg, including explicit side
-                // aisles around the house's back corners.
+              // WHICH BODIES OWN THE YARD, and the answer is no longer a flag.
+              //
+              // The branch below already knew that house doorway nodes are
+              // poison for outdoor enemies -- it says so -- but it only
+              // protected bodies carrying an arena flag. The wreck's passenger
+              // carries none, and it wakes STALLED, pressed against the very
+              // car it climbed out of. So it took the house-graph branch,
+              // walked itself to _bestDoorNode, and left the graveyard for the
+              // house: measured, it ends 8.9 m from a standing player at
+              // (-1, 6.5) -- the house's south wall -- while an ordinary walker
+              // started on the same grass closes to 0.68 m and strikes
+              // (tools/probe-grave-passenger.mjs). That is both halves of what
+              // Alex reported on 2026-09-01: a fight body that stops coming for
+              // you, and "an enemy that looks like it is still in the house
+              // making sounds when you get to the graveyard".
+              //
+              // The real rule is physical, so ask the physical question: a body
+              // standing OUTSIDE the building has no business routing through
+              // its doorways. The in-yard leg's clamps are the graveyard's own
+              // bounds, so the act is part of the test -- a forest body must
+              // not be dragged back into the yard by them.
+              const yardBody = e.graveArena || e.gravePressure
+                || (game.act === 'graveyard' && !inHouseShell(game, e.pos));
+              if (yardBody) {
+                // Give graveyard bodies a short in-yard avoidance leg,
+                // including explicit side aisles around the house's back
+                // corners.
                 if (e.pos.z < 10 && Math.abs(e.pos.x) < 13) {
                   e._via = { x: e.pos.x <= 0 ? -14 : 14, z: 11 };
                 } else {
@@ -1774,7 +1822,7 @@ export class Enemies {
             // one-hit lethal, but a sidestep, door, sprint or skull hit can beat
             // the action the player actually saw begin.
             if (!this._beginCommittedStrike(e, player)) {
-              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+              if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
               e.state = 'recover';
               e.recoverT = 0;
             } else {
@@ -1790,7 +1838,7 @@ export class Enemies {
           // The one-hit consequence is still severe; now every body earns it
           // with a visible fixed-point commitment. The target coordinate never
           // updates after contact, so movement and doors are actual answers.
-          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
+          if (graveCrowd(e) && !graveClaims.has(e)) {
             e.state = e.standing ? 'standing' : 'wind';
             e.windT = e.spec.windup * 0.62;
             e.strikeT = 0;
@@ -1799,13 +1847,13 @@ export class Enemies {
           const olderStrike = this.list.some((other) => other !== e
             && other.state === 'strike' && (other.serial ?? 0) < (e.serial ?? 0));
           if (olderStrike) {
-            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+            if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
             e.state = 'recover';
             e.recoverT = 0;
             break;
           }
           if (!sameLevel) {
-            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
+            if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
             e.state = 'recover';
             e.recoverT = 0;
             break;
@@ -1839,7 +1887,7 @@ export class Enemies {
             if (landed && !game.dead) {
               game.director.death(e);
             } else {
-              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.42);
+              if (graveCrowd(e)) this._releaseGraveClaim(e, 0.42);
               e.state = 'recover';
               e.recoverT = 0;
               game.audio.walkerMiss({ pos: e.pos, gain: e.kind === 'kneeler' ? 0.72 : 0.5,
@@ -2044,7 +2092,11 @@ export class Enemies {
         const rear = clamp(-camFwd.dot(toE), 0, 1) * near;
         const active = e.state === 'chase' || e.state === 'wind' || e.state === 'strike'
           ? 1 : e.state === 'dormant' ? 0.25 : 0.6;
-        e.loop.setThreat(threat * active, near * active, rear * active);
+        // A body left standing in the house is not on your sound stage once
+        // you are out in the yard: same room keeps the floor, different
+        // building loses it and falls off with distance like anything else.
+        const carry = inHouseShell(game, e.pos) === listenerInHouse ? 1 : 0;
+        e.loop.setThreat(threat * active, near * active, rear * active, carry);
       }
 
       // ---- skull radar ----

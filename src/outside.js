@@ -6042,7 +6042,104 @@ export class Forest {
     chair.rotation.set(-0.33, Math.atan2(this.samples[Math.round(mireS)].tx,
       this.samples[Math.round(mireS)].tz) + 0.48, 0.18);
     scene.add(batchStaticGroup(chair, 'mire chair'));
-    this.mire = { mesh: mire, reeds: reedMesh, rings: ringMesh, chair };
+
+    // THE LIP SAYS NO, AND THE SAME OBJECT SAYS WHAT INSTEAD.
+    //
+    // Alex, 2026-09-01: "make the pit you can fall into the forest moor
+    // clear. maybe even block it off so you have to use the thing to swing in
+    // the air (but make sure that thing actually doesn't stop you from going
+    // over however we block it."
+    //
+    // One prop answers both halves. A hazard rail across the near lip is the
+    // only straight horizontal line in a forest of leaning trunks; it stands
+    // between you and black water; its post caps are the one pale material
+    // out here, so the read is value and silhouette rather than hue and never
+    // a word. One post is snapped off with its head half sunk in the peat --
+    // the depth of the thing, told by something that already went in. Past
+    // it the rope knot is already lit across the gap: the rail says stop, the
+    // knot says how, and nothing on screen says either out loud.
+    //
+    // It cannot eat the crossing, and not because the arc happens to clear
+    // it -- because it is not there to be cleared:
+    //   * the colliders carry `skullPass`, the flag the open bedroom window
+    //     wears, so the throw that latches the rope has never met them;
+    //   * their tops drop to their own floors for as long as player.swing is
+    //     live -- the graveyard gate's idiom -- so no arc can catch on one.
+    // Neither depends on the rail's height or on where the arc happens to
+    // fall, which is the part he asked to be sure of.
+    const RAIL_TOP = 0.88;
+    const lipS = mireS - 3.3;                 // clear of the 3.08 sink and the 3.2 dip
+    const lipI = clamp(Math.round(lipS), 0, this.length - 1);
+    const lipHalf = this.halfW[lipI] + 1.5;   // wider than the walkable clamp, both sides
+    const lipSample = this.samples[lipI];
+    const lipYaw = Math.atan2(-lipSample.tz, lipSample.tx);   // along the lateral
+    const railColliders = [];
+    // The trail is a spline and an AABB cannot turn with it, so the block is a
+    // row of overlapping squares laid along the lateral line. Step 0.4 against
+    // a 0.6 footprint leaves no gap for a 0.34 m capsule at any bearing.
+    for (let lat = -lipHalf; lat <= lipHalf + 1e-4; lat += 0.4) {
+      const v = this.posAt(lipS, lat);
+      railColliders.push(this.game.world.addCollider(
+        v.x - 0.3, 0, v.z - 0.3, v.x + 0.3, RAIL_TOP, v.z + 0.3, { skullPass: true },
+      ));
+    }
+    this.game.tickers.push(() => {
+      const swinging = !!this.game.player.swing;
+      for (const c of railColliders) c.max.y = swinging ? c.min.y : RAIL_TOP;
+    });
+
+    const railGroup = new THREE.Group();
+    railGroup.name = 'mire hazard rail';
+    const postLats = [-lipHalf + 0.4, -lipHalf * 0.34, lipHalf * 0.34, lipHalf - 0.4];
+    const SNAPPED = 2;                        // the one something went through
+    const postAt = (lat) => {
+      const v = this.posAt(lipS, lat);
+      v.y = 0;
+      return v;
+    };
+    const addRailBox = (w, h, d, at, y, yaw, tilt = 0, mat = M.bark) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      mesh.position.set(at.x, y, at.z);
+      mesh.rotation.set(tilt, yaw, 0);
+      railGroup.add(mesh);
+      return mesh;
+    };
+    postLats.forEach((lat, i) => {
+      const at = postAt(lat);
+      const snapped = i === SNAPPED;
+      const h = snapped ? 0.46 : 1.02;
+      addRailBox(0.13, h, 0.13, at, h / 2, lipYaw + (i - 1.5) * 0.05, (i % 2 ? 0.06 : -0.05));
+      // the cap: the only pale value on the lip, and the reason the line reads
+      // at all under one lantern
+      if (!snapped) addRailBox(0.17, 0.06, 0.17, at, h + 0.02, lipYaw, 0, M.bone);
+    });
+    // the snapped post's head, face down in the peat past the lip
+    {
+      const gone = this.posAt(mireS - 2.1, postLats[SNAPPED] * 0.8);
+      gone.y = 0;
+      addRailBox(0.13, 0.62, 0.13, gone, -0.06, lipYaw + 0.7, Math.PI / 2 - 0.22);
+    }
+    // the rail itself: two sagging segments per span, so it hangs like rope-
+    // strung timber and not like a fence from a hardware shop
+    for (let i = 0; i < postLats.length - 1; i++) {
+      const a = postLats[i], b = postLats[i + 1];
+      const capA = i === SNAPPED ? 0.42 : RAIL_TOP;
+      const capB = i + 1 === SNAPPED ? 0.42 : RAIL_TOP;
+      const mid = (a + b) / 2;
+      const sag = Math.min(capA, capB) - 0.09;
+      for (const [from, to, y0, y1] of [[a, mid, capA, sag], [mid, b, sag, capB]]) {
+        const pa = postAt(from), pb = postAt(to);
+        const len = Math.hypot(pb.x - pa.x, pb.z - pa.z);
+        const centre = { x: (pa.x + pb.x) / 2, z: (pa.z + pb.z) / 2 };
+        const bar = addRailBox(0.075, 0.075, len, centre, (y0 + y1) / 2,
+          Math.atan2(pb.x - pa.x, pb.z - pa.z));
+        bar.rotation.x = Math.atan2(y1 - y0, len);
+      }
+    }
+    scene.add(batchStaticGroup(railGroup, 'mire hazard rail'));
+    this.mireRail = { colliders: railColliders, top: RAIL_TOP, s: lipS };
+
+    this.mire = { mesh: mire, reeds: reedMesh, rings: ringMesh, chair, rail: this.mireRail };
   }
 
   _buildForkTopology() {

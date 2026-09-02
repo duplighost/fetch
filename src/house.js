@@ -775,6 +775,17 @@ export function buildHouse(game) {
   world.addZone('bedroom', 4, -2, 12, 6, 3.0, 7);
   world.addZone('basement', -20.5, -12, 12, 6.5, -3.6, -0.4);
   world.addZone('house', -12.5, -14.5, 12.5, 6.5, -0.4, 7.2);
+  // THE BUILDING, as one box, derived from the three zones above and
+  // written beside them so the two can never drift apart. It answers one
+  // question for the whole codebase: is this POINT inside the house?
+  // `isPhysicalHouseInterior` answers it about the player from the act; this
+  // answers it about anything, which is what a creature standing in a room
+  // you have already left requires. (marrow.js registers a second 'basement'
+  // zone under the graveyard, so a union over zone NAMES would swallow the
+  // crypt — hence a named box rather than a search.)
+  game.houseShell = {
+    minX: -20.5, maxX: 12.5, minZ: -14.5, maxZ: 6.5, minY: -3.6, maxY: 7.2,
+  };
   world.addSurface('wood', -12, -14, 12, 6, -0.5, 7.2);
   world.addSurface('stone', 4, -6, 12, 6, -0.5, 3.4);   // kitchen flags
   world.addSurface('dirt', -20, -14, 12, 6, -3.6, -0.5); // cellar earth

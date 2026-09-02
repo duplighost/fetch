@@ -2,7 +2,7 @@
 // every beat runs on accumulated dt so the whole game can be stepped by tests.
 // Scare law: dread first; teach a rule, break it once; silence is a weapon.
 import * as THREE from 'three';
-import { clamp, lerp, damp, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
+import { clamp, lerp, damp, inHouseShell, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
 import { FOREST_GATE } from './outside.js';
 
 const ACT_SPAWNS = {
@@ -203,6 +203,20 @@ export class Director {
 
   _enterGraveyard() {
     const g = this.game;
+    // THE HOUSE KEEPS ITS OWN DEAD. The Resident and any walker still
+    // standing in the rooms behind you are house pressure, not migrating
+    // graveyard enemies -- the same sentence _enterForest already says about
+    // the Standing Kind. Nothing removed them before: _enterBasement's
+    // _removeResident only fires if the Resident exists at that moment, and
+    // round eighteen let residentHeard spawn one any time the player is
+    // physically upstairs, basement act included. So a body could be left
+    // pacing an empty house for the rest of the run -- frozen (_updateResident
+    // refuses to run outdoors) but still driving a presence loop with an
+    // audible floor from twenty metres away, and still wakeable by a pop.
+    // Alex, 2026-09-01: "There is an enemy that looks like it is still in the
+    // house making sounds when you get to the graveyard." It was.
+    g.enemies.clear((e) => inHouseShell(g, e.pos));
+    this.resident = null;
     g.checkpoint('graveyard');
     g.baseTension = 0.12;
     this.dread = 0.4;

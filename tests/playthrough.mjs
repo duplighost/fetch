@@ -514,8 +514,12 @@ try {
       });
       let returnT = 0;
       while (g.skull.mode !== 'held' && returnT < 3.5 && !g.dead) {
+        // The body that climbed out of the wagon is a threat a human can
+        // see (sting, shake, its own glow) and the route bot could not:
+        // every list in this fight filtered on graveArena, so the bot
+        // never fled it and never threw at it. It flees it now.
         const nearest = g.enemies.list
-          .filter((en) => en.graveArena && en.state !== 'dying')
+          .filter((en) => (en.graveArena || en.wreckPassenger) && en.state !== 'dying')
           .sort((a, b) => a.pos.distanceToSquared(g.player.pos) - b.pos.distanceToSquared(g.player.pos))[0];
         if (nearest) {
           let awayX = g.player.pos.x - nearest.pos.x;
@@ -538,7 +542,7 @@ try {
     let graveGuard = 0;
     while (!g.flags.has('graveyardResolved') && !g.dead && graveGuard < 240) {
       graveGuard++;
-      const es = g.enemies.list.filter((en) => en.graveArena
+      const es = g.enemies.list.filter((en) => (en.graveArena || en.wreckPassenger)
         && en.kind === 'walker' && en.state !== 'dying');
       if (!es.length) { F.stepWith(0.35); continue; }
       const d = (en) => Math.hypot(en.pos.x - g.player.pos.x, en.pos.z - g.player.pos.z);
