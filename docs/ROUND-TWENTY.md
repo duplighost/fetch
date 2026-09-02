@@ -117,7 +117,8 @@ should go after the districts the probes have never walked.
 
 Every gate in `tests/` except `playthrough` and `render-perf`, run serially:
 **33/33 green**, including all four that were red on the board.
-`playthrough` **6/6**. `netlify-release-integrity` needs
+`playthrough` **4/4** this round (6/6 in round nineteen, on the same code path).
+`netlify-release-integrity` needs
 `node tools/package-netlify.mjs` first — that is not a defect, it is a missing
 artifact on a fresh worktree.
 
