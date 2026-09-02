@@ -110,8 +110,24 @@ export class GameAudio {
     this._peakVoices = 0;
     this._droppedVoices = 0;
     this._resumes = 0;
+    // set while the GAME is deliberately holding the context suspended, so
+    // the watchdog above can tell a pause from a browser eviction
+    this._holdSuspended = false;
     ctx.addEventListener?.('statechange', () => {
       if (ctx.state === 'running' || ctx.state === 'closed') return;
+      // ...UNLESS WE ARE THE ONES WHO ASKED. The watchdog exists for exactly
+      // one case: the BROWSER suspending us under pressure. It could never
+      // tell that apart from a pause, so pausing the game suspended the
+      // context and this handler put it straight back on the next tick --
+      // main.js's _setAudioPaused says so in its own comment and works around
+      // it by ramping the master to zero, which is why a paused game sounds
+      // silent even though its context is still running. That workaround
+      // stays (it makes a pause silent whatever is playing); this removes the
+      // fight underneath it. tests/pause-title-regression asserts the honest
+      // state -- ctx.state 'suspended' under a pause -- and has been red on
+      // this exact line, non-deterministically, because it was racing a
+      // resume the engine was issuing against itself.
+      if (this._holdSuspended) return;
       this._resumes++;
       ctx.resume?.().catch?.(() => {});
     });
@@ -2641,6 +2657,11 @@ export class GameAudio {
 
   // ---------------- teardown ----------------
 
+  // A DELIBERATE HOLD, announced. Pause, the terminal hand-off and the page
+  // teardown all park the context on purpose; everything else that stops it
+  // is the browser, and the browser's version is the one the watchdog is for.
+  holdSuspended(hold) { this._holdSuspended = !!hold; }
+
   stopAll({ suspend = false } = {}) {
     if (!this._ready) return;
     this._cancelForestStoryPrewarm?.();
@@ -2665,6 +2686,7 @@ export class GameAudio {
     this._tGain.gain.setTargetAtTime(0.0001, t, 0.1);
     this.master.gain.cancelScheduledValues(t);
     this.master.gain.setTargetAtTime(0.0001, t, 0.18);
+    if (suspend) this.holdSuspended(true);
     if (suspend && !this._suspendTimer) {
       const ctx = this.ctx;
       this._suspendTimer = setTimeout(() => {

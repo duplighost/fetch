@@ -1482,6 +1482,11 @@ class Game {
   _setAudioPaused(paused) {
     const ctx = this.audio?.ctx;
     if (!ctx) return;
+    // FIRST, TELL THE ENGINE WHO ASKED. The watchdog in audio.js resumes on
+    // any non-running state; until it could tell a pause from a browser
+    // eviction it undid this suspend on the next tick, which is the race the
+    // gain ramp below was written to survive rather than to win.
+    this.audio?.holdSuspended?.(paused);
     // THE GAIN GOES FIRST, AND IT DOES NOT DEPEND ON THE CONTEXT OBEYING.
     //
     // Suspending an AudioContext is a request with a promise attached, and the
