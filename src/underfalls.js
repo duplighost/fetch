@@ -7,7 +7,6 @@
 // beautiful ledge can never secretly be a hole.
 import * as THREE from 'three';
 import { clamp, lerp, RNG, smoothstep, TAU } from './util.js';
-import { buildPresence, clonePresence, tickPresence } from './marrow.js';
 
 const MAIN_LOCAL = Object.freeze([
   Object.freeze({ x: 0,  z: 22,  y: 0.00, w: 2.30, name: 'stone veil' }),
@@ -21,14 +20,7 @@ const MAIN_LOCAL = Object.freeze([
   Object.freeze({ x: 40, z: 69,  y: 1.60, w: 2.50, name: 'sluice rise' }),
   Object.freeze({ x: 46, z: 78,  y: 3.20, w: 2.55, name: 'upper sluice' }),
   Object.freeze({ x: 55, z: 87,  y: 3.20, w: 2.75, name: 'overflow gallery' }),
-  // The old gallery-to-spill chord made the back half feel like one vacant
-  // diagonal. This dry procession bends east before returning to the descent:
-  // thirteen mandatory metres, one real decision mouth, same analytic floor.
-  // Both arms stay on the y=2 landing until their shoulders separate; dropping
-  // one inside the fork would make the XZ union select two different floors in
-  // the same walkable footprint.
-  Object.freeze({ x: 68, z: 90,  y: 2.00, w: 2.45, name: 'procession bend' }),
-  Object.freeze({ x: 60, z: 96,  y: 2.00, w: 2.65, name: 'spill descent' }),
+  Object.freeze({ x: 60, z: 96,  y: 0.00, w: 2.65, name: 'spill descent' }),
   Object.freeze({ x: 68, z: 104, y: 0.00, w: 3.80, name: 'hatch cistern' }),
 ]);
 
@@ -44,22 +36,11 @@ const SECRET_LOCAL = Object.freeze([
   Object.freeze({ x: 46, z: 78, y: 3.20, w: 1.70, name: 'overflow shortcut' }),
 ]);
 
-// A genuine dead arm at the new procession bend. It shares the same corridor
-// union, floor sampler, clamp, shell and navigation graph as the required way;
-// no decorative wall is allowed to counterfeit collision. The wet paving stays
-// on MAIN, so attention still rewards the player without a HUD arrow.
-const BLIND_LOCAL = Object.freeze([
-  Object.freeze({ x: 68, z: 90,  y: 2.00, w: 2.45, name: 'procession blind mouth' }),
-  Object.freeze({ x: 78, z: 93,  y: 2.00, w: 2.15, name: 'blind gallery' }),
-  Object.freeze({ x: 81, z: 101, y: 0.00, w: 2.35, name: 'witness dead end' }),
-]);
-
 const CHAMBERS_LOCAL = Object.freeze([
   Object.freeze({ x: 7,  z: 36,  y: 0.00, r: 4.30, name: 'intake apse' }),
   Object.freeze({ x: 22, z: 54,  y: 0.00, r: 10.50, name: 'drowned pump chapel' }),
   Object.freeze({ x: 27, z: 68,  y: 1.25, r: 3.45, name: 'bell cistern', secret: true }),
   Object.freeze({ x: 55, z: 87,  y: 3.20, r: 4.80, name: 'overflow gallery' }),
-  Object.freeze({ x: 81, z: 101, y: 0.00, r: 3.65, name: 'witness dead end', blind: true }),
   Object.freeze({ x: 68, z: 104, y: 0.00, r: 4.25, name: 'hatch cistern' }),
 ]);
 
@@ -127,12 +108,10 @@ export function createUnderfallsLayout(center) {
   const C = { x: center.x, z: center.z };
   const main = MAIN_LOCAL.map((p) => worldNode(C, p));
   const secret = SECRET_LOCAL.map((p) => worldNode(C, p));
-  const blind = BLIND_LOCAL.map((p) => worldNode(C, p));
   const chambers = CHAMBERS_LOCAL.map((p) => worldNode(C, p));
   const navigationWaypoints = NAVIGATION_LOCAL.map((p) => worldNode(C, p));
   const mainSegments = makeSegments(main, 'main');
   const secretSegments = makeSegments(secret, 'secret');
-  const blindSegments = makeSegments(blind, 'blind');
   const named = Object.fromEntries(main.map((p) => [p.name, p]));
   const chapel = chambers.find((c) => c.name === 'drowned pump chapel');
   const lowerSluice = named['lower sluice'];
@@ -162,11 +141,7 @@ export function createUnderfallsLayout(center) {
     },
     {
       name: 'hatch-veil',
-      pos: new THREE.Vector3(
-        (main[main.length - 2].x + main[main.length - 1].x) / 2,
-        1.3,
-        (main[main.length - 2].z + main[main.length - 1].z) / 2,
-      ),
+      pos: new THREE.Vector3((main[11].x + main[12].x) / 2, 1.3, (main[11].z + main[12].z) / 2),
       radius: 4.2,
       strength: 0.72,
     },
@@ -198,12 +173,12 @@ export function createUnderfallsLayout(center) {
       depth: 0.9,
     };
   };
-  const curtains = [[0, 1], [1, 2], [8, 9], [9, 10], [main.length - 2, main.length - 1]]
+  const curtains = [[0, 1], [1, 2], [8, 9], [9, 10], [11, 12]]
     .map(([i, j]) => curtainSlab(main[i], main[j]));
   if (secret[0] && secret[1]) curtains.push(curtainSlab(secret[0], secret[1]));
   const bounds = {
     minX: C.x - 10,
-    maxX: C.x + 87,
+    maxX: C.x + 74,
     minZ: C.z + 20.35,
     maxZ: C.z + 110,
   };
@@ -211,17 +186,14 @@ export function createUnderfallsLayout(center) {
     center: C,
     main,
     secret,
-    blind,
     chambers,
     navigationWaypoints,
     mainSegments,
     secretSegments,
-    blindSegments,
-    segments: [...mainSegments, ...secretSegments, ...blindSegments],
+    segments: [...mainSegments, ...secretSegments],
     bounds,
     mainLength: pathLength(main),
     secretLength: pathLength(secret),
-    blindLength: pathLength(blind),
     entrance: main[0],
     hatch: main[main.length - 1],
     named,
@@ -253,7 +225,7 @@ function segmentProjection(seg, x, z) {
 function chamberProjection(chamber, x, z) {
   const d = Math.hypot(x - chamber.x, z - chamber.z);
   return {
-    type: 'chamber', kind: chamber.secret ? 'secret' : chamber.blind ? 'blind' : 'main', chamber,
+    type: 'chamber', kind: chamber.secret ? 'secret' : 'main', chamber,
     cx: chamber.x, cz: chamber.z, d, w: chamber.r, y: chamber.y,
     clearance: d - chamber.r,
     routeDistance: null,
@@ -428,9 +400,8 @@ function buildUnderfallsNavigation(layout) {
   };
   for (const point of layout.main) add(point, 'main', point.name);
   for (const point of layout.secret) add(point, 'secret', point.name);
-  for (const point of layout.blind || []) add(point, 'blind', point.name);
   for (const chamber of layout.chambers) {
-    add(chamber, chamber.secret ? 'secret' : chamber.blind ? 'blind' : 'chamber', chamber.name);
+    add(chamber, chamber.secret ? 'secret' : 'chamber', chamber.name);
   }
   for (const point of layout.navigationWaypoints || []) add(point, 'navigation', point.name);
   const nodes = [...byPosition.values()];
@@ -2888,213 +2859,10 @@ function buildHatchCistern(game, layout, state) {
     if (game.act !== 'cave' || !game.flags.has('waterfallTaken')) return;
     game.director.enterMirrorRoom();
   });
-  const hatchCandles = [
-    { x: H.x - 1.45, y: y + 0.55, z: H.z, intensity: 1.7, r: 5.4 },
-    { x: H.x + 1.45, y: y + 0.55, z: H.z, intensity: 1.7, r: 5.4 },
-  ];
-  world.candles.push(...hatchCandles);
+  world.candles.push({ x: H.x - 1.45, y: y + 0.55, z: H.z, intensity: 1.7, r: 5.4 });
+  world.candles.push({ x: H.x + 1.45, y: y + 0.55, z: H.z, intensity: 1.7, r: 5.4 });
   game.caveEnd = new THREE.Vector3(H.x, y, H.z);
-  state.hatch = { group: hatch, post, position: game.caveEnd.clone(), candles: hatchCandles };
-}
-
-// ------------------------------------------------------ THE LAST WALK UP TO IT
-// A non-enemy can own horror without owning damage. The Witness stands directly
-// under the only exit and asks the player to walk into arm's reach while the
-// hatch remains the ordinary E interaction above it. It has no collider, no
-// entry in enemies.list, no camera control, no movement lock and no progression
-// flag read. The blind branch has a smaller harmless answer that lunges once;
-// curiosity is rewarded with fear, not a soft-lock or another combat tax.
-function buildUnderfallsDread(game, layout, state) {
-  const { scene, world } = game;
-  const H = layout.hatch;
-  const root = markUnderfalls(new THREE.Group());
-  root.name = 'the witness under the hatch';
-  // Hang off-centre between the two hatch chains. The held skull intentionally
-  // owns the middle of FETCH's frame; seating a narrow body on that exact axis
-  // let the player's own verb eclipse the scare they were walking toward.
-  const guardianHome = new THREE.Vector3(H.x - 0.88, H.y + 0.18, H.z + 0.18);
-  root.position.copy(guardianHome);
-  root.scale.set(1.48, 1.28, 1.2);
-  scene.add(root);
-
-  // The first pass was mechanically honest but visually read as a bright stick
-  // puppet. FETCH already owns a genuinely frightening authored body: MARROW's
-  // Presence. Clone its geometry and mutate the motion/material instances into
-  // a drowned callback. The clone shares all geometry, so this costs no extra
-  // geometry memory or shader signatures, and remains scenery rather than an
-  // enemy. Seeing the same wrong anatomy after leaving MARROW makes the final
-  // walk feel followed instead of introducing an unrelated mascot at the exit.
-  const sourcePresence = game.marrow?.presence;
-  const witnessPresence = sourcePresence
-    ? clonePresence(sourcePresence)
-    : buildPresence(new RNG(0x18d0));
-  witnessPresence.group.name = 'drowned Presence witness';
-  witnessPresence.group.visible = true;
-  // clonePresence intentionally preserves the donor transform. MARROW lives
-  // five metres below the outside world's origin, so reset the nested clone
-  // before mounting it beneath the cave hatch or the scare animates underground.
-  witnessPresence.group.position.set(0, 0, 0);
-  // MARROW's guardian normally keeps its too-long arms by its knees. Here the
-  // player carries a metre-wide skull in the centre of the frame, so the same
-  // anatomy opens around it: silhouette at the edges, wrong face above it.
-  // This is pose only; the borrowed stop-motion ticker still owns the twitch.
-  if (witnessPresence.arms[0]) witnessPresence.arms[0].rotation.z = -0.98;
-  if (witnessPresence.arms[1]) witnessPresence.arms[1].rotation.z = 0.82;
-  root.add(witnessPresence.group);
-  witnessPresence.group.traverse((object) => {
-    if (!object.isMesh || !object.material) return;
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
-    for (const material of materials) {
-      if (material === witnessPresence.eyeMat) {
-        object.scale.multiplyScalar(1.42);
-        continue;
-      }
-      if (material === witnessPresence.mawMat || material === witnessPresence.veinMat) continue;
-      if (material.isMeshPhysicalMaterial) {
-        material.color.setHex(0x11191a);
-        material.emissive?.setHex(0x02090a);
-        material.emissiveIntensity = Math.max(material.emissiveIntensity || 0, 0.22);
-      } else if (material.isMeshStandardMaterial) {
-        material.color.setHex(material.transparent ? 0x202a2b : 0x353b3b);
-        if (material.emissive) {
-          material.emissive.setHex(0x03090a);
-          material.emissiveIntensity = Math.max(material.emissiveIntensity || 0, 0.12);
-        }
-      }
-    }
-  });
-  const witnessGlow = {
-    x: guardianHome.x, y: guardianHome.y + 1.45, z: guardianHome.z,
-    intensity: 0, r: 4.8,
-  };
-  world.candles.push(witnessGlow);
-
-  const blindChamber = layout.chambers.find((chamber) => chamber.blind);
-  const blindRoot = markUnderfalls(new THREE.Group());
-  blindRoot.name = 'blind gallery harmless witness';
-  const blindStart = new THREE.Vector3(
-    blindChamber?.x ?? H.x + 13,
-    blindChamber?.y ?? H.y,
-    (blindChamber?.z ?? H.z - 3) + 0.35,
-  );
-  blindRoot.position.copy(blindStart);
-  blindRoot.visible = false;
-  blindRoot.scale.setScalar(0.82);
-  const blindPresence = sourcePresence
-    ? clonePresence(sourcePresence)
-    : buildPresence(new RNG(0x18b1));
-  blindPresence.group.name = 'half-buried blind Presence';
-  blindPresence.group.visible = true;
-  blindPresence.group.position.y = -0.42;
-  blindRoot.add(blindPresence.group);
-  scene.add(blindRoot);
-
-  const dread = {
-    guardian: root,
-    blindWitness: blindRoot,
-    witnessPresence,
-    blindPresence,
-    witnessGlow,
-    approachTriggered: false,
-    closeTriggered: false,
-    closePulse: 0,
-    pulseT: 0,
-    blind: { revealed: false, lunging: false, t: 0, start: blindStart.clone(), end: blindStart.clone() },
-    harmless: true,
-  };
-  state.dread = dread;
-  const playerEye = new THREE.Vector3();
-  const toPlayer = new THREE.Vector3();
-
-  game.tickers.push((dt, time) => {
-    const active = game.act === 'cave' && !game.dead && !game.terminal;
-    if (!active) {
-      for (const candle of state.hatch?.candles || []) candle.intensity = 1.7;
-      witnessGlow.intensity = 0;
-      return;
-    }
-    const p = game.player.pos;
-    const dx = p.x - guardianHome.x, dz = p.z - guardianHome.z;
-    const distance = Math.hypot(dx, dz);
-    dread.closePulse = Math.max(0, dread.closePulse - dt * 1.45);
-    const closeAge = 1 - dread.closePulse;
-    const lunge = dread.closePulse > 0
-      ? Math.sin(clamp(closeAge / 0.72, 0, 1) * Math.PI) * 0.58
-      : 0;
-    toPlayer.set(dx, 0, dz);
-    if (toPlayer.lengthSq() > 0.001) toPlayer.normalize();
-    root.position.copy(guardianHome).addScaledVector(toPlayer, lunge);
-    root.rotation.y = Math.atan2(dx, dz);
-    tickPresence(witnessPresence, dt, distance, 'guard', { x: 0, z: 0 });
-    const near = smoothstep(13.5, 1.1, distance);
-    witnessGlow.x = root.position.x;
-    witnessGlow.y = root.position.y + 1.45;
-    witnessGlow.z = root.position.z;
-    const witnessCut = Math.sin(time * 21.3) > 0.7 ? 0.35 : 1;
-    witnessGlow.intensity = near * (0.42 + near * 0.92) * witnessCut;
-    if (near > 0) {
-      // Tickers run after the director's fear ease, so the authored gauntlet
-      // can raise the rendered frame without changing the director's threat.
-      game.fx.fear = Math.max(game.fx.fear, near * 0.96);
-      dread.pulseT -= dt;
-      if (near > 0.58 && dread.pulseT <= 0) {
-        dread.pulseT = 0.46 + (Math.sin(time * 3.7) * 0.5 + 0.5) * 0.34;
-        game.shake(0.035 + near * 0.055);
-      }
-    }
-    for (let i = 0; i < (state.hatch?.candles?.length || 0); i++) {
-      const candle = state.hatch.candles[i];
-      const cut = Math.sin(time * (17.3 + i * 2.1) + i * 4.2) > 0.58 ? 0.32 : 1;
-      candle.intensity = 1.7 * (1 - near * 0.48) * (1 - near + near * cut);
-    }
-    if (!dread.approachTriggered && distance < 8.2) {
-      dread.approachTriggered = true;
-      game.flag('underfallsWitnessApproached');
-      game.audio.duck(0.42, 4.2);
-      game.audio.drownedCall?.({ pos: root.position, gain: 0.48, distant: false });
-    }
-    if (!dread.closeTriggered && distance < 2.35) {
-      dread.closeTriggered = true;
-      dread.closePulse = 1;
-      witnessPresence._twitchUntil = 0;
-      game.flag('underfallsWitnessReached');
-      game.fx.fear = 1;
-      game.shake(0.48);
-      game.audio.sting(0.94);
-      game.camera.getWorldPosition(playerEye);
-      game.audio.drownedImpact?.({ pos: playerEye, gain: 0.78 });
-    }
-
-    const bx = p.x - blindRoot.position.x, bz = p.z - blindRoot.position.z;
-    const blindDistance = Math.hypot(bx, bz);
-    blindRoot.rotation.y = Math.atan2(bx, bz);
-    if (!dread.blind.revealed && blindDistance < 6.4) {
-      dread.blind.revealed = true;
-      blindRoot.visible = true;
-      blindPresence._twitchUntil = 0;
-      game.flag('underfallsBlindWitnessSeen');
-      game.audio.whisper({ pos: blindRoot.position, gain: 0.48, rate: 0.43, verb: 0.86 });
-    }
-    if (dread.blind.revealed && !dread.blind.lunging && blindDistance < 3.7) {
-      dread.blind.lunging = true;
-      dread.blind.t = 0;
-      toPlayer.set(bx, 0, bz);
-      if (toPlayer.lengthSq() > 0.001) toPlayer.normalize();
-      dread.blind.end.copy(dread.blind.start).addScaledVector(toPlayer, 1.55);
-      game.flag('underfallsBlindWitnessLunged');
-      game.fx.fear = 1;
-      game.shake(0.36);
-      game.audio.sting(0.76);
-    }
-    if (dread.blind.lunging && dread.blind.t < 1) {
-      dread.blind.t = Math.min(1, dread.blind.t + dt * 4.8);
-      const q = 1 - (1 - dread.blind.t) ** 3;
-      blindRoot.position.lerpVectors(dread.blind.start, dread.blind.end, q);
-    }
-    if (dread.blind.revealed) {
-      tickPresence(blindPresence, dt, blindDistance, 'guard', { x: 0, z: 0 });
-    }
-  });
+  state.hatch = { group: hatch, post, position: game.caveEnd.clone() };
 }
 
 function installClamp(game, layout, state) {
@@ -3654,7 +3422,6 @@ export function buildUnderfalls(game) {
   buildLowSteam(game, layout, state);
   buildCeilingDrips(game, layout, state);
   buildHatchCistern(game, layout, state);
-  buildUnderfallsDread(game, layout, state);
   // The district exists under the exterior coordinates, but none of its
   // chapel, sluice, hatch or spray geometry belongs in an exterior render.
   // Remember each root's live visibility so one-shot cave beats survive a

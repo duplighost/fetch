@@ -9,16 +9,6 @@ const server = await ensureServer();
 const browser = await launchBrowser();
 let exit = 0;
 const report = { url: `${URL_BASE}/?test=1`, checks: [], browserErrors: [] };
-// Test-mode bypasses the production animated warm gate and constructs WebAudio
-// synchronously. Context creation itself varied from 315..517 ms in this run,
-// while the untouched shipped source measured 396.9 ms on the same host. Keep
-// 250 ms as the ideal, pin the deterministic audio bake separately, and reserve
-// the outer ceiling for an actual multi-frame stall. The production freeze
-// contract remains tests/warm-start-regression.mjs (zero links during play).
-const COLD_AUDIO_IDEAL_MS = 250;
-const CORE_AUDIO_BAKE_HARD_CEILING_MS = 250;
-const TEST_MODE_START_HARD_CEILING_MS = 750;
-const STORY_IDLE_SLICE_HARD_CEILING_MS = 75;
 
 try {
   const { page, errors } = await openPage(browser, report.url);
@@ -31,12 +21,7 @@ try {
     { timeout: 60000, polling: 100 },
   );
 
-  report.checks = await page.evaluate(async ({
-    COLD_AUDIO_IDEAL_MS,
-    CORE_AUDIO_BAKE_HARD_CEILING_MS,
-    TEST_MODE_START_HARD_CEILING_MS,
-    STORY_IDLE_SLICE_HARD_CEILING_MS,
-  }) => {
+  report.checks = await page.evaluate(async () => {
     const F = window.__FETCH;
     const g = window.__game;
     const checks = [];
@@ -55,17 +40,13 @@ try {
     F.start();
     const synchronousStartMs = performance.now() - startAt;
     check(
-      'Start defers the late forest bank and avoids a multi-frame test-mode audio stall',
-      synchronousStartMs < TEST_MODE_START_HARD_CEILING_MS
-        && audioBakeMs < CORE_AUDIO_BAKE_HARD_CEILING_MS
-        && g.audio._storyBakeMs === 0,
+      'synchronous Start stays below the cold audio-hitch ceiling',
+      synchronousStartMs < 250,
       {
         synchronousStartMs: round(synchronousStartMs),
         audioBakeMs: round(audioBakeMs),
         forestStoryBakeMs: round(g.audio._storyBakeMs),
-        idealMs: COLD_AUDIO_IDEAL_MS,
-        coreBakeCeilingMs: CORE_AUDIO_BAKE_HARD_CEILING_MS,
-        startHardCeilingMs: TEST_MODE_START_HARD_CEILING_MS,
+        ceilingMs: 250,
       },
     );
     const prewarmAt = performance.now();
@@ -80,7 +61,7 @@ try {
       'idle prewarm completes in bounded slices and first audible prop is hitch-free',
       g.audio._storyPrewarmReady
         && Object.keys(g.audio._forestStoryBufs).length === 8
-        && g.audio._storyPrewarmMaxChunkMs < STORY_IDLE_SLICE_HARD_CEILING_MS
+        && g.audio._storyPrewarmMaxChunkMs < 50
         && firstStoryLoopMs < 12
         && !!firstStoryHandle,
       {
@@ -88,7 +69,6 @@ try {
         buffers: Object.keys(g.audio._forestStoryBufs).length,
         totalBakeMs: round(g.audio._storyBakeMs),
         maxChunkMs: round(g.audio._storyPrewarmMaxChunkMs),
-        hardCeilingMs: STORY_IDLE_SLICE_HARD_CEILING_MS,
         firstStoryLoopMs: round(firstStoryLoopMs),
         waitMs: round(performance.now() - prewarmAt),
       },
@@ -442,11 +422,6 @@ try {
     );
 
     return checks;
-  }, {
-    COLD_AUDIO_IDEAL_MS,
-    CORE_AUDIO_BAKE_HARD_CEILING_MS,
-    TEST_MODE_START_HARD_CEILING_MS,
-    STORY_IDLE_SLICE_HARD_CEILING_MS,
   });
 
   for (const result of report.checks) {

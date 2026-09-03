@@ -91,7 +91,7 @@ function softDot() {
 // a half-formed second face in its shoulder, eyes in its chest, and the
 // stop-motion jitter that makes it read as bad claymation. Its two point
 // lights are NOT ported; the emissive ranges were authored to carry it.
-export function buildPresence(rng = new RNG(0x3aa2)) {
+function buildPresence(rng) {
   const P = {};
   const g = new THREE.Group();
   g.name = 'the presence';
@@ -247,53 +247,9 @@ export function buildPresence(rng = new RNG(0x3aa2)) {
   return P;
 }
 
-// Underfalls borrows the Presence as an authored creature vocabulary, not as
-// a second copy of all its geometry. Object3D.clone already shares geometry;
-// this companion maps the animation handles onto the clone and gives it fresh
-// materials so the drowned Witness can twitch and glow without recolouring the
-// original guardian in MARROW. No new geometry and no new shader signatures.
-export function clonePresence(source) {
-  const group = source.group.clone(true);
-  const objects = new Map();
-  const materials = new Map();
-  const materialClone = (material) => {
-    if (Array.isArray(material)) return material.map(materialClone);
-    if (!materials.has(material)) materials.set(material, material.clone());
-    return materials.get(material);
-  };
-  const mapTree = (from, to) => {
-    objects.set(from, to);
-    if (from.material) to.material = materialClone(from.material);
-    for (let i = 0; i < from.children.length; i++) mapTree(from.children[i], to.children[i]);
-  };
-  mapTree(source.group, group);
-  const object = (value) => objects.get(value);
-  const objectList = (values) => values.map(object);
-  return {
-    group,
-    torso: object(source.torso),
-    head: object(source.head),
-    jaw: object(source.jaw),
-    sideFace: object(source.sideFace),
-    veins: objectList(source.veins),
-    spines: objectList(source.spines),
-    arms: objectList(source.arms),
-    veils: objectList(source.veils),
-    rags: objectList(source.rags),
-    chestEyes: objectList(source.chestEyes),
-    legs: objectList(source.legs),
-    mawMat: materialClone(source.mawMat),
-    veinMat: materialClone(source.veinMat),
-    eyeMat: materialClone(source.eyeMat),
-    phase: 0,
-    _twitchUntil: 0,
-    _twitch: new THREE.Vector3(),
-  };
-}
-
 // MARROW's wrongness ticker (entity.js:466-549), guard/erupt/fold only —
 // the modes this district uses. `ag` is the one aggression scalar.
-export function tickPresence(P, dt, dist, mode, anims) {
+function tickPresence(P, dt, dist, mode, anims) {
   P.phase += dt;
   const guardLoom = mode === 'guard' ? clamp(1 - (dist - 1.0) / 7, 0, 1) : 0;
   const ag = mode === 'guard' ? clamp(0.35 + guardLoom * 0.65, 0, 1) : anims.ag ?? 0.6;

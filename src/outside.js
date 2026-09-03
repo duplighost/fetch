@@ -696,28 +696,23 @@ function buildGraveyardUpgrade(game) {
   tooth.position.copy(TOOTH_HOME);
   tooth.visible = false;   // until the stone comes down; no reason to spend its
   scene.add(tooth);        // draws across the whole yard before then
-  const toothGlow = { x: TOOTH_HOME.x, y: TOOTH_HOME.y + 0.2, z: TOOTH_HOME.z, intensity: 0, r: 4.5 };
-  world.candles.push(toothGlow);
+  const relicGlow = { x: TOOTH_HOME.x, y: TOOTH_HOME.y + 0.2, z: TOOTH_HOME.z, intensity: 0, r: 4.5 };
+  world.candles.push(relicGlow);
 
-  // THE RELIC MOVES TO THE WRECK. The canine remains the reward in this grave;
-  // the keepsake is now physically knocked out of the station wagon on its
-  // fourth hit, follows a visible arc, and lands outside the car's broad AABB.
-  // It is still a keepsake and grants no new mechanic; only its discovery has
-  // changed. The same throw that destroys the car cannot scoop it on return.
-  const RELIC_HOME = game.wreck?.relicLand?.clone()
-    || new THREE.Vector3(-5.4, 0.42, 17.2);
-  const RELIC_START = game.wreck?.relicLaunch?.clone()
-    || new THREE.Vector3(-9, 1.35, 14);
+  // ...and BEHIND it in the same rubble, THE RELIC. "might as well remove that
+  // powerup and put both powerups in the same spot as the first powerup is in
+  // now that comes out of that destroyed gravestone." Two sequential fetches
+  // from one broken stone: the canine first, and only once it is in the jaw
+  // does the second thing in the hole light up. It is a keepsake and nothing
+  // more — it grants no mechanic, which is exactly why it stopped being worth
+  // a guarded altar in another district.
+  const RELIC_HOME = new THREE.Vector3(TOOTH_HOME.x + 0.66, TOOTH_HOME.y - 0.08, TOOTH_HOME.z + 0.2);
   const relicKit = makeRelic();
   const relic = relicKit.mesh;
-  relic.position.copy(RELIC_START);
+  relic.position.copy(RELIC_HOME);
   relic.visible = false;
   scene.add(relic);
-  const carRelicGlow = {
-    x: RELIC_HOME.x, y: RELIC_HOME.y + 0.25, z: RELIC_HOME.z,
-    intensity: 0, r: 4.8,
-  };
-  world.candles.push(carRelicGlow);
+  let relicRevealedAt = -1;
   const relicTarget = world.addFetchTarget({
     id: 'marrowRelic', object: relic, radius: 0.5, enabled: false,
     onHit(skull, at) {
@@ -725,7 +720,6 @@ function buildGraveyardUpgrade(game) {
       if (game.flags.has('relicKept')) return 'continue';
       this.enabled = false;
       relic.visible = false;
-      carRelic.phase = 'taken';
       game.flag('relicKept');
       game.impact('pop', at || relic.position);
       game.audio.catchThud?.({ pos: relic.position, gain: 0.62, rate: 0.82 });
@@ -734,47 +728,6 @@ function buildGraveyardUpgrade(game) {
       return 'return';
     },
   });
-  const carRelic = {
-    id: 'graveyardCarRelic', mesh: relic, target: relicTarget,
-    phase: game.flags.has('relicKept') ? 'taken' : 'hidden',
-    t: 0, duration: 1.28, landedAt: -1,
-    start: RELIC_START, home: RELIC_HOME,
-    seat(start, home) {
-      // buildGraveyardLandmarks owns the upgrade and is deliberately built
-      // before the wagon. Once the authored car transform exists, replace the
-      // harmless fallback points in place so every closure and target keeps
-      // the same Vector3 identity.
-      this.start.copy(start);
-      this.home.copy(home);
-      if (this.phase === 'hidden') this.mesh.position.copy(this.start);
-      carRelicGlow.x = this.home.x;
-      carRelicGlow.y = this.home.y + 0.25;
-      carRelicGlow.z = this.home.z;
-    },
-    eject() {
-      if (this.phase !== 'hidden' || game.flags.has('relicKept')) return false;
-      this.phase = 'air';
-      this.t = 0;
-      this.landedAt = -1;
-      this.mesh.position.copy(this.start);
-      this.mesh.visible = true;
-      this.target.enabled = false;
-      game.flag('wreckRelicEjected');
-      game.audio.metalDrop({ pos: this.start, gain: 0.62, rate: 1.24 });
-      return true;
-    },
-    reset() {
-      if (game.flags.has('wreckDestroyed') || game.flags.has('relicKept')) return;
-      this.phase = 'hidden';
-      this.t = 0;
-      this.landedAt = -1;
-      this.mesh.position.copy(this.start);
-      this.mesh.visible = false;
-      this.target.enabled = false;
-      carRelicGlow.intensity = 0;
-    },
-  };
-  game.graveyardCarRelic = carRelic;
 
   // The sixth hero grave is the stone that keeps it: two skull hits bring the
   // stone down. Visibility derives from the grave's own state every tick, so a
@@ -824,51 +777,25 @@ function buildGraveyardUpgrade(game) {
         tooth.userData.halo.scale.set(hb, hb, 1);
       }
     }
-    toothGlow.intensity += ((tooth.visible ? 1.5 + Math.sin(time * 2.6) * 0.25 : 0)
-      - toothGlow.intensity) * Math.min(1, dt * 2.4);
-
-    // The car's keepsake is independent of the grave now. Its ballistic arc is
-    // cosmetic and deterministic; only the settled phase enables collection.
+    // THE SECOND FETCH from the same rubble: it only wakes once the canine is
+    // in the jaw, so the two are a sequence and not a pile. Same derived
+    // visibility, same anti-scoop settle — the toppling throw's return leg
+    // must never scoop a reward the player has not seen.
     const relicTaken = game.flags.has('relicKept');
-    if (relicTaken) carRelic.phase = 'taken';
-    if (carRelic.phase === 'air') {
-      carRelic.t = Math.min(carRelic.duration, carRelic.t + dt);
-      const q = clamp(carRelic.t / carRelic.duration, 0, 1);
-      const ease = q * q * (3 - 2 * q);
-      relic.position.lerpVectors(carRelic.start, carRelic.home, ease);
-      relic.position.y += Math.sin(q * Math.PI) * 2.65;
-      relic.rotation.x += dt * 7.4;
-      relic.rotation.y += dt * 9.1;
-      relic.rotation.z += dt * 5.8;
-      if (q >= 1) {
-        carRelic.phase = 'settled';
-        carRelic.landedAt = time;
-        relic.position.copy(carRelic.home);
-        relic.rotation.x = 0.18;
-        relic.rotation.z = -0.12;
-        game.flag('wreckRelicLanded');
-        game.audio.metalDrop({ pos: carRelic.home, gain: 0.48, rate: 1.42 });
-        game.audio.glassTink({ pos: carRelic.home, gain: 0.38, rate: 0.86, verb: 0.45 });
-      }
-    }
-    relic.visible = !relicTaken && surfaceVisible
-      && (carRelic.phase === 'air' || carRelic.phase === 'settled');
-    relicTarget.enabled = relic.visible && carRelic.phase === 'settled'
-      && carRelic.landedAt >= 0 && (time - carRelic.landedAt) > 0.9;
+    relic.visible = toppled && taken && !relicTaken && surfaceVisible;
+    if (relic.visible && relicRevealedAt < 0) relicRevealedAt = time;
+    if (!relic.visible && !relicTaken) relicRevealedAt = -1;
+    relicTarget.enabled = relic.visible && relicRevealedAt >= 0 && (time - relicRevealedAt) > 0.9;
     if (relic.visible) {
       relicKit.mat.emissiveIntensity = 0.8 + Math.max(0, Math.sin(time * 2.4)) ** 2 * 1.5;
-      if (carRelic.phase === 'settled') {
-        relic.rotation.y += dt * 1.05;
-        relic.position.y = RELIC_HOME.y + Math.sin(time * 1.5 + 1.1) * 0.045;
-      }
+      relic.rotation.y += dt * 1.05;
+      relic.position.y = RELIC_HOME.y + Math.sin(time * 1.5 + 1.1) * 0.045;
     }
-    if (relic.visible) {
-      carRelicGlow.x = relic.position.x;
-      carRelicGlow.z = relic.position.z;
-      carRelicGlow.y = relic.position.y + 0.25;
-    }
-    carRelicGlow.intensity += ((relic.visible ? 1.65 + Math.sin(time * 2.8) * 0.3 : 0)
-      - carRelicGlow.intensity) * Math.min(1, dt * 3.0);
+    // one descriptor for the hole, wherever the live prize is standing in it
+    const lit = relic.visible ? relic : (tooth.visible ? tooth : null);
+    if (lit) { relicGlow.x = lit.position.x; relicGlow.z = lit.position.z; relicGlow.y = lit.position.y + 0.2; }
+    relicGlow.intensity += ((lit ? 1.5 + Math.sin(time * 2.6) * 0.25 : 0)
+      - relicGlow.intensity) * Math.min(1, dt * 2.4);
 
     // THE SEAL, derived: the funeral opens it, and a reload restores it.
     if (!seal.open && game.flags.has('graveyardResolved')) seal.open = true;
@@ -4094,138 +4021,14 @@ function buildWreckedCar(game) {
   // the sounds are latched on the hit itself so a restore is silent.
   const WRECK_DEBRIS_OWNER = 90;
   const wreckAt = new THREE.Vector3(-9, 0.9, 14);
-  // Authored local points survive the wagon's yaw and crush. The body is folded
-  // in the rear cargo well and erupts through the buckled hatch TOWARD the
-  // graveyard entrance. The first version used the already-open passenger door
-  // on the far side of the car, which was physically plausible and visually
-  // invisible from the route where the player actually discovers the wreck.
-  // The keepsake still leaves the cabin and lands well outside the broad AABB.
-  const passengerStart = car.localToWorld(new THREE.Vector3(-1.08, 0, 0.04));
-  const passengerEnd = car.localToWorld(new THREE.Vector3(-3.02, 0, -0.08));
-  const relicLaunch = car.localToWorld(new THREE.Vector3(0.12, 1.16, 0.1));
-  // Land on the same arrival-side grass the body bursts toward. The previous
-  // far-side landing passed every reachability test yet hid the tiny object
-  // behind the surviving car shell from the exact route that earned it.
-  const relicLand = car.localToWorld(new THREE.Vector3(-3.55, 0, -0.58));
-  passengerStart.y = world.groundHeightAt(passengerStart.x, passengerStart.z, 3);
-  passengerEnd.y = world.groundHeightAt(passengerEnd.x, passengerEnd.z, 3);
-  relicLand.y = world.groundHeightAt(relicLand.x, relicLand.z, 3) + 0.42;
-  const passengerGlow = {
-    x: passengerStart.x, y: passengerStart.y + 1.0, z: passengerStart.z,
-    intensity: 0, r: 4.6,
-  };
-  world.candles.push(passengerGlow);
-
-  // Nothing is boot-spawned. Enemy clears are a normal death/arena boundary in
-  // FETCH, so a body hidden in scenery must be created at the reveal itself and
-  // must notice if a clear removed it without a kill. This is the mannequin
-  // scare's lifecycle law, applied to the least likely container in the yard.
-  const passenger = {
-    actor: null, active: false, spent: false, t: 0, duration: 0.92,
-    trigger() {
-      if (this.active || this.spent || game.act !== 'graveyard') return null;
-      const e = game.enemies.spawn('walker', passengerStart.x, passengerStart.z, 'dormant', 3);
-      e.wreckPassenger = true;
-      e.riseFrozen = true;
-      e.iframes = Math.max(e.iframes || 0, 1.05);
-      e.pos.copy(passengerStart);
-      e.mesh.position.copy(passengerStart);
-      e.mesh.scale.set(e.spec.scale, e.spec.scale * 0.34, e.spec.scale);
-      e.mesh.rotation.z = -0.82;
-      e.mesh.rotation.y = Math.atan2(passengerEnd.x - passengerStart.x,
-        passengerEnd.z - passengerStart.z);
-      this.actor = e;
-      this.active = true;
-      this.t = 0;
-      passengerGlow.x = passengerStart.x;
-      passengerGlow.y = passengerStart.y + 1.0;
-      passengerGlow.z = passengerStart.z;
-      passengerGlow.intensity = Math.max(passengerGlow.intensity, 1.5);
-      game.flag('wreckPassengerRevealed');
-      game.audio.whisper({ pos: passengerStart, gain: 0.52, rate: 0.48, verb: 0.7 });
-      game.audio.sting(0.82);
-      game.fx.fear = Math.max(game.fx.fear, 0.72);
-      game.shake(0.3);
-      return e;
-    },
-    reset() {
-      if (this.actor && game.enemies.list.includes(this.actor)) {
-        game.enemies.clear((e) => e === this.actor);
-      }
-      this.actor = null;
-      this.active = false;
-      this.spent = false;
-      this.t = 0;
-      passengerGlow.intensity = 0;
-    },
-    update(dt) {
-      const e = this.actor;
-      if (!e) {
-        passengerGlow.intensity += (0 - passengerGlow.intensity) * Math.min(1, dt * 5.5);
-        // A list clear can happen between the glass breaking and the next
-        // rendered frame. The second-hit state remains the reveal contract,
-        // so re-create the passenger lazily while that unfinished stage still
-        // owns the car. A real kill sets spent and can never come back.
-        if (!this.spent && wreck.hits === 2 && !wreck.dead && game.act === 'graveyard') {
-          this.trigger();
-        }
-        return;
-      }
-      if (!game.enemies.list.includes(e)) {
-        // A popped body is authored consequence; a bare list clear is a reset
-        // boundary and may re-arm while the unfinished car still exists.
-        this.spent = e.state === 'dying';
-        this.actor = null;
-        this.active = false;
-        passengerGlow.intensity += (0 - passengerGlow.intensity) * Math.min(1, dt * 5.5);
-        return;
-      }
-      if (game.act !== 'graveyard') {
-        game.enemies.clear((candidate) => candidate === e);
-        this.actor = null;
-        this.active = false;
-        this.spent = true;
-        passengerGlow.intensity = 0;
-        return;
-      }
-      const reveal = clamp(this.t / this.duration, 0, 1);
-      const glowWant = this.active && e.state !== 'dying' ? 0.46 + (1 - reveal) * 1.08 : 0;
-      passengerGlow.x = e.pos.x;
-      passengerGlow.y = e.pos.y + 1.05;
-      passengerGlow.z = e.pos.z;
-      passengerGlow.intensity += (glowWant - passengerGlow.intensity) * Math.min(1, dt * 8.5);
-      if (!this.active || e.state === 'dying') return;
-      this.t = Math.min(this.duration, this.t + dt);
-      const q = clamp(this.t / this.duration, 0, 1);
-      const ease = q * q * (3 - 2 * q);
-      e.pos.lerpVectors(passengerStart, passengerEnd, ease);
-      e.pos.y = world.groundHeightAt(e.pos.x, e.pos.z, 3);
-      e.mesh.position.copy(e.pos);
-      e.mesh.scale.set(e.spec.scale, e.spec.scale * (0.34 + ease * 0.66), e.spec.scale);
-      e.mesh.rotation.z = -(1 - ease) * 0.82;
-      if (q < 1) return;
-      this.active = false;
-      this.spent = true;
-      e.riseFrozen = false;
-      e.state = 'wind';
-      e.windT = 0;
-      e.mesh.scale.setScalar(e.spec.scale);
-      e.mesh.rotation.z = 0;
-      e.home = { x: e.pos.x, z: e.pos.z };
-      game.audio.enemyTell?.('walker', { pos: e.pos });
-    },
-  };
   const wreck = {
     hits: 0, stages: 4, wreckT: 0, alarm: false, dead: false,
     _alarmT: 0, _wail: 0, collider: null, target: null,
-    passenger, relicLaunch, relicLand,
     reset() {
       // a finished wreck STAYS finished: the flag is the truth, and un-crushing
       // a car the player already took apart would be the graveyard reset eating
       // their work
       if (game.flags.has('wreckDestroyed')) return;
-      this.passenger.reset();
-      game.graveyardCarRelic?.reset?.();
       this.hits = 0;
       this.wreckT = 0;
       this.alarm = false;
@@ -4248,7 +4051,6 @@ function buildWreckedCar(game) {
   wreck.collider = world.addCollider(bounds.min.x + 0.12, -0.2, bounds.min.z + 0.12,
     bounds.max.x - 0.12, Math.min(1.75, bounds.max.y), bounds.max.z - 0.12);
   game.wreck = wreck;
-  game.graveyardCarRelic?.seat?.(relicLaunch, relicLand);
 
   // ONE function owns the pose, so the ticker and a restore cannot disagree.
   function poseWreck(t) {
@@ -4337,7 +4139,6 @@ function buildWreckedCar(game) {
         game.audio.glassShatter({ pos: point, gain: 0.85, rate: 0.92 });
         game.audio.thud({ pos: point, gain: 0.6, rate: 0.6, intensity: 0.5 });
         shedDebris(3, 1.4);
-        wreck.passenger.trigger();
       } else if (stage === 3) {
         game.audio.metalDrop({ pos: point, gain: 0.8, rate: 0.5 });
         game.audio.thud({ pos: point, gain: 0.72, rate: 0.46, intensity: 0.8, crack: true });
@@ -4366,7 +4167,6 @@ function buildWreckedCar(game) {
         wreck.collider.max.y = 0.98;
         this.enabled = false;
         game.flag('wreckDestroyed');
-        game.graveyardCarRelic?.eject?.();
         game.enemies.resonancePulse?.(wreckAt, 7.4, 1.25);
       }
       return 'return';
@@ -4374,7 +4174,6 @@ function buildWreckedCar(game) {
   });
 
   game.tickers.push((dt) => {
-    wreck.passenger.update(dt);
     const want = wreck.hits / wreck.stages;
     if (Math.abs(want - wreck.wreckT) > 0.0005) {
       wreck.wreckT += (want - wreck.wreckT) * Math.min(1, dt * 5.5);
@@ -6042,104 +5841,7 @@ export class Forest {
     chair.rotation.set(-0.33, Math.atan2(this.samples[Math.round(mireS)].tx,
       this.samples[Math.round(mireS)].tz) + 0.48, 0.18);
     scene.add(batchStaticGroup(chair, 'mire chair'));
-
-    // THE LIP SAYS NO, AND THE SAME OBJECT SAYS WHAT INSTEAD.
-    //
-    // Alex, 2026-09-01: "make the pit you can fall into the forest moor
-    // clear. maybe even block it off so you have to use the thing to swing in
-    // the air (but make sure that thing actually doesn't stop you from going
-    // over however we block it."
-    //
-    // One prop answers both halves. A hazard rail across the near lip is the
-    // only straight horizontal line in a forest of leaning trunks; it stands
-    // between you and black water; its post caps are the one pale material
-    // out here, so the read is value and silhouette rather than hue and never
-    // a word. One post is snapped off with its head half sunk in the peat --
-    // the depth of the thing, told by something that already went in. Past
-    // it the rope knot is already lit across the gap: the rail says stop, the
-    // knot says how, and nothing on screen says either out loud.
-    //
-    // It cannot eat the crossing, and not because the arc happens to clear
-    // it -- because it is not there to be cleared:
-    //   * the colliders carry `skullPass`, the flag the open bedroom window
-    //     wears, so the throw that latches the rope has never met them;
-    //   * their tops drop to their own floors for as long as player.swing is
-    //     live -- the graveyard gate's idiom -- so no arc can catch on one.
-    // Neither depends on the rail's height or on where the arc happens to
-    // fall, which is the part he asked to be sure of.
-    const RAIL_TOP = 0.88;
-    const lipS = mireS - 3.3;                 // clear of the 3.08 sink and the 3.2 dip
-    const lipI = clamp(Math.round(lipS), 0, this.length - 1);
-    const lipHalf = this.halfW[lipI] + 1.5;   // wider than the walkable clamp, both sides
-    const lipSample = this.samples[lipI];
-    const lipYaw = Math.atan2(-lipSample.tz, lipSample.tx);   // along the lateral
-    const railColliders = [];
-    // The trail is a spline and an AABB cannot turn with it, so the block is a
-    // row of overlapping squares laid along the lateral line. Step 0.4 against
-    // a 0.6 footprint leaves no gap for a 0.34 m capsule at any bearing.
-    for (let lat = -lipHalf; lat <= lipHalf + 1e-4; lat += 0.4) {
-      const v = this.posAt(lipS, lat);
-      railColliders.push(this.game.world.addCollider(
-        v.x - 0.3, 0, v.z - 0.3, v.x + 0.3, RAIL_TOP, v.z + 0.3, { skullPass: true },
-      ));
-    }
-    this.game.tickers.push(() => {
-      const swinging = !!this.game.player.swing;
-      for (const c of railColliders) c.max.y = swinging ? c.min.y : RAIL_TOP;
-    });
-
-    const railGroup = new THREE.Group();
-    railGroup.name = 'mire hazard rail';
-    const postLats = [-lipHalf + 0.4, -lipHalf * 0.34, lipHalf * 0.34, lipHalf - 0.4];
-    const SNAPPED = 2;                        // the one something went through
-    const postAt = (lat) => {
-      const v = this.posAt(lipS, lat);
-      v.y = 0;
-      return v;
-    };
-    const addRailBox = (w, h, d, at, y, yaw, tilt = 0, mat = M.bark) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      mesh.position.set(at.x, y, at.z);
-      mesh.rotation.set(tilt, yaw, 0);
-      railGroup.add(mesh);
-      return mesh;
-    };
-    postLats.forEach((lat, i) => {
-      const at = postAt(lat);
-      const snapped = i === SNAPPED;
-      const h = snapped ? 0.46 : 1.02;
-      addRailBox(0.13, h, 0.13, at, h / 2, lipYaw + (i - 1.5) * 0.05, (i % 2 ? 0.06 : -0.05));
-      // the cap: the only pale value on the lip, and the reason the line reads
-      // at all under one lantern
-      if (!snapped) addRailBox(0.17, 0.06, 0.17, at, h + 0.02, lipYaw, 0, M.bone);
-    });
-    // the snapped post's head, face down in the peat past the lip
-    {
-      const gone = this.posAt(mireS - 2.1, postLats[SNAPPED] * 0.8);
-      gone.y = 0;
-      addRailBox(0.13, 0.62, 0.13, gone, -0.06, lipYaw + 0.7, Math.PI / 2 - 0.22);
-    }
-    // the rail itself: two sagging segments per span, so it hangs like rope-
-    // strung timber and not like a fence from a hardware shop
-    for (let i = 0; i < postLats.length - 1; i++) {
-      const a = postLats[i], b = postLats[i + 1];
-      const capA = i === SNAPPED ? 0.42 : RAIL_TOP;
-      const capB = i + 1 === SNAPPED ? 0.42 : RAIL_TOP;
-      const mid = (a + b) / 2;
-      const sag = Math.min(capA, capB) - 0.09;
-      for (const [from, to, y0, y1] of [[a, mid, capA, sag], [mid, b, sag, capB]]) {
-        const pa = postAt(from), pb = postAt(to);
-        const len = Math.hypot(pb.x - pa.x, pb.z - pa.z);
-        const centre = { x: (pa.x + pb.x) / 2, z: (pa.z + pb.z) / 2 };
-        const bar = addRailBox(0.075, 0.075, len, centre, (y0 + y1) / 2,
-          Math.atan2(pb.x - pa.x, pb.z - pa.z));
-        bar.rotation.x = Math.atan2(y1 - y0, len);
-      }
-    }
-    scene.add(batchStaticGroup(railGroup, 'mire hazard rail'));
-    this.mireRail = { colliders: railColliders, top: RAIL_TOP, s: lipS };
-
-    this.mire = { mesh: mire, reeds: reedMesh, rings: ringMesh, chair, rail: this.mireRail };
+    this.mire = { mesh: mire, reeds: reedMesh, rings: ringMesh, chair };
   }
 
   _buildForkTopology() {
@@ -6723,52 +6425,6 @@ export class Forest {
         { skullPass: true, forestStoryProp: spec.id },
       );
       const targetPos = new THREE.Vector3(root.position.x, ground + targetY, root.position.z);
-      let hider = null;
-      if (spec.kind === 'washer' || spec.kind === 'fridge') {
-        // Both routes through the second braid have a container, so whichever
-        // order/side the player chooses owns one equivalent reveal. The actor
-        // is deliberately absent at boot: forest arenas, deaths and district
-        // transitions clear enemies, and a boot body hidden in a prop would be
-        // the exact one-life bug the basement dropcloth scare already solved.
-        root.updateMatrixWorld(true);
-        const hidden = root.localToWorld(new THREE.Vector3(
-          spec.kind === 'fridge' ? 0.22 : 0,
-          0,
-          spec.kind === 'fridge' ? 0.16 : 0.3,
-        ));
-        const exit = root.localToWorld(new THREE.Vector3(
-          spec.kind === 'fridge' ? 0.72 : -0.34,
-          0,
-          -1.62,
-        ));
-        hidden.y = this.heightAt(hidden.x, hidden.z);
-        exit.y = this.heightAt(exit.x, exit.z);
-        hider = {
-          actor: null, phase: 'armed', t: 0, duration: 0.86,
-          hidden, exit,
-          trigger() {
-            if (this.phase !== 'armed' || game.act !== 'forest') return null;
-            const e = game.enemies.spawn('walker', hidden.x, hidden.z, 'dormant', hidden.y + 1);
-            e.forestHider = spec.id;
-            e.riseFrozen = true;
-            e.iframes = Math.max(e.iframes || 0, 0.96);
-            e.pos.copy(hidden);
-            e.mesh.position.copy(hidden);
-            e.mesh.scale.set(e.spec.scale, e.spec.scale * 0.28, e.spec.scale);
-            e.mesh.rotation.z = spec.kind === 'fridge' ? 0.68 : -0.78;
-            e.mesh.rotation.y = Math.atan2(exit.x - hidden.x, exit.z - hidden.z);
-            this.actor = e;
-            this.phase = 'emerging';
-            this.t = 0;
-            game.flag(`forestHiderRevealed:${spec.id}`);
-            game.audio.forestStoryBreak?.(spec.kind, { pos: targetPos, gain: 0.92, verb: 0.74 });
-            game.audio.brushCrash({ pos: targetPos, gain: 0.7, rate: 0.48 });
-            game.audio.sting(0.68);
-            game.shake(0.24);
-            return e;
-          },
-        };
-      }
       const state = {
         ...spec,
         index,
@@ -6777,7 +6433,6 @@ export class Forest {
         glowMat,
         collider,
         targetPos,
-        hider,
         audibleRadius: 34,
         visibleReadRadius: 15,
         audibleBeforeVisible: true,
@@ -6837,7 +6492,6 @@ export class Forest {
     const game = this.game;
     const live = game.act === 'forest' && !game.dead && !game.terminal && !game.endingTail;
     const playerPos = game.player.pos;
-    const playerRoute = this.project(playerPos.x, playerPos.z);
     const candidates = [];
     for (const prop of props) {
       const fork = prop.forkId && this.forks.find((candidate) => candidate.id === prop.forkId);
@@ -6866,59 +6520,15 @@ export class Forest {
         if (part) part.rotation.z += dt * (1.1 + prop.index * 0.13) * prop.visualLevel;
       }
 
+      if (!canSpeak) {
+        prop.stopLoop();
+        continue;
+      }
       const distance = Math.hypot(
         playerPos.x - prop.targetPos.x,
         (playerPos.y + 1.2) - prop.targetPos.y,
         playerPos.z - prop.targetPos.z,
       );
-      const hider = prop.hider;
-      if (hider) {
-        const actor = hider.actor;
-        if (actor?.state === 'dying') {
-          hider.phase = 'spent';
-          game.flag(`forestHiderSpent:${prop.id}`);
-        }
-        if (actor && !game.enemies.list.includes(actor)) {
-          // Killed bodies stay spent. A bare clear (death/arena ownership) is
-          // allowed to re-arm only if the player can still reach this branch.
-          const killed = actor.state === 'dying' || hider.phase === 'spent';
-          hider.actor = null;
-          hider.phase = killed ? 'spent' : 'armed';
-          hider.t = 0;
-        }
-        if (hider.phase === 'emerging' && hider.actor
-          && game.enemies.list.includes(hider.actor)) {
-          const e = hider.actor;
-          hider.t = Math.min(hider.duration, hider.t + dt);
-          const q = clamp(hider.t / hider.duration, 0, 1);
-          const ease = q * q * (3 - 2 * q);
-          e.pos.lerpVectors(hider.hidden, hider.exit, ease);
-          e.pos.y = this.heightAt(e.pos.x, e.pos.z);
-          e.mesh.position.copy(e.pos);
-          e.mesh.scale.set(e.spec.scale, e.spec.scale * (0.28 + ease * 0.72), e.spec.scale);
-          e.mesh.rotation.z = (1 - ease) * (prop.kind === 'fridge' ? 0.68 : -0.78);
-          if (q >= 1) {
-            hider.phase = 'spent';
-            e.riseFrozen = false;
-            e.state = 'wind';
-            e.windT = 0;
-            e.mesh.scale.setScalar(e.spec.scale);
-            e.mesh.rotation.z = 0;
-            e.home = { x: e.pos.x, z: e.pos.z };
-            game.audio.enemyTell?.('walker', { pos: e.pos });
-          }
-        }
-        const chosenBranch = fork?.selected === prop.side;
-        const nearRouteBeat = playerRoute
-          && playerRoute.s >= prop.s - 5.4 && playerRoute.s <= prop.s + 2.8;
-        if (canSpeak && chosenBranch && nearRouteBeat && distance < 7.2
-          && hider.phase === 'armed') hider.trigger();
-      }
-
-      if (!canSpeak) {
-        prop.stopLoop();
-        continue;
-      }
       if (distance <= prop.audibleRadius) candidates.push({ prop, distance });
       else prop.stopLoop();
     }
@@ -7643,16 +7253,12 @@ export class Forest {
     const { world, scene, mats: M, audio } = game;
     const up = new THREE.Vector3(0, 1, 0);
     const ropeMat = M.curtain.clone();
-    if (ropeMat.color) ropeMat.color.multiplyScalar(1.48);
-    if ('emissive' in ropeMat) {
-      ropeMat.emissive = new THREE.Color(0x303936);
-      ropeMat.emissiveIntensity = 1.08;
-    }
+    if (ropeMat.color) ropeMat.color.multiplyScalar(1.35);
     const knotMat = M.headstone.clone();
-    if (knotMat.color) knotMat.color.multiplyScalar(1.18);
+    if (knotMat.color) knotMat.color.multiplyScalar(0.86);
     if ('emissive' in knotMat) {
-      knotMat.emissive = new THREE.Color(0x525e62);
-      knotMat.emissiveIntensity = 1.82;
+      knotMat.emissive = new THREE.Color(0x41474a);
+      knotMat.emissiveIntensity = 0.24;
     }
     const markerMat = new THREE.MeshLambertMaterial({ color: 0x0f1314 });
     const packMat = new THREE.MeshLambertMaterial({ color: 0x0b0d0a });
@@ -7694,15 +7300,11 @@ export class Forest {
       addSegment(group, supportBase, supportTop, 0.27, M.bark, 7);
       addSegment(group, supportTop, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), 0.12, M.bark, 6);
       addSegment(group, pivot.clone().add(new THREE.Vector3(0, 1.15, 0)), pivot, 0.026, ropeMat, 5);
-      const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.18, 0), knotMat);
+      const knot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.13, 0), knotMat);
       knot.position.copy(pivot);
       knot.scale.set(1.0, 1.35, 1.0);
       knot.name = `${spec.id} pale knot`;
       group.add(knot);
-      // One pooled descriptor per optional pivot lights the rope, its support
-      // and the landing together. It creates no new shader light and therefore
-      // cannot revive the first-use compilation freeze.
-      world.candles.push({ x: pivot.x, y: pivot.y - 0.25, z: pivot.z, intensity: 0.96, r: 5.2 });
       const streamerGeo = new THREE.PlaneGeometry(0.18, 0.92, 1, 3);
       const streamerPos = streamerGeo.attributes.position;
       for (let v = 0; v < streamerPos.count; v++) {

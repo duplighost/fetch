@@ -2,7 +2,7 @@
 // Declarative tables for the world compiler + furnishing + the act-gating props.
 // Grid: origin (-12,-14), 12x10 cells of 2m. Backyard begins at world z=6.
 import * as THREE from 'three';
-import { clamp, damp, isPhysicalHouseInterior, RNG, smoothstep, TAU } from './util.js';
+import { clamp, damp, RNG, smoothstep, TAU } from './util.js';
 // (the foyer lag mirror is gone; house.js no longer imports from mirrors.js)
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 // The second stall's occupant runs on the enemies' held stop-motion clock -- the
@@ -466,8 +466,8 @@ function createFurnitureKit(game) {
     return { ...f, top: y + 1.56 };
   }
 
-  function coatStand(x, y, z, dynamic = false) {
-    const f = frame(x, y, z, 0, dynamic);
+  function coatStand(x, y, z) {
+    const f = frame(x, y, z);
     cylinder(f, 0.035, 0.19, 1.82, D.wood, 0, 0.91, 0, 9);
     for (let i = 0; i < 4; i++) {
       const a = i * Math.PI / 2;
@@ -775,17 +775,6 @@ export function buildHouse(game) {
   world.addZone('bedroom', 4, -2, 12, 6, 3.0, 7);
   world.addZone('basement', -20.5, -12, 12, 6.5, -3.6, -0.4);
   world.addZone('house', -12.5, -14.5, 12.5, 6.5, -0.4, 7.2);
-  // THE BUILDING, as one box, derived from the three zones above and
-  // written beside them so the two can never drift apart. It answers one
-  // question for the whole codebase: is this POINT inside the house?
-  // `isPhysicalHouseInterior` answers it about the player from the act; this
-  // answers it about anything, which is what a creature standing in a room
-  // you have already left requires. (marrow.js registers a second 'basement'
-  // zone under the graveyard, so a union over zone NAMES would swallow the
-  // crypt — hence a named box rather than a search.)
-  game.houseShell = {
-    minX: -20.5, maxX: 12.5, minZ: -14.5, maxZ: 6.5, minY: -3.6, maxY: 7.2,
-  };
   world.addSurface('wood', -12, -14, 12, 6, -0.5, 7.2);
   world.addSurface('stone', 4, -6, 12, 6, -0.5, 3.4);   // kitchen flags
   world.addSurface('dirt', -20, -14, 12, 6, -3.6, -0.5); // cellar earth
@@ -927,32 +916,21 @@ function furnish(game) {
     // through the floor. -0.006 is the lying-under-the-rug pose (5 mm proud at
     // the tip) and the rug's finish() lifts it to a clearly openable -0.075.
     boardPivot.rotation.z = -0.006;
-    // This is a small HATCH disguised as one floor plank, not a hairline UV
-    // accident. The wider cross-grain slab, proud edge and paired iron hinges
-    // make its affordance readable the instant the rug leaves it; pivot,
-    // interaction point and opening animation remain exactly where they were.
-    const board = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.024, 0.19), M.woodFloor);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.016, 0.11), M.woodFloor);
     board.position.set(-0.425, 0, 0);
     board.castShadow = board.receiveShadow = true;
     boardPivot.add(board);
-    const hingeGeo = mergeGeometries([
-      new THREE.BoxGeometry(0.14, 0.012, 0.034).translate(-0.09, 0.02, -0.065),
-      new THREE.BoxGeometry(0.14, 0.012, 0.034).translate(-0.09, 0.02, 0.065),
-    ]);
-    const hinges = new THREE.Mesh(hingeGeo, D.iron);
-    hinges.castShadow = true;
-    boardPivot.add(hinges);
     scene.add(boardPivot);
 
     // The seam. A board you are meant to lift has to LOOK liftable before you
     // lift it: three merged shadow slivers ring the loose board's free end and
     // long edges, so once the rug flap is off, the eye finds an outline in the
     // floor instead of a floor. Merged geometry — zero extra draws.
-    world.box(darkLine, 10.16, F + 0.004, 2.16, 0.06, 0.008, 0.23);
-    world.box(darkLine, 10.605, F + 0.004, 2.268, 0.9, 0.008, 0.026);
-    world.box(darkLine, 10.605, F + 0.004, 2.052, 0.9, 0.008, 0.026);
+    world.box(darkLine, 10.16, F + 0.004, 2.16, 0.05, 0.008, 0.13);
+    world.box(darkLine, 10.605, F + 0.004, 2.222, 0.9, 0.008, 0.022);
+    world.box(darkLine, 10.605, F + 0.004, 2.098, 0.9, 0.008, 0.022);
 
-    const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.008, 0.24), new THREE.MeshBasicMaterial({ color: 0x040404 }));
+    const cavity = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.008, 0.16), new THREE.MeshBasicMaterial({ color: 0x040404 }));
     cavity.position.set(10.62, F + 0.008, 2.16);
     cavity.visible = false;
     scene.add(cavity);
@@ -1389,8 +1367,7 @@ function furnish(game) {
   world.candles.push({ x: -9, y: G + 1.0, z: 2.2, intensity: 1.3, r: 4 });
   // foyer: coat stand, mirror frame (dark glass — the house mirror is elsewhere)
   K.rug(-1.9, G, -8.1, 1.25, 7.8);
-  const foyerCoatStand = K.coatStand(-3.35, G, -12.65, true);
-  game.houseReturnProps.foyerCoatStand = foyerCoatStand.root;
+  K.coatStand(-3.35, G, -12.65);
   const foyerConsole = K.consoleTable(-3.48, G, -7.7, Math.PI / 2, 1.05);
   K.bottle(-3.42, foyerConsole.top, -7.82, 0.65);
   K.framedArt(-3.8, 1.72, -5.1, Math.PI / 2, 2, 0.55, 0.72);
@@ -6251,7 +6228,7 @@ function buildHouseReturnHorror(game) {
     const p = game.player.pos;
     const rockerDistance = Math.hypot(p.x - rockerFocus.x, p.z - rockerFocus.z);
     const diningDistance = Math.hypot(p.x - diningFocus.x, p.z - diningFocus.z);
-    if (isPhysicalHouseInterior(game) && !game.dead) {
+    if (game.act === 'house' && !game.dead) {
       if (p.y > 3.0 && rockerDistance < 8.0) state.visits.rocker = true;
       if (state.visits.rocker && (p.y < 2.75 || rockerDistance > 9.0)) state.visits.rockerLeft = true;
       if (p.y < 1.35 && diningDistance < 7.2) state.visits.dining = true;
@@ -6264,7 +6241,7 @@ function buildHouseReturnHorror(game) {
       state.active = true;
       game.flag('houseReturnStarted');
     }
-    if (!isPhysicalHouseInterior(game) || game.dead) {
+    if (game.act !== 'house' || game.dead) {
       // Never carry a nearly-expired beat through a death or act transition.
       // Progress is retained; pending time is not.
       state.clock = 0;
@@ -8011,12 +7988,11 @@ const _knockFwd = new THREE.Vector3();
 // answers: once, from the porch; again, in your own rhythm with one knock you
 // never made; and — once per run — the two blows, the walk around the outside
 // of the house looking for another way in, and the last small dry knock from
-// directly behind you, INSIDE. Those original three answers remain implication
-// only. On the post-basement return, three fresh knocks get one new physical
-// answer: the foyer coat stand falls away from the Resident that was behind it.
-// The door still never opens, no control is touched, and progression reads none
-// of these flags. Every beat runs on one dt ticker (immune to director scope
-// bumps); the lasting changes are light and the fallen stand.
+// directly behind you, INSIDE. Implication only: nothing spawns, nothing
+// opens, no control is touched, no progression reads any of these flags, and
+// the door stays locked 'never' forever. Every beat runs on one dt ticker
+// (immune to director scope bumps); the only lasting change is light — the
+// under-door seam and the porch spill never fully recover.
 function frontDoorKnockAct(game) {
   const { world, scene } = game;
   const door = world.doorById.frontDoor;
@@ -8052,26 +8028,16 @@ function frontDoorKnockAct(game) {
   const spill = { x: DOOR_X, y: 0.55, z: -13.1, intensity: 0.3, r: 3.2 };
   const SPILL_BOOT = spill.intensity;
   world.candles.push(spill);
-  // A pooled descriptor, black at boot, gives the physical return answer one
-  // readable breath after the stand falls. It does not add a light or alter
-  // the pinned shader census; it borrows the same pool every other prop uses.
-  const returnGlow = { x: -1.75, y: 1.25, z: -10.4, intensity: 0, r: 4.6 };
-  world.candles.push(returnGlow);
 
   const state = {
     bout: 0, lastT: -100, gaps: [], answering: null, done: false,
     cool1: 0, cool2: 0,
-    returnBout: 0, returnLastT: -100, returnDone: false,
-    coatFall: 0, coatFallTarget: 0,
-    returnGlowT: 0,
     // driven light state, exposed for tests along with everything else
     seamTarget: 1, seamValue: 1, seamRate: 5, spillTarget: 1,
     dipT: 0, dipLevel: 1, segDipT: [0, 0, 0], segValue: [1, 1, 1],
     script: null, scriptT: 0, scriptI: 0,
   };
   game.frontDoorKnock = state;
-  const coatStand = game.houseReturnProps?.foyerCoatStand || null;
-  const coatBaseZ = coatStand?.rotation.z || 0;
 
   const beginAnswer = (name, steps) => {
     state.answering = name;
@@ -8201,74 +8167,10 @@ function frontDoorKnockAct(game) {
     beginAnswer('answer3', steps);
   };
 
-  // THE RETURN ANSWER. Progression is intentionally monotonic, so coming back
-  // upstairs still says `act === basement`; this beat keys off the physical
-  // house predicate and the stolen flame instead. It is also lifecycle-safe:
-  // the Resident is created only when the coat hits the boards, after any
-  // respawn clear, and residentHeard resolves its pointer against the live list.
-  const beginReturnAnswer = () => {
-    state.returnDone = true;          // one impossible occupant per run
-    game.flag('frontDoorReturnAnswer');
-    game.audio.duck(0.22, 3.4);
-    state.seamTarget = 0.16;
-    state.spillTarget = 0.24;
-    const standPos = new THREE.Vector3(-3.35, 1.0, -12.65);
-    beginAnswer('returnAnswer', [
-      { at: 0.62, run() {
-        // It does not answer through the door. It answers from the thing the
-        // player has been standing beside while knocking.
-        game.audio.knockBack({ pos: standPos, gain: 0.66, rate: 0.72, verb: 0.42 });
-        dipSeam(0.08, 1.35);
-      } },
-      { at: 1.02, run() {
-        state.coatFallTarget = 1;
-        game.audio.creak({ pos: standPos, gain: 0.72, rate: 0.42, verb: 0.62 });
-      } },
-      { at: 1.34, run() {
-        const resident = game.residentHeard(0.82);
-        if (resident) {
-          // A held skull owns the centre of FETCH's frame and the coat stand
-          // sits against the west wall. Seat the answer down the open runner,
-          // offset from that centreline: the fallen stand still tells the
-          // player where to turn, but architecture cannot swallow the body.
-          resident.pos.set(-1.75, 0, -10.4);
-          resident.mesh.position.copy(resident.pos);
-          // This Resident was not summoned from the floor. The stand fell and
-          // exposed something that was already there, so bypass the generic
-          // enemy rise or the whole reveal remains buried during its sting.
-          resident.graveRiseT = 0;
-          resident.graveRiseDur = 0;
-          state.returnGlowT = 1.9;
-          returnGlow.intensity = Math.max(returnGlow.intensity, 1.38);
-          resident.state = 'wind';
-          resident.windT = 0;
-          resident.home = { x: resident.pos.x, z: resident.pos.z };
-        }
-        game.audio.sting(0.78);
-        game.shake(0.28);
-      } },
-      { at: 2.7, run() {} },
-    ]);
-  };
-
   state.onKnock = () => {
-    // Mid-answer knocks stay the player's own dead thud.
-    if (state.answering) return;
+    // aftermath and mid-answer knocks stay the player's own dead thud
+    if (state.done || state.answering) return;
     const now = game.time;
-    const postBasementReturn = game.act === 'basement'
-      && isPhysicalHouseInterior(game) && game.flags.has('ateFlame');
-    if (postBasementReturn && !state.returnDone) {
-      const returnGap = now - state.returnLastT;
-      if (returnGap < 0.28) return;
-      state.returnLastT = now;
-      if (returnGap > 4.5) state.returnBout = 0;
-      state.returnBout++;
-      if (state.returnBout >= 3) beginReturnAnswer();
-      return;
-    }
-    // The original final answer remains spent; the post-basement answer above
-    // is deliberately independent so a curious early knocker is not punished.
-    if (state.done) return;
     const gap = now - state.lastT;
     if (gap < 0.28) return;              // key-autorepeat / drum-roll guard
     state.lastT = now;
@@ -8318,18 +8220,8 @@ function frontDoorKnockAct(game) {
       }
     }
     spill.intensity += (SPILL_BOOT * state.spillTarget - spill.intensity) * Math.min(1, dt * 2.6);
-    state.returnGlowT = Math.max(0, state.returnGlowT - dt);
-    const returnGlowWant = state.returnGlowT > 0
-      ? 0.28 + 0.98 * smoothstep(0, 1.4, state.returnGlowT)
-      : 0;
-    returnGlow.intensity += (returnGlowWant - returnGlow.intensity) * Math.min(1, dt * 7.5);
-    if (coatStand && Math.abs(state.coatFallTarget - state.coatFall) > 0.0001) {
-      state.coatFall += (state.coatFallTarget - state.coatFall) * Math.min(1, dt * 5.2);
-      const e = state.coatFall * state.coatFall * (3 - 2 * state.coatFall);
-      coatStand.rotation.z = coatBaseZ + e * 1.34;
-    }
     if (!state.answering) return;                 // idle: nothing scripted
-    if (game.dead || !isPhysicalHouseInterior(game)) { // abort straight to aftermath
+    if (game.dead || game.act !== 'house') {      // abort straight to aftermath
       settleAftermath(true);
       return;
     }

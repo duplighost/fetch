@@ -36,31 +36,6 @@ export class RNG {
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 export const lerp = (a, b, t) => a + (b - a) * t;
-
-// Acts only move forward, but the house is physically revisitable after the
-// basement act begins. Systems that belong to the rooms above the cellar must
-// therefore ask where the player is, not whether progression moved backward.
-// -0.70 matches house.js's upper-sector culling seam: above it the player can
-// see and inhabit the furnished house; below it they are genuinely downstairs.
-export const isPhysicalHouseInterior = (game) => !!game && (
-  game.act === 'bedroom'
-  || game.act === 'house'
-  || (game.act === 'basement' && (game.player?.pos?.y ?? -Infinity) > -0.70)
-);
-
-// And the same question asked about a POINT rather than about progression:
-// is this thing standing inside the building? house.js publishes the box
-// beside the zones it is derived from. Anything outside the house — the
-// yard, the graveyard, the forest — answers false, and so does everything
-// in a session where the house has not been built yet.
-export const inHouseShell = (game, pos) => {
-  const b = game?.houseShell;
-  if (!b || !pos) return false;
-  return pos.x >= b.minX && pos.x <= b.maxX
-    && pos.z >= b.minZ && pos.z <= b.maxZ
-    && pos.y >= b.minY && pos.y <= b.maxY;
-};
-
 export const smoothstep = (a, b, v) => {
   const t = clamp((v - a) / (b - a), 0, 1);
   return t * t * (3 - 2 * t);

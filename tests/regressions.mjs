@@ -2004,10 +2004,10 @@ try {
     return { checks, diagnostics: null };
   });
 
-  // TWO DIFFERENT CAUSES, TWO DIFFERENT PRIZES. The hero grave still gives the
-  // Iron Canine; the keepsake now has to be physically knocked out of the
-  // wrecked wagon and land where the player can see and fetch it.
-  await scenario('the-hero-grave-keeps-the-canine-and-the-wreck-keeps-the-relic', () => {
+  // ONE BROKEN STONE, TWO PRIZES, IN ORDER. "might as well remove that powerup
+  // and put both powerups in the same spot as the first powerup is in now that
+  // comes out of that destroyed gravestone."
+  await scenario('the-hero-grave-yields-two-in-order', () => {
     const F = window.__FETCH;
     const g = window.__game;
     const checks = [];
@@ -2031,37 +2031,12 @@ try {
 
     g.flag('skullSharpened');
     F.stepWith(2.0, {}, false);
-    check('the sharpened bite applies, but the grave never invents the car keepsake',
+    check('the sharpened bite applies, and the second thing lights up behind it',
       g.skullPower === 2 && canine.object.visible === false
-      && relic.object.visible === false && relic.enabled === false);
-
-    g.enemies.clear(() => true);
-    const wagon = g.world.fetchTargets.find((t) => t.id === 'wreckedWagon');
-    const outbound = { mode: 'outbound' };
-    wagon.onHit.call(wagon, outbound, wagon.pos);
-    wagon.onHit.call(wagon, outbound, wagon.pos);
-    const passenger = g.wreck.passenger.actor;
-    if (passenger) {
-      passenger.state = 'dying';
-      g.enemies.clear((enemy) => enemy === passenger);
-      g.wreck.passenger.update(1 / 60);
-    }
-    wagon.onHit.call(wagon, outbound, wagon.pos);
-    wagon.onHit.call(wagon, outbound, wagon.pos);
-    F.stepWith(2.3, {}, false);
-    const box = g.wreck.collider;
-    const home = g.graveyardCarRelic.home;
-    const outsideCar = home.x < box.min.x - 0.34 || home.x > box.max.x + 0.34
-      || home.z < box.min.z - 0.34 || home.z > box.max.z + 0.34;
-    check('the fourth wagon hit ejects the keepsake onto lit reachable ground',
-      g.wreck.dead && g.graveyardCarRelic.phase === 'settled'
-      && relic.object.visible === true && relic.enabled === true && outsideCar,
-      {
-        hits: g.wreck.hits,
-        phase: g.graveyardCarRelic.phase,
-        outsideCar,
-        at: relic.object.position.toArray().map((v) => +v.toFixed(2)),
-      });
+      && relic.object.visible === true && relic.enabled === true);
+    check('and it stands clear of the first, not on top of it',
+      Math.hypot(relic.object.position.x - 18.52, relic.object.position.z - 37.5) > 0.4,
+      { at: relic.object.position.toArray().map((v) => +v.toFixed(2)) });
 
     g.flag('relicKept');
     F.stepWith(0.6, {}, false);
