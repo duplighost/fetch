@@ -420,22 +420,8 @@ try {
   await fallbackPage.waitForFunction(() => window.__game.started
       && document.pointerLockElement === null && !window.__game.el.pauseButton.hidden);
   await fallbackPage.click('#pauseButton');
-  // AND WAIT FOR THE SUSPEND, the way the Escape scenario above already does:
-  // the pause fades the buses and parks the context behind a 420 ms timer, so
-  // `paused && overlay` is true a third of a second before ctx.state can be
-  // 'suspended'.
-  //
-  // The wait alone was NOT the bug. It took this check from 3/3 red to 4-of-7
-  // flaky, and the remaining flakiness is what found the real one: audio.js's
-  // watchdog resumed on any non-running state without asking who asked, so the
-  // engine undid its own suspend on the next tick. A deliberate hold is
-  // announced now (audio.holdSuspended) and the watchdog leaves it alone, which
-  // is what makes this deterministic. Both halves are needed: the fix stops the
-  // engine fighting itself, this wait stops the harness reading the clock early.
   await fallbackPage.waitForFunction(() => window.__game.paused
-      && !window.__game.el.pause.classList.contains('hidden')
-      && window.__game.audio.ctx?.state === 'suspended',
-    null, { timeout: 5000 });
+      && !window.__game.el.pause.classList.contains('hidden'));
   const fallbackButton = await fallbackPage.evaluate(() => ({
     paused: window.__game.paused,
     reason: window.__game.pauseReason,

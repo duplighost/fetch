@@ -2,8 +2,7 @@
 // skull's chatter long before they're seen. Faster than you. Stun is quiet;
 // popping is LOUD and the dark answers it.
 import * as THREE from 'three';
-import { clamp, lerp, damp, hash2, inHouseShell, isPhysicalHouseInterior, smoothstep, TAU } from './util.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { clamp, lerp, damp, hash2, smoothstep, TAU } from './util.js';
 
 const KIND = {
   walker: {
@@ -90,7 +89,7 @@ const CHOIR_SURFACE = Object.freeze({
 // lantern, leaving only two eyes and a pale jaw. Lift the neutral surface just
 // enough for the malformed silhouette and planted limbs to exist; eye motion
 // and the long windup still carry state, so no meaning depends on this value.
-const BASE_COLOR = { walker: 0x29262d, resident: 0x252127, kneeler: 0x2b2930 };
+const BASE_COLOR = { walker: 0x16141a, resident: 0x100d12, kneeler: 0x2b2930 };
 const STAIN_GEO = new THREE.CircleGeometry(0.55, 10);
 const STAIN_MAT = new THREE.MeshBasicMaterial({ color: 0x0b0910, transparent: true, opacity: 0.85, depthWrite: false });
 // More than the whole authored graveyard fight, with room for the house and
@@ -275,31 +274,14 @@ FIGURE_GEO.malformedSlab = malformShared(FIGURE_GEO.slab, 0.12, 18.2);
   jaw.lineTo(-0.055, -0.035);
   jaw.closePath();
   FIGURE_GEO.walkerJaw = new THREE.ShapeGeometry(jaw, 2);
-
-  // One shared, merged lower body per walker: two mismatched shins and feet
-  // break the old floating-poncho silhouette without multiplying graveyard
-  // draw calls or entering the gait/hit-volume contracts.
-  const leftShin = new THREE.CylinderGeometry(0.075, 0.11, 0.72, 5);
-  leftShin.rotateZ(-0.1);
-  leftShin.translate(-0.17, 0.34, -0.015);
-  const rightShin = new THREE.CylinderGeometry(0.09, 0.12, 0.62, 5);
-  rightShin.rotateZ(0.16);
-  rightShin.translate(0.16, 0.29, -0.035);
-  const leftFoot = new THREE.BoxGeometry(0.19, 0.1, 0.34);
-  leftFoot.rotateY(-0.14);
-  leftFoot.translate(-0.2, 0.045, 0.1);
-  const rightFoot = new THREE.BoxGeometry(0.22, 0.11, 0.29);
-  rightFoot.rotateY(0.2);
-  rightFoot.translate(0.19, 0.05, 0.075);
-  FIGURE_GEO.walkerLegs = mergeGeometries([leftShin, rightShin, leftFoot, rightFoot]);
 }
 const GLINT_MAT = new THREE.MeshBasicMaterial({ color: 0xe8ecef });
 const WALKER_BONE_MAT = new THREE.MeshStandardMaterial({
-  color: 0x55554f, roughness: 0.96, metalness: 0, flatShading: true,
+  color: 0x30312f, roughness: 0.96, metalness: 0, flatShading: true,
   side: THREE.DoubleSide,
 });
-const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x39343b });
-const WALKER_FOLD_MAT = new THREE.MeshLambertMaterial({ color: 0x17151c, side: THREE.DoubleSide });
+const WALKER_WRAP_MAT = new THREE.MeshLambertMaterial({ color: 0x242126 });
+const WALKER_FOLD_MAT = new THREE.MeshLambertMaterial({ color: 0x0d0c11, side: THREE.DoubleSide });
 const WALKER_VOID_MAT = new THREE.MeshBasicMaterial({ color: 0x000000 });
 
 // One corpse-mass, three drowned faces. All geometry is shared across the one
@@ -557,9 +539,7 @@ function buildWalker(g, mat, limbs) {
   // offset ribcage, hunch, and two separately sloped shoulders make a body push
   // against it. Forearms live outside that outline even before the lunge.
   const shroud = addPart(g, FIGURE_GEO.walkerShroud, mat,
-    0, 0.91, -0.17, 1.06, 1.05, 2.25, -0.13, 0, -0.035);
-  addPart(g, FIGURE_GEO.walkerLegs, WALKER_WRAP_MAT,
-    0, 0, -0.055, 1, 1, 1, 0, 0, -0.035);
+    0, 0.91, -0.15, 1.13, 1.03, 1.08, -0.13, 0, -0.035);
   addPart(g, FIGURE_GEO.walkerPallFold, WALKER_FOLD_MAT,
     -0.035, 0.91, -0.073, 1.06, 1.02, 1, -0.03, 0, -0.07);
   addPart(g, FIGURE_GEO.sphere, mat,
@@ -572,10 +552,10 @@ function buildWalker(g, mat, limbs) {
   ];
 
   const head = new THREE.Group();
-  head.position.set(0.045, 1.75, 0.16);
+  head.position.set(0.045, 1.72, 0.095);
   head.rotation.set(-0.14, 0, 0.19);
   addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
-    0, 0, 0, 0.78, 0.8, 1.04, 0, 0.03, -0.025);
+    0, 0, 0, 0.72, 0.72, 1, 0, 0.03, -0.025);
   const mouth = addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
     0.005, -0.145, 0.045, 0.64, 0.48, 1, 0, 0, -0.08);
   const jaw = addPart(head, FIGURE_GEO.walkerJaw, WALKER_BONE_MAT,
@@ -590,7 +570,7 @@ function buildWalker(g, mat, limbs) {
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
-    armP.position.set(s * (s < 0 ? 0.48 : 0.46), s < 0 ? 1.42 : 1.39, 0.19);
+    armP.position.set(s * (s < 0 ? 0.48 : 0.46), s < 0 ? 1.42 : 1.39, 0.105);
     armP.rotation.z = s < 0 ? 0.15 : -0.075;
     addPart(armP, FIGURE_GEO.limb, WALKER_WRAP_MAT,
       0, s < 0 ? -0.53 : -0.59, 0.09,
@@ -633,7 +613,7 @@ function buildResident(g, mat, limbs) {
   addPart(g, FIGURE_GEO.malformedCapsule, mat,
     -0.04, 1.3, -0.12, 0.5, 0.54, 0.35, -0.2, 0, 0.055);
   const yoke = addPart(g, FIGURE_GEO.malformedCapsule, mat,
-    -0.035, 1.54, -0.055, 0.27, 0.62, 0.31, 0, 0, Math.PI / 2 + 0.11);
+    -0.035, 1.54, -0.055, 0.29, 0.78, 0.29, 0, 0, Math.PI / 2 + 0.055);
   const hump = addPart(g, FIGURE_GEO.malformedSphere, mat,
     -0.18, 1.59, -0.24, 0.7, 0.43, 0.35, -0.12, 0.04, 0.11);
 
@@ -646,26 +626,18 @@ function buildResident(g, mat, limbs) {
     0.075, 1.04, 0.382, 0.042, 0.14, 0.035, 0, 0, Math.PI / 2 - 0.19);
 
   const head = new THREE.Group();
-  head.position.set(0.09, 1.75, 0.1);
+  head.position.set(0.09, 1.77, 0.09);
   head.rotation.set(-0.18, 0.06, -0.2);
   addPart(head, FIGURE_GEO.malformedSphere, mat, 0, 0, 0, 0.23, 0.28, 0.2, 0.02);
   addPart(head, FIGURE_GEO.malformedSlab, mat, 0.015, -0.2, 0.045, 0.2, 0.13, 0.15, -0.04, 0, 0.08);
-  // The old two dots on a black pebble were unreadable at the distance this
-  // first appears. A crooked funerary face is now physically wedged under the
-  // lintel: the same shared dimensional mask as the walkers, smaller, split by
-  // a real void and lit only by the player's existing skull lamp.
-  addPart(head, FIGURE_GEO.walkerMask, WALKER_BONE_MAT,
-    0.01, -0.02, 0.17, 0.51, 0.57, 0.74, 0.01, 0.05, -0.1);
-  addPart(head, FIGURE_GEO.walkerMouth, WALKER_VOID_MAT,
-    0.015, -0.12, 0.305, 0.41, 0.3, 0.7, 0, 0.02, -0.12);
-  addEyes(head, 0.064, 0.025, 0.31, 0.011, 0.008);
+  addEyes(head, 0.07, 0.015, 0.19, 0.028, 0.012);
   g.add(head);
 
   for (const s of [-1, 1]) {
     const armP = new THREE.Group();
     const longSide = s < 0;
-    armP.position.set(s * (longSide ? 0.45 : 0.4), longSide ? 1.53 : 1.45, 0.09);
-    armP.rotation.z = longSide ? 0.2 : -0.34;
+    armP.position.set(s * (longSide ? 0.48 : 0.43), longSide ? 1.56 : 1.47, 0.025);
+    armP.rotation.z = longSide ? 0.11 : -0.27;
     addPart(armP, FIGURE_GEO.malformedLimb, mat,
       0, longSide ? -0.61 : -0.49, 0.065,
       longSide ? 0.12 : 0.15, longSide ? 0.66 : 0.53, longSide ? 0.1 : 0.13,
@@ -1324,10 +1296,6 @@ export class Enemies {
     const camPos = game.camera.getWorldPosition(V.a);
     const camFwd = game.camera.getWorldDirection(V.b);
     camFwd.y = 0; camFwd.normalize();
-    // Which building the EARS are in, once per frame; each loop below asks
-    // the same question about its own body and drops the presence floor when
-    // the two answers disagree.
-    const listenerInHouse = inHouseShell(game, camPos);
 
     // CINDERBLOOM's useful crowd law, reduced to FETCH scale: an attack token
     // persists through approach and strike. A stun, pop, or missed commitment
@@ -1340,29 +1308,6 @@ export class Enemies {
     const graveClaimBudget = graveWave >= 2 ? 2 : 1;
     const claimableState = (e) => e.state === 'standing' || e.state === 'wind' ||
       e.state === 'chase' || e.state === 'strike';
-    // THE WRECK'S PASSENGER IS A FIGHT BODY, AND THE FIGHT HAS A BUDGET.
-    //
-    // Round eighteen spawned it with none of the graveyard's flags, so the
-    // crowd law did not own it: while the funeral ran it closed and struck
-    // whenever it liked, ON TOP of the one or two attackers the arena had
-    // budgeted. Measured against e166da4 in matched worktrees, that took
-    // tests/playthrough.mjs from 4/4 survived to 2/6 -- the bot reaches wave
-    // three and dies, and every beat after the funeral fails behind it.
-    // (Alex, 2026-09-01: "Make the graveyard work correctly again.")
-    //
-    // It cannot be wave bookkeeping either: `alive` gates wave progression,
-    // so counting it there would let one unkilled body freeze the funeral.
-    //
-    // THE FUNERAL'S TWO HANDS BELONG TO THE FUNERAL. It is not added to
-    // graveCandidates, so it can never hold one of the wave's attack tokens:
-    // while the yard is fighting it takes the Standing Kind's job and walks
-    // the ring -- present, lit, audible, and not a third hand nobody
-    // budgeted for. The moment the waves are done graveArenaActive goes
-    // false, this predicate stops owning it, and it comes for you with
-    // nothing in its way. Break the car over a quiet yard and that is
-    // immediate, which is the beat exactly as round eighteen authored it.
-    const graveCrowd = (e) => e.graveArena || e.gravePressure
-      || (e.wreckPassenger && graveArenaActive);
     const graveCandidates = graveArenaActive
       ? this.list.filter((e) => e.graveArena && e.kind === 'walker' && claimableState(e))
       : [];
@@ -1511,7 +1456,7 @@ export class Enemies {
               game.audio.footstep(game.world.surfaceAt(e.pos), { pos: e.pos, gain: 0.42, rate: 0.78 });
             }
           } else if (dist > 1 && !sameLevel
-            && isPhysicalHouseInterior(game)) {
+            && (game.act === 'house' || game.act === 'bedroom')) {
             // The stalk climbs now — quietly. Stalk pace, stalk cadence, the
             // stairs' own wood underfoot as the tell; the wind-up mercy-tell
             // below still cannot begin until it shares your storey.
@@ -1564,10 +1509,10 @@ export class Enemies {
           // meant a statue at the foot of the stairs — or worse, ON them —
           // whenever you climbed. Indoors the graph now spans the storeys,
           // so only the outdoor acts keep the patient wait.
-          const inHouse = isPhysicalHouseInterior(game);
+          const inHouse = game.act === 'house' || game.act === 'bedroom';
           if (!sameLevel && !inHouse) { e.windT += dt; break; }   // it waits below. it hears you.
           e._besiegeHold = false;
-          if (graveCrowd(e) && !graveClaims.has(e)) {
+          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
             const angle = e.orbitAngle + game.time * e.orbitSign * 0.22;
             const ring = 3.3 + (e.orbitAngle % 1.4);
             const tx = player.pos.x + Math.cos(angle) * ring;
@@ -1588,7 +1533,7 @@ export class Enemies {
             // one-touch house chase. Claimed attackers remain faster than a
             // walking player but just slower than a committed run, so spatial
             // mastery and a clean throw can actually create breathing room.
-            const arenaPace = graveCrowd(e) ? 0.8 : 1;
+            const arenaPace = (e.graveArena || e.gravePressure) ? 0.8 : 1;
             // The acceleration ramp and the lose-interest clock used to be
             // one number (windT). Split: _chaseT carries the ramp, seeded in
             // the wind-up so the old curve is preserved; in the house windT
@@ -1711,33 +1656,12 @@ export class Enemies {
               e._unstuck1 = false; e._unstuck2 = false;
             }
             if (e._stallT > 0.8) {
-              // WHICH BODIES OWN THE YARD, and the answer is no longer a flag.
-              //
-              // The branch below already knew that house doorway nodes are
-              // poison for outdoor enemies -- it says so -- but it only
-              // protected bodies carrying an arena flag. The wreck's passenger
-              // carries none, and it wakes STALLED, pressed against the very
-              // car it climbed out of. So it took the house-graph branch,
-              // walked itself to _bestDoorNode, and left the graveyard for the
-              // house: measured, it ends 8.9 m from a standing player at
-              // (-1, 6.5) -- the house's south wall -- while an ordinary walker
-              // started on the same grass closes to 0.68 m and strikes
-              // (tools/probe-grave-passenger.mjs). That is both halves of what
-              // Alex reported on 2026-09-01: a fight body that stops coming for
-              // you, and "an enemy that looks like it is still in the house
-              // making sounds when you get to the graveyard".
-              //
-              // The real rule is physical, so ask the physical question: a body
-              // standing OUTSIDE the building has no business routing through
-              // its doorways. The in-yard leg's clamps are the graveyard's own
-              // bounds, so the act is part of the test -- a forest body must
-              // not be dragged back into the yard by them.
-              const yardBody = e.graveArena || e.gravePressure
-                || (game.act === 'graveyard' && !inHouseShell(game, e.pos));
-              if (yardBody) {
-                // Give graveyard bodies a short in-yard avoidance leg,
-                // including explicit side aisles around the house's back
-                // corners.
+              if (e.graveArena || e.gravePressure) {
+                // House doorway nodes are poison for outdoor enemies: a risen
+                // body stalled against the rear wall used to route south into
+                // the house and leave the arena forever. Give graveyard bodies
+                // a short in-yard avoidance leg, including explicit side
+                // aisles around the house's back corners.
                 if (e.pos.z < 10 && Math.abs(e.pos.x) < 13) {
                   e._via = { x: e.pos.x <= 0 ? -14 : 14, z: 11 };
                 } else {
@@ -1822,7 +1746,7 @@ export class Enemies {
             // one-hit lethal, but a sidestep, door, sprint or skull hit can beat
             // the action the player actually saw begin.
             if (!this._beginCommittedStrike(e, player)) {
-              if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
+              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
               e.state = 'recover';
               e.recoverT = 0;
             } else {
@@ -1838,7 +1762,7 @@ export class Enemies {
           // The one-hit consequence is still severe; now every body earns it
           // with a visible fixed-point commitment. The target coordinate never
           // updates after contact, so movement and doors are actual answers.
-          if (graveCrowd(e) && !graveClaims.has(e)) {
+          if ((e.graveArena || e.gravePressure) && !graveClaims.has(e)) {
             e.state = e.standing ? 'standing' : 'wind';
             e.windT = e.spec.windup * 0.62;
             e.strikeT = 0;
@@ -1847,13 +1771,13 @@ export class Enemies {
           const olderStrike = this.list.some((other) => other !== e
             && other.state === 'strike' && (other.serial ?? 0) < (e.serial ?? 0));
           if (olderStrike) {
-            if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
+            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
             e.state = 'recover';
             e.recoverT = 0;
             break;
           }
           if (!sameLevel) {
-            if (graveCrowd(e)) this._releaseGraveClaim(e, 0.34);
+            if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.34);
             e.state = 'recover';
             e.recoverT = 0;
             break;
@@ -1887,7 +1811,7 @@ export class Enemies {
             if (landed && !game.dead) {
               game.director.death(e);
             } else {
-              if (graveCrowd(e)) this._releaseGraveClaim(e, 0.42);
+              if (e.graveArena || e.gravePressure) this._releaseGraveClaim(e, 0.42);
               e.state = 'recover';
               e.recoverT = 0;
               game.audio.walkerMiss({ pos: e.pos, gain: e.kind === 'kneeler' ? 0.72 : 0.5,
@@ -2092,11 +2016,7 @@ export class Enemies {
         const rear = clamp(-camFwd.dot(toE), 0, 1) * near;
         const active = e.state === 'chase' || e.state === 'wind' || e.state === 'strike'
           ? 1 : e.state === 'dormant' ? 0.25 : 0.6;
-        // A body left standing in the house is not on your sound stage once
-        // you are out in the yard: same room keeps the floor, different
-        // building loses it and falls off with distance like anything else.
-        const carry = inHouseShell(game, e.pos) === listenerInHouse ? 1 : 0;
-        e.loop.setThreat(threat * active, near * active, rear * active, carry);
+        e.loop.setThreat(threat * active, near * active, rear * active);
       }
 
       // ---- skull radar ----

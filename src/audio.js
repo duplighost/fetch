@@ -110,24 +110,8 @@ export class GameAudio {
     this._peakVoices = 0;
     this._droppedVoices = 0;
     this._resumes = 0;
-    // set while the GAME is deliberately holding the context suspended, so
-    // the watchdog above can tell a pause from a browser eviction
-    this._holdSuspended = false;
     ctx.addEventListener?.('statechange', () => {
       if (ctx.state === 'running' || ctx.state === 'closed') return;
-      // ...UNLESS WE ARE THE ONES WHO ASKED. The watchdog exists for exactly
-      // one case: the BROWSER suspending us under pressure. It could never
-      // tell that apart from a pause, so pausing the game suspended the
-      // context and this handler put it straight back on the next tick --
-      // main.js's _setAudioPaused says so in its own comment and works around
-      // it by ramping the master to zero, which is why a paused game sounds
-      // silent even though its context is still running. That workaround
-      // stays (it makes a pause silent whatever is playing); this removes the
-      // fight underneath it. tests/pause-title-regression asserts the honest
-      // state -- ctx.state 'suspended' under a pause -- and has been red on
-      // this exact line, non-deterministically, because it was racing a
-      // resume the engine was issuing against itself.
-      if (this._holdSuspended) return;
       this._resumes++;
       ctx.resume?.().catch?.(() => {});
     });
@@ -824,15 +808,11 @@ export class GameAudio {
   }
 
   // one-shot buffer player; verb send is post-envelope/post-panner, never raw source
-  // No more than this many one-shot voices at once, across BOTH one-shot paths
-  // -- this one and _bus, which was outside the count entirely until
-  // 2026-09-01 and carried most of the game's sound. The old figure quoted
-  // here (0-2 live sources plus a handful of one-shots) was measuring half the
-  // mixer; the honest number is 14 at the peak of five real minutes in the
-  // Underfalls (tools/probe-cave-realtime.mjs). This ceiling is still never
-  // met by the game working; it is only ever met by the game misbehaving, and
-  // when it is, the result is a dropped sound instead of a graph that gets
-  // louder until the context gives up.
+  // No more than this many one-shot voices at once. Normal play measures 0-2
+  // live sources plus a handful of one-shots (tools/probe-audio-live.mjs), so
+  // this ceiling is never met by the game working; it is only ever met by the
+  // game misbehaving, and when it is, the result is a dropped sound instead of
+  // a graph that gets louder until the context gives up.
   static VOICE_CAP = 40;
 
   // `ref` and `roll` shape the falloff for a sound that is MEANT to carry. The
@@ -887,48 +867,15 @@ export class GameAudio {
       droppedVoices: this._droppedVoices | 0,
       resumes: this._resumes | 0,
       cap: GameAudio.VOICE_CAP,
-      // How hard the master compressor has ever had to pull, and for how many
-      // seconds it was pulling more than 18 dB. Ordinary Underfalls play:
-      // worst 11.6 dB, zero storm seconds.
-      worstReduction: +(this._worstReduction ?? 0).toFixed(1),
-      stormSeconds: this._stormSeconds | 0,
     };
   }
 
   // output bus for live-synthesized one-shots: voices connect (post their own
   // envelope gains) into the returned node; verb rides the same post-env tail
-  //
-  // THE HALF OF THE MIXER THE WATCHDOG COULD NOT SEE.
-  //
-  // Round seven answered "loud sound until it just stops playing sound" with a
-  // voice cap and voiceStats(), so that the next occurrence would report itself
-  // instead of being guessed at, and so that a graph which starts stacking
-  // drops sounds instead of getting louder until the context gives up. Both
-  // live on _play -- the BUFFER path. Every synthesized one-shot in the game
-  // comes through here instead: bellRing, caveDrip, whisper, stoneGrind,
-  // splash, drownedCall, thud, creak, carAlarm, the lot. Measured over five
-  // real minutes in the Underfalls, this path opened 296 voices to _play's 423
-  // (tools/probe-cave-realtime.mjs) -- and not one of them was counted, capped,
-  // or visible in the numbers Alex was asked to read back.
-  //
-  // So it is counted and capped on exactly the same terms now. Over the cap
-  // the caller still gets a GainNode, so nothing throws and no call site
-  // changes; that node simply is not wired to the master, so the sound is
-  // dropped rather than added to a mix that is already misbehaving. With both
-  // paths finally counted, five real minutes of Underfalls play peaks at 14
-  // voices against the ceiling of forty: this can only ever be met by the
-  // game going wrong.
   _bus(opts = {}, dur = 2, baseGain = 1, baseVerb = 0.25) {
     const ctx = this.ctx;
     const g = ctx.createGain();
     g.gain.value = baseGain * (opts.gain ?? 1);
-    if (this._voices >= GameAudio.VOICE_CAP) {
-      this._droppedVoices = (this._droppedVoices || 0) + 1;
-      if (this._droppedVoices === 1) {
-        console.warn('[FETCH audio] voice cap hit -- dropping one-shots. Something is calling far more sound than play produces; see tools/probe-cave-realtime.mjs and audio.voiceStats().');
-      }
-      return g;                              // unwired: it makes no sound
-    }
     const nodes = [g];
     let tail = g;
     if (opts.pos) {
@@ -938,14 +885,7 @@ export class GameAudio {
     tail.connect(this.master);
     const verb = opts.verb ?? baseVerb;
     if (verb > 0) { const vs = ctx.createGain(); vs.gain.value = verb; tail.connect(vs).connect(this.verbBus); nodes.push(vs); }
-    this._voices++;
-    if (this._voices > this._peakVoices) this._peakVoices = this._voices;
-    // the same timer that already owned these nodes' lifetime now owns the
-    // voice's, so the count can never drift from the graph
-    setTimeout(() => {
-      this._voices = Math.max(0, this._voices - 1);
-      for (const nd of nodes) { try { nd.disconnect(); } catch {} }
-    }, (dur + 1.2) * 1000);
+    setTimeout(() => { for (const nd of nodes) { try { nd.disconnect(); } catch {} } }, (dur + 1.2) * 1000);
     return g;
   }
 
@@ -1011,35 +951,6 @@ export class GameAudio {
     this._updateChatter(dt);
     this._updateBoneApproach(dt);
     this._updateVerbRack();
-    this._watchTheMix(dt);
-  }
-
-  // WHAT A RUNAWAY LOOKS LIKE FROM INSIDE, for free.
-  //
-  // His report has survived four rounds because nobody has ever had a number
-  // from the session it happened in: "it gets so loud it crashes the sound" is
-  // a description of the master bus, and the master bus was never measured.
-  // DynamicsCompressorNode.reduction is the decibels the compressor is pulling
-  // out RIGHT NOW, it is already in this chain, and reading it costs nothing --
-  // no analyser, no FFT, no extra node. A mix behaving normally sits around a
-  // couple of dB. A mix being stormed sits pinned. Sampled once a second and
-  // reported through voiceStats(), so the next time it happens the answer is a
-  // measurement rather than a fifth round of guessing. It changes no gain and
-  // silences nothing: this is the instrument, not a fix.
-  //
-  // THE THRESHOLD IS MEASURED, NOT GUESSED. Five real minutes of ordinary
-  // Underfalls play -- the walk, the secret, a death, the Choir -- worst
-  // reduction 11.6 dB (tools/probe-cave-realtime.mjs). The compressor's own
-  // threshold is -18 dB at ratio 4, so 18 dB of reduction means the mix is
-  // roughly 24 dB over the knee: nothing the game does gets there.
-  _watchTheMix(dt) {
-    if (!this.comp || typeof this.comp.reduction !== 'number') return;
-    this._mixT = (this._mixT || 0) + dt;
-    if (this._mixT < 1) return;
-    this._mixT = 0;
-    const r = this.comp.reduction;               // negative dB, 0 when idle
-    if (r < (this._worstReduction ?? 0)) this._worstReduction = r;
-    if (r < -18) this._stormSeconds = (this._stormSeconds || 0) + 1;
   }
 
   _thump(vol) {
@@ -2614,24 +2525,13 @@ export class GameAudio {
         farSrc.playbackRate.setTargetAtTime(0.6, t, 0.03);
         farSrc.playbackRate.setTargetAtTime(1, t + 0.15, dur);
       },
-      // THE FLOOR IS FOR THE ROOM YOU ARE IN. `carry` is 1 when the body and
-      // the listener share a space and 0 when they do not, and it multiplies
-      // the FLOOR only -- the threat/near/rear terms keep their own distance
-      // falloff either way, so a creature in the building you just walked out
-      // of is still faintly there, just no longer pinned to the audible
-      // minimum. ENEMIES[kind].floor exists so a threat sharing your space is
-      // always trackable on the sound stage (Behind You law); applied across a
-      // wall and forty metres of night it is a creature that follows you out
-      // of the house. Alex, 2026-09-01: "There is an enemy that looks like it
-      // is still in the house making sounds when you get to the graveyard."
-      // Default 1 so every existing caller is byte-identical.
-      setThreat(threat, near, rear, carry = 1) {
+      setThreat(threat, near, rear) {
         if (this._dead) return;
         if (this._chokeT && ctx.currentTime < this._chokeT) return;
         const t = ctx.currentTime;
         const panic = clamp01(near * near + rear * 0.45);
         // volume = floor + threat*0.42 + near*0.28 + rear*0.28 (Behind You law)
-        const farVol = clamp01(cfg.floor * clamp01(carry) + threat * 0.42 + near * 0.28 + rear * 0.28) * cfg.farGain;
+        const farVol = clamp01(cfg.floor + threat * 0.42 + near * 0.28 + rear * 0.28) * cfg.farGain;
         farG.gain.setTargetAtTime(Math.max(0.0001, farVol), t, 0.08);
         farSrc.playbackRate.setTargetAtTime(1 + threat * cfg.pitchRise * 0.45 + panic * cfg.pitchRise * 0.85, t, 0.1);
         const nearVol = clamp01(Math.pow(clamp01(near), 1.65) * 0.72 + panic * 0.55) * cfg.closeGain;
@@ -2657,11 +2557,6 @@ export class GameAudio {
 
   // ---------------- teardown ----------------
 
-  // A DELIBERATE HOLD, announced. Pause, the terminal hand-off and the page
-  // teardown all park the context on purpose; everything else that stops it
-  // is the browser, and the browser's version is the one the watchdog is for.
-  holdSuspended(hold) { this._holdSuspended = !!hold; }
-
   stopAll({ suspend = false } = {}) {
     if (!this._ready) return;
     this._cancelForestStoryPrewarm?.();
@@ -2686,7 +2581,6 @@ export class GameAudio {
     this._tGain.gain.setTargetAtTime(0.0001, t, 0.1);
     this.master.gain.cancelScheduledValues(t);
     this.master.gain.setTargetAtTime(0.0001, t, 0.18);
-    if (suspend) this.holdSuspended(true);
     if (suspend && !this._suspendTimer) {
       const ctx = this.ctx;
       this._suspendTimer = setTimeout(() => {

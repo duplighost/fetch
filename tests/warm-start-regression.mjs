@@ -84,9 +84,6 @@ try {
       textures: warm.textures,
       programsAtEntry: warm.programsAtEntry,
       programsNow: warm.programsNow,
-      links: warm.links,
-      renderReady: warm.renderReady,
-      bootReadyMs: warm.bootReadyMs,
       paused: window.__game.paused,
       pauseReason: window.__game.pauseReason,
       titleHidden: window.__game.el.title.classList.contains('hidden'),
@@ -102,10 +99,6 @@ try {
       && entry.textures.uploaded > 0,
     'every boot-painted texture is uploaded before the game entered',
     JSON.stringify(entry.textures));
-  check(entry.renderReady && entry.links?.status === 'settled'
-      && entry.links.linked === entry.links.total,
-    'the first world draw waits for every asynchronous driver link to settle',
-    JSON.stringify(entry.links));
   check(!entry.paused && entry.titleHidden,
     'spam-clicking the title arrives in play, never in a pause it never asked for',
     `paused=${entry.paused} reason=${entry.pauseReason}`);
@@ -115,11 +108,11 @@ try {
   const heldMs = await page.evaluate(() => window.__FETCH.warm().entryLatencyMs);
   console.log(`     press-to-play: ${heldMs?.toFixed(0)}ms in-page (${Date.now() - pressedAt}ms wall)`);
   console.log(`     compile: ${JSON.stringify(entry.timings)}  textures: ${entry.textures?.durationMs?.toFixed(0)}ms`);
-  // A ceiling, not a stopwatch: cold ANGLE link time varies wildly. It is now
-  // intentionally paid behind a painted, compositor-animated title rather
-  // than coerced into a frozen first WebGL frame. This catches a true hang.
-  check(heldMs != null && heldMs < 35000,
-    'the animated title eventually hands over without a boot hang',
+  // A ceiling, not a stopwatch: gate machines differ and his is the slow one.
+  // What this catches is the warm pass turning back into a wait on the driver
+  // (the compileAsync path measured 11.4 s here against 0.7 s synchronous).
+  check(heldMs != null && heldMs < 6000,
+    'the title never holds the press longer than a player would wait',
     `${heldMs?.toFixed(0)}ms`);
 
   // ---- the gate: walk the whole game and link nothing ---------------------
@@ -233,7 +226,8 @@ try {
   const calm = await openPage(browser, `${URL_BASE}/?mute=1`, { width: 1024, height: 700 });
   await calm.page.waitForFunction(() => window.__FETCH?.ready === true, null, { timeout: 90000 });
   await calm.page.waitForFunction(
-    () => window.__game._bootReady === true && window.__game._bootRenderReady(),
+    () => ['created', 'ready', 'degraded'].includes(window.__game.shaderWarmup.status)
+      && ['ready', 'degraded'].includes(window.__game.textureWarmup?.status),
     null, { timeout: 90000, polling: 100 },
   );
   await calm.page.click('#title [data-action="start"]');

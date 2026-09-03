@@ -117,26 +117,10 @@ const results = await page.evaluate(async () => {
   F.teleport('house');
   F.stepWith(0.2, {}, false);
   const before = g.enemies.list.some((x) => x.kind === 'resident');
-  // HOUSE_RESIDENT_DELAY is 18 -- AND THE CLOCK IS HELD WHILE THE LANDING
-  // WINDOW SCARE RUNS. _updateResident parks it for the whole entry sequence
-  // on purpose ('a Resident arriving mid-fold does not stack, it steps on the
-  // only scare in the room'), and that sequence is ~9 s: measured, the clock
-  // runs 17.8 -> 5.3 by twelve seconds, then holds through press/sash/fold/
-  // skitter/done and the body arrives around 27 s
-  // (tools/probe-resident-clock.mjs). A flat 19.5 s budget was written against
-  // the bare constant and has been red ever since the hold was added -- it was
-  // failing the game for obeying its own design.
-  //
-  // Wait for the arrival instead of guessing at it, and assert BOTH halves:
-  // it comes unprompted, and it does not come before the constant Alex dialled.
-  let arrivedAt = null;
-  for (let t = 0.5; t <= 40 && arrivedAt === null; t += 0.5) {
-    F.stepWith(0.5, {}, false);
-    if (g.enemies.list.some((x) => x.kind === 'resident')) arrivedAt = +t.toFixed(1);
-  }
-  const after = arrivedAt !== null && arrivedAt >= 18;
+  F.stepWith(19.5, {}, false);        // HOUSE_RESIDENT_DELAY is 18
+  const after = g.enemies.list.some((x) => x.kind === 'resident');
   check('the Resident walks the house early, unprompted',
-    before === false && after === true, { before, after, arrivedAt });
+    before === false && after === true, { before, after });
 
   // and the director pointer self-heals when tests clear the list
   g.enemies.clear();

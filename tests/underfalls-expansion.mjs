@@ -101,11 +101,6 @@ try {
     F.start();
     F.teleport('clearing');
     F.stepWith(1 / 120, {}, false);
-    // This district test skips the two-part frozen-falls puzzle. Arm its
-    // already-thawed result explicitly; the full playthrough owns the real
-    // wheel/plate sequence and this gate owns the waterfall/cave boundary.
-    g.flag('fallsThawed');
-    g.director.armWaterfall();
     const waterfall = g.world.fetchTargets.find((target) => target.id === 'waterfall');
     const directive = waterfall?.enabled ? waterfall.onHit.call(waterfall, g.skull, waterfall.pos, {}) : null;
     if (directive === 'gone') g.skull.vanish();
