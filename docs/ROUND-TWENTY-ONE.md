@@ -92,7 +92,7 @@ the world is on screen in ~104–123 ms.
 
 ## Where to pick up
 
-He has not played this build yet. Wait for his report — his reports beat every
+No report on this build is recorded here. Assume he has played it and ask; his reports beat every
 instrument here, and the recurring failure mode in this game is
 working-but-illegible, not broken. See `FETCH legibility law` in memory.
 
