@@ -25,16 +25,18 @@ the same commit.
   superseded once main caught up — closed, not deleted.
 - **Work in a fresh `git worktree`, never in a shared checkout.**
   `C:\Users\Alex\Projects\fetch-claude` is stale and shared; do not use it.
-- **When Alex says "fetch," read `docs/ROUND-FIFTEEN.md` first and follow it.**
-  It carries what is still open, what needs his answer rather than more work,
-  the measured gate baseline, and the traps. `docs/ROUND-FOURTEEN.md` is the
-  newest record — what round fourteen did, in numbers, with the brief it was
-  built from kept underneath. His own words on the live build
-  (`docs/HIS-NOTES-2026-08-19.md`) outrank every brief in this repo, and every
-  item in them was answered by round thirteen. The older round records carry
-  what was measured, what was wrong, and what is still open; each brief
-  supersedes this line when a new round starts — update this pointer in the same
-  commit that adds the next brief.
+- **When Alex says "fetch," read `docs/ROUND-TWENTY-ONE.md` first.** It is the
+  newest record and it explains the situation: on 2026-09-03 the game was
+  reverted to the round-fifteen build at Alex's choice, so `ROUND-FIFTEEN.md`
+  describes the code that is actually live, while `ROUND-TWENTY.md` and
+  `ROUND-NINETEEN.md` describe code that is no longer in the game. Read
+  twenty-one for what happened, then fifteen for what the live build does.
+  His own words on a build always outrank every brief in this repo.
+  There are nineteen ROUND documents here and most are history; do not read
+  further back than the two above unless you are chasing a specific detail.
+  **Update this pointer in the same commit that adds the next round.** It was
+  left pointing at fifteen for six rounds, which sent every session to the
+  wrong file.
 
 ## What this is
 
