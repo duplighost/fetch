@@ -15,7 +15,7 @@ export const RESULTS = join(ROOT, 'tests', 'results');
 const PW = (() => {
   if (process.env.FETCH_PLAYWRIGHT) return process.env.FETCH_PLAYWRIGHT;
   try { return require.resolve('playwright-core', { paths: [ROOT] }); } catch { /* fall through */ }
-  const legacy = 'C:/Users/Alex/AppData/Local/npm-cache/_npx/e41f203b7505f1fb/node_modules/playwright-core';
+  const legacy = 'C:/Users/alexd/AppData/Local/npm-cache/_npx/e41f203b7505f1fb/node_modules/playwright-core';
   if (existsSync(legacy)) return legacy;
   throw new Error('playwright-core not found; set FETCH_PLAYWRIGHT');
 })();

@@ -1,97 +1,97 @@
 {
  "files": [
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/atmosphere.js -> C:/Users/Alex/Projects/fetch-claude/src/atmosphere.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/atmosphere.js -> C:/Projects/fetch-claude/src/atmosphere.js",
    "verdict": "TAKE-WHOLE",
    "notes": "NEW 765-line module, purely additive dress: night dome, 540 seeded stars, moon+halo, graveyard/forest/clearing/cave dress, foxfire wayfinding. Claims verified: exactly ONE ticker pushed into game.tickers (fan-out at lines 52-55), 11 InstancedMesh sets, dispose() that removes ticker + disposes geo/mats. Resilient to our tree: uses game.mats?.headstone/rock via cloneTint with fallbacks (both mats exist in our textures.js:645-646). Needs 2 lines in main.js (import + this.atmosphere = buildAtmosphere(this)) plus their test tints tint('rock')/tint('headstone') for deterministic shots. MUST pair with their outside.js, which hides the old flat waterfall sheet (fall.visible=false) \u2014 taking atmosphere alone double-stacks two transparent water sheets (moire, their own comment warns). Nothing here touches the house/stairs \u2014 it is NOT the source of the stair see-through."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/outside.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/outside.js",
    "verdict": "TAKE-WHOLE",
    "notes": "Ours is untouched base, so this is a clean fast-forward. Real plunge-pool basin (-3.15, smoothstep 5.4..8.2 around z+15.2) in both terrainHeightFn and clearing mesh (they match \u2014 no floating-terrain bug); bridge-stone tops become walkable ground once risen; 7 bigger stones (was 5); cliff widened 44->60 with colliders to +-30 (closes a walk-around); game.waterfallBarrier collider physically bars the fall pre-bargain (bridgeBarrier is an alias, line 591 \u2014 the director's two names are the SAME object, not a bug); game.caveZone = addZone(...) with enabled = flags.has('waterfallTaken'); caveHatch double-gated on waterfallTaken; rope onArrive adds game.checkpoint('forest') (far-side pose checkpoint); forest seal update pools its Matrix4/Vector3/Quaternion (was allocating per frame). HARD DEPENDENCY: requires their world.js addZone-return change or `game.caveZone.enabled=...` throws at boot. Also depends on main.js checkpoint(pose) for full value. Bug hunt: nothing here explains floating objects or stair see-through; carefully checked."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/world.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/world.js",
    "verdict": "TAKE-WHOLE",
    "notes": "Three small changes: addZone returns the zone object with enabled:true; zoneAt skips enabled===false; surfaceAt iterates LAST-match-wins. The surfaceAt flip is a genuine bug fix for OUR authoring order \u2014 today first-match makes the kitchen flags sound like wood (house wood zone registered before kitchen stone, house.js:569-570), the cave mouth sound like clearing dirt, and the finale bedroom sound like cave stone; last-match fixes all three. Verified every addSurface call site in both trees \u2014 no zone relies on first-match. Risk is only prospective: future surface zones must be authored as later-overrides. Does not touch stairs, colliders, or _buildStairs (stairs are solid full-height boxes \u2014 the see-through Alex saw is not geometric)."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/director.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/director.js",
    "verdict": "MERGE (take ~90%, revert 2 design points)",
    "notes": "TAKE: scoped beat timers (after() gets scope, _scope++ on act change AND respawn, {global:true} opt-in used for bridge stones \u2014 claim verified; our only cross-file after() calls are house.js 0.7s door-opens, same-act, safe); forward-only zone progression (next>current, verified \u2014 kills act rollback; note backtracking now keeps later-act fog/audio, one-way by design); FOG_COLOR_BY_ACT + BACKGROUND_BY_ACT (the 'looks better' palette); pose checkpoints at act hooks + arena-clear checkpoint('forest') + waterfall checkpoint('clearing'); respawn waterfall persistence (stones risen, caveZone enabled, barrier collapsed via max.y=min.y, skull.vanish() \u2014 our skull.js already has vanish()); requestStage on real growth vs setStage on hard teleports; clearing fall death (y<-1.5, consistent with new basin); residentHeard else-branch swaps abstract sting for positional creak+_paceOverhead. REVERT (ours wins): (1) keep `g.skull.fearHome = act==='graveyard'` \u2014 they replaced it with expression-only graveFear, deleting the skull-refuses-long-throws behavior (skull.js hardAway*0.6). That is throw-grammar territory; ship both lines so the tremble expresses what fearHome does. (2) death() no longer yaw-snaps to the killer and uses movementLocked with look staying live 1.1s \u2014 a real improvement per Alex's philosophy but a changed shipped beat; flag for his sign-off (recommend take). Bedroom spawn x 9.5->7.2 reframe and graveyard/cave yaw tweaks: framing calls, cheap to take, Alex judges frame one."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/enemies.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/enemies.js",
    "verdict": "TAKE-WHOLE (one feel check)",
    "notes": "Preserves OUR playtest-2 door-node steering and Resident-opens-doors VERBATIM (their lines 384-546 = our 163-330; verified). Fixes a REAL bug in our current file: src/enemies.js line 130 `toE = V.c.set(...)` clobbers `toP` (also V.c, line 112), so the unobserved Standing Kind advances along the camera->enemy vector (i.e., wrong direction) \u2014 their V.d fix is correct; take even if nothing else ships. Adds structural LOS (_segmentBlocked slab-AABB test vs world.colliders, cached 0.08s per enemy; open door = collapsed collider passes, matching our door system \u2014 no fight with Resident door behavior); standing/stalk now move via _moveWithPush (no more wall-phasing; _moveWithPush already existed in our base \u2014 their 'crowd pushing' claim is really 'these two states now use it' plus a center-inside-AABB escape, which fixes the stuck-inside-collider case); swept skull hits upgraded from single capsule to body-axis + shoulder + head lobes, allocation-free (base was already swept prevPos->pos; their claim overstates novelty but the delta is good); resculpted Walker/Resident/Kneeler silhouettes with shared FIGURE_GEO (the 'looks better', plus no per-spawn geometry leak); stable userData contract kept. FEEL CHECK: new hit lobes are more generous (bodyR+0.11 skull radius, big shoulder spheres) \u2014 slightly easier hits; playtest before blessing."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/finale.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/finale.js",
    "verdict": "TAKE-WHOLE",
    "notes": "10KB -> 25KB rebuild of the mirror room: furnished echo bedroom (bed/dresser/door/window/rug/lamp/drapes via makeDrapeGeometry), peeling wall veils over already-live mirrors (veilMat opacity fade \u2014 no camera move), articulated human reflection carrying the evolved skull head (clones the LIVE skull via setStage(0)/setStage(oldStage) snapshot \u2014 works with any variant incl. our c/d since it uses the public Skull API), furniture leans/scrapes under crush, and the close keeps look input live: frozen only inside the fadeOut callback, yaw-snap only when frameHidden. No dependencies on their main/skull/player changes \u2014 drop-in against our feel core. This is the flagship 'looks better' file. Post-merge check: mirror budget params changed on Mirrors ctor; run smoke's mirror render budgets (their run: 49 draw calls, 5610 tris \u2014 well inside)."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/src/house.js (theirs: fetch-courier-codex/src/house.js)",
+   "file": "C:/Projects/fetch-claude/src/house.js (theirs: fetch-courier-codex/src/house.js)",
    "verdict": "KEEP OURS + cherry-pick 1 hunk",
    "notes": "Their entire delta vs the shared base is one hunk: makeKey material brightened (color 0xd9b24a->0xf0c55b, emissiveIntensity 0.5->1.15) \u2014 take it, it helps all three key reads and the colorblind-safe amber. Everything else: OURS WINS \u2014 our furnish-audit re-seats (fb2fc7e) are absent from their tree, which is precisely the 'floating/misplaced objects' Alex saw in their build: framedArt floating 0.8m off the backhall wall (our fix at src/house.js:692), wardrobe cornering the nursery door approach (:614), fireplace parked across the west window under its own curtains (:641-649). Merging ours forward imports none of their placement bugs because they made no placement changes. Basement key placement is identical in both trees (boiler tank, 10.6, B+1.62, -3.4, house.js:930) \u2014 his failure to find it was lighting, see main.js note."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/skull-variant-c.js",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/src/skull-variant-c.js",
    "verdict": "SKIP as-named; remount as new variant",
    "notes": "41-line calibration shim, NOT a sculpt \u2014 see variantCShim field. Filename collides with OUR 21KB round-3 sculpt-off winner src/skull-variant-c.js; a naive copy would delete a candidate Alex is judging and silently swap the shipping skull. Port its content to a new file (suggest src/skull-variant-a2.js, mounted as ?skull=a2) so it competes in the sculpt-off instead of pre-empting it."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/src/skull.js (theirs: fetch-courier-codex/src/skull.js)",
+   "file": "C:/Projects/fetch-claude/src/skull.js (theirs: fetch-courier-codex/src/skull.js)",
    "verdict": "MERGE (ours is base; port 2 additive pieces)",
    "notes": "FEEL CORE \u2014 ours wins. FEEL_PROFILE untouched by them (verified). PORT: (1) pendingStage/requestStage()/_applyPendingStageIfUnseen() + `this.pendingStage=this.stage` in setStage + the one-line update() call \u2014 additive, enforces the growth-never-witnessed law properly, and their director CRASHES without requestStage; our V.f scratch already exists. (2) graveFear tremble in _updateHeld (expression-only; ship alongside fearHome, not instead). DO NOT PORT: their hardAway line (`this.hardAway = P.hardAwayBase`) which deletes fearHome's graveyard short-throw behavior \u2014 keep ours (`fearHome ? P.hardAwayBase*0.6 : ...`, src/skull.js:455); their variant ternary defaulting to C and dropping variant D import (keep our VARIANTS={a,b,c,d} + courier default, src/skull.js:110); hand skin darkening (cosmetic, Alex judges)."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/src/main.js (theirs: fetch-courier-codex/src/main.js)",
+   "file": "C:/Projects/fetch-claude/src/main.js (theirs: fetch-courier-codex/src/main.js)",
    "verdict": "MERGE (surgical; loop and input edges stay ours)",
    "notes": "TAKE: (1) InputState.clearKeys fix \u2014 converts a lost held throw into one pending.throwReleased edge + zeroes lookX/Y; this PROTECTS the press/hold/release grammar on focus/pointer-lock loss (today the skull can hang out forever); it is inside a feel-core file but changes no tuning. (2) checkpoint(act, pose) capturing checkpointPose {act,x,y,z,yaw,pitch} + checkpoint('bedroom') at boot \u2014 required by their director.respawn pose restore. (3) atmosphere import + buildAtmosphere(this) + tint('rock')/tint('headstone'). (4) gore pool (shared geo/mat). (5) sr-only text updated only on change (was rewriting every frame). (6) REDUCED_MOTION guards on grain time + shake transform. (7) preserveDrawingBuffer: TEST_MODE \u2014 safe: every screenshot consumer we have passes ?test=1 (tools/shot-held.mjs, tools/shot-room.mjs, tests/smoke.mjs \u2014 verified). HOLD FOR ALEX: skullLight state machine (held 1.2 / flight 42 / gone 0). Our light is a constant-42 lantern on the skull (src/main.js:104) \u2014 skull = light + radar is the design contract. Their dim-in-hand is the PRIME SUSPECT for 'never found the basement key' (identical key placement, near-black basement, held light 1.2). It is also the best candidate for the stair-shaft 'see-through' read (unlit shaft interiors against their darker per-act backgrounds). If Alex wants light-as-throw-verb, retune held to ~12-20 and playtest the basement first. Also HOLD: grain/vignette halving (visual taste), crosshair dataset-sync removal (pairs with index.html decision), VERSION string."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/src/player.js (theirs: fetch-courier-codex/src/player.js)",
+   "file": "C:/Projects/fetch-claude/src/player.js (theirs: fetch-courier-codex/src/player.js)",
    "verdict": "MERGE (3-line additive flag)",
    "notes": "FEEL CORE \u2014 verified their diff touches NO tuning (WALK/RUN/JUMP/bob untouched). Only adds movementLocked and folds it into the existing frozen gates (move, run, jump). Needed by their director.death look-stays-live and asserted by their regression suite. Safe."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/index.html (theirs: fetch-courier-codex/index.html)",
+   "file": "C:/Projects/fetch-claude/index.html (theirs: fetch-courier-codex/index.html)",
    "verdict": "MERGE (a11y yes, copy and crosshair are Alex's call)",
    "notes": "TAKE: .go becomes a real <button> with :focus-visible, dialog roles/aria-labelledby, prefers-reduced-motion CSS block. HOLD: (1) crosshair display:none \u2014 ours is a wordless 4px dot that brightens on target (in-world-adjacent state cue, arguably fits Alex's UI philosophy already); their removal is purer but drops the only aim affordance; their regression check asserts removal, so the check and the decision must match. (2) Copy: 'click' -> 'click to wake' / 'click to return', and the keys line rewritten ('left mouse \u2014 throw \u00b7 hold \u2014 keep it out \u00b7 release \u2014 call it home', adds 'right mouse \u2014 call'). Alex's copy voice rule says reuse HIS lines \u2014 but note their keys line teaches the actual grammar more precisely and documents right-mouse call for the first time. Present both to him."
   },
   {
-   "file": "C:/Users/Alex/Projects/fetch-claude/serve.mjs",
+   "file": "C:/Projects/fetch-claude/serve.mjs",
    "verdict": "SKIP",
    "notes": "Byte-identical in both trees."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/lib/harness.mjs",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/lib/harness.mjs",
    "verdict": "TAKE-WHOLE",
    "notes": "One-line fix: shotPath extension regex accepts .png/.jpg/.jpeg/.webp instead of appending .png to everything (this is their 'JPEG extension bug' \u2014 our tests/shots/play-*.jpg.png files are the artifact of it)."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/playthrough.mjs",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/playthrough.mjs",
    "verdict": "TAKE-WHOLE",
    "notes": "Fixes the vacuous `beat('resident-came', ... ? true : true)` into a real assertion: director.resident exists, kind==='resident', registered in g.enemies.list, with diagnostic payload. Runs against the merged tree (drives the shipping route via the white-box API; the resident spawn path is our unchanged playtest-2 behavior). 24 beats intact."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/smoke.mjs",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/smoke.mjs",
    "verdict": "TAKE-WHOLE",
    "notes": "Honest relabel of the 300-step render-free burst as simulation throughput (not FPS); cave act now calls g.director.waterfallTaken() first so cave/mirror screenshots reflect the broken-promise state \u2014 waterfallTaken() is already a public method with that exact name in OUR director.js:478, so this works unmodified; mirror act steps 540 frames with yaw/pitch zeroed for deterministic finale shots. Render budgets unchanged from ours."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/regressions.mjs",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/regressions.mjs",
    "verdict": "MERGE (take with 2 patched checks)",
    "notes": "582-line, 23-check suite covering: growth-law (requestStage defers while held/on-screen, applies exactly once unseen, gone accepts immediately), forward-only progression, cave zone disabled + physically unreachable + hatch rejection pre-bargain, clearKeys one-release-edge, rope far-side spatial checkpoint + exact pose restore + spent rope, waterfall flag/barrier/skull-gone surviving death. All pass on the merged tree IF the dependency cluster ships (world+outside+director+skull.requestStage+player.movementLocked+main.checkpointPose+clearKeys fix). TWO checks assert THEIR design decisions and must be patched to match ours: 'default query ships anatomical variant C' (expects skull.variant==null && userData.variant==='c' && root 'fetchShippingSkull' \u2014 fails against our courier default + full-sculpt c; rewrite to assert our a/b/c/d mounts + courier default until Alex crowns a winner) and 'crosshair has no visual box during play' (fails if we keep our 4px dot; align with the index.html decision)."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/render-perf.mjs",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/tests/render-perf.mjs",
    "verdict": "TAKE-WHOLE",
    "notes": "406-line rendered-frame gate: asserts visible window, WebGL2, D3D11 ANGLE, non-software renderer, buffer sizes; measures delivered rAF cadence (p50<28ms, p95<50ms, coverage>0.90) then monkey-patches g.render for EXT_disjoint_timer_query_webgl2 GPU samples (p95<45ms) across forest/clearing/cave/mirror. Works against OUR main.js \u2014 it only needs window.__game.render (instance-assignable) and window.__FETCH (identical API in both trees, verified). Matches our headless-webgl playbook (system Chrome, not swiftshader). Run as separate test:gpu, not in the default gate (needs a visible window)."
   },
   {
-   "file": "C:/Users/Alex/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/docs/CODEX-ITERATION.md + README.md",
+   "file": "C:/Users/alexd/Documents/Codex/2026-08-07/th/outputs/fetch-courier-codex/docs/CODEX-ITERATION.md + README.md",
    "verdict": "TAKE (as records)",
    "notes": "Copy CODEX-ITERATION.md into our docs/ as the review-source record; their README's Verification section and npm scripts are worth folding into package.json (test = autotest && regressions && smoke; test:playthrough; test:gpu). Their BRIEFING.md/PLAYTEST-2.md are STALE vs ours (ours has the shipped-lane markers) \u2014 keep ours. DESIGN/HANDOFF/PLAYTEST-1/WALKTHROUGH/AGENTS.md byte-identical."
   }
