@@ -1,0 +1,11 @@
+{
+  "id": "fetch_hand_spacing_v3",
+  "title": "FETCH — natural finger spacing",
+  "source": "D:/Projects/fetch/art/website-covers/2026-10-30/fetch-the-returning-skull-v2.png",
+  "folder": "D:/Projects/fetch/art/website-covers/2026-10-30",
+  "stem": "fetch-the-returning-skull-v3",
+  "prompt": "Use case: precise-object-edit.\nInput image: edit target, the supplied FETCH cover.\nMake a tiny, careful anatomical correction to ONLY the player's RIGHT HAND against the wooden doorframe on the right edge. Its index and middle fingers are spread too far apart. Bring those fingers together into a natural relaxed hand placement. Reconstruct this hand as a normal adult RIGHT hand seen from the back: the four long fingers lie close together in a gently curved, nearly parallel group resting on the wood, with small natural gaps, the middle finger slightly longest. No wide V-shaped split between index and middle fingers. Thumb correctly emerges from the inner LEFT side of this right hand and rests near the inner edge of the frame, with a normal short thumb web; no elongated extra index-like thumb and no extra protruding digit at the wrist. Five digits in total, plausible joints and knuckles, no fused fingers. The hand looks naturally braced on the doorway, not posed as a gesture. Preserve its scale, position, dirty wet skin, grey frayed cuff and the light on it.\nKeep absolutely everything else as close as possible to the reference: unchanged left catching hand, hovering cracked skull, key clamped in its teeth, light trails, background Resident, moon, graves, trees, weathered house, framing and beautiful lighting. No new objects or changes to the composition. Preserve the 16:9 landscape image, exquisite detail and original palette. No text or watermark.",
+  "generatedSource": "C:/Users/Alex/.codex/generated_images/01a18cf0-4667-7d71-aad6-30f6f564e76e/exec-f0097ad6-7382-4cf9-b742-9420bc9915fe.png",
+  "tool": "built-in image_gen",
+  "date": "2026-10-30"
+}
